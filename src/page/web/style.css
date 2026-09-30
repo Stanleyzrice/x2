@@ -10,7 +10,8 @@ h2 { font-size: 15px; margin: 24px 0 8px; }
 table { border-collapse: collapse; width: 100%; }
 th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
-td.img img, .opt img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; display: block; }
+td.img img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; display: block; }
+.opt img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; display: block; }
 td.empty { color: var(--muted); text-align: center; }
 input[type=text], input[type=url], input[type=number], select { width: 100%; min-width: 160px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
 .field { display: flex; flex-direction: column; gap: 4px; margin: 12px 0; }
@@ -19,7 +20,8 @@ fieldset { border: 0; padding: 0; margin: 12px 0; }
 .opts { display: flex; flex-wrap: wrap; gap: 8px; }
 .opt { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
 .opt small { display: block; color: var(--muted); }
-figure { margin: 12px 0; } figure img { max-width: 100%; border-radius: 8px; }
+figure { margin: 12px 0; } figure img { width: 140px; height: 140px; object-fit: cover; border-radius: 8px; display: block; }
+figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; background: var(--soft); border-top: 1px solid var(--line); }
 button { padding: 7px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }

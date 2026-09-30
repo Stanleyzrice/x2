@@ -1,9 +1,10 @@
-// x2 buy：采购。要买什么（todo）→ 贴 1688 链接（link）→ 对规格（match，一个 ask 页面）→ 购物清单（list）→ 人在 1688 买 → 标买过（done）。
+// x2 buy：采购。要买什么（todo）→ 以图搜图找货源（find）或贴 1688 链接（link）→ 对规格（match，一个 ask 页面）→ 购物清单（list）→ 人在 1688 买 → 标买过（done）。
 // 人给的判断只往后加（store.append）：sources.json 记链接和规格的对照，bought.json 记买过的订单；现在的对照 = 每个商品、每个规格最新的一条。
 // 1688 自动加购不在这里：人照购物清单在 1688 上加购、付款
 import { type Offer, offer as readOffer, offerIdOf } from "../site/alibaba.ts";
 import type { Order } from "../site/shopee.ts";
 import { ask } from "../page/serve.ts";
+import { ready as zhixiaReady, similar1688 } from "../site/zhixia.ts";
 import type { Page } from "../page/spec.ts";
 import * as store from "../store.ts";
 
@@ -55,14 +56,59 @@ async function todo(json: boolean) {
 	}
 }
 
-async function link(itemId: string | undefined, url: string | undefined, json: boolean) {
-	const offerId = url ? offerIdOf(url) : null;
-	if (!itemId || !offerId) throw new Error("用法：x2 buy link <商品 id> <1688 链接或货源 id>");
+/** 记下一个商品的 1688 货源：读货源（标题、规格、图）存进 offers，对照往后加进 sources */
+async function record(itemId: string, offerId: string): Promise<Offer> {
 	const o = await readOffer(offerId);
 	const offers = await store.read<Record<string, Offer>>("offers", {});
 	await store.write("offers", { ...offers, [o.offerId]: o });
 	await store.append<Link>("sources", [{ kind: "link", itemId, offerId: o.offerId }]);
+	return o;
+}
+
+async function link(itemId: string | undefined, url: string | undefined, json: boolean) {
+	const offerId = url ? offerIdOf(url) : null;
+	if (!itemId || !offerId) throw new Error("用法：x2 buy link <商品 id> <1688 链接或货源 id>");
+	const o = await record(itemId, offerId);
 	console.log(json ? JSON.stringify({ offerId: o.offerId, title: o.title, skus: o.skus.length }) : `已记下：${itemId} → 1688「${o.title}」，${o.skus.length} 个规格。下一步：x2 buy match ${itemId}`);
+}
+
+/** 缺链接的商品（给了商品 id 只找它）：拿 Shopee 的商品图经知虾在 1688 以图搜图，每个给 4 个候选，一个 ask 页面里让人选；都不对的可以贴链接 */
+async function find(itemId: string | undefined, json: boolean) {
+	const missing = new Map<string, { name: string; image: string }>();
+	for (const r of await rows()) if (r.state === "缺链接" && (!itemId || r.itemId === itemId) && !missing.has(r.itemId)) missing.set(r.itemId, { name: r.name, image: r.image.replace(/_tn$/, "") });
+	if (missing.size === 0) return console.log(json ? JSON.stringify({ found: 0 }) : itemId ? `商品 ${itemId} 不缺链接` : "没有缺链接的商品");
+	await zhixiaReady();
+	const found: { itemId: string; name: string; image: string; candidates: Awaited<ReturnType<typeof similar1688>> }[] = [];
+	for (const [id, m] of missing) {
+		// 知虾对频率敏感：两次搜索隔 6 秒
+		if (found.length > 0) await new Promise((r) => setTimeout(r, 6000));
+		console.error(`以图搜图：${m.name}`);
+		found.push({ itemId: id, ...m, candidates: m.image ? await similar1688(m.image) : [] });
+	}
+	const page: Page = {
+		title: "找 1688 货源",
+		blocks: [
+			{ type: "text", text: "每个商品按图在 1688 上找了几个同款，选一个要买的；都不对就在下面贴链接。不选也不贴的，下次再找。" },
+			...found.flatMap((f): Page["blocks"] => [
+				{ type: "heading", text: f.name },
+				...(f.image ? [{ type: "image" as const, src: `${f.image}_tn`, caption: `商品 ${f.itemId}` }] : []),
+				{ type: "choice", id: `pick_${f.itemId}`, label: f.candidates.length ? "1688 上的同款" : "没有找到同款", options: f.candidates.map((c) => ({ value: c.offerId, label: c.title, image: c.image, note: `¥${c.price} · 月销 ${c.monthSold}` })) },
+				{ type: "input", id: `url_${f.itemId}`, label: "都不对的话，贴 1688 链接", input: { type: "url", placeholder: "https://detail.1688.com/offer/….html" } },
+			]),
+		],
+		submit: { label: "用选中的货源" },
+	};
+	const answer = await ask(page);
+	if (!answer.submitted) return console.log(json ? JSON.stringify({ submitted: false }) : "取消了，没有记");
+	const done: { itemId: string; offerId: string; title: string }[] = [];
+	for (const f of found) {
+		const url = answer.values[`url_${f.itemId}`] as string | null;
+		const offerId = (url ? offerIdOf(url) : null) ?? (answer.values[`pick_${f.itemId}`] as string | null);
+		if (!offerId) continue;
+		const o = await record(f.itemId, offerId);
+		done.push({ itemId: f.itemId, offerId: o.offerId, title: o.title });
+	}
+	console.log(json ? JSON.stringify({ submitted: true, linked: done }) : done.length ? `记下 ${done.length} 个商品的货源：\n${done.map((d) => `  ${d.itemId} → ${d.title}（x2 buy match ${d.itemId} 对规格）`).join("\n")}` : "没有选货源");
 }
 
 // 繁体 → 简体：Shopee 台湾的规格名是繁体，1688 是简体。只收规格名里常见的字，猜对照用，不求全
@@ -136,8 +182,9 @@ export async function buy(args: string[], json: boolean): Promise<void> {
 	const [sub, ...rest] = args;
 	if (sub === "todo") return todo(json);
 	if (sub === "link") return link(rest[0], rest[1], json);
+	if (sub === "find") return find(rest[0], json);
 	if (sub === "match") return match(rest[0], json);
 	if (sub === "list") return list(json);
 	if (sub === "done") return done(rest, json);
-	throw new Error("x2 buy 的子命令：todo、link、match、list、done");
+	throw new Error("x2 buy 的子命令：todo、find、link、match、list、done");
 }
