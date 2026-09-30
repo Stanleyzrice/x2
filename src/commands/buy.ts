@@ -4,7 +4,7 @@
 // 对照按 SKU 记：Shopee 的一个规格（model）→ 1688 一家货源（offer）的一个规格（sku）。人给的对照只往后加（sources.json），每个规格以最新的一条为准。
 // 正常情况下对照在上品时就写好，订单来了直接可买；找货源是例外：老商品没有对照、货源下架、规格没了、库存不够、想换一家
 import { type CartLine, type Offer, Gone, addToCart, cart as readCart, offer as readOffer, offerIdOf } from "../site/alibaba.ts";
-import { type Order, toShipOrders } from "../site/shopee.ts";
+import { type Order, toShipOrders } from "../site/shopee/orders.ts";
 import { ready as zhixiaReady, similar1688 } from "../site/zhixia.ts";
 import { ask } from "../page/serve.ts";
 import type { Page } from "../page/spec.ts";

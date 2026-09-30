@@ -37,6 +37,8 @@ export async function page(origin: string): Promise<Page> {
 		await c.eval(tab.tabId, `window.name = ${JSON.stringify(MARK)}`);
 	}
 	const id = tab.tabId;
+	// 后台标签页当成有焦点：不然有的页面不启动（2026-09-30：聊聊在后台标签页里不登录、不发请求）
+	await c.send(id, "Emulation.setFocusEmulationEnabled", { enabled: true });
 	return {
 		run: (fn, ...args) => c.evalFn(id, fn, ...args),
 		goto: async (url) => {

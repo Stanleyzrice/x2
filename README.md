@@ -22,9 +22,11 @@ x2/
 ├ bin/x2.ts               命令行入口：x2 <命令> …
 ├ src/
 │ ├ browser.ts            唯一碰 cdp-relay 的地方：选登录着的浏览器、用自己开的标签页、在页面里发请求
-│ ├ site/                 一个站点一个文件，只管「怎么请求、怎么从响应里取出数据」
-│ │ ├ shopee.ts           待出货的订单、订单明细、商品和规格
-│ │ └ alibaba.ts          1688：货源（标题、图、规格、价格）
+│ ├ site/                 一个站点一个文件（大的一个目录），只管「怎么请求、怎么从响应里取出数据」；各站的接口一览和坑在同目录的 .md
+│ │ ├ shopee/             卖家中心：订单、商品和上架、批量上架、收入、售后、经营数据和营销、聊聊、帮助中心（shopee.md）
+│ │ ├ alibaba.ts          1688：货源、搜索、购物车和加购、采购单、物流
+│ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md 是全部数据接口）
+│ │ └ chanboss.ts         仓老板：入仓单、库存、退件、扣款流水
 │ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色
 │ ├ store.ts              读写 ~/x2/*.json：整份覆盖（读来的）、往后加（人给的）
 │ ├ page/
@@ -37,7 +39,7 @@ x2/
 ├ views/                  存下来的 page：buy.json（采购单）……
 ├ .claude/skills/
 │ └ buy/SKILL.md          采购：同步订单 → 采购单 → ask 找货源 → ask 确认加购 → 加进 1688 购物车 → 人付款
-├ test/
+├ test/                   pnpm test 跑的单元测试；live/ 是对真站点跑一遍读取的脚本（手动运行，只打印字段名和条数）
 ├ package.json            依赖只有 @wuwe1/cdp-relay、zod
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
 ```
@@ -49,7 +51,8 @@ x2/
 ├ orders.json     读来的：待出货的订单和明细，每次 x2 buy order 整份覆盖
 ├ offers.json     读来的：1688 货源和它的规格
 ├ sources.json    人给的：Shopee 的一个 SKU → 1688 一家货源的一个规格，只往后加
-└ carted.json     做过的：加进 1688 购物车的订单行（订单号 + SKU），只往后加
+├ carted.json     做过的：加进 1688 购物车的订单行（订单号 + SKU），只往后加
+└ zhixia-usage.json  知虾最近一小时的请求时间：限流用，几个 x2 进程共用
 ```
 
 ## 先例
