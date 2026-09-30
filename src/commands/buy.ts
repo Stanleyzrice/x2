@@ -155,18 +155,19 @@ async function candidates(t: Target, mode: Mode): Promise<Option[]> {
 
 const SEARCH = "search";
 
-/** 给缺货源、货源失效的 SKU（给了 SKU 只找它）选 1688 的「哪家 + 哪个规格」。
+/** 给缺货源、货源失效的 SKU（给了 SKU 只找它，可买的也行）选 1688 的「哪家 + 哪个规格」。
  * 先看这个商品用过的货源；都不对可以选「用图搜」或贴链接，再来一轮；不选的下次再找 */
 async function source(modelId: string | undefined, json: boolean) {
 	const { lines } = await plan();
 	const { specs, links } = await load();
 	const targets = new Map<string, Target>();
-	for (const l of lines) if (l.state !== "可买" && (!modelId || l.modelId === modelId)) {
+	// 不给 SKU：缺货源、货源失效的都找；给了 SKU：可买的也重新选（例 选错了规格）
+	for (const l of lines) if (modelId ? l.modelId === modelId : l.state !== "可买") {
 		const t = targets.get(l.modelId);
 		const cur = specs.get(l.modelId);
 		targets.set(l.modelId, t ? { ...t, qty: t.qty + l.qty } : { modelId: l.modelId, itemId: l.itemId, name: l.name, spec: l.spec, qty: l.qty, image: l.image, state: l.state, why: l.why, current: cur ? `${cur.offerId}:${cur.skuId}` : null });
 	}
-	if (targets.size === 0) return console.log(json ? JSON.stringify({ mapped: [] }) : modelId ? `SKU ${modelId} 不用找货源` : "没有要找货源的 SKU");
+	if (targets.size === 0) return console.log(json ? JSON.stringify({ mapped: [] }) : modelId ? `还没买的订单里没有 SKU ${modelId}` : "没有要找货源的 SKU");
 
 	// 这个商品用过的货源：各个规格对上的（包括可能已下架的，读一遍就知道）、旧的商品链接
 	const usedBy = (itemId: string) => [
