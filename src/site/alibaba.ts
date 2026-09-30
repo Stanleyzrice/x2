@@ -14,13 +14,16 @@ export function offerIdOf(linkOrId: string): string | null {
 	return m ? m[1]! : null;
 }
 
+/** 货源下架了或不存在：采购单上算货源失效。要登录、要过滑块是别的错，要人处理 */
+export class Gone extends Error {}
+
 export async function offer(offerId: string): Promise<Offer> {
 	const url = `https://detail.1688.com/offer/${offerId}.html`;
 	const p = await page("https://detail.1688.com");
 	await p.goto(url);
 	const got = await p.run((url: string) => {
 		const m = (window as any).context?.result?.global?.globalData?.model;
-		if (!m?.tradeModel) return { error: location.href.includes("login") || location.href.includes("punish") ? "1688 要登录或要过滑块：在浏览器里处理一下" : "货源不存在或已下架" };
+		if (!m?.tradeModel) return location.href.includes("login") || location.href.includes("punish") ? { error: "1688 要登录或要过滑块：在浏览器里处理一下" } : { gone: true as const };
 		const t = m.tradeModel, d = m.offerDetail;
 		const unescape = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 		const hasSkus = (t.skuMap ?? []).length > 0;
@@ -39,5 +42,6 @@ export async function offer(offerId: string): Promise<Offer> {
 		return { offerId: String(t.offerId), url, title: d.subject, image: d.mainImageList?.[0]?.fullPathImageURI ?? "", unit: t.unit ?? "", minQty: Number(t.beginAmount ?? 1), props, skus };
 	}, url);
 	if ("error" in got) throw new Error(`读 1688 货源 ${offerId}：${got.error}`);
+	if ("gone" in got) throw new Gone(`1688 货源 ${offerId} 不存在或已下架`);
 	return got;
 }

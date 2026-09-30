@@ -1,7 +1,8 @@
 // x2 ask <声明>：渲染、等人提交，把答案 JSON 打印出来（agent 读它）
 // x2 show <声明>：渲染、打开，只看
-// <声明> 是一个 JSON 文件的路径、views/ 下的名字（x2 show today），或 -（从标准输入读）。
-// 表格写了 from（例 "buy todo"）的，渲染前现跑 x2 <from> --json，把结果当行：存下来的视图每次打开都是新的数据
+// <声明> 是一个 JSON 文件的路径、views/ 下的名字（x2 show buy），或 -（从标准输入读）。
+// 表格写了 from（例 "buy"）的，渲染前现跑 x2 <from> --json，把结果（或它的 key 字段）当行：存下来的视图每次打开都是新的数据。
+// 同一个 from 只跑一次
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -21,15 +22,20 @@ function load(arg: string | undefined): { page: Page; name: string } {
 	return { page: parsed.data, name: path === null ? "page" : basename(path, ".json") };
 }
 
-/** 表格的 from：现跑那个 x2 命令，它的 --json 输出（一个数组）就是行 */
+/** 表格的 from：现跑那个 x2 命令，它的 --json 输出（一个数组，或对象里 key 那个字段）就是行 */
 function fill(page: Page): Page {
+	const runs = new Map<string, unknown>();
+	const run = (from: string) => {
+		if (!runs.has(from)) runs.set(from, JSON.parse(execFileSync(process.execPath, [bin, ...from.split(/\s+/), "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] })));
+		return runs.get(from);
+	};
 	return {
 		...page,
 		blocks: page.blocks.map((b) => {
 			if (b.type !== "table" || !b.from) return b;
-			const out = execFileSync(process.execPath, [bin, ...b.from.split(/\s+/), "--json"], { encoding: "utf8" });
-			const rows = JSON.parse(out) as unknown;
-			if (!Array.isArray(rows)) throw new Error(`x2 ${b.from} --json 的输出不是一个数组，当不了表格的行`);
+			const out = run(b.from);
+			const rows = b.key ? (out as Record<string, unknown>)?.[b.key] : out;
+			if (!Array.isArray(rows)) throw new Error(`x2 ${b.from} --json 的输出${b.key ? `的 ${b.key}` : ""}不是一个数组，当不了表格的行`);
 			return { ...b, rows: rows as Record<string, unknown>[] };
 		}),
 	};

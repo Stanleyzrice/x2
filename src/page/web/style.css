@@ -35,7 +35,7 @@ a { color: var(--accent); }
 
 /* 组件 */
 .text { white-space: pre-wrap; color: var(--muted); margin: 0 0 var(--s3); }
-figure { margin: var(--s3) 0; } figcaption { margin-top: var(--s1); }
+figure { margin: var(--s3) 0; } figcaption { margin-top: var(--s1); white-space: pre-line; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; }
 th, td { border-bottom: 1px solid var(--line); padding: var(--s2); text-align: left; vertical-align: middle; }
