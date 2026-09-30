@@ -79,27 +79,62 @@ async function link(itemId: string | undefined, url: string | undefined, json: b
 	console.log(json ? JSON.stringify({ offerId: o.offerId, title: o.title, skus: o.skus.length }) : `已记下：${itemId} → 1688「${o.title}」，${o.skus.length} 个规格。下一步：x2 buy match ${itemId}`);
 }
 
-/** 缺链接的商品（给了商品 id 只找它）：拿 Shopee 的商品图经知虾在 1688 以图搜图，每个给 4 个候选，一个 ask 页面里让人选；都不对的可以贴链接 */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+type Found = { offerId: string; title: string; image: string; note: string; matched: number };
+
+/** 缺链接的商品（给了商品 id 只找它）：拿 Shopee 的商品图经知虾在 1688 以图搜图，每个 8 个候选；
+ * 每个候选读一遍 1688 的规格，按「店里的规格对上几个」排序（卖家的规格名常照抄货源），一个 ask 页面里让人选；都不对的可以贴链接 */
 async function find(itemId: string | undefined, json: boolean) {
-	const missing = new Map<string, { name: string; image: string }>();
-	for (const r of await rows()) if (r.state === "缺链接" && (!itemId || r.itemId === itemId) && !missing.has(r.itemId)) missing.set(r.itemId, { name: r.name, image: r.image.replace(/_tn$/, "") });
+	const missing = new Map<string, { name: string; image: string; specs: Set<string> }>();
+	for (const r of await rows()) if (r.state === "缺链接" && (!itemId || r.itemId === itemId)) {
+		const m = missing.get(r.itemId) ?? { name: r.name, image: r.image.replace(/_tn$/, ""), specs: new Set<string>() };
+		if (r.spec) m.specs.add(r.spec);
+		missing.set(r.itemId, m);
+	}
 	if (missing.size === 0) return console.log(json ? JSON.stringify({ found: 0 }) : itemId ? `商品 ${itemId} 不缺链接` : "没有缺链接的商品");
 	await zhixiaReady();
-	const found: { itemId: string; name: string; image: string; candidates: Awaited<ReturnType<typeof similar1688>> }[] = [];
+	const found: { itemId: string; name: string; image: string; specs: string[]; candidates: Found[] }[] = [];
+	const read = new Map<string, Offer>();
+	let blocked = "";
 	for (const [id, m] of missing) {
 		// 知虾对频率敏感：两次搜索隔 6 秒
-		if (found.length > 0) await new Promise((r) => setTimeout(r, 6000));
+		if (found.length > 0) await sleep(6000);
 		console.error(`以图搜图：${m.name}`);
-		found.push({ itemId: id, ...m, candidates: m.image ? await similar1688(m.image) : [] });
+		const hits = m.image ? await similar1688(m.image, 8) : [];
+		const specs = [...m.specs];
+		const candidates: Found[] = [];
+		for (const [i, c] of hits.entries()) {
+			const base = `¥${c.price} · 月销 ${c.monthSold}`;
+			// 1688 要登录或过滑块时，后面的也读不了：只列出来，不读规格
+			if (blocked) { candidates.push({ offerId: c.offerId, title: c.title, image: c.image, note: `${base}\n规格没读到：${blocked}`, matched: -1 }); continue; }
+			console.error(`  读 1688 规格 ${i + 1}/${hits.length}：${c.title}`);
+			try {
+				const o = read.get(c.offerId) ?? await readOffer(c.offerId);
+				read.set(c.offerId, o);
+				const matched = specs.filter((s) => guess(s, o.skus) !== undefined).length;
+				const names = o.skus.map((s) => s.name).filter(Boolean);
+				const list = names.length === 0 ? "单规格" : `${names.length} 个规格：${names.slice(0, 6).join("、")}${names.length > 6 ? "…" : ""}`;
+				candidates.push({ offerId: c.offerId, title: c.title, image: c.image, note: `${specs.length ? `规格对上 ${matched}/${specs.length} · ` : ""}${base}\n${list}`, matched });
+			} catch (e) {
+				const msg = (e as Error).message;
+				if (msg.includes("登录") || msg.includes("滑块")) blocked = msg;
+				candidates.push({ offerId: c.offerId, title: c.title, image: c.image, note: `${base}\n规格没读到：${msg}`, matched: -1 });
+			}
+			await sleep(1500);
+		}
+		// 对上多的在前；一样多的保持以图搜图的顺序（sort 是稳定的）
+		candidates.sort((a, b) => b.matched - a.matched);
+		found.push({ itemId: id, name: m.name, image: m.image, specs, candidates });
 	}
 	const page: Page = {
 		title: "找 1688 货源",
 		blocks: [
-			{ type: "text", text: "每个商品按图在 1688 上找了几个同款，选一个要买的；都不对就在下面贴链接。不选也不贴的，下次再找。" },
+			{ type: "text", text: "每个商品按图在 1688 上找了几个同款，读了它们的规格，店里的规格对上得多的排在前面：卖家的规格名常照抄货源，对上得多的多半就是这家。\n选一个要买的；都不对就在下面贴链接。不选也不贴的，下次再找。" },
 			...found.flatMap((f): Page["blocks"] => [
 				{ type: "heading", text: f.name },
-				...(f.image ? [{ type: "image" as const, src: `${f.image}_tn`, caption: `商品 ${f.itemId}` }] : []),
-				{ type: "choice", id: `pick_${f.itemId}`, label: f.candidates.length ? "1688 上的同款" : "没有找到同款", options: f.candidates.map((c) => ({ value: c.offerId, label: c.title, image: c.image, note: `¥${c.price} · 月销 ${c.monthSold}` })) },
+				...(f.image ? [{ type: "image" as const, src: f.image, caption: `店里的规格：${f.specs.join("、") || "（单规格）"}` }] : []),
+				{ type: "choice", id: `pick_${f.itemId}`, label: f.candidates.length ? "1688 上的同款" : "没有找到同款", options: f.candidates.map((c) => ({ value: c.offerId, label: c.title, image: c.image, note: c.note })) },
 				{ type: "input", id: `url_${f.itemId}`, label: "都不对的话，贴 1688 链接", input: { type: "url", placeholder: "https://detail.1688.com/offer/….html" } },
 			]),
 		],
