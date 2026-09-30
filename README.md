@@ -9,7 +9,7 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 | 概念 | 是什么 | 例 |
 |---|---|---|
 | **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块，每个导出的函数是一个操作 | `shopee.toShipOrders()`、`alibaba.offer(id)` |
-| **store** | 存数据：读来的、人给的判断，都是 JSON 文件（`~/x2/`）。计算就是普通的函数 | `store.read("orders")`、`store.append("bought", …)` |
+| **store** | 存数据：读来的、人给的判断，都是 JSON 文件（`~/x2/`）。计算就是普通的函数 | `store.read("orders")`、`store.append("carted", …)` |
 | **page** | 声明式的网页：agent 写一份 JSON，x2 渲染成网页。`ask` 等人操作、把答案交回 agent；`show` 只展示。常看的存成文件（`views/`），数据写「从哪个命令来」，每次打开都是最新的 | `x2 ask spec.json`、`x2 show buy` |
 | **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步要 ask | `.claude/skills/buy/SKILL.md` |
 
@@ -32,11 +32,11 @@ x2/
 │ │ ├ serve.ts            本机起一个页面、打开浏览器；ask 时等提交，把答案打印出来
 │ │ └ web/                渲染声明的网页：index.html + render.ts，不用框架
 │ └ commands/             x2 的子命令，一个文件一组
-│   ├ buy.ts              x2 buy：同步订单（order）、采购单、找货源（source）、标买过（done）
+│   ├ buy.ts              x2 buy：同步订单（order）、采购单、找货源（source）、加进 1688 购物车（cart）
 │   └ page.ts             x2 ask、x2 show
 ├ views/                  存下来的 page：buy.json（采购单）……
 ├ .claude/skills/
-│ └ buy/SKILL.md          采购：同步订单 → 采购单 → ask 找货源 → 人过一眼 → 在 1688 买 → 标买过
+│ └ buy/SKILL.md          采购：同步订单 → 采购单 → ask 找货源 → ask 确认加购 → 加进 1688 购物车 → 人付款
 ├ test/
 ├ package.json            依赖只有 @wuwe1/cdp-relay、zod
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
@@ -49,7 +49,7 @@ x2/
 ├ orders.json     读来的：待出货的订单和明细，每次 x2 buy order 整份覆盖
 ├ offers.json     读来的：1688 货源和它的规格
 ├ sources.json    人给的：Shopee 的一个 SKU → 1688 一家货源的一个规格，只往后加
-└ bought.json     人给的：买过的订单，只往后加
+└ carted.json     做过的：加进 1688 购物车的订单行（订单号 + SKU），只往后加
 ```
 
 ## 先例
