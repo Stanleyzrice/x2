@@ -1,0 +1,19 @@
+{
+	"name": "x2",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@10.18.3",
+	"bin": { "x2": "bin/x2.ts" },
+	"scripts": {
+		"check": "tsc --noEmit",
+		"test": "node --test test/*.test.ts"
+	},
+	"dependencies": {
+		"@wuwe1/cdp-relay": "github:wuwe1/cdp-relay#v1.0.0",
+		"zod": "^4.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"typescript": "^5.9.0"
+	}
+}
