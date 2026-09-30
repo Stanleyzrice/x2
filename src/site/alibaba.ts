@@ -46,63 +46,177 @@ export async function offer(offerId: string): Promise<Offer> {
 	return got;
 }
 
-// ── 购物车 ──
-// 读和加都在页面里用页面自己的 lib.mtop.request 发（签名由它算）。依据 lilto 的 packages/presets/src/1688.ts（2026-09-24 读的 mtop.js 源码）：
+// ── mtop ──
+// 购物车、加购、采购单、物流都在页面里用页面自己的 lib.mtop.request 发（签名由它算）。依据 lilto 的 packages/presets/src/1688.ts（2026-09-24 读的 mtop.js 源码）：
 // 站点回 SUCCESS 时 resolve；站点回别的 ret 时 reject 整个响应（带 api）；库自己超时、解析失败时 reject 的对象没有 api，这时请求可能已经到了站点
+
+/** ok：站点回 SUCCESS；site：站点回了别的 ret（确定是站点的答复）；unknown：没有站点的答复（超时、解析失败），请求可能已经到了站点；blocked：要登录或过滑块 */
+type Mtop = { kind: "ok"; data: any } | { kind: "site"; ret: string } | { kind: "unknown"; ret: string } | { kind: "blocked"; ret: string };
+
+/** 打开 url（它要有 lib.mtop），在页面里调一个 mtop 接口 */
+async function mtop(url: string, api: string, data: Record<string, string>): Promise<Mtop> {
+	const p = await page(new URL(url).origin);
+	await p.goto(url);
+	return p.run(async (api: string, data: Record<string, string>) => {
+		if (/login|passport|punish/.test(location.href)) return { kind: "blocked" as const, ret: "1688 要登录或要过滑块：在浏览器里处理一下" };
+		const lib = (window as any).lib;
+		if (!lib?.mtop) return { kind: "site" as const, ret: "页面没加载好（没有 lib.mtop），没有发请求" };
+		try {
+			const res = await lib.mtop.request({ api, v: "1.0", type: "post", dataType: "json", H5Request: true, timeout: 20000, data });
+			return { kind: "ok" as const, data: res.data };
+		} catch (e: any) {
+			const ret = ((e?.ret ?? []) as string[]).join("，") || String(e);
+			if (!e?.api) return { kind: "unknown" as const, ret };
+			if (/FAIL_SYS_SESSION_EXPIRED|FAIL_SYS_USER_VALIDATE/.test(ret)) return { kind: "blocked" as const, ret };
+			return { kind: "site" as const, ret };
+		}
+	}, api, data);
+}
+
+/** 读的接口：不是 ok 就抛错 */
+async function read(url: string, api: string, data: Record<string, string>, what: string): Promise<any> {
+	const r = await mtop(url, api, data);
+	if (r.kind !== "ok") throw new Error(`${what}：${r.ret}`);
+	return r.data;
+}
+
+// ── 账号 ──
+
+/** 登录着的 1688 账号：userId 唯一且不变；loginId 是会员名（能改，只给人看）。首页服务端渲染的 loginStore */
+export async function account(): Promise<{ userId: string; loginId: string }> {
+	const p = await page("https://www.1688.com");
+	await p.goto("https://www.1688.com/");
+	const u = await p.run(() => (window as any).__ICE_APP_CONTEXT__?.loaderData?.["/"]?.data?.loginStore ?? null);
+	if (u?.isLogin !== true || !u.userId) throw new Error("1688 没有登录：在浏览器里登录 1688");
+	return { userId: String(u.userId), loginId: String(u.loginId ?? "") };
+}
+
+// ── 搜索 ──
+
+export type SearchHit = { offerId: string; url: string; title: string; price: number; minQty: number; sold: string; shop: string; image: string };
+
+/** 在 1688 上按关键词搜货源（第一页）。搜索页的关键词是 GBK 编码，照 lilto 的做法在搜索框里填、提交表单，不自己拼地址。
+ * 读的是页面上的卡片（2026-08-29 的页面结构），改版了会读不到，报错 */
+export async function search(keyword: string): Promise<SearchHit[]> {
+	const p = await page("https://s.1688.com");
+	await p.goto("https://s.1688.com/selloffer/offer_search.htm");
+	const sent = await p.run((keyword: string) => {
+		const input = document.querySelector<HTMLInputElement>("input[name=keywords]");
+		if (!input?.form) return false;
+		input.value = keyword;
+		input.form.submit();
+		return true;
+	}, keyword);
+	if (!sent) throw new Error("1688 搜索页没有搜索框：要登录、要过滑块，或者改版了");
+	for (let i = 0; i < 30; i++) {
+		await new Promise((r) => setTimeout(r, 1000));
+		const got = await p.run((keyword: string) => {
+			if (/login|passport|punish/.test(location.href) || document.querySelector(".nc_wrapper,.baxia-dialog,#nc_1_wrapper")) return { error: "1688 要登录或要过滑块：在浏览器里处理一下" };
+			if (document.readyState !== "complete" || (document.querySelector<HTMLInputElement>("input[name=keywords]")?.value ?? "").trim() !== keyword.trim()) return null;
+			const cards = [...document.querySelectorAll<HTMLAnchorElement>('a[data-tracker="offer"][href*="offerId="], a[class*="offerCard--"][href*="offerId="], a.search-offer-item, a.search-offer-wrapper')];
+			if (!cards.length) return /空空如也/.test(document.body.innerText) ? { hits: [] } : null;
+			return {
+				hits: cards.map((card: HTMLAnchorElement) => {
+					const offerId = card.href.match(/offerId=(\d+)/)?.[1] ?? "";
+					const descs = [...card.querySelectorAll<HTMLElement>('.desc-text, [class*="descText--"]')].map((e) => e.innerText.trim());
+					const min = descs.find((v) => /^[≥>]/.test(v)) || (card.querySelector<HTMLElement>('[class*="hoverPriceQty--"]')?.innerText ?? "").trim();
+					const sold = descs.find((v) => /^(?:全网)?\d[\d.+万]*件$/.test(v)) || "";
+					const img = card.querySelector("img");
+					return {
+						offerId, url: `https://detail.1688.com/offer/${offerId}.html`,
+						title: (card.querySelector<HTMLElement>('[class*="titleText--"]')?.innerText ?? card.innerText.split("\n")[0] ?? "").trim(),
+						price: Number.parseFloat((card.querySelector<HTMLElement>('.price-item .text-main, [class*="priceItem--"], [class*="hoverPriceValue--"]')?.innerText ?? "").replace(/[^\d.]/g, "")) || 0,
+						minQty: Number.parseInt(min.replace(/[^\d]/g, ""), 10) || 0,
+						sold, shop: descs.filter((v) => v !== min && v !== sold && !/回头率|包运费|先采后付/.test(v)).pop() ?? "",
+						image: img?.src || img?.getAttribute("data-src") || "",
+					};
+				}).filter((h) => h.offerId),
+			};
+		}, keyword);
+		if (got && "error" in got) throw new Error(got.error);
+		if (got) return got.hits;
+	}
+	throw new Error("1688 搜索结果 30 秒没出来：页面可能改版了");
+}
+
+// ── 购物车 ──
 
 export type CartLine = { offerId: string; skuId: string; quantity: number };
 
-
-/** 购物车里的全部规格。超过一页读不全时报错（没有做翻页），免得把读了一半当成全部 */
+/** 购物车里的全部规格。超过一页读不全时报错（没有做翻页），免得把读了一半当成全部。
+ * 删购物车没有做：lilto 旧工作台是点页面上的删除确认框（「确认将 N 个商品删除？」），不是接口 */
 export async function cart(): Promise<CartLine[]> {
-	const p = await page("https://cart.1688.com");
-	await p.goto("https://cart.1688.com/cart.htm");
-	const got = await p.run(async () => {
-		if (/login|passport|punish/.test(location.href)) return { error: "1688 要登录或要过滑块：在浏览器里处理一下" };
-		const lib = (window as any).lib;
-		if (!lib?.mtop) return { error: "购物车页面没加载好（没有 lib.mtop）" };
-		try {
-			const res = await lib.mtop.request({ api: "mtop.1688.buycenter.MtopPurchaseAstoreService.render", v: "1.0", type: "post", dataType: "json", H5Request: true, timeout: 20000, data: { fromkv: "", purchaseType: "main_purchase_type", platformType: "PC" } });
-			const parts = Object.values(JSON.parse(res.data.model).data) as { type: string; fields: any }[];
-			const items = parts.filter((x) => x.type === "item").map((x) => ({ offerId: String(x.fields.offerId), skuId: String(x.fields.skuId ?? x.fields.offerId), quantity: Number(x.fields.quantity) }));
-			const total = Number(parts.find((x) => x.type === "root")?.fields?.totalSkuCount ?? items.length);
-			return items.length < total ? { error: `购物车有 ${total} 个规格，只读到 ${items.length} 个（没有做翻页）` } : { items };
-		} catch (e: any) {
-			return { error: `读购物车：${(e?.ret ?? [String(e)]).join("，")}` };
-		}
-	});
-	if ("error" in got) throw new Error(got.error);
-	return got.items;
+	const data = await read("https://cart.1688.com/cart.htm", "mtop.1688.buycenter.MtopPurchaseAstoreService.render", { fromkv: "", purchaseType: "main_purchase_type", platformType: "PC" }, "读 1688 购物车");
+	const parts = Object.values(JSON.parse(data.model).data) as { type: string; fields: any }[];
+	const items = parts.filter((x) => x.type === "item").map((x) => ({ offerId: String(x.fields.offerId), skuId: String(x.fields.skuId ?? x.fields.offerId), quantity: Number(x.fields.quantity) }));
+	const total = Number(parts.find((x) => x.type === "root")?.fields?.totalSkuCount ?? items.length);
+	if (items.length < total) throw new Error(`购物车有 ${total} 个规格，只读到 ${items.length} 个（没有做翻页）`);
+	return items;
 }
 
 /** 加购的结果。sent：站点收下了（到底加没加上由调用方回读购物车判断）；refused：站点确定没加；unknown：请求可能到了站点，不知道加没加 */
 export type AddResult = { kind: "sent" } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
 
 /** 把一个规格加进购物车（addCargo，在这个货源的商品页里发）。只有一个规格的货源 specId 是空字符串。
- * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发 */
+ * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发。
+ * 还没做（lilto 旧工作台做过）：加之前查起订量（混批时看 mixModel）、价格比上次读到的涨了 10% 以上就停 */
 export async function addToCart(offerId: string, specId: string, quantity: number): Promise<AddResult> {
-	const p = await page("https://detail.1688.com");
-	await p.goto(`https://detail.1688.com/offer/${offerId}.html`);
-	return p.run(async (offerId: string, specId: string, quantity: number) => {
-		if (/login|passport|punish/.test(location.href)) return { kind: "blocked" as const, why: "1688 要登录或要过滑块：在浏览器里处理一下" };
-		const lib = (window as any).lib;
-		if (!lib?.mtop) return { kind: "refused" as const, why: "商品页没加载好（没有 lib.mtop），没有发请求" };
-		try {
-			await lib.mtop.request({
-				api: "com.alibaba.china.buy.service.purchase.MtopPurchaseService.addCargo", v: "1.0", type: "post", dataType: "json", H5Request: true, timeout: 20000,
-				data: {
-					client: "pc", purchaseType: "", attributes: "{}", fromkv: "offerdetail:pc",
-					goodsParams: JSON.stringify([{ offerId, specId, quantity, flow: "general", ext: { sceneCode: "" }, selectedTradeServices: [] }]),
-				},
-			});
-			return { kind: "sent" as const };
-		} catch (e: any) {
-			const ret = ((e?.ret ?? []) as string[]).join("，") || String(e);
-			if (!e?.api) return { kind: "unknown" as const, why: ret };
-			if (/FAIL_SYS_SESSION_EXPIRED|FAIL_SYS_USER_VALIDATE/.test(ret)) return { kind: "blocked" as const, why: ret };
-			// 只有这几种是站点确定没加：业务拒绝、参数不对。别的（系统错误、限流、令牌过期）可能已经加了
-			if (/FAIL_BIZ|ILLEGAL|PARAM/.test(ret)) return { kind: "refused" as const, why: ret };
-			return { kind: "unknown" as const, why: ret };
-		}
-	}, offerId, specId, quantity);
+	const r = await mtop(`https://detail.1688.com/offer/${offerId}.html`, "com.alibaba.china.buy.service.purchase.MtopPurchaseService.addCargo", {
+		client: "pc", purchaseType: "", attributes: "{}", fromkv: "offerdetail:pc",
+		goodsParams: JSON.stringify([{ offerId, specId, quantity, flow: "general", ext: { sceneCode: "" }, selectedTradeServices: [] }]),
+	});
+	if (r.kind === "ok") return { kind: "sent" };
+	if (r.kind === "blocked") return { kind: "blocked", why: r.ret };
+	// 站点的答复里只有这几种是确定没加：业务拒绝、参数不对、页面没加载好没发。别的（系统错误、限流、令牌过期）可能已经加了
+	if (r.kind === "site" && /FAIL_BIZ|ILLEGAL|PARAM|没有发请求/.test(r.ret)) return { kind: "refused", why: r.ret };
+	return { kind: "unknown", why: r.ret };
+}
+
+// ── 采购单 ──
+
+export type BuyerOrder = {
+	orderId: string; status: string; statusLabel: string; createdAt: string; paidAt: number | null;
+	goods: number; freight: number; discount: number; paid: number;
+	items: { offerId: string; specId: string; quantity: number; price: number; trackingNo: string; shippedAt: number | null }[];
+};
+
+const BUYER_ORDERS = "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html";
+
+/** 采购单（在 1688 买的订单），一页最多 50 张，新的在前。金额是元（接口是分）。
+ * orderId 用 idStr：19 位订单号当数字会丢精度 */
+export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): Promise<{ total: number; pages: number; rows: BuyerOrder[] }> {
+	const data = await read(BUYER_ORDERS, "mtop.1688.trading.dataline.service", {
+		serviceId: "OrderListDataLineService.buyerOrderList", param: JSON.stringify({ tradeStatus, page: pageNo, pageSize: Math.min(50, pageSize) }),
+	}, "读 1688 采购单");
+	const payload = JSON.parse(String(data?.data?.result ?? "null"))?.data;
+	const yuan = (v: unknown) => Number(v ?? 0) / 100;
+	const rows = ((payload?.data ?? []) as any[]).map((o): BuyerOrder => ({
+		orderId: String(o.idStr ?? o.id), status: String(o.status ?? ""), statusLabel: String(o.statusLabel ?? ""),
+		createdAt: String(o.gmtCreate ?? ""), paidAt: o.gmtPayment ? Number(o.gmtPayment) : null,
+		goods: yuan(o.sumProductPayment), freight: yuan(o.carriage), discount: yuan(o.allPromotionFee), paid: yuan(o.sumPayment),
+		items: ((o.orderEntries ?? []) as any[]).map((e) => ({
+			offerId: String(e.sourceId ?? ""), specId: String(e.specId ?? ""),
+			quantity: Number(e.quantity?.realAmount ?? e.quantity?.calAmount ?? e.quantity ?? 0), price: yuan(e.price),
+			trackingNo: String(e.entryExtension?.trackingNo ?? ""), shippedAt: e.entryExtension?.sendgt ? Number(e.entryExtension.sendgt) : null,
+		})),
+	}));
+	return { total: Number(payload?.total ?? rows.length), pages: Number(payload?.pages ?? 1), rows };
+}
+
+export type Trace = { orderId: string; traces: { status: string; trackingNo: string; logisticsId: string; remark: string }[] };
+
+/** 采购单的物流轨迹。回包里的订单号会被当成数字丢精度、顺序也不稳：订单号对不上时只用运单号反查唯一的一条，不按位置猜 */
+export async function traces(orders: { orderId: string; trackingNos?: string[] }[]): Promise<Trace[]> {
+	if (orders.length === 0) return [];
+	const data = await read(BUYER_ORDERS, "mtop.1688.mtoplgttraceservice.querytrace", { orderIds: orders.map((o) => o.orderId).join(",") }, "读 1688 物流");
+	const raw = (data?.result ?? []) as any[];
+	return orders.map(({ orderId, trackingNos = [] }) => {
+		const exact = raw.find((c) => String(c.orderId ?? "") === orderId);
+		const byNo = trackingNos.length ? raw.filter((c) => (c.trace ?? []).some((t: any) => trackingNos.includes(String(t.mailNo ?? "")))) : [];
+		const found = exact ?? (byNo.length === 1 ? byNo[0] : undefined);
+		return {
+			orderId,
+			traces: ((found?.trace ?? []) as any[]).filter((t) => t.mailNo).map((t) => ({ status: String(t.currentStatus ?? ""), trackingNo: String(t.mailNo), logisticsId: String(t.logisticsId ?? ""), remark: String(t.remark ?? "") })),
+		};
+	});
 }
