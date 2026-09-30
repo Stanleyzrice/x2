@@ -26,3 +26,26 @@ figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
 button { padding: 7px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
 .sent { color: var(--muted); }
+.muted { color: var(--muted); }
+img.zoom { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; background: rgb(0 0 0 / .8); display: flex; align-items: center; justify-content: center; z-index: 10; cursor: zoom-out; }
+.lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; }
+.variants { display: flex; flex-direction: column; gap: 12px; }
+.vrow { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.big { width: 140px; height: 140px; flex: none; border-radius: 8px; overflow: hidden; }
+.big img, img.big { width: 140px; height: 140px; object-fit: cover; display: block; border-radius: 8px; }
+.big.empty { background: var(--soft); }
+.vpick { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.vlabel { font-weight: 600; } .vlabel small { display: block; color: var(--muted); font-weight: 400; }
+.attr { display: flex; gap: 8px; align-items: flex-start; }
+.aname { color: var(--muted); font-size: 12px; width: 40px; flex: none; padding-top: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 4px 10px; border-radius: 6px; font-size: 13px; }
+.chip.swatch { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px; width: 76px; }
+.chip.swatch img { width: 68px; height: 68px; object-fit: cover; border-radius: 4px; display: block; }
+.chip.swatch span { font-size: 11px; line-height: 1.3; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.chip.off { opacity: .4; }
+.vfoot { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+button.none { font-size: 12px; padding: 4px 10px; }
+@media (max-width: 640px) { .vrow { flex-wrap: wrap; } .big, .big img, img.big { width: 96px; height: 96px; } }

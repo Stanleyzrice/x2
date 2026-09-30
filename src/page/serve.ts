@@ -12,8 +12,9 @@ const web = (name: string) => readFileSync(new URL(`./web/${name}`, import.meta.
 // 放进 <script> 的 JSON：</script> 和 <!-- 会提前结束脚本，转义掉
 const safe = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
 
+// no-referrer：1688 的图（cbu01.alicdn.com）带着别的站的 Referer 加载不出来
 function html(page: Page, answerUrl?: string): string {
-	return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+	return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
 <title>${page.title.replace(/</g, "&lt;")}</title><style>${web("style.css")}</style></head>
 <body><div id="root"></div><script>window.X2_PAGE=${safe(page)};window.X2_ANSWER=${safe(answerUrl ?? null)};</script><script>${web("render.js")}</script></body></html>`;
 }

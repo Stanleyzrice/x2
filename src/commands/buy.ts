@@ -8,7 +8,8 @@ import { ready as zhixiaReady, similar1688 } from "../site/zhixia.ts";
 import type { Page } from "../page/spec.ts";
 import * as store from "../store.ts";
 
-type Link = { kind: "link"; itemId: string; offerId: string; at?: string };
+/** offerId 是 null：人说货源不对，这个商品回到缺链接 */
+type Link = { kind: "link"; itemId: string; offerId: string | null; at?: string };
 type Spec = { kind: "spec"; modelId: string; skuId: string; offerId: string; at?: string };
 type Row = {
 	orderSn: string; daysLeft: number | null; name: string; spec: string; qty: number; image: string; itemId: string; modelId: string;
@@ -32,7 +33,7 @@ async function rows(): Promise<Row[]> {
 	const now = Date.now();
 	return orders.filter((o) => !bought.has(o.orderSn)).flatMap((o) => o.items.map((it): Row => {
 		const link = links.get(it.itemId);
-		const offer = link ? offers[link.offerId] : undefined;
+		const offer = link?.offerId ? offers[link.offerId] : undefined;
 		const spec = specs.get(it.modelId);
 		// 规格对的是别的货源（换过链接）算没对
 		const sku = spec && offer && spec.offerId === offer.offerId ? offer.skus.find((s) => s.skuId === spec.skuId) : undefined;
@@ -56,11 +57,17 @@ async function todo(json: boolean) {
 	}
 }
 
-/** 记下一个商品的 1688 货源：读货源（标题、规格、图）存进 offers，对照往后加进 sources */
-async function record(itemId: string, offerId: string): Promise<Offer> {
+/** 读一遍 1688 货源（标题、规格、图、价格、库存），存进 offers */
+async function refresh(offerId: string): Promise<Offer> {
 	const o = await readOffer(offerId);
 	const offers = await store.read<Record<string, Offer>>("offers", {});
 	await store.write("offers", { ...offers, [o.offerId]: o });
+	return o;
+}
+
+/** 记下一个商品的 1688 货源：读货源存进 offers，对照往后加进 sources */
+async function record(itemId: string, offerId: string): Promise<Offer> {
+	const o = await refresh(offerId);
 	await store.append<Link>("sources", [{ kind: "link", itemId, offerId: o.offerId }]);
 	return o;
 }
@@ -124,10 +131,11 @@ function guess(spec: string, skus: readonly { skuId: string; name: string }[]): 
 
 async function match(itemId: string | undefined, json: boolean) {
 	if (!itemId) throw new Error("用法：x2 buy match <商品 id>");
-	const { orders, offers, bought, links, specs } = await load();
-	const linked = links.get(itemId);
-	const o = linked ? offers[linked.offerId] : undefined;
-	if (!o) throw new Error(`商品 ${itemId} 还没贴 1688 链接：x2 buy link ${itemId} <链接>`);
+	const { orders, bought, links, specs } = await load();
+	const linked = links.get(itemId)?.offerId;
+	if (!linked) throw new Error(`商品 ${itemId} 还没有 1688 货源：x2 buy find ${itemId}，或 x2 buy link ${itemId} <链接>`);
+	// 现读一遍：价格、库存是今天的
+	const o = await refresh(linked);
 	// 这个商品在还没买的订单里出现的规格，件数加起来
 	const models = new Map<string, { modelId: string; spec: string; image: string; qty: number }>();
 	for (const ord of orders) if (!bought.has(ord.orderSn)) for (const it of ord.items) if (it.itemId === itemId) {
@@ -138,24 +146,26 @@ async function match(itemId: string | undefined, json: boolean) {
 	const page: Page = {
 		title: `对规格：${o.title}`,
 		blocks: [
-			{ type: "text", text: `店里的规格对上 1688 的规格。已经按名字猜了一个，核对一下；拿不准的选「—」留空。\n1688：${o.url}` },
+			{ type: "text", text: `店里的每个规格选一个 1688 的规格：左边是店里的图，右边是选中的 1688 规格的图。已经按名字猜了一个，核对一下；点图看大图。\n两边对不上（规格数、型号都不一样），多半是货源找错了：点「货源不对」，这个商品回到缺链接，再找一次。\n1688：${o.url}` },
 			{
-				type: "table", id: "pairs",
-				columns: [
-					{ key: "image", label: "", show: "image" },
-					{ key: "spec", label: "店里的规格" },
-					{ key: "qty", label: "要买" },
-					{ key: "skuId", label: "1688 规格", input: { type: "select", options: o.skus.map((s) => ({ value: s.skuId, label: `${s.name || "（单规格）"}  ¥${s.price}  库存 ${s.stock}` })) } },
-				],
-				rows: [...models.values()].map((m) => ({ ...m, skuId: current(m.modelId) ?? guess(m.spec, o.skus) ?? "" })),
+				type: "variants", id: "pairs",
+				attrs: o.props,
+				options: o.skus.map((s) => ({ value: s.skuId, attrs: s.attrs, label: s.name, image: s.image || undefined, note: `¥${s.price} · 库存 ${s.stock}` })),
+				rows: [...models.values()].map((m) => ({
+					key: m.modelId, label: m.spec || "（单规格）", image: m.image.replace(/_tn$/, "") || undefined, note: `要买 ${m.qty} 件`,
+					value: current(m.modelId) ?? guess(m.spec, o.skus),
+				})),
 			},
 		],
-		submit: { label: "确认对照" },
+		submit: { label: "确认对照", cancel: "货源不对" },
 	};
 	const answer = await ask(page);
-	if (!answer.submitted) return console.log(json ? JSON.stringify({ submitted: false }) : "取消了，没有记");
-	const pairs = (answer.values.pairs as { modelId: string; skuId: string | null }[]).filter((p) => p.skuId);
-	await store.append<Spec>("sources", pairs.map((p) => ({ kind: "spec", modelId: p.modelId, skuId: p.skuId!, offerId: o.offerId })));
+	if (!answer.submitted) {
+		await store.append<Link>("sources", [{ kind: "link", itemId, offerId: null }]);
+		return console.log(json ? JSON.stringify({ submitted: false, unlinked: itemId }) : `商品 ${itemId} 回到缺链接：x2 buy find ${itemId} 再找，或 x2 buy link ${itemId} <链接>`);
+	}
+	const pairs = Object.entries(answer.values.pairs as Record<string, string | null>).filter((p): p is [string, string] => p[1] !== null);
+	await store.append<Spec>("sources", pairs.map(([modelId, skuId]) => ({ kind: "spec", modelId, skuId, offerId: o.offerId })));
 	console.log(json ? JSON.stringify({ submitted: true, matched: pairs.length, of: models.size }) : `记下 ${pairs.length} 个规格的对照（共 ${models.size} 个）`);
 }
 

@@ -1,5 +1,5 @@
 // page 的声明：agent 写一份 JSON，x2 渲染成网页（先例 Vercel 的 json-render：组件目录当护栏；MCP 的 elicitation）。
-// 组件只取需求用得上的最大公约数：文字、图片、表格（格可以是输入框、下拉；行可以勾选）、输入框、选项。
+// 组件只取需求用得上的最大公约数：文字、图片、表格（格可以是输入框、下拉；行可以勾选）、输入框、选项、规格选择。
 // 校验不过的声明不渲染，错误原样交回 agent，它自己改
 import { z } from "zod";
 
@@ -39,6 +39,16 @@ export const Block = z.discriminatedUnion("type", [
 		multiple: z.boolean().optional(),
 		options: z.array(z.object({ value: z.string(), label: z.string(), image: z.string().optional(), note: z.string().optional() })),
 	}),
+	z.object({
+		type: z.literal("variants"),
+		id: z.string().describe("答案是 { 行的 key: 选中的 option 的 value 或 null }"),
+		attrs: z.array(z.object({ name: z.string(), values: z.array(z.object({ name: z.string(), image: z.string().optional() })) }))
+			.describe("规格的属性（例 颜色、尺寸）；有图的取值画成图块，没图的画成按钮"),
+		options: z.array(z.object({ value: z.string(), attrs: z.array(z.string()), label: z.string(), image: z.string().optional(), note: z.string().optional() }))
+			.describe("每个规格：attrs 是各属性的取值，顺序同 attrs"),
+		rows: z.array(z.object({ key: z.string(), label: z.string(), image: z.string().optional(), note: z.string().optional(), value: z.string().optional() }))
+			.describe("每一行要选一个规格（例 店里的一个规格）；value 是预选的 option"),
+	}).describe("规格选择（先例 电商商品页的规格选择：颜色用图块、尺寸用按钮）：每一行选一个规格，行的图和选中规格的图并排"),
 ]);
 
 export const Page = z.object({
