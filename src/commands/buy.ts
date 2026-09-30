@@ -246,14 +246,15 @@ async function cart(orderSns: string[], json: boolean) {
 	const page: Page = {
 		title: "加进 1688 购物车",
 		blocks: [
-			{ type: "text", text: "勾上的一行一行加进 1688 购物车（同一个 1688 规格已经合在一起）。「购物车里已有」不是 0 的，先想想是不是加过了。\n加完在 1688 上付款。第一次用可以只勾一行，在 1688 购物车里看过再加其余的。" },
+			{ type: "text", text: "勾上的一行一行加进 1688 购物车（同一个 1688 规格已经合在一起）。购物车里已经够数的没有勾上：多半加过了，确定要再加就勾上。\n加完在 1688 上付款。第一次用可以只勾一行，在 1688 购物车里看过再加其余的。" },
 			{
 				type: "table", id: "rows", select: true,
 				columns: [
 					{ key: "image", label: "", show: "image" }, { key: "title", label: "货源" }, { key: "sku", label: "规格" }, { key: "qty", label: "加几件" },
 					{ key: "inCart", label: "购物车里已有" }, { key: "price", label: "单价" }, { key: "orders", label: "订单" },
 				],
-				rows: items.map((c) => ({ ...c, inCart: inCart(before, c.offerId, c.skuId), _selected: true })),
+				// 车里已经够这次要加的，多半加过了（例 在别的机器上加的，carted.json 不在这台）：默认不勾，人看了再定
+				rows: items.map((c) => { const n = inCart(before, c.offerId, c.skuId); return { ...c, inCart: n, _selected: n < c.qty }; }),
 			},
 		],
 		submit: { label: "加进购物车" },
