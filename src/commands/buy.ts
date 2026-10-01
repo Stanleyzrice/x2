@@ -9,6 +9,7 @@ import { ready as zhixiaReady, similar1688 } from "../site/zhixia.ts";
 import { ask } from "../page/serve.ts";
 import type { Page } from "../page/spec.ts";
 import { rank } from "../similar.ts";
+import { EXIT, Usage } from "../errors.ts";
 import * as store from "../store.ts";
 
 type Spec = { kind: "spec"; modelId: string; offerId: string; skuId: string; at?: string };
@@ -294,6 +295,8 @@ async function cart(orderSns: string[], json: boolean) {
 			report.push({ sku: name, qty: r.qty, result: "结果未知", why: stop });
 		}
 	}
+	// 有结果未知的：退出码 4，调用方不许重发
+	if (report.some((r) => r.result === "结果未知")) process.exitCode = EXIT.unknown;
 	if (json) return console.log(JSON.stringify({ added: report }));
 	for (const r of report) console.log(`[${r.result}] ${r.sku}${r.why ? `：${r.why}` : ""}`);
 	if (report.some((r) => r.result === "结果未知")) console.log("\n结果未知的不会自动重发：到 1688 购物车里看一眼，没加上的用 x2 buy cart <订单号> 再加");
@@ -306,5 +309,5 @@ export async function buy(args: string[], json: boolean): Promise<void> {
 	if (sub === "order") return order(json);
 	if (sub === "source") return source(rest[0], json);
 	if (sub === "cart") return cart(rest, json);
-	throw new Error("x2 buy order：同步订单；x2 buy：采购单；x2 buy source [SKU]：找货源；x2 buy cart [订单号…]：加进 1688 购物车");
+	throw new Usage("x2 buy order：同步订单；x2 buy：采购单；x2 buy source [SKU]：找货源；x2 buy cart [订单号…]：加进 1688 购物车");
 }

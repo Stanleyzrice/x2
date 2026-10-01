@@ -6,6 +6,7 @@
 //   旧研究里的 agent/send_message 是跟 Shopee 官方客服聊的，不是跟买家
 // - 不调 conversation/enter、conversation/open：会把消息标成已读
 import { page } from "../../browser.ts";
+import { NeedsHuman } from "../../errors.ts";
 import { ORIGIN, shop } from "./seller.ts";
 
 const CHAT_PAGE = `${ORIGIN}/new-webchat/conversations`;
@@ -20,7 +21,7 @@ async function refresh(): Promise<void> {
 		if (ok) return;
 		await new Promise((r) => setTimeout(r, 500));
 	}
-	throw new Error("聊聊页 20 秒还没登录完：在浏览器里打开聊聊看看");
+	throw new NeedsHuman("聊聊页 20 秒还没登录完：在浏览器里打开聊聊看看");
 }
 
 /** 发一个聊聊的读请求。token 失效（401）时打开聊聊页刷新一次再发 */
@@ -41,7 +42,7 @@ async function webchat<T = any>(path: string, req: { method?: "GET" | "POST"; qu
 		if (r.status >= 400) throw new Error(`聊聊 ${path} 回 HTTP ${r.status}：${r.json?.message ?? ""}`);
 		return r.json as T;
 	}
-	throw new Error("聊聊的 token 刷新以后还是 401：在浏览器里打开聊聊看看");
+	throw new NeedsHuman("聊聊的 token 刷新以后还是 401：在浏览器里打开聊聊看看");
 }
 
 /** 会话列表的一页（50 个），按最后一条消息从新到旧。翻页：cursor 用这一页最后一个的 next_timestamp_nano */

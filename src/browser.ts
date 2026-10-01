@@ -2,6 +2,7 @@
 // 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
 // 连着几个浏览器时用 X2_BROWSER（浏览器在 cdp-relay 扩展里的名字或 id）选一个；只连着一个时不用设。
 import { RelayClient, type TabInfo } from "@wuwe1/cdp-relay";
+import { NeedsHuman, Usage } from "./errors.ts";
 
 const MARK = "x2";
 
@@ -15,9 +16,9 @@ export type Page = {
 async function client(): Promise<RelayClient> {
 	const browser = process.env.X2_BROWSER;
 	const c = new RelayClient(browser ? { browser } : {});
-	const all = await c.browsers().catch(() => { throw new Error("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？"); });
-	if (all.length === 0) throw new Error("没有连上的浏览器：打开 Chrome，确认 cdp-relay 扩展已连接");
-	if (all.length > 1 && !browser) throw new Error(`连着 ${all.length} 个浏览器，用 X2_BROWSER 选一个：${all.map((b) => b.label || b.id).join("、")}`);
+	const all = await c.browsers().catch(() => { throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？"); });
+	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 cdp-relay 扩展已连接");
+	if (all.length > 1 && !browser) throw new Usage(`连着 ${all.length} 个浏览器，用 X2_BROWSER 选一个：${all.map((b) => b.label || b.id).join("、")}`);
 	return c;
 }
 

@@ -4,6 +4,7 @@
 // 响应的外壳多数是 { code, message, data }，code 0 是成功；财务、售后的是 { error, error_msg, data }，error 0 是成功。
 // 接口一览、各自的坑在 shopee.md
 import { page } from "../../browser.ts";
+import { NeedsHuman } from "../../errors.ts";
 
 export const ORIGIN = "https://seller.shopee.tw";
 /** 商品图、订单图的地址：图片 id 接在后面，加 _tn 是缩略图 */
@@ -47,7 +48,7 @@ const messageOf = (json: any) => String(json?.user_message ?? json?.message ?? j
 /** 读：回 JSON，业务码不是 0、HTTP 出错、没登录都抛错 */
 export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
 	const r = await call(path, req);
-	if (r.kind === "signin") throw new Error("Shopee 卖家中心没有登录：在浏览器里登录");
+	if (r.kind === "signin") throw new NeedsHuman("Shopee 卖家中心没有登录：在浏览器里登录");
 	if (r.kind === "unknown") throw new Error(`Shopee ${path}：${r.why}`);
 	if (r.json === null) throw new Error(`Shopee ${path}：HTTP ${r.status} ${r.text}`);
 	const code = codeOf(r.json);

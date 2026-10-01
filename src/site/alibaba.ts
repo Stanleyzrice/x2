@@ -1,7 +1,10 @@
 // 1688：货源详情、购物车、加购。货源详情是服务端渲染进页面的全局变量（window.context.result.global.globalData.model），打开商品页读它，不用签名。
 // 查过的事实（2026-09-30）：tradeModel.skuMap 是规格（specAttrs 用「&gt;」连接几个属性，例「kitty猫款式5&gt;20*30cm【硅藻泥】3mm」）；
 // offerDetail.skuProps 是属性（prop，例「颜色」「尺寸」）和它的取值（value: {name, imageUrl}），第一个属性的取值带图片；只有一个规格的货源没有 skuMap
+import { z } from "zod";
 import { page } from "../browser.ts";
+import { NeedsHuman, Usage } from "../errors.ts";
+import { all, byPage, get, type Ops, str, strs } from "./op.ts";
 
 /** attrs：每个属性的取值，顺序同 Offer.props */
 export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string };
@@ -41,7 +44,7 @@ export async function offer(offerId: string): Promise<Offer> {
 			: [{ skuId: String(t.offerId), specId: "", name: "", attrs: [], price: Number(t.minPrice), stock: Number(t.canBookedAmount ?? 0), image: d.mainImageList?.[0]?.fullPathImageURI ?? "" }];
 		return { offerId: String(t.offerId), url, title: d.subject, image: d.mainImageList?.[0]?.fullPathImageURI ?? "", unit: t.unit ?? "", minQty: Number(t.beginAmount ?? 1), props, skus };
 	}, url);
-	if ("error" in got) throw new Error(`读 1688 货源 ${offerId}：${got.error}`);
+	if ("error" in got) throw new NeedsHuman(`读 1688 货源 ${offerId}：${got.error}`);
 	if ("gone" in got) throw new Gone(`1688 货源 ${offerId} 不存在或已下架`);
 	return got;
 }
@@ -76,6 +79,7 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 /** 读的接口：不是 ok 就抛错 */
 async function read(url: string, api: string, data: Record<string, string>, what: string): Promise<any> {
 	const r = await mtop(url, api, data);
+	if (r.kind === "blocked") throw new NeedsHuman(`${what}：${r.ret}`);
 	if (r.kind !== "ok") throw new Error(`${what}：${r.ret}`);
 	return r.data;
 }
@@ -87,7 +91,7 @@ export async function account(): Promise<{ userId: string; loginId: string }> {
 	const p = await page("https://www.1688.com");
 	await p.goto("https://www.1688.com/");
 	const u = await p.run(() => (window as any).__ICE_APP_CONTEXT__?.loaderData?.["/"]?.data?.loginStore ?? null);
-	if (u?.isLogin !== true || !u.userId) throw new Error("1688 没有登录：在浏览器里登录 1688");
+	if (u?.isLogin !== true || !u.userId) throw new NeedsHuman("1688 没有登录：在浏览器里登录 1688");
 	return { userId: String(u.userId), loginId: String(u.loginId ?? "") };
 }
 
@@ -133,7 +137,7 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 				}).filter((h) => h.offerId),
 			};
 		}, keyword);
-		if (got && "error" in got) throw new Error(got.error);
+		if (got && "error" in got) throw new NeedsHuman(got.error);
 		if (got) return got.hits;
 	}
 	throw new Error("1688 搜索结果 30 秒没出来：页面可能改版了");
@@ -220,3 +224,23 @@ export async function traces(orders: { orderId: string; trackingNos?: string[] }
 		};
 	});
 }
+
+// ── x2 1688 <操作>：读操作（加购是写，只经 x2 buy cart 的确认页） ──
+
+export const ops: Ops = {
+	account: get("登录着的 1688 账号", undefined, () => account()),
+	offer: get("一家货源：标题、起订量、属性、每个规格的价格和库存", z.object({ id: str("货源 id 或 1688 链接") }), (p) => {
+		const id = offerIdOf(p.id);
+		if (!id) throw new Usage(`认不出货源：${p.id}`);
+		return offer(id);
+	}),
+	search: all("按关键词搜货源（第一页）", z.object({ keyword: str("关键词") }), (p) => search(p.keyword)),
+	cart: all("购物车里的全部规格和件数", undefined, () => cart()),
+	orders: byPage("采购单（在 1688 买的订单），新的在前；金额是元",
+		z.object({ status: z.string().default("").describe("交易状态（采购单列表接口的 tradeStatus）；不给是全部") }),
+		async (p, n) => {
+			const r = await buyerOrders(n, 50, p.status);
+			return { rows: r.rows, more: n < r.pages };
+		}),
+	traces: all("采购单的物流轨迹", z.object({ orders: strs("采购单号") }), (p) => traces(p.orders.map((orderId) => ({ orderId })))),
+};
