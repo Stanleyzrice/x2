@@ -23,7 +23,7 @@ const snap = (s: Partial<Snapshot> = {}): Snapshot => ({
 	orders: [order("1", 1), order("2", 2)],
 	skus: new Map([["M1", { modelId: "M1", itemId: "I1", offerId: "O1", skuId: "S1" }]]),
 	offers: new Map([["O1", { offerId: "O1", title: "红T 货源", live: true, skus: [{ skuId: "S1", specId: "sp1", name: "红色 L", price: 10, stock: 99, image: "" }] }]]),
-	options: [], writes: [], purchases: [], cart: [], ...s,
+	options: [], writes: [], purchases: [], cart: [], issues: [], ...s,
 });
 
 test("对采购单：采购单的件数按加购的先后分给订单，差的看购物车，都没有是不见了", () => {
@@ -171,4 +171,19 @@ test("买家取消：看货走到哪", () => {
 test("快到期：不到 6 天、还没打包就给人", () => {
 	const r = checkOrders(snap({ orders: [order("1", 1, { shipBy: hours(24 * 5.9) }), order("2", 1, { shipBy: hours(24 * 6.5) })] }));
 	assert.deepEqual(r.inbox.filter((i) => i.kind === "快到期").map((i) => i.key), ["late:1"]);
+});
+
+test("到货问题：人报了以后订单卡在到货有问题，不提醒打包；收件箱一个问题一行", () => {
+	const reported = [order("1", 1, { chanbossStatus: "已预报" }), order("2", 2, { chanbossStatus: "已预报" })];
+	const r = checkOrders(snap({ orders: reported, writes: [cartWrite()], purchases: [purchase(3, { signed: true })], issues: [{ id: "9", sn: "1", item: "红T", kind: "坏了", qty: 1, note: null, resolution: null }] }));
+	assert.equal(r.orders.get("1")!.step, "到货有问题");
+	assert.deepEqual(r.inbox.filter((i) => i.kind === "打包").map((i) => i.key), ["pack:2"]);
+	assert.match(r.inbox.find((i) => i.key === "issue:9")!.title, /订单 1 红T 坏了 1 件/);
+});
+
+test("取消的货到了台湾：过了 30 天就不再提醒", () => {
+	const o = order("1", 1, { platformStatus: "不成立", chanbossStatus: "已打包", cancelledAt: hours(-24 * 31) });
+	assert.equal(checkOrders(snap({ orders: [o] })).inbox.find((i) => i.key === "cancel-goods:1"), undefined);
+	const fresh = { ...o, cancelledAt: hours(-24 * 3) };
+	assert.ok(checkOrders(snap({ orders: [fresh] })).inbox.find((i) => i.key === "cancel-goods:1"));
 });

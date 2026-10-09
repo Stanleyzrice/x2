@@ -15,8 +15,8 @@ import { NeedsHuman } from "./errors.ts";
 type Cond = { col: string; op: string; value?: string | number; sub?: string };
 /** 一个条件，或几个「或」起来的条件；最外层的几项「且」起来 */
 type Filter = Cond | { or: Cond[] };
-/** kanban：看板，按这一列分列（这一列要在 selects 里）；看板不能是第一个（默认视图是表格） */
-type View = { title: string; kanban?: string; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[] };
+/** kanban：看板，按这一列分列（这一列要在 selects 里）；form：表单（人填一行新的），fields 是表单上的列和它的说明，required 是必填的。看板、表单不能是第一个（默认视图是表格） */
+type View = { title: string; kanban?: string; form?: { heading: string; fields: Record<string, string>; required?: string[] }; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[] };
 /** columns：列名 → 中文名，也是视图里列的顺序；links：显示成链接的列；selects：显示成单选的列和它的取值（按这个顺序，看板的列也是这个顺序） */
 type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; selects?: Record<string, readonly string[]>; views: View[] };
 
@@ -57,6 +57,22 @@ export function tables(lateDays: number): Table[] {
 					hide: ["platform_status", "chanboss_status", "problem", "destination", "sourced", "carted", "paid", "arrived", "created_at", "cancelled_at", "items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at"],
 				},
 				{ title: "快到期", filters: [...OPEN_ORDER, { col: "days_left", op: "lt", value: lateDays }], sorts: [["ship_by", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at", "cancelled_at", "sourced", "carted", "paid", "arrived"] },
+			],
+		},
+		{
+			name: "arrival_issues", title: "到货问题",
+			selects: { kind: ["错货", "少件", "坏了", "其他"], resolution: ["退换", "重新买", "不用管"] },
+			columns: { sn: "订单号", item: "哪件", kind: "问题", qty: "几件", note: "备注", resolution: "怎么处理", done: "处理好了", reported_at: "报的时间", done_at: "处理好的时间", id: "编号" },
+			views: [
+				{ title: "没处理好的", filters: [{ col: "done", op: "notchecked" }], sorts: [["reported_at", "asc"]], hide: ["id", "done_at"] },
+				{
+					title: "报到货问题",
+					form: {
+						heading: "打包时发现错货、少件、坏了，填一行",
+						fields: { sn: "订单号（拣货单上的）", item: "哪件：商品和规格，例 红T L", kind: "", qty: "", note: "看到了什么；拍了照片写在哪", resolution: "知道怎么处理就选，不知道空着" },
+						required: ["sn", "kind"],
+					},
+				},
 			],
 		},
 		{
@@ -238,7 +254,8 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 					await api("PATCH", `/views/${viewId}`, { title: spec.title });
 					for (const f of (await api<{ list: any[] }>("GET", `/views/${viewId}/filters`)).list) await api("DELETE", `/filters/${f.id}`);
 					for (const s of (await api<{ list: any[] }>("GET", `/views/${viewId}/sorts`)).list) await api("DELETE", `/sorts/${s.id}`);
-				} else if (spec.kanban) viewId = (await api<any>("POST", `/tables/${model.id}/kanbans`, { title: spec.title, fk_grp_col_id: colId(spec.kanban) })).id;
+				} else if (spec.form) viewId = (await api<any>("POST", `/tables/${model.id}/forms`, { title: spec.title, heading: spec.form.heading })).id;
+				else if (spec.kanban) viewId = (await api<any>("POST", `/tables/${model.id}/kanbans`, { title: spec.title, fk_grp_col_id: colId(spec.kanban) })).id;
 				else viewId = (await api<any>("POST", `/tables/${model.id}/grids`, { title: spec.title })).id;
 				for (const f of spec.filters ?? []) {
 					const cond = (c: Cond, extra: object = {}) => ({ fk_column_id: colId(c.col), comparison_op: c.op, comparison_sub_op: c.sub, value: c.value, ...extra });
@@ -250,6 +267,21 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 				for (const [col, direction] of spec.sorts ?? []) await api("POST", `/views/${viewId}/sorts`, { fk_column_id: colId(col), direction });
 				const order = Object.keys(t.columns);
 				const nameOf = (columnId: string) => full.columns.find((c: any) => c.id === columnId)?.column_name as string | undefined;
+				if (spec.form) {
+					// 表单：只放 fields 里的列，按它的顺序，带说明
+					await api("PATCH", `/forms/${viewId}`, { heading: spec.form.heading, submit_another_form: true, show_blank_form: true });
+					const keys = Object.keys(spec.form.fields);
+					for (const fc of (await api<any>("GET", `/forms/${viewId}`)).columns ?? []) {
+						const name = nameOf(fc.fk_column_id);
+						if (!name) continue;
+						const i = keys.indexOf(name);
+						await api("PATCH", `/form-columns/${fc.id}`, {
+							show: i >= 0, order: i >= 0 ? i + 1 : keys.length + 1, label: t.columns[name] ?? name, description: spec.form.fields[name] ?? "", required: (spec.form.required ?? []).includes(name),
+						});
+					}
+					views++;
+					continue;
+				}
 				if (spec.kanban) {
 					// 看板：卡片上显示哪些列、什么顺序
 					for (const vc of (await api<{ list: any[] }>("GET", `/views/${viewId}/columns`)).list) {

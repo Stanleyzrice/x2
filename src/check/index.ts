@@ -27,6 +27,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 	const purchases = await sql`select * from purchases`;
 	const cart = await sql`select account, offer_id, offer_sku_id, qty from cart`;
 	const accounts = await sql`select user_id, login_id from accounts_1688`;
+	const issues = await sql`select id::text, sn, item, kind, qty, note, resolution from arrival_issues where not done order by id`;
 	return {
 		now: new Date(),
 		settings: { lateDays: Number(settings!.late_days), channel: settings!.channel, buyAccount: settings!.buy_account },
@@ -44,6 +45,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 		})),
 		cart: cart.map((c) => ({ account: c.account, offerId: c.offer_id, skuId: c.offer_sku_id, qty: Number(c.qty) })),
 		accounts: new Map(accounts.map((a) => [a.user_id, a.login_id ?? a.user_id])),
+		issues: issues.map((x) => ({ id: x.id, sn: String(x.sn).trim(), item: x.item, kind: x.kind, qty: x.qty, note: x.note, resolution: x.resolution })),
 	};
 }
 
@@ -86,6 +88,8 @@ export async function check(sql: Sql): Promise<Checked> {
 
 	let opened = 0, closed = 0;
 	await sql.begin(async (tx) => {
+		// 到货问题勾了处理好了：记下时间
+		await tx`update arrival_issues set done_at = now() where done and done_at is null`;
 		// 人勾的货源候选写进规格
 		for (const o of r.chosenSources) await tx`update skus set offer_id = ${o.offerId}, offer_sku_id = ${o.skuId}, sourced_at = now() where model_id = ${o.modelId}`;
 		// 规格的货源已经是候选里的某一个（人勾了、随加购批准了）：这个规格的候选用完了，删掉（「选货源」视图空了就是选完了）

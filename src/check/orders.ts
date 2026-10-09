@@ -12,12 +12,14 @@ export type OfferSku = { skuId: string; specId: string; name: string; price: num
 export type Offer = { offerId: string; title: string | null; live: boolean; skus: OfferSku[] };
 export type Option = { modelId: string; offerId: string; skuId: string; sure: boolean; chosen: boolean };
 export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null };
+/** 到货问题：人在 NocoDB 的表单里报的、还没处理好的（错货、少件、坏了……） */
+export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
 /** buyAccount：采购账号（1688 userId），x2 只往它加购 */
 export type Settings = { lateDays: number; channel: string; buyAccount: string | null };
 
 export type Snapshot = {
 	now: Date; settings: Settings; orders: Order[]; skus: Map<string, Sku>; offers: Map<string, Offer>; options: Option[];
-	writes: Write[]; purchases: Purchase[]; cart: CartLine[];
+	writes: Write[]; purchases: Purchase[]; cart: CartLine[]; issues: Issue[];
 	/** 1688 账号：userId → 会员名 */
 	accounts: Map<string, string>;
 };
@@ -42,7 +44,7 @@ export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: 
 
 /** 卡在哪一步：按流程排（看板的列也是这个顺序） */
 export const STEPS = [
-	"没货源", "没加购", "加购等批准", "没付款", "没预报", "预报等批准", "货没到齐", "到齐了没打包", "等 chanboss 收货", "等 chanboss 打包",
+	"没货源", "没加购", "加购等批准", "没付款", "没预报", "预报等批准", "货没到齐", "到货有问题", "到齐了没打包", "等 chanboss 收货", "等 chanboss 打包",
 	"不是经 x2 买的", "已打包", "取消了",
 ] as const;
 
@@ -56,6 +58,8 @@ const BUYER_ORDERS = "https://air.1688.com/app/ctf-page/trade-order-list/buyer-o
 const short = (s: string, n = 14) => (s.length > n ? `${s.slice(0, n)}…` : s);
 export const label = (i: { name: string; spec: string }) => `${short(i.name)} / ${i.spec || "（单规格）"}`;
 const DAY = 86_400_000;
+
+const issueText = (x: Issue) => `${x.item ? `${x.item} ` : ""}${x.kind}${x.qty ? ` ${x.qty} 件` : ""}`;
 
 export const isCancelled = (o: Order) => o.platformStatus === "不成立" || o.platformStatus === "取消中";
 /** 已经过了「已打包」：剩下是 chanboss 和 Shopee 的事。买家这时取消，货算到了台湾 */
@@ -154,6 +158,9 @@ export function checkOrders(s: Snapshot): Result {
 			step = missing.length ? "货没到齐" : "到齐了没打包";
 			if (missing.length) stepDetail = `还差 ${missing.join("、")}`;
 		} else step = o.chanbossStatus === "已到齐" ? "等 chanboss 打包" : "等 chanboss 收货";
+		// 到货有问题（人报的）：没处理好之前不提醒打包
+		const issues = s.issues.filter((x) => x.sn === o.sn);
+		if (issues.length && (step === "货没到齐" || step === "到齐了没打包")) { step = "到货有问题"; stepDetail = issues.map(issueText).join("；"); }
 		if (sources.some((x) => boughtOutside.has(`${o.sn}:${x.i.modelId}`))) stepDetail = [stepDetail, "在 x2 外面买的"].filter(Boolean).join("；");
 		computed.set(o.sn, { daysLeft, sourced, carted, paid, arrived, destination, step, stepDetail });
 
@@ -195,7 +202,7 @@ export function checkOrders(s: Snapshot): Result {
 			});
 		}
 		// 打包：寄到我们这里、到齐了、报过了
-		if (destination === "寄到我们这里" && arrived && !needsBuy) inbox.push({
+		if (destination === "寄到我们这里" && arrived && !needsBuy && !issues.length) inbox.push({
 			key: `pack:${o.sn}`, kind: "打包", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS,
 			title: `打包：订单 ${o.sn} 的货到齐了`,
 			detail: `${o.items.map((i) => `${label(i)} × ${i.qty}`).join("\n")}\n按这张订单装好，在 chanboss 上打印 SKU 拣货单贴上，寄给 chanboss`,
@@ -207,6 +214,21 @@ export function checkOrders(s: Snapshot): Result {
 			detail: o.items.map((i) => `${label(i)} × ${i.qty}`).join("\n"),
 		});
 		if (o.problem) inbox.push(problem(o));
+	}
+
+	// 到货问题：一个问题一行，人在「到货问题」里勾「处理好了」就关
+	for (const x of s.issues) {
+		const o = s.orders.find((y) => y.sn === x.sn);
+		inbox.push({
+			key: `issue:${x.id}`, kind: "到货问题", shop: o?.shop ?? null, due: o?.shipBy ?? null, link: null,
+			title: `到货问题：订单 ${x.sn} ${issueText(x)}`,
+			detail: [
+				...(o ? [] : ["库里没有这张订单：订单号对吗？"]),
+				...(x.note ? [x.note] : []),
+				`怎么处理：${x.resolution ?? "还没定（退换、重新买、不用管）"}`,
+				"处理完在「到货问题」里勾「处理好了」",
+			].join("\n"),
+		});
 	}
 
 	function problem(o: Order): InboxItem {
@@ -233,8 +255,9 @@ export function checkOrders(s: Snapshot): Result {
 		const bought = mine.filter((x) => x.line?.state === "已付款");
 		if (isPacked(o)) {
 			where = "货到了台湾"; what = "在 chanboss 台湾仓上架，30 天内给别的订单用（过了 30 天货代会处理掉）";
-			// 30 天从上架算；还读不到上架时间，先按取消的时间算
+			// 30 天从上架算；还读不到上架时间，先按取消的时间算。过了期限货就没了：这件事也就结束了，不再提醒
 			due = o.cancelledAt ? new Date(o.cancelledAt.getTime() + 30 * DAY) : null;
+			if (due && due < s.now) where = null;
 		} else if (o.chanbossStatus === "已到齐") { where = "货在 chanboss 仓库"; what = "给新订单用（合并发货），或者退回卖家"; }
 		else if (bought.length) {
 			const shipped = bought.some((x) => x.line!.purchases.some((p) => p.status !== "waitsellersend"));

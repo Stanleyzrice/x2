@@ -273,3 +273,20 @@ on conflict do nothing;
 
 -- 2026-10-09：订单的「卡在哪一步」只放固定的几步（看板按它分列），细节（还差哪件……）放 step_detail
 alter table orders add column if not exists step_detail text;
+
+-- 2026-10-09：到货问题：错货、少件、坏了。x2 看不到，人在 NocoDB 的表单里报（订单号、哪件、什么问题、几件），处理完勾「处理好了」。
+-- 没处理好的：订单卡在「到货有问题」，不提醒打包；收件箱一行一个问题
+create table if not exists arrival_issues (
+	id bigserial primary key,
+	sn text not null,
+	item text,
+	kind text not null default '坏了',
+	qty int,
+	note text,
+	-- 怎么处理：退换、重新买、不用管
+	resolution text,
+	done boolean not null default false,
+	reported_at timestamptz not null default now(),
+	done_at timestamptz
+);
+insert into inbox_roles (kind, role) values ('到货问题', '运营') on conflict do nothing;
