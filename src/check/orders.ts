@@ -1,6 +1,6 @@
 // 检查订单：拿 docs/orders.md「每一步怎样算做完」和「异常」对一遍库，算出收件箱、agent 要做的，和订单上「卡在哪一步」等列。
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
-import { matchSku } from "../similar.ts";
+import { exceptionFor, matchSku, rank as nearest } from "../similar.ts";
 import { type CartLine, type CartWrite, type Line, type Need, type Purchase, reconcile } from "./reconcile.ts";
 
 export type Item = { itemId: string; modelId: string; chanbossModelId: string; name: string; spec: string; qty: number; image: string };
@@ -11,8 +11,8 @@ export type Order = {
 /** 货源的一个规格（快照里的） */
 export type SourceSku = { skuId: string; specId: string; name: string; price: number; stock: number; image: string };
 /** 货源（sources 表的一行）：店里一个商品 × 一个货源。chosen 的是这个商品现在的货源（一个商品只用一个）；没 chosen 的是还在挑的，sure 是 x2 认为明显对得上的。
- * title、skus 是快照（x2 现读这个货源时更新）：店里的规格按名字在 skus 里配 */
-export type Source = { itemId: string; offerId: string; title: string | null; skus: SourceSku[]; chosen: boolean; sure: boolean; broken: string | null };
+ * title、skus 是快照（x2 现读这个货源时更新）：店里的规格按名字在 skus 里配；配不上的看 exceptions（规格例外，人定的） */
+export type Source = { itemId: string; offerId: string; title: string | null; skus: SourceSku[]; chosen: boolean; sure: boolean; broken: string | null; exceptions?: string | null };
 export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null };
 /** 到货问题：人在 NocoDB 的表单里报的、还没处理好的（错货、少件、坏了……） */
 export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
@@ -86,7 +86,7 @@ export function checkOrders(s: Snapshot): Result {
 	// 每个订单行（有货源的）都拿去对剩下的采购单：x2 外面买的也认得出来；x2 加了购、人又另外买了，也认得出来
 	const needs: Need[] = s.orders.flatMap((o) => o.items.flatMap((i) => {
 		const src = chosenOf.get(i.itemId);
-		const sku = src ? matchSku(i.spec, src.skus) : null;
+		const sku = src ? matchSku(i.spec, src.skus, src.exceptions) : null;
 		return src && sku && o.createdAt ? [{ sn: o.sn, modelId: i.modelId, qty: i.qty, offerId: src.offerId, skuId: sku.skuId, createdAt: o.createdAt, until: o.cancelledAt }] : [];
 	}));
 	const lines = reconcile(cartWrites, s.purchases, s.cart, needs);
@@ -104,12 +104,15 @@ export function checkOrders(s: Snapshot): Result {
 	const forecastFlying = new Set(s.writes.filter((w) => w.op === "预报" && IN_FLIGHT.has(w.status)).map((w) => w.params.sn as string));
 
 	// ── 货源 ──
-	// 一个商品一个货源；店里的规格按名字在货源的规格里配（配不上：规格对不上，要人看）
+	// 一个商品一个货源；店里的规格按名字在货源的规格里配，配不上的看人定的规格例外（都没有：规格对不上，要人看）
 	type SourceState = { state: "有" | "新" | "待选" | "没有" | "失效" | "规格对不上"; src?: Source; sku?: SourceSku; why?: string };
 	const sourceOf = (i: Item): SourceState => {
 		const pick = (src: Source, state: "有" | "新"): SourceState => {
-			const sku = matchSku(i.spec, src.skus);
-			return sku ? { state, src, sku } : { state: "规格对不上", src, why: `「${i.spec || "（单规格）"}」在货源「${short(src.title ?? src.offerId)}」里找不到对得上的规格` };
+			const sku = matchSku(i.spec, src.skus, src.exceptions);
+			if (sku) return { state, src, sku };
+			const named = exceptionFor(i.spec, src.exceptions);
+			const where = `货源「${short(src.title ?? src.offerId)}」`;
+			return { state: "规格对不上", src, why: named === undefined ? `「${i.spec || "（单规格）"}」在${where}里找不到对得上的规格` : `规格例外里写的「${named}」在${where}里找不到了（货源改了规格名？）` };
 		};
 		const chosen = chosenOf.get(i.itemId);
 		if (chosen) return chosen.broken ? { state: "失效", why: chosen.broken } : pick(chosen, "有");
@@ -121,7 +124,7 @@ export function checkOrders(s: Snapshot): Result {
 
 	const toFind = new Map<string, { itemId: string; name: string; why: string }>();
 	const toChoose = new Map<string, { item: Item; due: Date | null; shop: string | null }>();
-	const unmatched = new Map<string, { item: Item; why: string; due: Date | null; shop: string | null }>();
+	const unmatched = new Map<string, { item: Item; src: Source; why: string; due: Date | null; shop: string | null }>();
 	const cartPlan = new Map<string, CartParams>();
 	const forecasts: ForecastParams[] = [];
 	const unforecast: string[] = [];
@@ -175,7 +178,7 @@ export function checkOrders(s: Snapshot): Result {
 			const due = (had: { due: Date | null } | undefined) => (had?.due && o.shipBy && had.due < o.shipBy ? had.due : o.shipBy);
 			if (src.state === "没有" || src.state === "失效") toFind.set(i.itemId, { itemId: i.itemId, name: short(i.name, 20), why: src.why ?? "没有货源" });
 			if (src.state === "待选") toChoose.set(i.itemId, { item: i, shop: o.shop, due: due(toChoose.get(i.itemId)) });
-			if (src.state === "规格对不上") unmatched.set(i.modelId, { item: i, why: src.why!, shop: o.shop, due: due(unmatched.get(i.modelId)) });
+			if (src.state === "规格对不上") unmatched.set(i.modelId, { item: i, src: src.src!, why: src.why!, shop: o.shop, due: due(unmatched.get(i.modelId)) });
 		}
 		// 加购：还要买、货源齐了的订单，没加过（或加的不见了）、没在外面买、也没有在路上的
 		if (needsBuy && sourced) for (const { i, src, line } of sources) {
@@ -288,10 +291,21 @@ export function checkOrders(s: Snapshot): Result {
 		key: `source:${itemId}`, kind: "选货源", shop: c.shop, due: c.due, link: null,
 		title: `选货源：${short(c.item.name, 20)} 拿不准用哪个货源`, detail: `找到的货源在「货源」的「选货源」里，勾一个「用这个」`,
 	});
-	for (const [modelId, c] of unmatched) inbox.push({
-		key: `sku:${modelId}`, kind: "规格对不上", shop: c.shop, due: c.due, link: null,
-		title: `规格对不上：${label(c.item)}`, detail: `${c.why}。把店里的规格名改得和货源的一样，或者换货源`,
-	});
+	// 规格对不上：人定哪个配哪个，写进货源那一行的「规格例外」（照抄第一个最像的，不对就改）；或者换货源
+	for (const [modelId, c] of unmatched) {
+		const near = nearest(c.item.spec, c.src.skus).slice(0, 5).map((k) => k.name);
+		inbox.push({
+			key: `sku:${modelId}`, kind: "规格对不上", shop: c.shop, due: c.due, link: null,
+			title: `规格对不上：${label(c.item)}`,
+			detail: [
+				`${c.why}。`,
+				"在「货源」里这个商品那一行的「规格例外」加一行（照抄下面这行，配错了就换成对的那个）：",
+				`${c.item.spec || "（单规格）"} = ${near[0] ?? "货源的规格名"}`,
+				...(near.length ? ["", "货源里最像的几个规格：", ...near.map((n) => `· ${n}`)] : []),
+				"", "也可以在终端里告诉 agent 哪个配哪个；或者换货源",
+			].join("\n"),
+		});
+	}
 	const offerName = (l: Line) => {
 		const x = offerOf.get(l.offerId);
 		const sku = x?.skus.find((k) => k.skuId === l.skuId);

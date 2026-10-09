@@ -35,3 +35,14 @@ test("在货源的规格里配店里的规格：只有一个对得上才配；�
 	assert.equal(matchSku("L42銀色（最大拉力69kg）", skus), null);
 	assert.equal(matchSku("", [{ name: "" }])?.name, "");
 });
+
+test("规格例外：按名字配不上时照人写的配（繁简、空格不算）；写的那个货源里没有了回 null", () => {
+	const spec = "特粗26管雙層側三網150金+輪";
+	assert.equal(matchSku(spec, rack), null);
+	const ex = "别的规格 = 特厚25管全钢-双杆150黑+万向轮\n特粗26管双层侧三网150金+轮 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮";
+	assert.equal(matchSku(spec, rack, ex)?.name, "顶配侧三层置物网+双层置物架+双杆150金+万向轮");
+	assert.equal(matchSku(spec, rack, `${spec} = 顶配侧三层置物网+双层置物架+双杆150银+万向轮`), null);
+	// 店里是单规格、货源有几个：写「（单规格）」
+	assert.equal(matchSku("", [{ name: "红" }, { name: "蓝" }]), null);
+	assert.equal(matchSku("", [{ name: "红" }, { name: "蓝" }], "（单规格） = 蓝")?.name, "蓝");
+});

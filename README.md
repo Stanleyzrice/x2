@@ -92,7 +92,7 @@ x2/
 │ ├ run.ts                x2 run：执行批准了的写入
 │ ├ source.ts             x2 source：选货源，更新货源快照
 │ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB
-│ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色；matchSku 加购时按店里的规格名在货源的规格里配
+│ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色；matchSku 加购时按店里的规格名在货源的规格里配，配不上的看规格例外
 │ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、db.ts、nocodb.ts
 ├ .claude/skills/
 │ └ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 对采购单 → 预报 → 人打包

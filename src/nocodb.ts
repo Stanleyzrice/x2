@@ -77,12 +77,12 @@ export function tables(): Table[] {
 		{
 			name: "sources", title: "货源", links: ["url", "image", "item_image"],
 			columns: {
-				item_name: "店里的商品", chosen: "用这个", title: "货源", url: "链接", score: "像不像", missing: "对不上的规格", sure: "明显对得上", origin: "从哪来", broken: "用不了",
+				item_name: "店里的商品", chosen: "用这个", title: "货源", url: "链接", sku_exceptions: "规格例外", score: "像不像", missing: "对不上的规格", sure: "明显对得上", origin: "从哪来", broken: "用不了",
 				image: "货源的图", item_image: "店里的图", site: "站点", read_at: "读到于", skus: "货源的规格（快照）", offer_id: "货源 id", item_id: "商品 id", found_at: "找到于", chosen_at: "定下于",
 			},
 			views: [
 				// 选货源：还没定的货源，按店里的商品分组；定了以后剩下的删掉，空了就是选完了
-				{ title: "选货源", filters: [{ col: "chosen", op: "notchecked" }], sorts: [["score", "desc"]], group: [["item_name", "asc"]], hide: ["skus", "offer_id", "item_id", "found_at", "chosen_at", "broken", "read_at", "site"] },
+				{ title: "选货源", filters: [{ col: "chosen", op: "notchecked" }], sorts: [["score", "desc"]], group: [["item_name", "asc"]], hide: ["skus", "offer_id", "item_id", "found_at", "chosen_at", "broken", "read_at", "site", "sku_exceptions"] },
 				{ title: "定了的", filters: [{ col: "chosen", op: "checked" }], sorts: [["item_name", "asc"]], hide: ["chosen", "score", "missing", "sure", "skus", "item_id", "found_at"] },
 			],
 		},
@@ -153,13 +153,19 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 		await api("PATCH", `/bases/${base.id}/sources/${source.id}`, { is_schema_readonly: true });
 
 		const specs = tables();
-		// 重新读表结构是 NocoDB 的后台任务：等到要的表都出来（最多 60 秒）
+		// 重新读表结构是 NocoDB 的后台任务：等到要的表和列都出来（最多 60 秒；库里新加的列也要等）
 		let all: any[] = [];
-		for (let i = 0; i < 40; i++) {
+		const ready = async () => {
 			all = (await api<{ list: any[] }>("GET", `/bases/${base.id}/tables`)).list;
-			if (specs.every((t) => all.some((m) => m.table_name === t.name))) break;
-			await new Promise((r) => setTimeout(r, 1500));
-		}
+			for (const t of specs) {
+				const m = all.find((x) => x.table_name === t.name);
+				if (!m) return false;
+				const cols = new Set(((await api<any>("GET", `/tables/${m.id}`)).columns as any[]).map((c) => c.column_name));
+				if (!Object.keys(t.columns).every((c) => cols.has(c))) return false;
+			}
+			return true;
+		};
+		for (let i = 0; i < 40 && !(await ready()); i++) await new Promise((r) => setTimeout(r, 1500));
 		let views = 0;
 		for (const [order, t] of specs.entries()) {
 			const model = all.find((m) => m.table_name === t.name);

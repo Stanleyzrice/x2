@@ -1,4 +1,4 @@
-// 店里的规格名和 1688 的规格名比较：排序用的分数，和「缺」了什么（先例 Google 搜索结果下的「缺少字词」）。
+// 店里的规格名和货源的规格名比较：排序用的分数，和「缺」了什么（先例 Google 搜索结果下的「缺少字词」）。
 // 中文没有空格，按相邻两个字（bigram）比，不按词。数字和颜色是区分规格的关键（150 和 120、金和白），店里有、对方没有的列出来并扣分。
 // Shopee 台湾的规格名是繁体，1688 是简体：先转成简体再比
 
@@ -45,9 +45,25 @@ export function rank<T extends { name: string }>(mine: string, items: readonly T
 	return items.map((it) => ({ ...it, ...compare(mine, it.name) })).sort((x, y) => y.score - x.score);
 }
 
-/** 店里的规格名，在货源的规格里配一个：数字、颜色都对上、一半以上的字对上，而且只有一个这样的（明显比别的像也算）。
+/** 两个规格名是不是同一个：繁简、大小写、空格和标点不算 */
+export const sameName = (a: string, b: string) => squash(a) === squash(b);
+
+/** 规格例外：按名字配不上时人定的，写在货源那一行，一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）。
+ * 回店里这个规格写的货源规格名；没写是 undefined */
+export function exceptionFor(spec: string, exceptions: string | null | undefined): string | undefined {
+	for (const line of (exceptions ?? "").split("\n")) {
+		const i = line.indexOf("=");
+		if (i > 0 && sameName(line.slice(0, i), spec || "（单规格）")) return line.slice(i + 1).trim();
+	}
+	return undefined;
+}
+
+/** 店里的规格名，在货源的规格里配一个。人写了规格例外的照它（写的那个货源里没有了回 null）；
+ * 没写的按名字配：数字、颜色都对上、一半以上的字对上，而且只有一个这样的（明显比别的像也算）。
  * 只有一个规格的货源（店里也没有规格名）直接用它。配不上、或者几个都一样像，回 null：要人看 */
-export function matchSku<T extends { name: string }>(spec: string, skus: readonly T[]): T | null {
+export function matchSku<T extends { name: string }>(spec: string, skus: readonly T[], exceptions?: string | null): T | null {
+	const named = exceptionFor(spec, exceptions);
+	if (named !== undefined) return skus.find((s) => sameName(s.name, named)) ?? null;
 	if (skus.length === 1 && (!spec || !skus[0]!.name)) return skus[0]!;
 	const ok = rank(spec, skus).filter((s) => s.missing.length === 0 && (!spec || s.score >= 0.5));
 	if (ok.length === 1 || (ok.length > 1 && ok[0]!.score - ok[1]!.score >= 0.2)) return skus.find((s) => s.name === ok[0]!.name) ?? null;

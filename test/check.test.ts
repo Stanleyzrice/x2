@@ -224,3 +224,19 @@ test("取消的订单只分到取消以前下的采购单", () => {
 	const before = { ...after, createdAt: hours(-30) };
 	assert.ok(checkOrders(snap({ orders: [o], purchases: [before] })).inbox.find((i) => i.key === "cancel-goods:1"));
 });
+
+test("规格对不上：收件箱写出照抄的一行和最像的几个；人写了规格例外就照它加购", () => {
+	const skus = [sku("S8", "大红 L 加长"), sku("S9", "蓝色 XL")];
+	const r = checkOrders(snap({ sources: [source({ chosen: true, skus })] }));
+	const detail = r.inbox.find((i) => i.key === "sku:M1")!.detail;
+	assert.match(detail, /\n红色 L = .+\n/);
+	assert.match(detail, /· 大红 L 加长/);
+	const ok = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 大红 L 加长" })] }));
+	assert.equal(ok.inbox.find((i) => i.kind === "规格对不上"), undefined);
+	const t = ok.todo.find((x) => x.kind === "加购");
+	assert.ok(t && t.kind === "加购");
+	assert.equal((t.propose.writes[0]!.params as CartParams).skuId, "S8");
+	// 写的那个货源里没有了（卖家改了规格名）：还是规格对不上，写出原因
+	const gone = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 粉色 L" })] }));
+	assert.match(gone.inbox.find((i) => i.key === "sku:M1")!.detail, /规格例外里写的「粉色 L」在货源「红T 货源」里找不到了/);
+});

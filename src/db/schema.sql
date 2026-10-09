@@ -156,3 +156,7 @@ create table if not exists orders (
 );
 
 -- ── 加列（表建好以后加的列写在这里） ──
+
+-- 规格例外：店里的规格按名字在货源的规格里配不上时，人定的。一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）；
+-- 只记例外，配得上的不记。人在 NocoDB 里写，或者人在终端里说了、agent 用 x2 source <商品 id> --spec 写。换了货源就跟着那一行删掉
+alter table sources add column if not exists sku_exceptions text;

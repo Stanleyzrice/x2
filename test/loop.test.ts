@@ -9,6 +9,7 @@ import { migrate } from "../src/db/index.ts";
 import { Usage } from "../src/errors.ts";
 import { approve, propose } from "../src/propose.ts";
 import { run } from "../src/run.ts";
+import { setException } from "../src/source.ts";
 import type { Submitted, WriteOp } from "../src/site/writes.ts";
 
 const url = process.env.X2_TEST_DATABASE_URL;
@@ -118,4 +119,20 @@ test("收件箱：人勾「处理好了」就关，以后不再开", { skip: !sq
 	await check(db, reads());
 	await check(db, reads());
 	assert.equal((await db`select open from inbox where key = 'late:S2'`)[0]!.open, false);
+});
+
+test("规格例外：x2 source --spec 写进用这个的货源那一行；两边都要对得上，同一个规格写过的换掉", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	await db`insert into orders (sn, shop, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
+		values ('S3', 'ni1206', '待出货', '待处理', 'c3', 1, ${db.json([{ itemId: "RACK", modelId: "M3", chanbossModelId: "cM3", name: "衣帽架", spec: "特粗26管雙層側三網150金+輪", qty: 1, image: "" }])}, now())`;
+	const skus = ["顶配侧三层置物网+双层置物架+双杆150金+万向轮", "顶配侧三层置物网+双层置物架+双杆150白+万向轮"].map((name, i) => ({ skuId: `K${i}`, specId: "", name, price: 1, stock: 9, image: "" }));
+	await assert.rejects(setException(db, "RACK", "特粗26管雙層側三網150金+輪 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮"), /还没定货源/);
+	await db`insert into sources (item_id, offer_id, title, skus, chosen) values ('RACK', 'O9', '衣帽架货源', ${db.json(skus)}, true)`;
+	await assert.rejects(setException(db, "RACK", "特粗26管 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮"), /卖过的规格里没有/);
+	await assert.rejects(setException(db, "RACK", "特粗26管雙層側三網150金+輪 = 顶配150银"), /最像的：顶配/);
+	await setException(db, "RACK", "特粗26管双层侧三网150金+轮 = 顶配侧三层置物网+双层置物架+双杆150白+万向轮");
+	const r = await setException(db, "RACK", "特粗26管雙層側三網150金+輪=顶配侧三层置物网+双层置物架+双杆150金+万向轮");
+	assert.equal(r.spec, "特粗26管雙層側三網150金+輪");
+	const [row] = await db`select sku_exceptions from sources where item_id = 'RACK'`;
+	assert.equal(row!.sku_exceptions, "特粗26管雙層側三網150金+輪 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮");
 });

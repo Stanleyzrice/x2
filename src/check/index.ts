@@ -26,7 +26,7 @@ const complete = (results: Read[]) => ([what, who]: [string, string | null]) => 
 export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 	const [settings] = await sql`select * from order_settings where id = 1`;
 	const orders = await sql`select * from orders where created_at > now() - interval '60 days' or platform_status = '待出货' order by ship_by nulls last`;
-	const sources = await sql`select item_id, offer_id, title, skus, chosen, sure, broken from sources`;
+	const sources = await sql`select item_id, offer_id, title, skus, chosen, sure, broken, sku_exceptions from sources`;
 	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('加购', '预报', '取消预报') and include`;
 	const issues = await sql`select id::text, sn, item, kind, qty, note, resolution from arrival_issues where not done order by id`;
 	return {
@@ -36,7 +36,7 @@ export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 			sn: o.sn, shop: o.shop, createdAt: o.created_at, shipBy: o.ship_by, platformStatus: o.platform_status ?? "", chanbossStatus: o.chanboss_status ?? "", chanbossId: o.chanboss_id,
 			chanbossTime: Number(o.chanboss_time), items: o.items, problem: o.problem, cancelledAt: o.cancelled_at,
 		})),
-		sources: sources.map((r) => ({ itemId: r.item_id, offerId: r.offer_id, title: r.title, skus: r.skus, chosen: r.chosen, sure: r.sure, broken: r.broken })),
+		sources: sources.map((r) => ({ itemId: r.item_id, offerId: r.offer_id, title: r.title, skus: r.skus, chosen: r.chosen, sure: r.sure, broken: r.broken, exceptions: r.sku_exceptions })),
 		writes: writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })),
 		purchases: reads.purchases,
 		cart: reads.cart,
