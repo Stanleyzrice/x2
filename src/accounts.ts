@@ -1,7 +1,7 @@
 // 按店找浏览器：一家店一个浏览器（Chrome 的不同用户）。每个连着的浏览器读一次 shopee shop，按店铺 id 认；
 // 1688 也一样：每个浏览器读一次登录着的 1688 账号，按账号（userId）认。读到的店写进 shops（账号名、店名、浏览器）。
 // 一个进程里只认一次（开标签页、读接口都要时间）
-import { account as alibabaAccount } from "./site/alibaba.ts";
+import { account as alibabaAccount } from "./site/1688.ts";
 import { shop as shopeeShop } from "./site/shopee/seller.ts";
 import { browsers, using } from "./browser.ts";
 import type { Sql } from "./db/index.ts";

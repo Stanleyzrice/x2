@@ -1,7 +1,7 @@
 // 同步 1688：购物车、采购单（带物流），一个 1688 账号一份（在登录着那个账号的浏览器里读）。
 // 货源不按时同步：x2 source、x2 run 用到哪家现读哪家，读到的存进 offers（下架的记 live = false）
 import { in1688 } from "../accounts.ts";
-import { type BuyerOrder, buyerOrders, cart as readCart, Gone, type Offer, offer as readOffer, traces } from "../site/alibaba.ts";
+import { type BuyerOrder, buyerOrders, cart as readCart, Gone, type Offer, offer as readOffer, traces } from "../site/1688.ts";
 import type { Sql } from "../db/index.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

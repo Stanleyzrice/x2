@@ -48,7 +48,7 @@ create table if not exists source_options (
 	model_id text not null,
 	offer_id text not null,
 	offer_sku_id text not null,
-	-- 店里的规格（给人对照）
+	-- 店里的规格（给人比着看）
 	sku_name text,
 	sku_image text,
 	-- 1688 这边

@@ -3,7 +3,7 @@
 // x2 <站点> 列出操作，x2 <站点> <操作> --help 列出参数，x2 schema 输出全部操作的参数（JSON Schema）
 import { z } from "zod";
 import { Usage } from "../errors.ts";
-import { ops as alibaba } from "../site/alibaba.ts";
+import { ops as alibaba } from "../site/1688.ts";
 import { ops as chanboss } from "../site/chanboss.ts";
 import type { Op, Ops } from "../site/op.ts";
 import { ops as shopee } from "../site/shopee/ops.ts";

@@ -3,10 +3,10 @@
 // 对不上、或者几个都像：都写成货源候选，收件箱加一行「选货源」，人在 NocoDB 的「选货源」里勾「用这个」
 import type { Sql } from "./db/index.ts";
 import { Usage } from "./errors.ts";
-import { type Offer, offerIdOf } from "./site/alibaba.ts";
+import { type Offer, offerIdOf } from "./site/1688.ts";
 import { ready as zhixiaReady, similar1688 } from "./site/zhixia.ts";
 import { rank } from "./similar.ts";
-import { fetchOffers } from "./sync/alibaba.ts";
+import { fetchOffers } from "./sync/1688.ts";
 
 type Candidate = { offer: Offer; skuId: string; name: string; image: string; price: number; stock: number; score: number; missing: string[]; origin: string };
 export type Found = { modelId: string; name: string; sure: { offerId: string; skuId: string; title: string; sku: string } | null; options: number; why: string };

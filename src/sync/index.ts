@@ -3,7 +3,7 @@
 import { alibabaAccounts, recordShops } from "../accounts.ts";
 import { type Sql, host } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
-import { syncCart, syncPurchases } from "./alibaba.ts";
+import { syncCart, syncPurchases } from "./1688.ts";
 import { syncOrders } from "./orders.ts";
 import { syncSkus } from "./skus.ts";
 

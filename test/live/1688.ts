@@ -1,4 +1,4 @@
-import * as a from "../../src/site/alibaba.ts";
+import * as a from "../../src/site/1688.ts";
 const run = async (name: string, f: () => Promise<any>) => { try { const v = await f(); console.log("OK ", name, "→", JSON.stringify(v, (k, x) => (typeof x === "string" && x.length > 40 ? x.slice(0, 40) + "…" : x)).slice(0, 400)); return v; } catch (e) { console.log("ERR", name, (e as Error).message); } };
 await run("account", async () => { const u = await a.account(); return { userId: u.userId ? "有" : "无", loginId: u.loginId ? "有" : "无" }; });
 await run("search", async () => { const h = await a.search("登山扣磁铁"); return { n: h.length, first: h[0] }; });

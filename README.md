@@ -2,18 +2,32 @@
 
 x2（小二）帮一个人经营网店：到各个网站上读数据、做事，拿不准的请示掌柜。掌柜是运营本人，她在自己的 Mac 上用 coding agent（Claude）使唤 x2。
 
-只为运营真实的需求做事，抽象是这些需求用到的东西的最大公约数。第一个需求是采购：Shopee 上有人下单，要在出货期限前从 1688 买到对的货，不重买、不漏买。
+只为运营真实的需求做事，抽象是这些需求用到的东西的最大公约数。第一个需求是订单：Shopee 上有人下单，要在出货期限前从 1688 买到对的货、预报给仓老板、打包，不重买、不漏买。
 
 ## 四个概念
 
 | 概念 | 是什么 | 例 |
 |---|---|---|
-| **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块，每个导出的函数是一个操作；读操作另外声明成 `ops`（参数 + 怎么读），命令行直接能用 | `x2 shopee orders`、`x2 1688 offer --id …` |
-| **store** | 存数据：读来的、人给的判断，都是 JSON 文件（`~/x2/`）。计算就是普通的函数 | `store.read("orders")`、`store.append("carted", …)` |
-| **page** | 声明式的网页：agent 写一份 JSON，x2 渲染成网页。`ask` 等人操作、把答案交回 agent；`show` 只展示。常看的存成文件（`views/`），数据写「从哪个命令来」，每次打开都是最新的 | `x2 ask spec.json`、`x2 show buy` |
-| **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步要 ask | `.claude/skills/buy/SKILL.md` |
+| **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `site/writes.ts`，只由 `x2 run` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
+| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准）、写入的记录、站点数据的镜像。表的结构在 `src/db/schema.sql`，x2 建和改；人在 NocoDB 里看和填 | 订单、规格、收件箱、写入 |
+| **循环** | 同步（站点 → 库）→ 检查（算出收件箱和 agent 要做的）→ agent 准备写入、人在收件箱里做和批准 → `x2 run` 执行、读回来 → 下一轮。做完 = 收件箱是空的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 propose`、`x2 run` |
+| **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步等人 | `.claude/skills/orders/SKILL.md` |
 
-人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改网站上的东西（加购、上架、发消息）的命令分两步：先列计划，人在 page 上确认了再做。
+人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报）只有一条路：agent 用 `x2 propose` 写成待批准的写入，人在收件箱里批准，`x2 run` 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
+
+## 推进：x2 status
+
+```sh
+x2 status                      # 同步过期的数据 → 检查 → 更新收件箱 → 数据新不新、收件箱里有什么、agent 能做什么
+x2 status --json               # 给 agent：todo 里有现成的一批写入
+x2 sync orders --force         # 只同步一域：orders 订单（仓老板）、skus 规格（Shopee，一家店一份）、cart 1688 购物车、purchases 采购单
+x2 source 188862745004         # 给一个规格找货源：这个商品用过的 → 以图搜图 → 按规格名打分
+x2 propose < 一批.json          # 写一批待批准的写入；收件箱加一行「批准」
+x2 approve 12                  # 人在终端里说「批准」时，替人勾上
+x2 run                         # 执行批准了的写入
+```
+
+两家店各开一个浏览器（Chrome 的不同用户）：x2 每个连着的浏览器读一次登录着的店和 1688 账号，按店、按账号选。只连着一个浏览器、或要手动选时，用 `X2_BROWSER`。
 
 ## 读站点：x2 <站点> <操作>
 
@@ -28,8 +42,8 @@ x2 schema                                   # 全部操作的说明和参数（J
 ```
 
 - 参数写成 `--名字 值`；日期是台湾时间的 `YYYY-MM-DD`（也可以给秒）；一列值用逗号分隔。
-- 列表（list）默认翻到底，`--pages N` 只翻 N 页，`--cursor <next>` 从上次停下的地方接着翻；输出 `{ rows, next }`，`next` 是 null 就是到底了。page 的表格可以写 `"from": "shopee products --pages 1", "key": "rows"`。
-- 只收读。写不进通用入口：写要先列计划、人在 page 上确认（例 `x2 buy cart`）。
+- 列表（list）默认翻到底，`--pages N` 只翻 N 页，`--cursor <next>` 从上次停下的地方接着翻；输出 `{ rows, next }`，`next` 是 null 就是到底了。
+- 只收读。写不进通用入口：写只经 `x2 propose` → 人批准 → `x2 run`。
 - 逃生口：`x2 shopee raw --path …`、`x2 zhixia raw --path …`，只 GET。
 
 ## 输出约定
@@ -51,54 +65,46 @@ x2 schema                                   # 全部操作的说明和参数（J
 
 5. **字段**：id 一律是字符串（Shopee、1688 的订单号超过 JS 数字的精度）；时间用 ISO 8601。读来的原样字段（`any` 的行）先照站点的样子给，用到时再整理。
 6. **自描述**：`x2 <站点>`、`x2 <站点> <操作> --help`、`x2 schema`。
-7. **读不写文件**：读操作不碰 `~/x2/`。
+7. **读不写库**：读操作不碰库，同步才写。
 
 ## 目录
 
 ```
 x2/
 ├ bin/x2.ts               命令行入口：x2 <命令> …
+├ AGENTS.md               agent 开起来做什么、不许做什么（CLAUDE.md 引它）
+├ docs/                   loop.md 循环怎么转；orders.md 订单；glossary.md 词
 ├ src/
-│ ├ browser.ts            唯一碰 cdp-relay 的地方：选登录着的浏览器、用自己开的标签页、在页面里发请求
+│ ├ browser.ts            唯一碰 cdp-relay 的地方：选浏览器（using）、用自己开的标签页、在页面里发请求
+│ ├ accounts.ts           按店找浏览器：每个浏览器里登录着哪家店、哪个 1688 账号
 │ ├ errors.ts             错误分类和退出码：用法不对、要人处理
 │ ├ site/                 一个站点一个文件（大的一个目录），只管「怎么请求、怎么从响应里取出数据」；各站的接口一览和坑在同目录的 .md
 │ │ ├ op.ts               读操作的声明（get、list）和参数的类型（日期、逗号分隔的一列……）
+│ │ ├ writes.ts           写操作的声明：加购、预报（现读 → 提交 → 读回来），只由 x2 run 执行
 │ │ ├ shopee/             卖家中心：订单、商品和上架、批量上架、收入、售后、经营数据和营销、聊聊、帮助中心（shopee.md）；ops.ts 是它的读操作
-│ │ ├ alibaba.ts          1688：货源、搜索、购物车和加购、采购单、物流
+│ │ ├ 1688.ts             1688：货源、搜索、购物车和加购、采购单、物流
 │ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md 是全部数据接口）
-│ │ └ chanboss.ts         仓老板：入仓单、库存、退件、扣款流水
+│ │ └ chanboss.ts         仓老板：订单、预报、库存、退件、扣款流水（chanboss.md）
+│ ├ db/                   库：连接、schema.sql（建表、加列）、import.ts（把 ~/x2 的 JSON 迁进来，只用一次）
+│ ├ sync/                 同步，一域一个（站点 → 镜像），按 syncs 表的「目标多新」决定读不读
+│ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单），index.ts 读快照、写回收件箱
+│ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
+│ ├ run.ts                x2 run：执行批准了的写入
+│ ├ source.ts             x2 source：选货源
 │ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色
-│ ├ store.ts              读写 ~/x2/*.json：整份覆盖（读来的）、往后加（人给的）
-│ ├ page/
-│ │ ├ spec.ts             page 的声明：组件目录（zod）。渲染不了的声明当场报错给 agent
-│ │ ├ serve.ts            本机起一个页面、打开浏览器；ask 时等提交，把答案打印出来
-│ │ └ web/                渲染声明的网页：index.html + render.ts，不用框架
-│ └ commands/             x2 的子命令，一个文件一组
-│   ├ site.ts             x2 <站点> <操作>、x2 schema：读操作的通用入口
-│   ├ buy.ts              x2 buy：同步订单（order）、采购单、找货源（source）、加进 1688 购物车（cart）
-│   └ page.ts             x2 ask、x2 show
-├ views/                  存下来的 page：buy.json（采购单）……
+│ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、sync、propose、approve、run）、source.ts、db.ts
 ├ .claude/skills/
-│ └ buy/SKILL.md          采购：同步订单 → 采购单 → ask 找货源 → ask 确认加购 → 加进 1688 购物车 → 人付款
-├ test/                   pnpm test 跑的单元测试；live/ 是对真站点跑一遍读取的脚本（手动运行，只打印字段名和条数）
-├ package.json            依赖只有 @wuwe1/cdp-relay、zod
+│ └ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 对采购单 → 预报 → 人打包
+├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
+├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
 ```
 
-数据在 `~/x2/`：
-
-```
-~/x2/
-├ orders.json     读来的：待出货的订单和明细，每次 x2 buy order 整份覆盖
-├ offers.json     读来的：1688 货源和它的规格
-├ sources.json    人给的：Shopee 的一个 SKU → 1688 一家货源的一个规格，只往后加
-├ carted.json     做过的：加进 1688 购物车的订单行（订单号 + SKU），只往后加
-└ zhixia-usage.json  知虾最近一小时的请求时间：限流用，几个 x2 进程共用
-```
+数据都在库里。本机只留一个文件：`~/x2/zhixia-usage.json`（知虾最近一小时的请求时间，限流用，几个 x2 进程共用）。凭证（库的密码）在环境变量里。
 
 ## 先例
 
 - site：一个站点的操作写成代码，不写成声明。写代码的是 agent，直接写函数最简单、出错最好查。
-- page：Vercel 的 json-render（组件目录当护栏）、MCP 的 elicitation（向用户要结构化输入）、LangGraph 的 interrupt（流程停下等人）。
+- 循环：Kubernetes 的 controller（按状态触发，不按事件）；lilto 的「做完 = 某个视图为空」「读取的频率是目标，不是任务」。
 - skill：Claude 的 skill。
 - 前身是 lilto（`~/Developer/lilto`），现在只当资料：Shopee、1688、聊聊的接口和 cdp-relay 的坑都记在那里。

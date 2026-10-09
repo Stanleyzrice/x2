@@ -7,8 +7,8 @@
 import { z } from "zod";
 import { in1688 } from "../accounts.ts";
 import type { Sql } from "../db/index.ts";
-import { fetchOffer } from "../sync/alibaba.ts";
-import { account as alibabaAccount, addToCart, cart as readCart, type CartLine } from "./alibaba.ts";
+import { fetchOffer } from "../sync/1688.ts";
+import { account as alibabaAccount, addToCart, cart as readCart, type CartLine } from "./1688.ts";
 import { forecast, NO_TRACKING, orders as chanbossOrders } from "./chanboss.ts";
 
 export type Submitted = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };

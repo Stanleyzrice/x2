@@ -5,7 +5,7 @@
 // orders.json 不迁：x2 sync 重新同步
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Offer } from "../site/alibaba.ts";
+import type { Offer } from "../site/1688.ts";
 import type { Sql } from "./index.ts";
 
 type Spec = { kind: "spec"; modelId: string; offerId: string; skuId: string; at: string };

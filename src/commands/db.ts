@@ -1,7 +1,7 @@
 // x2 db：库。x2 db migrate 建表、加列（每个命令第一次用库时也会跑）；x2 db import 把 ~/x2 的 JSON 迁进库（只用一次）
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { account } from "../site/alibaba.ts";
+import { account } from "../site/1688.ts";
 import { db } from "../db/index.ts";
 import { importJson } from "../db/import.ts";
 import { Usage } from "../errors.ts";
