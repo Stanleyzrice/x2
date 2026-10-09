@@ -196,3 +196,10 @@ test("买家取消、货已经买了：退款进度 x2 读得到，退成了就�
 	assert.match(bought({ status: "refundclose", label: "退款关闭", kind: "退货退款" }), /没退成/);
 	assert.equal(bought({ status: "refundsuccess", label: "退款成功", kind: "退货退款" }), "");
 });
+
+test("1688 付了款，过了 48 小时还没发货：给人催", () => {
+	const waiting = { ...purchase(3), status: "waitsellersend", paidAt: hours(-50) };
+	const r = checkOrders(snap({ writes: [cartWrite()], purchases: [waiting] }));
+	assert.match(r.inbox.find((i) => i.key === "unshipped:P1")!.title, /付款 52 小时了还没发货（订单 1、2）/);
+	assert.equal(checkOrders(snap({ purchases: [{ ...waiting, paidAt: hours(-10) }] })).inbox.find((i) => i.kind === "没发货"), undefined);
+});

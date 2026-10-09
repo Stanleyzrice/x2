@@ -15,7 +15,8 @@ export type Write = { id: string; batch: string; op: string; status: string; par
 /** 到货问题：人在 NocoDB 的表单里报的、还没处理好的（错货、少件、坏了……） */
 export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
 /** buyAccount：采购账号（1688 userId），x2 只往它加购 */
-export type Settings = { lateDays: number; channel: string; buyAccount: string | null };
+/** shipWaitHours：1688 付了款多久还没发货算异常 */
+export type Settings = { lateDays: number; channel: string; buyAccount: string | null; shipWaitHours?: number };
 
 export type Snapshot = {
 	now: Date; settings: Settings; orders: Order[]; skus: Map<string, Sku>; offers: Map<string, Offer>; options: Option[];
@@ -317,6 +318,26 @@ export function checkOrders(s: Snapshot): Result {
 				...(not.length ? ["", "付款前先删掉这些（不该买）：", ...not.map(([k, r]) => `${k.split("|").slice(1).join(" / ")}：${r.shouldBuy}`)] : []),
 				"", "付完在 agent 里说「我付好了」",
 			].join("\n"),
+		});
+	}
+
+	// ── 1688 付了款，过了 N 小时还没发货：给人催（最近 30 天付款的；退款了、关了的不算） ──
+	const waitMs = (s.settings.shipWaitHours ?? 48) * 3600_000;
+	const late = new Map<string, Purchase[]>();
+	for (const p of s.purchases) {
+		if (p.status !== "waitsellersend" || p.refund || !p.paidAt) continue;
+		const age = s.now.getTime() - p.paidAt.getTime();
+		if (age < waitMs || age > 30 * DAY) continue;
+		late.set(p.orderId, [...(late.get(p.orderId) ?? []), p]);
+	}
+	for (const [orderId, ps] of late) {
+		const sns = [...new Set(lines.filter((l) => l.purchases.some((b) => b.orderId === orderId)).map((l) => l.sn))];
+		const hours = Math.floor((s.now.getTime() - ps[0]!.paidAt!.getTime()) / 3600_000);
+		const due = sns.map((sn) => s.orders.find((o) => o.sn === sn)?.shipBy).filter((d): d is Date => Boolean(d)).sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+		inbox.push({
+			key: `unshipped:${orderId}`, kind: "没发货", shop: null, due, link: BUYER_ORDERS,
+			title: `没发货：1688 采购单 ${orderId} 付款 ${hours} 小时了还没发货${sns.length ? `（订单 ${sns.join("、")}）` : ""}`,
+			detail: `${ps.map((p) => `${p.offerId} / ${p.offerSkuId ?? ""} × ${p.qty}`).join("\n")}\n找卖家催发货；催不动就退款换一家（x2 会重新准备加购）`,
 		});
 	}
 

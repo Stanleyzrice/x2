@@ -6,7 +6,7 @@
 
 export type CartWrite = { id: string; account: string; offerId: string; skuId: string; at: Date; lines: { sn: string; modelId: string; qty: number }[] };
 export type Purchase = {
-	account: string; orderId: string; offerId: string; offerSkuId: string | null; qty: number; createdAt: Date | null;
+	account: string; orderId: string; offerId: string; offerSkuId: string | null; qty: number; createdAt: Date | null; paidAt?: Date | null;
 	/** 这一行的状态：waitsellersend 待发货、waitbuyerreceive 已发货、success 已收货、cancel 交易关闭…… */
 	status: string;
 	toChanboss: boolean | null; trackingNo: string | null; signed: boolean;

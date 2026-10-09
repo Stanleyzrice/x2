@@ -141,7 +141,7 @@ export function tables(lateDays: number): Table[] {
 		{
 			name: "order_settings", title: "订单设置",
 			columns: {
-				buy_account: "采购账号（1688 userId）", late_days: "快到期提前几天", forecast_needs_approval: "预报要批准", channel: "发货线路", chanboss_address: "chanboss 的收货地址",
+				buy_account: "采购账号（1688 userId）", late_days: "快到期提前几天", ship_wait_hours: "付款后几小时没发货算异常", forecast_needs_approval: "预报要批准", channel: "发货线路", chanboss_address: "chanboss 的收货地址",
 				sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id",
 			},
 			views: [{ title: "设置", hide: ["id"] }],

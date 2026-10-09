@@ -300,3 +300,7 @@ alter table purchases add column if not exists refund_label text;
 alter table purchases add column if not exists refund_kind text;
 alter table purchases add column if not exists refund_amount numeric;
 alter table purchases add column if not exists return_tracking_no text;
+
+-- 2026-10-09：1688 付了款多久还没发货算异常（小时），进收件箱给人催
+alter table order_settings add column if not exists ship_wait_hours int not null default 48;
+insert into inbox_roles (kind, role) values ('没发货', '运营') on conflict do nothing;

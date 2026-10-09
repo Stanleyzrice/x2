@@ -11,6 +11,7 @@ function depends(kind: string, key: string): [string, string | null][] {
 		case "打包": return [["orders", null], ["purchases", null]];
 		case "取消": return key.startsWith("cancel-goods:") ? [["orders", null], ["purchases", null]] : [["orders", null], ["cart", null]];
 		case "快到期": case "问题单": case "选货源": return [["orders", null]];
+		case "没发货": return [["purchases", null]];
 		default: return [];
 	}
 }
@@ -30,7 +31,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 	const issues = await sql`select id::text, sn, item, kind, qty, note, resolution from arrival_issues where not done order by id`;
 	return {
 		now: new Date(),
-		settings: { lateDays: Number(settings!.late_days), channel: settings!.channel, buyAccount: settings!.buy_account },
+		settings: { lateDays: Number(settings!.late_days), channel: settings!.channel, buyAccount: settings!.buy_account, shipWaitHours: Number(settings!.ship_wait_hours ?? 48) },
 		orders: orders.map((o) => ({
 			sn: o.sn, shop: o.shop, createdAt: o.created_at, shipBy: o.ship_by, platformStatus: o.platform_status ?? "", chanbossStatus: o.chanboss_status ?? "", chanbossId: o.chanboss_id,
 			chanbossTime: Number(o.chanboss_time), items: o.items, problem: o.problem, cancelledAt: o.cancelled_at,
@@ -40,7 +41,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 		options: options.map((r) => ({ modelId: r.model_id, offerId: r.offer_id, skuId: r.offer_sku_id, sure: r.sure, chosen: r.chosen })),
 		writes: writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })),
 		purchases: purchases.map((p) => ({
-			account: p.account, orderId: p.order_id, offerId: p.offer_id, offerSkuId: p.offer_sku_id, qty: Number(p.qty), createdAt: p.created_at, status: p.status ?? "",
+			account: p.account, orderId: p.order_id, offerId: p.offer_id, offerSkuId: p.offer_sku_id, qty: Number(p.qty), createdAt: p.created_at, paidAt: p.paid_at, status: p.status ?? "",
 			toChanboss: p.to_chanboss, trackingNo: p.tracking_no, signed: p.signed,
 			refund: p.refund_status ? { status: p.refund_status, label: p.refund_label ?? "", kind: p.refund_kind } : null,
 		})),
