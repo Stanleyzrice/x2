@@ -61,13 +61,3 @@
 | 商品稿 | 还没建到 Shopee 上的商品：标题、图、规格、价格…… | 草稿、刊登稿 |
 | 核价 | 按货源价和店铺参数算利润、求售价 | — |
 | 备货天数 | Shopee 商品要几天内出货；预购的才能设长 | — |
-
-## 代码里还没改的名字
-
-做第一阶段时一起改：
-
-- `x2 buy` 拆成 `x2 sync`、`x2 status`、`x2 source` 和加购写入（见 [loop.md](loop.md)「命令」）；skill `buy` 改名 `orders`；`views/buy.json`（「采购单」页面）删掉。
-- README 的四个概念：page 删掉；store 改成库；加上收件箱、写入、同步、检查。
-- `src/site/alibaba.ts` 改名 `src/site/1688.ts`：命令和 `test/live/1688.ts` 都叫 1688。
-- 仓老板几个读操作的说明：「入仓单」改成「订单」，「仓库」改成「仓老板」。
-- `buy.ts`、README 里的「SKU」改成「规格」，「对照」改成「货源」。
