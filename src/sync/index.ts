@@ -9,8 +9,8 @@ import { syncSkus } from "./skus.ts";
 
 export type Domain = {
 	describe: string;
-	/** 目标多新（Postgres 的 interval） */
-	maxAge: string;
+	/** 目标多新（分钟）：写进 syncs 的默认值，人可以在 NocoDB 里改 */
+	maxMinutes: number;
 	/** 要读的几份：店铺 id、1688 账号；只有一份是 [""] */
 	scopes: (sql: Sql) => Promise<string[]>;
 	run: (sql: Sql, scope: string) => Promise<number>;
@@ -23,14 +23,14 @@ async function accounts(sql: Sql): Promise<string[]> {
 }
 
 export const DOMAINS: Record<string, Domain> = {
-	orders: { describe: "订单（仓老板，两家店）", maxAge: "20 minutes", scopes: async () => [""], run: (sql) => syncOrders(sql) },
+	orders: { describe: "订单（仓老板，两家店）", maxMinutes: 20, scopes: async () => [""], run: (sql) => syncOrders(sql) },
 	skus: {
-		describe: "规格（Shopee 在售商品，一家店一份）", maxAge: "1 day",
+		describe: "规格（Shopee 在售商品，一家店一份）", maxMinutes: 1440,
 		scopes: async (sql) => (await sql`select shop_id from shops where enabled order by shop_id`).map((r) => r.shop_id as string),
 		run: (sql, shopId) => syncSkus(sql, shopId),
 	},
-	cart: { describe: "1688 购物车（一个账号一份）", maxAge: "20 minutes", scopes: accounts, run: syncCart },
-	purchases: { describe: "1688 采购单和物流（一个账号一份）", maxAge: "30 minutes", scopes: accounts, run: (sql, a) => syncPurchases(sql, a) },
+	cart: { describe: "1688 购物车（一个账号一份）", maxMinutes: 20, scopes: accounts, run: syncCart },
+	purchases: { describe: "1688 采购单和物流（一个账号一份）", maxMinutes: 30, scopes: accounts, run: (sql, a) => syncPurchases(sql, a) },
 };
 
 export type Result = { name: string; scope: string; result: "成功" | "失败" | "没读"; rows?: number; error?: string; blocked?: boolean };
@@ -47,8 +47,8 @@ export async function sync(sql: Sql, opts: { only?: string[]; force?: boolean; s
 			scopes = scopes.filter((x) => x === s?.shop_id);
 		}
 		for (const scope of scopes) {
-			await sql`insert into syncs (name, scope, max_age) values (${name}, ${scope}, ${d.maxAge}::interval) on conflict do nothing`;
-			const [row] = await sql`select (last_ok_at is null or last_ok_at < now() - max_age or result is distinct from '成功') as stale from syncs where name = ${name} and scope = ${scope}`;
+			await sql`insert into syncs (name, scope, max_minutes) values (${name}, ${scope}, ${d.maxMinutes}) on conflict do nothing`;
+			const [row] = await sql`select (last_ok_at is null or last_ok_at < now() - make_interval(mins => max_minutes) or result is distinct from '成功') as stale from syncs where name = ${name} and scope = ${scope}`;
 			if (!opts.force && !row!.stale) { out.push({ name, scope, result: "没读" }); continue; }
 			console.error(`同步 ${name}${scope ? ` ${scope}` : ""}`);
 			try {

@@ -84,7 +84,7 @@ export function tables(lateDays: number): Table[] {
 		},
 		{
 			name: "syncs", title: "同步",
-			columns: { name: "读什么", scope: "店铺或账号", last_ok_at: "上次读到", result: "结果", error: "原因", blocked: "要人处理", max_age: "目标多新", last_at: "上次读", rows: "行数", host: "电脑" },
+			columns: { name: "读什么", scope: "店铺或账号", last_ok_at: "上次读到", result: "结果", error: "原因", blocked: "要人处理", max_minutes: "目标多新（分钟）", last_at: "上次读", rows: "行数", host: "电脑" },
 			views: [{ title: "数据新不新", sorts: [["last_ok_at", "asc"]] }],
 		},
 		{

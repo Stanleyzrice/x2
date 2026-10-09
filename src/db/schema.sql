@@ -220,11 +220,11 @@ create table if not exists writes (
 create index if not exists writes_key on writes (key);
 create index if not exists writes_batch on writes (batch);
 
--- 同步：一样要同步的东西。max_age 是目标多新；result 是上次的结果：成功、部分、失败
+-- 同步：一样要同步的东西。max_minutes 是目标多新（分钟，人在 NocoDB 里能改）；result 是上次的结果：成功、部分、失败
 create table if not exists syncs (
 	name text not null,
 	scope text not null default '',
-	max_age interval not null,
+	max_minutes int not null,
 	last_at timestamptz,
 	last_ok_at timestamptz,
 	result text,
@@ -237,3 +237,13 @@ create table if not exists syncs (
 );
 
 -- ── 加列（表建好以后加的列写在这里） ──
+
+-- 2026-10-09：syncs.max_age（interval，NocoDB 显示成 [object Object]）换成 max_minutes（分钟）
+do $$ begin
+	if exists (select 1 from information_schema.columns where table_name = 'syncs' and column_name = 'max_age') then
+		alter table syncs add column if not exists max_minutes int;
+		update syncs set max_minutes = extract(epoch from max_age)::int / 60;
+		alter table syncs alter column max_minutes set not null;
+		alter table syncs drop column max_age;
+	end if;
+end $$;

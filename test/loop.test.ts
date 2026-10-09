@@ -89,7 +89,7 @@ test("收件箱：每轮重算，只更新不重复；同步读全了才关", { 
 	const soon = new Date(Date.now() + 86400_000);
 	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
 		values ('S1', 'ni1206', ${soon}, '待出货', '已预报', 'c1', 1, ${db.json([{ itemId: "I", modelId: "M", chanbossModelId: "cM", name: "红T", spec: "L", qty: 1, image: "" }])}, now())`;
-	await db`insert into syncs (name, scope, max_age, result) values ('orders', '', '20 minutes', '成功')`;
+	await db`insert into syncs (name, scope, max_minutes, result) values ('orders', '', 20, '成功')`;
 	await check(db);
 	await check(db);
 	const open = await db`select key, open from inbox where key = 'late:S1'`;
