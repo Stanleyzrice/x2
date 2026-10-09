@@ -194,8 +194,24 @@ export async function addToCart(offerId: string, specId: string, quantity: numbe
 export type BuyerOrder = {
 	orderId: string; status: string; statusLabel: string; createdAt: string; paidAt: number | null;
 	goods: number; freight: number; discount: number; paid: number;
+	/** 收货地址：还没有真的采购单核对过字段（2026-10-09），从名字带 address、addr、receiver 的字段里找；找不到是空字符串 */
+	address: string;
 	items: { offerId: string; specId: string; quantity: number; price: number; trackingNo: string; shippedAt: number | null }[];
+	/** 原样的一行：字段核对过以前留着查 */
+	raw: unknown;
 };
+
+/** 在一行采购单里找收货地址：先找名字像地址的字符串字段，再找收货人对象里的 */
+export function addressOf(o: any): string {
+	const found: string[] = [];
+	const walk = (v: any, key: string, depth: number) => {
+		if (depth > 4 || v === null || v === undefined) return;
+		if (typeof v === "string") { if (/address|addr/i.test(key) && v.trim()) found.push(v.trim()); return; }
+		if (typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, /receiver|address|addr/i.test(key) ? `${key}.${k}` : k, depth + 1);
+	};
+	walk(o, "", 0);
+	return found.sort((a, b) => b.length - a.length)[0] ?? "";
+}
 
 const BUYER_ORDERS = "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html";
 
@@ -211,6 +227,7 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 		orderId: String(o.idStr ?? o.id), status: String(o.status ?? ""), statusLabel: String(o.statusLabel ?? ""),
 		createdAt: String(o.gmtCreate ?? ""), paidAt: o.gmtPayment ? Number(o.gmtPayment) : null,
 		goods: yuan(o.sumProductPayment), freight: yuan(o.carriage), discount: yuan(o.allPromotionFee), paid: yuan(o.sumPayment),
+		address: addressOf(o), raw: o,
 		items: ((o.orderEntries ?? []) as any[]).map((e) => ({
 			offerId: String(e.sourceId ?? ""), specId: String(e.specId ?? ""),
 			quantity: Number(e.quantity?.realAmount ?? e.quantity?.calAmount ?? e.quantity ?? 0), price: yuan(e.price),

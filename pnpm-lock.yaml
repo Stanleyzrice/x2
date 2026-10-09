@@ -11,6 +11,9 @@ importers:
       '@wuwe1/cdp-relay':
         specifier: github:wuwe1/cdp-relay#v1.0.0
         version: https://codeload.github.com/wuwe1/cdp-relay/tar.gz/40bb97833c8a92e7d15a48f04e0d847b678e8481
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
       zod:
         specifier: ^4.1.0
         version: 4.6.5
@@ -32,6 +35,10 @@ packages:
     version: 1.0.0
     engines: {node: '>=22.18'}
     hasBin: true
+
+  postgres@3.4.9:
+    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
+    engines: {node: '>=12'}
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
@@ -68,6 +75,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  postgres@3.4.9: {}
 
   typescript@5.9.3: {}
 

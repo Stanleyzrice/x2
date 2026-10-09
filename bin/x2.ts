@@ -2,9 +2,11 @@
 // x2 的命令行：x2 <命令> [参数…] [--json]。--json 给 agent 读，不加给人读。
 // 输出约定：stdout 只放结果；stderr 只放进度、日志；--json 时出错也在 stdout：{ "error": { "kind", "message" } }。
 // 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先回读）
-import { buy } from "../src/commands/buy.ts";
-import { askCommand, showCommand } from "../src/commands/page.ts";
+import { dbCommand } from "../src/commands/db.ts";
+import { approveCommand, proposeCommand, runCommand, status, syncCommand } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
+import { sourceCommand } from "../src/commands/source.ts";
+import { close } from "../src/db/index.ts";
 import { EXIT, kindOf, Usage } from "../src/errors.ts";
 
 const argv = process.argv.slice(2);
@@ -12,21 +14,29 @@ const json = argv.includes("--json");
 const [cmd, ...args] = argv.filter((a) => a !== "--json");
 
 const commands: Record<string, () => Promise<void>> = {
-	ask: () => askCommand(args[0]),
-	show: () => showCommand(args[0]),
-	buy: () => buy(args, json),
+	status: () => status(args, json),
+	sync: () => syncCommand(args, json),
+	propose: () => proposeCommand(args, json),
+	approve: () => approveCommand(args, json),
+	run: () => runCommand(args, json),
+	source: () => sourceCommand(args, json),
+	db: () => dbCommand(args, json),
 	schema: async () => schema(),
 };
 
 const help = [
 	"x2 <命令> [参数…] [--json]",
+	"推进（见 docs/loop.md）：",
+	"  x2 status [--no-sync]          同步过期的数据 → 检查 → 更新收件箱 → 说要做什么",
+	"  x2 sync [域…] [--shop 店] [--force]  同步：orders 订单、skus 规格、cart 1688 购物车、purchases 采购单；给了域就不管过没过期",
+	"  x2 propose < 一批.json          写一批待批准的写入（x2 status --json 的 todo 里有现成的）；收件箱加一行「批准」",
+	"  x2 approve <批次>               替人勾「批准」（人在终端里说了批准时）",
+	"  x2 run [--batch N] [--try 操作]  执行批准了的写入：先核清结果未知的，再一个一个做、读回来",
+	"  x2 source [规格…] [--url 链接]   给规格找货源；不给规格就找检查算出来缺的",
+	"  x2 db migrate | import          建表；把 ~/x2 的 JSON 迁进库（只用一次）",
 	"读站点（只读）：",
 	...sitesHelp(),
 	"  x2 schema  全部站点操作的说明和参数（JSON Schema）",
-	"做事：",
-	"  x2 buy …       采购：x2 buy order 同步订单、x2 buy 采购单、x2 buy source 找货源、x2 buy cart 加进 1688 购物车",
-	"  x2 ask <声明>  渲染一个 page，等人提交，打印答案",
-	"  x2 show <声明> 渲染一个 page，只看",
 	"退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先回读）",
 ].join("\n");
 
@@ -41,4 +51,6 @@ try {
 	if (json) console.log(JSON.stringify({ error: { kind, message } }));
 	else console.error(message);
 	process.exitCode = EXIT[kind];
+} finally {
+	await close();
 }

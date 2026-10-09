@@ -1,6 +1,8 @@
 // 唯一碰 cdp-relay 的地方：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
 // 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
-// 连着几个浏览器时用 X2_BROWSER（浏览器在 cdp-relay 扩展里的名字或 id）选一个；只连着一个时不用设。
+// 连着几个浏览器时（一家店一个浏览器）：按店找浏览器的代码用 using() 指定在哪个里做（见 accounts.ts）；
+// 不在 using() 里时用 X2_BROWSER（浏览器在 cdp-relay 扩展里的名字或 id）；只连着一个时不用选。
+import { AsyncLocalStorage } from "node:async_hooks";
 import { RelayClient, type TabInfo } from "@wuwe1/cdp-relay";
 import { NeedsHuman, Usage } from "./errors.ts";
 
@@ -13,11 +15,23 @@ export type Page = {
 	goto(url: string): Promise<void>;
 };
 
+const chosen = new AsyncLocalStorage<string>();
+
+/** 在这个浏览器（cdp-relay 里的 id）里做 fn：fn 里的 page() 都开在它里面 */
+export const using = <T>(browser: string, fn: () => Promise<T>): Promise<T> => chosen.run(browser, fn);
+
+/** 连着的浏览器 */
+export async function browsers(): Promise<{ id: string; label: string }[]> {
+	const all = await new RelayClient({}).browsers().catch(() => { throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？"); });
+	return all.map((b) => ({ id: b.id, label: b.label }));
+}
+
 async function client(): Promise<RelayClient> {
-	const browser = process.env.X2_BROWSER;
+	const browser = chosen.getStore() ?? process.env.X2_BROWSER;
 	const c = new RelayClient(browser ? { browser } : {});
 	const all = await c.browsers().catch(() => { throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？"); });
 	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 cdp-relay 扩展已连接");
+	if (browser && !all.some((b) => b.id === browser || b.label === browser)) throw new NeedsHuman(`浏览器 ${browser} 没有连着：打开它，确认 cdp-relay 扩展已连接`);
 	if (all.length > 1 && !browser) throw new Usage(`连着 ${all.length} 个浏览器，用 X2_BROWSER 选一个：${all.map((b) => b.label || b.id).join("、")}`);
 	return c;
 }

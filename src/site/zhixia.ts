@@ -7,7 +7,9 @@ import { z } from "zod";
 import { page } from "../browser.ts";
 import { NeedsHuman } from "../errors.ts";
 import { all, byPage, get, ints, num, type Ops, parseJson, str } from "./op.ts";
-import * as store from "../store.ts";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const ORIGIN = "https://shopee.mobduos.com";
 const PRO = "/api/shopee-report-service/pro";
@@ -15,9 +17,24 @@ const GAP_MS = 6000, JITTER_MS = 4000, PER_HOUR = 200;
 
 type Usage = { calls: string[] };
 
+// 次数记在本机的文件里（不进库：这是本机这个浏览器的限流，不是店里的数据）。X2_HOME 可以改目录
+const USAGE = join(process.env.X2_HOME ?? join(homedir(), "x2"), "zhixia-usage.json");
+
+async function readUsage(): Promise<Usage> {
+	const text = await readFile(USAGE, "utf8").catch((e: NodeJS.ErrnoException) => { if (e.code === "ENOENT") return null; throw e; });
+	return text === null ? { calls: [] } : (JSON.parse(text) as Usage);
+}
+
+/** 先写临时文件再改名：写到一半进程挂了，原来的文件还在 */
+async function writeUsage(u: Usage): Promise<void> {
+	await mkdir(join(USAGE, ".."), { recursive: true });
+	await writeFile(`${USAGE}.tmp`, `${JSON.stringify(u)}\n`);
+	await rename(`${USAGE}.tmp`, USAGE);
+}
+
 /** 等到可以再发一次：离上一次够 6～10 秒、这一小时没满 200 次；记下这一次 */
 async function throttle(): Promise<void> {
-	const usage = await store.read<Usage>("zhixia-usage", { calls: [] });
+	const usage = await readUsage();
 	const now = Date.now();
 	const recent = usage.calls.filter((t) => now - Date.parse(t) < 3_600_000);
 	if (recent.length >= PER_HOUR) {
@@ -27,7 +44,7 @@ async function throttle(): Promise<void> {
 	const last = recent.at(-1);
 	const wait = last ? Date.parse(last) + GAP_MS + Math.random() * JITTER_MS - now : 0;
 	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-	await store.write("zhixia-usage", { calls: [...recent, new Date().toISOString()] });
+	await writeUsage({ calls: [...recent, new Date().toISOString()] });
 }
 
 /** x2 打开知虾标签页时要落在工作台页面上（有 webpackJsonp），不是随便一页 */
