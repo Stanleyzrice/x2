@@ -260,17 +260,22 @@ export function checkOrders(s: Snapshot): Result {
 			if (due && due < s.now) where = null;
 		} else if (o.chanbossStatus === "已到齐") { where = "货在 chanboss 仓库"; what = "给新订单用（合并发货），或者退回卖家"; }
 		else if (bought.length) {
+			// 退款：进行中的写出走到哪一步（x2 看得到，退成了这一行自己关）；关闭了是没退成，要人再处理
+			const refunds = bought.flatMap((x) => x.line!.purchases.map((p) => p.refund)).filter((r): r is NonNullable<typeof r> => Boolean(r));
+			const closedRefund = refunds.find((r) => r.status === "refundclose");
+			const going = refunds.find((r) => r.status !== "refundclose" && r.status !== "refundsuccess");
 			const shipped = bought.some((x) => x.line!.purchases.some((p) => p.status !== "waitsellersend"));
-			where = shipped ? "1688 已经发货" : "付了款，1688 还没发货";
-			what = shipped ? "退回 1688 卖家" : "在 1688 申请退款";
+			if (going && !closedRefund) { where = `${going.kind ?? "退款"}进行中`; what = going.label || "退款中"; }
+			else if (closedRefund) { where = "退款关闭了（没退成）"; what = "重新申请，或者定去处"; }
+			else { where = shipped ? "1688 已经发货" : "付了款，1688 还没发货"; what = shipped ? "退回 1688 卖家" : "在 1688 申请退款"; }
 		}
 		if (where) inbox.push({
 			key: `cancel-goods:${o.sn}`, kind: "取消", shop: o.shop, due, link: isPacked(o) || o.chanbossStatus === "已到齐" ? CHANBOSS_ORDERS : BUYER_ORDERS,
 			title: `取消：订单 ${o.sn} 取消了，${where}，${what}`,
 			detail: [
 				...o.items.map((i) => `${label(i)} × ${i.qty}`),
-				...bought.map((x) => `采购单 ${x.line!.purchases.map((p) => p.orderId).join("、")}：${label(x.i)} × ${x.line!.paidQty}${x.line!.outside ? "（在 x2 外面买的）" : ""}`),
-				"", "做完在这一行勾「处理好了」",
+				...bought.map((x) => `采购单 ${x.line!.purchases.map((p) => `${p.orderId}${p.refund ? `（${p.refund.kind ?? "退款"}：${p.refund.label}）` : ""}`).join("、")}：${label(x.i)} × ${x.line!.paidQty}${x.line!.outside ? "（在 x2 外面买的）" : ""}`),
+				"", bought.length ? "退款、退货的进度 x2 读得到：退成了这一行自己关" : "做完在这一行勾「处理好了」",
 			].join("\n"),
 		});
 	}

@@ -187,3 +187,12 @@ test("取消的货到了台湾：过了 30 天就不再提醒", () => {
 	const fresh = { ...o, cancelledAt: hours(-24 * 3) };
 	assert.ok(checkOrders(snap({ orders: [fresh] })).inbox.find((i) => i.key === "cancel-goods:1"));
 });
+
+test("买家取消、货已经买了：退款进度 x2 读得到，退成了就不再提醒", () => {
+	const o = order("1", 1, { platformStatus: "不成立", cancelledAt: hours(1) });
+	const bought = (refund: any) => checkOrders(snap({ orders: [o], purchases: [{ ...purchase(1), status: "waitbuyerreceive", refund }] })).inbox.find((i) => i.key === "cancel-goods:1")?.title ?? "";
+	assert.match(bought(null), /退回 1688 卖家/);
+	assert.match(bought({ status: "waitbuyersend", label: "退款协议达成，等待买家退货", kind: "退货退款" }), /退货退款进行中，退款协议达成，等待买家退货/);
+	assert.match(bought({ status: "refundclose", label: "退款关闭", kind: "退货退款" }), /没退成/);
+	assert.equal(bought({ status: "refundsuccess", label: "退款成功", kind: "退货退款" }), "");
+});

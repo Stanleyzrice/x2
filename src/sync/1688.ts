@@ -1,7 +1,7 @@
 // 同步 1688：购物车、采购单（带物流），一个 1688 账号一份（在登录着那个账号的浏览器里读）。
 // 货源不按时同步：x2 source、x2 run 用到哪家现读哪家，读到的存进 offers（下架的记 live = false）
 import { in1688 } from "../accounts.ts";
-import { type BuyerOrder, buyerOrders, cart as readCart, Gone, type Offer, offer as readOffer, traces } from "../site/1688.ts";
+import { type BuyerOrder, buyerOrders, cart as readCart, Gone, type Offer, offer as readOffer, type Refund, refund as readRefund, traces } from "../site/1688.ts";
 import type { Sql } from "../db/index.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -57,18 +57,30 @@ export async function syncCart(sql: Sql, account: string): Promise<number> {
 /** 1688 的物流状态里有「签收」就算签收了 */
 export const signedOf = (status: string) => /签收/.test(status);
 
-/** 采购单读最近 3 页（150 张，新的在前）；有快递单号的再读物流 */
+/** 退款粗状态是终态时的中文（进行中的读详情才有细状态和中文） */
+const REFUND_DONE: Record<string, string> = { refundsuccess: "退款成功", refundclose: "退款关闭" };
+
+/** 采购单读最近 3 页（150 张，新的在前），再加上「退款售后」里的（有进行中退款的，可能是更早的采购单）；有快递单号的再读物流；
+ * 有进行中退款的行再读退款详情（细状态、退货运单号）。退款结束了（成功、关闭）只记粗状态，不再读详情 */
 export async function syncPurchases(sql: Sql, account: string, pages = 3): Promise<number> {
-	const { orders, trace } = await in1688(account, async () => {
-		const orders: BuyerOrder[] = [];
+	const { orders, trace, refunds } = await in1688(account, async () => {
+		const byId = new Map<string, BuyerOrder>();
 		for (let n = 1; n <= pages; n++) {
 			const r = await buyerOrders(n);
-			orders.push(...r.rows);
+			for (const o of r.rows) byId.set(o.orderId, o);
 			if (n >= r.pages || r.rows.length === 0) break;
 		}
+		for (const o of (await buyerOrders(1, 50, "dispute")).rows) byId.set(o.orderId, o);
+		const orders = [...byId.values()];
 		const shipped = orders.filter((o) => o.items.some((i) => i.trackingNo));
 		const trace = new Map((await traces(shipped.map((o) => ({ orderId: o.orderId, trackingNos: o.items.map((i) => i.trackingNo).filter(Boolean) })))).map((t) => [t.orderId, t]));
-		return { orders, trace };
+		const refunds = new Map<string, Refund>();
+		const open = new Map(orders.flatMap((o) => o.items).filter((i) => i.refund && !REFUND_DONE[i.refund.status]).map((i) => [i.refund!.id, i.refund!.stage]));
+		for (const [id, stage] of open) {
+			await sleep(1500);
+			refunds.set(id, await readRefund(id, stage));
+		}
+		return { orders, trace, refunds };
 	});
 	const { chanboss_address } = (await sql`select chanboss_address from order_settings where id = 1`)[0]!;
 	// 1688 规格：采购单上只有 specId，按货源里的规格换成 skuId（只有一个规格的货源 specId 是空的，skuId 是货源 id）
@@ -85,18 +97,26 @@ export async function syncPurchases(sql: Sql, account: string, pages = 3): Promi
 				const logistics = t?.traces.find((x) => x.trackingNo === i.trackingNo)?.status ?? null;
 				// 签收了：这一行 1688 上是「已收货」、收了件，或者物流里有「签收」
 				const signed = i.status === "success" || i.received >= i.quantity || (logistics !== null && signedOf(logistics));
+				const r = i.refund ? refunds.get(i.refund.id) : undefined;
 				await tx`
 					insert into purchases ${tx({
 						order_id: o.orderId, line, account, offer_id: i.offerId, spec_id: i.specId, offer_sku_id: skuId, qty: i.quantity, price: i.price, paid: o.paid,
 						status: i.status || o.status, status_label: i.statusLabel || o.statusLabel, created_at: date(o.createdAt), paid_at: date(o.paidAt),
 						address: o.address, to_chanboss: chanboss_address && o.address ? o.address.includes(chanboss_address) : null,
 						tracking_no: i.trackingNo || null, shipped_at: date(i.shippedAt), logistics, signed,
+						refund_id: i.refund?.id ?? null, refund_stage: i.refund?.stage ?? null, refund_status: r?.status ?? i.refund?.status ?? null,
+						refund_label: r?.statusLabel ?? (i.refund ? REFUND_DONE[i.refund.status] ?? "退款中" : null), refund_kind: r?.kind ?? null, refund_amount: r?.amount ?? null,
+						return_tracking_no: r?.returnTrackingNo ?? null,
 						raw: tx.json(o.raw as any), synced_at: at,
 					})}
 					on conflict (order_id, line) do update set
 						offer_sku_id = excluded.offer_sku_id, qty = excluded.qty, price = excluded.price, paid = excluded.paid, status = excluded.status, status_label = excluded.status_label,
 						paid_at = excluded.paid_at, address = excluded.address, to_chanboss = excluded.to_chanboss, tracking_no = excluded.tracking_no, shipped_at = excluded.shipped_at,
-						logistics = excluded.logistics, signed = excluded.signed, raw = excluded.raw, synced_at = excluded.synced_at`;
+						logistics = excluded.logistics, signed = excluded.signed, raw = excluded.raw, synced_at = excluded.synced_at,
+						refund_id = excluded.refund_id, refund_stage = excluded.refund_stage, refund_status = excluded.refund_status, refund_label = excluded.refund_label,
+						-- 退款结束以后不再读详情：类型、金额、退货运单号留着上次读到的
+						refund_kind = coalesce(excluded.refund_kind, purchases.refund_kind), refund_amount = coalesce(excluded.refund_amount, purchases.refund_amount),
+						return_tracking_no = coalesce(excluded.return_tracking_no, purchases.return_tracking_no)`;
 			}
 		}
 	});

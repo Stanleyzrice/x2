@@ -290,3 +290,13 @@ create table if not exists arrival_issues (
 	done_at timestamptz
 );
 insert into inbox_roles (kind, role) values ('到货问题', '运营') on conflict do nothing;
+
+-- 2026-10-09：采购单每一行的退款。refund_status 是退款单的细状态（waitselleragree、waitbuyermodify、waitbuyersend、waitsellerreceive、refundsuccess、refundclose），
+-- 进行中的读详情才知道细状态；refund_label 是 1688 的中文；refund_kind：仅退款、退货退款、换货、补寄
+alter table purchases add column if not exists refund_id text;
+alter table purchases add column if not exists refund_stage text;
+alter table purchases add column if not exists refund_status text;
+alter table purchases add column if not exists refund_label text;
+alter table purchases add column if not exists refund_kind text;
+alter table purchases add column if not exists refund_amount numeric;
+alter table purchases add column if not exists return_tracking_no text;

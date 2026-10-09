@@ -42,6 +42,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 		purchases: purchases.map((p) => ({
 			account: p.account, orderId: p.order_id, offerId: p.offer_id, offerSkuId: p.offer_sku_id, qty: Number(p.qty), createdAt: p.created_at, status: p.status ?? "",
 			toChanboss: p.to_chanboss, trackingNo: p.tracking_no, signed: p.signed,
+			refund: p.refund_status ? { status: p.refund_status, label: p.refund_label ?? "", kind: p.refund_kind } : null,
 		})),
 		cart: cart.map((c) => ({ account: c.account, offerId: c.offer_id, skuId: c.offer_sku_id, qty: Number(c.qty) })),
 		accounts: new Map(accounts.map((a) => [a.user_id, a.login_id ?? a.user_id])),

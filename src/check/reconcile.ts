@@ -10,12 +10,14 @@ export type Purchase = {
 	/** 这一行的状态：waitsellersend 待发货、waitbuyerreceive 已发货、success 已收货、cancel 交易关闭…… */
 	status: string;
 	toChanboss: boolean | null; trackingNo: string | null; signed: boolean;
+	/** 这一行的退款：细状态（refundsuccess、refundclose、waitbuyersend……）、1688 的中文、类型（仅退款、退货退款……）；没有是 null */
+	refund?: { status: string; label: string; kind: string | null } | null;
 };
 export type CartLine = { account: string; offerId: string; skuId: string; qty: number };
 /** 还没经 x2 付款的订单行：拿剩下的采购单去对。createdAt 是订单的下单时间 */
 export type Need = { sn: string; modelId: string; qty: number; offerId: string; skuId: string; createdAt: Date };
 
-export type Bought = { orderId: string; qty: number; status: string; toChanboss: boolean | null; trackingNo: string | null; signed: boolean };
+export type Bought = { orderId: string; qty: number; status: string; toChanboss: boolean | null; trackingNo: string | null; signed: boolean; refund: Purchase["refund"] };
 export type Line = {
 	sn: string; modelId: string; qty: number; writeId: string; account: string; offerId: string; skuId: string;
 	/** 已付款：件数都在采购单里；在购物车：还没付完，差的购物车里有；不见了：采购单、购物车里都没有 */
@@ -26,8 +28,8 @@ export type Line = {
 	purchases: Bought[];
 };
 
-/** 采购单关了、取消了的不算 */
-const closed = (p: Purchase) => /cancel|close|关闭|取消/i.test(p.status);
+/** 采购单关了、取消了的不算；这一行退款成功了（钱退回来了）也不算 */
+const closed = (p: Purchase) => /cancel|close|关闭|取消/i.test(p.status) || p.refund?.status === "refundsuccess";
 /** 加购和下单之间允许的时钟误差 */
 const SKEW_MS = 3600_000;
 
@@ -52,7 +54,7 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 			const n = Math.min(need, slot.left);
 			slot.left -= n;
 			need -= n;
-			used.push({ orderId: slot.p.orderId, qty: n, status: slot.p.status, toChanboss: slot.p.toChanboss, trackingNo: slot.p.trackingNo, signed: slot.p.signed });
+			used.push({ orderId: slot.p.orderId, qty: n, status: slot.p.status, toChanboss: slot.p.toChanboss, trackingNo: slot.p.trackingNo, signed: slot.p.signed, refund: slot.p.refund ?? null });
 		}
 		return used;
 	};

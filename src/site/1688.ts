@@ -197,7 +197,11 @@ export type BuyerOrder = {
 	/** 收货地址：采购单列表里没有（2026-10-09 对 50 张真采购单核对过），从名字带 address、addr、receiver 的字段里找；找不到是空字符串。要的话得读采购单详情 */
 	address: string;
 	/** 每一行（一个 1688 规格）：skuId（只有一个规格的货源是空的）、这一行的状态（已发货、已收货……）、已收件数 */
-	items: { offerId: string; specId: string; skuId: string; name: string; spec: string; quantity: number; price: number; status: string; statusLabel: string; received: number; trackingNo: string; shippedAt: number | null }[];
+	items: {
+		offerId: string; specId: string; skuId: string; name: string; spec: string; quantity: number; price: number; status: string; statusLabel: string; received: number; trackingNo: string; shippedAt: number | null;
+		/** 这一行的退款：单号、售中还是售后、粗状态（waitselleragree 进行中、refundsuccess 成功、refundclose 关闭）。没有退款是 null */
+		refund: { id: string; stage: "售中" | "售后"; status: string } | null;
+	}[];
 	/** 原样的一行：字段核对过以前留着查 */
 	raw: unknown;
 };
@@ -234,10 +238,45 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 			spec: ((e.specInfo?.specItems ?? []) as any[]).map((x) => x.specValue).join(" / "),
 			quantity: Number(e.quantity?.realAmount ?? e.quantity?.calAmount ?? e.quantity ?? 0), price: yuan(e.price),
 			status: String(e.entryStatus ?? ""), statusLabel: String(e.entryStatusLabel ?? ""), received: Number(e.entryExtension?.receivedQuantity ?? 0),
+			// 售中退款在 refundId / refundStatus，售后（确认收货以后申请的）在 refundIdForAs / refundStatusForAs（2026-10-09 读页面的 JS、对真退款单核对过，见 1688.md）
+			refund: e.entryExtension?.refundIdForAs ? { id: String(e.entryExtension.refundIdForAs), stage: "售后", status: String(e.entryExtension.refundStatusForAs ?? "") }
+				: e.entryExtension?.refundId ? { id: String(e.entryExtension.refundId), stage: "售中", status: String(e.entryExtension.refundStatus ?? "") } : null,
 			trackingNo: String(e.entryExtension?.trackingNo ?? ""), shippedAt: e.entryExtension?.sendgt ? Number(e.entryExtension.sendgt) : null,
 		})),
 	}));
 	return { total: Number(payload?.total ?? rows.length), pages: Number(payload?.pages ?? 1), rows };
+}
+
+// ── 退款 ──
+
+/** 一张退款单的状态。status：waitselleragree 等卖家同意、waitbuyermodify 卖家拒绝等买家修改、waitbuyersend 等买家寄回、
+ * waitsellerreceive 等卖家收货、refundsuccess 成功、refundclose 关闭（后两个是终态）。同一个状态码中文会变（退款成功、极速退款成功），判断用状态码 */
+export type Refund = {
+	refundId: string; status: string; statusLabel: string;
+	/** 仅退款、退货退款、换货、补寄 */
+	kind: string;
+	/** 退的钱（元）：货款 + 运费 */
+	amount: number;
+	/** 退货寄回的运单号、物流状态（还没寄是 null） */
+	returnTrackingNo: string | null; returnLogistics: string | null;
+	createdAt: string; updatedAt: string;
+};
+
+/** 读一张退款单的详情（viewRefundDetail）。stage：售中（行上的 refundId）还是售后（refundIdForAs）。
+ * 回包里有卖家的电话、姓名、退货地址：只取上面这些，不留 */
+export async function refund(refundId: string, stage: "售中" | "售后"): Promise<Refund> {
+	const d = await read(BUYER_ORDERS, "mtop.alibaba.cbu.refund.MtopRefundView.viewRefundDetail", { refundId, disputeType: stage === "售中" ? "1" : "2" }, `读 1688 退款单 ${refundId}`);
+	const m = d?.model;
+	if (!m?.status) throw new Error(`1688 退款单 ${refundId} 没有回状态`);
+	const scene = m.refundSceneModel ?? {};
+	const back = m.selfReturnGoodsLogisticModel;
+	return {
+		refundId, status: String(m.status), statusLabel: String(m.statusLabel ?? ""),
+		kind: scene.replaceNew ? "换货" : scene.reshipping ? "补寄" : m.needReturnGoods ? "退货退款" : "仅退款",
+		amount: (Number(m.refundPayment ?? 0) + Number(m.refundCarriage ?? 0)) / 100,
+		returnTrackingNo: back?.freightBill ? String(back.freightBill) : null, returnLogistics: back?.logisticsStatus ? String(back.logisticsStatus) : null,
+		createdAt: String(m.gmtCreate ?? ""), updatedAt: String(m.gmtModified ?? ""),
+	};
 }
 
 export type Trace = { orderId: string; traces: { status: string; trackingNo: string; logisticsId: string; remark: string }[] };
@@ -275,5 +314,7 @@ export const ops: Ops = {
 			const r = await buyerOrders(n, 50, p.status);
 			return { rows: r.rows, more: n < r.pages };
 		}),
+	refund: get("一张退款单：状态、类型、退的钱、退货运单号", z.object({ id: str("退款单号（TQ 开头）"), stage: z.enum(["售中", "售后"]).default("售中").describe("售中（行上的 refundId）还是售后（refundIdForAs）") }),
+		(p) => refund(p.id, p.stage)),
 	traces: all("采购单的物流轨迹", z.object({ orders: strs("采购单号") }), (p) => traces(p.orders.map((orderId) => ({ orderId })))),
 };
