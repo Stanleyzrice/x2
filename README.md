@@ -25,6 +25,7 @@ x2 source 188862745004         # 给一个规格找货源：这个商品用过�
 x2 propose < 一批.json          # 写一批待批准的写入；收件箱加一行「批准」
 x2 approve 12                  # 人在终端里说「批准」时，替人勾上
 x2 run                         # 执行批准了的写入
+x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_NOCODB_URL、X2_NOCODB_EMAIL、X2_NOCODB_PASSWORD、X2_NOCODB_META_URL）
 ```
 
 两家店各开一个浏览器（Chrome 的不同用户）：x2 每个连着的浏览器读一次登录着的店和 1688 账号，按店、按账号选。只连着一个浏览器、或要手动选时，用 `X2_BROWSER`。
@@ -91,6 +92,7 @@ x2/
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入
 │ ├ source.ts             x2 source：选货源
+│ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB
 │ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色
 │ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、sync、propose、approve、run）、source.ts、db.ts
 ├ .claude/skills/

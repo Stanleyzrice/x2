@@ -70,6 +70,9 @@ export async function check(sql: Sql): Promise<Checked> {
 	await sql.begin(async (tx) => {
 		// 人勾的货源候选写进规格
 		for (const o of r.chosenSources) await tx`update skus set offer_id = ${o.offerId}, offer_sku_id = ${o.skuId}, sourced_at = now() where model_id = ${o.modelId}`;
+		// 规格的货源已经是候选里的某一个（人勾了、随加购批准了）：这个规格的候选用完了，删掉（「选货源」视图空了就是选完了）
+		await tx`delete from source_options o where exists (
+			select 1 from source_options x join skus s on s.model_id = x.model_id and s.offer_id = x.offer_id and s.offer_sku_id = x.offer_sku_id where x.model_id = o.model_id)`;
 		for (const [sn, c] of r.orders) {
 			await tx`update orders set days_left = ${c.daysLeft}, sourced = ${c.sourced}, carted = ${c.carted}, paid = ${c.paid}, arrived = ${c.arrived},
 				destination = ${c.destination}, step = ${c.step}, checked_at = now() where sn = ${sn}`;
