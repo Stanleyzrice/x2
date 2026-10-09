@@ -88,7 +88,7 @@ export async function syncPurchases(sql: Sql, account: string, pages = 3): Promi
 				await tx`
 					insert into purchases ${tx({
 						order_id: o.orderId, line, account, offer_id: i.offerId, spec_id: i.specId, offer_sku_id: skuId, qty: i.quantity, price: i.price, paid: o.paid,
-						status: o.status, status_label: i.statusLabel || o.statusLabel, created_at: date(o.createdAt), paid_at: date(o.paidAt),
+						status: i.status || o.status, status_label: i.statusLabel || o.statusLabel, created_at: date(o.createdAt), paid_at: date(o.paidAt),
 						address: o.address, to_chanboss: chanboss_address && o.address ? o.address.includes(chanboss_address) : null,
 						tracking_no: i.trackingNo || null, shipped_at: date(i.shippedAt), logistics, signed,
 						raw: tx.json(o.raw as any), synced_at: at,

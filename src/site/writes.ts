@@ -7,7 +7,8 @@
 import { z } from "zod";
 import { in1688 } from "../accounts.ts";
 import type { Sql } from "../db/index.ts";
-import { fetchOffer } from "../sync/1688.ts";
+import { current } from "../check/index.ts";
+import { fetchOffer, syncCart, syncPurchases } from "../sync/1688.ts";
 import { account as alibabaAccount, addToCart, cart as readCart, type CartLine } from "./1688.ts";
 import { forecast, NO_TRACKING, orders as chanbossOrders } from "./chanboss.ts";
 
@@ -50,7 +51,7 @@ const cartParams = z.object({
 	lines: z.array(z.object({ sn: z.string(), modelId: z.string(), qty: z.number().int().positive() })).min(1),
 	/** 随这次加购一起批准的新货源（规格 id）：加上了才写进规格 */
 	newSources: z.array(z.string()).default([]),
-	/** 加在哪个 1688 账号（userId）：不给就用登录着的那个，执行时记下 */
+	/** 加在哪个 1688 账号（userId）：x2 propose 填采购账号；没设采购账号时用登录着的那个，执行时记下 */
 	account: z.string().optional(),
 	/** 1688 规格的 specId：执行时现读货源填上 */
 	specId: z.string().optional(),
@@ -66,7 +67,15 @@ const cart: WriteOp<CartP> = {
 	display: (p) => `${p.title} / ${p.sku} × ${p.qty}（订单 ${[...new Set(p.lines.map((l) => l.sn))].join("、")}）${p.newSources.length ? "（新货源）" : ""}`,
 	where: (p, fn) => (p.account ? in1688(p.account, fn) : fn()),
 	async prepare(sql, p) {
-		const account = p.account ?? (await alibabaAccount()).userId;
+		const [{ buy }] = await sql`select buy_account as buy from order_settings where id = 1` as any;
+		const account = p.account ?? buy ?? (await alibabaAccount()).userId;
+		if (buy && account !== buy) return { skip: `只往采购账号（${buy}）加购，这一项写的是 ${account}` };
+		// 现读这个账号的购物车和采购单，再对一次：在这之间有人在外面买了、或者已经加进购物车了，就不加（免得买重）
+		await syncCart(sql, account);
+		await syncPurchases(sql, account, 1);
+		const covered = (await current(sql)).covered;
+		const dup = p.lines.filter((l) => covered.has(`${l.sn}:${l.modelId}`));
+		if (dup.length) return { skip: `订单 ${dup.map((l) => l.sn).join("、")} 的货已经买了或者在购物车里了（刚读的采购单、购物车）` };
 		const live = await liveOrders([...new Set(p.lines.map((l) => l.sn))]);
 		for (const l of p.lines) {
 			const o = live.get(l.sn);

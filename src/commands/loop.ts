@@ -26,7 +26,7 @@ export async function status(args: string[], json: boolean): Promise<void> {
 	const sql = await db();
 	if (!args.includes("--no-sync")) await sync(sql);
 	const { todo } = await check(sql);
-	const syncs = await sql`select s.name, s.scope, s.last_ok_at, s.result, s.error, s.blocked, coalesce(sh.account, s.scope) as who from syncs s left join shops sh on sh.shop_id = s.scope order by s.name, s.scope`;
+	const syncs = await sql`select s.name, s.scope, s.last_ok_at, s.result, s.error, s.blocked, coalesce(sh.account, a.login_id, s.scope) as who from syncs s left join shops sh on sh.shop_id = s.scope left join accounts_1688 a on a.user_id = s.scope order by s.name, s.scope`;
 	const inbox = await sql`select key, kind, title, detail, due, approve from inbox where open and (snooze_until is null or snooze_until < now()) order by due nulls last, kind`;
 	const snoozed = await sql`select count(*)::int as n from inbox where open and snooze_until >= now()`;
 	const [{ n: unknown }] = await sql`select count(*)::int as n from writes where status in ('结果未知', '已提交', '不一致')` as any;
@@ -37,7 +37,7 @@ export async function status(args: string[], json: boolean): Promise<void> {
 			snoozed: snoozed[0]!.n, todo, unknown,
 		}));
 	}
-	const data = syncs.map((s) => `${NAMES[s.name] ?? s.name}${s.scope ? ` ${s.who}` : ""} ${ago(s.last_ok_at)}${s.result === "失败" ? `（这次读不了：${String(s.error).split("\n")[0]}）` : ""}`);
+	const data = syncs.map((s) => `${NAMES[s.name] ?? s.name}${s.scope ? ` ${s.who}` : ""} ${ago(s.last_ok_at)}${s.result === "失败" ? `（这次读不了：${String(s.error).split("\n")[0]}）` : s.result === "没登录" ? "（没登录：不是采购账号，不读）" : ""}`);
 	// 中文字占两格：按显示宽度对齐
 	const width = (t: string) => [...t].reduce((n, c) => n + (c.charCodeAt(0) > 0xff ? 2 : 1), 0);
 	const pad = (label: string, lines: string[]) => lines.map((l, i) => `${(i === 0 ? label : "")}${" ".repeat(8 - width(i === 0 ? label : ""))}${l}`).join("\n");
@@ -51,6 +51,7 @@ export async function status(args: string[], json: boolean): Promise<void> {
 function todoLine(t: Todo): string {
 	if (t.kind === "找货源") return `找货源：${t.why}（${t.command}）`;
 	if (t.kind === "核清") return `核清：${t.why}（${t.command}）`;
+	if (t.kind === "取消预报") return `取消预报：${t.why}`;
 	return `${t.kind}：${t.why}（x2 status --json 的 todo 里有现成的一批，看过交给 x2 propose）`;
 }
 

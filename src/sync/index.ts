@@ -16,11 +16,13 @@ export type Domain = {
 	run: (sql: Sql, scope: string) => Promise<number>;
 };
 
-/** 1688 账号：登录着的浏览器里的，和加购写入里记过的（浏览器没连着时读不到，算失败，不当成购物车空了） */
+/** 1688 账号：采购账号、登录着的浏览器里的，和加购写入里记过的 */
 async function accounts(sql: Sql): Promise<string[]> {
 	const written = await sql`select distinct params->>'account' as a from writes where op = '加购' and params->>'account' is not null`;
-	return [...new Set([...await alibabaAccounts(), ...written.map((r) => r.a as string)])];
+	return [...new Set([...await buyAccount(sql), ...await alibabaAccounts(), ...written.map((r) => r.a as string)])];
 }
+
+const buyAccount = async (sql: Sql) => (await sql`select buy_account from order_settings where id = 1 and buy_account is not null`).map((r) => r.buy_account as string);
 
 export const DOMAINS: Record<string, Domain> = {
 	orders: { describe: "订单（chanboss，两家店）", maxMinutes: 20, scopes: async () => [""], run: (sql) => syncOrders(sql) },
@@ -33,7 +35,8 @@ export const DOMAINS: Record<string, Domain> = {
 	purchases: { describe: "1688 采购单和物流（一个账号一份）", maxMinutes: 30, scopes: accounts, run: (sql, a) => syncPurchases(sql, a) },
 };
 
-export type Result = { name: string; scope: string; result: "成功" | "失败" | "没读"; rows?: number; error?: string; blocked?: boolean };
+/** 没登录：不是采购账号的 1688 账号现在没有浏览器登录着，这次不读，不算失败（采购账号没登录才是失败、要人处理）。它的数据还是上次读到的，靠它关的收件箱不关 */
+export type Result = { name: string; scope: string; result: "成功" | "失败" | "没读" | "没登录"; rows?: number; error?: string; blocked?: boolean };
 
 /** 同步过期的（force：不管过没过期都读）。only：只同步这几个域；shop：只同步这家店（店铺 id 或账号名） */
 export async function sync(sql: Sql, opts: { only?: string[]; force?: boolean; shop?: string } = {}): Promise<Result[]> {
@@ -46,7 +49,15 @@ export async function sync(sql: Sql, opts: { only?: string[]; force?: boolean; s
 			const [s] = await sql`select shop_id from shops where shop_id = ${opts.shop} or account = ${opts.shop}`;
 			scopes = scopes.filter((x) => x === s?.shop_id);
 		}
+		const online = name === "cart" || name === "purchases" ? new Set(await alibabaAccounts()) : null;
+		const buying = new Set(await buyAccount(sql));
 		for (const scope of scopes) {
+			if (online && !online.has(scope) && !buying.has(scope)) {
+				await sql`insert into syncs (name, scope, max_minutes) values (${name}, ${scope}, ${d.maxMinutes}) on conflict do nothing`;
+				await sql`update syncs set result = '没登录', error = '没有浏览器登录着这个 1688 账号（不是采购账号：不读）', blocked = false where name = ${name} and scope = ${scope}`;
+				out.push({ name, scope, result: "没登录" });
+				continue;
+			}
 			await sql`insert into syncs (name, scope, max_minutes) values (${name}, ${scope}, ${d.maxMinutes}) on conflict do nothing`;
 			const [row] = await sql`select (last_ok_at is null or last_ok_at < now() - make_interval(mins => max_minutes) or result is distinct from '成功') as stale from syncs where name = ${name} and scope = ${scope}`;
 			if (!opts.force && !row!.stale) { out.push({ name, scope, result: "没读" }); continue; }

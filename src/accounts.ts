@@ -7,7 +7,7 @@ import { browsers, using } from "./browser.ts";
 import type { Sql } from "./db/index.ts";
 import { NeedsHuman } from "./errors.ts";
 
-type Seen = { browser: string; label: string; shop: Awaited<ReturnType<typeof shopeeShop>> | null; alibaba: string | null };
+type Seen = { browser: string; label: string; shop: Awaited<ReturnType<typeof shopeeShop>> | null; alibaba: string | null; loginId: string | null };
 
 let seen: Promise<Seen[]> | null = null;
 
@@ -17,17 +17,20 @@ export function scan(): Promise<Seen[]> {
 		const out: Seen[] = [];
 		for (const b of await browsers()) {
 			const shop = await using(b.id, () => shopeeShop()).catch(() => null);
-			const alibaba = await using(b.id, () => alibabaAccount()).then((a) => a.userId).catch(() => null);
-			out.push({ browser: b.id, label: b.label, shop, alibaba });
+			const a = await using(b.id, () => alibabaAccount()).catch(() => null);
+			out.push({ browser: b.id, label: b.label, shop, alibaba: a?.userId ?? null, loginId: a?.loginId ?? null });
 		}
 		return out;
 	})();
 	return seen;
 }
 
-/** 认出来的店写进 shops：账号名、店名、账号 id、浏览器 */
+/** 认出来的店写进 shops（账号名、店名、账号 id、浏览器），1688 账号写进 accounts_1688（会员名） */
 export async function recordShops(sql: Sql): Promise<void> {
 	for (const s of await scan()) {
+		if (s.alibaba) await sql`
+			insert into accounts_1688 (user_id, login_id, seen_at) values (${s.alibaba}, ${s.loginId}, now())
+			on conflict (user_id) do update set login_id = excluded.login_id, seen_at = excluded.seen_at`;
 		if (!s.shop) continue;
 		await sql`
 			insert into shops (shop_id, account, name, user_id, browser) values (${s.shop.shopId}, ${s.shop.username}, ${s.shop.name}, ${s.shop.userId}, ${s.browser})

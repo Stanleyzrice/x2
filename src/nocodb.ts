@@ -6,15 +6,21 @@
 // 环境变量：X2_NOCODB_URL（例 http://localhost:8080）、X2_NOCODB_EMAIL、X2_NOCODB_PASSWORD（管理员）、X2_NOCODB_META_URL（NocoDB 自己的元数据库）、
 // X2_NOCODB_DB_URL（NocoDB 那台机器怎么连 x2 的库；不给就用 X2_DATABASE_URL）
 import postgres from "postgres";
+import { createHash } from "node:crypto";
+import { STEPS } from "./check/orders.ts";
+import { CHANBOSS_STATUS } from "./sync/orders.ts";
 import type { Sql } from "./db/index.ts";
 import { NeedsHuman } from "./errors.ts";
 
 type Cond = { col: string; op: string; value?: string | number; sub?: string };
 /** 一个条件，或几个「或」起来的条件；最外层的几项「且」起来 */
 type Filter = Cond | { or: Cond[] };
-type View = { title: string; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[] };
-/** columns：列名 → 中文名，也是视图里列的顺序；links：显示成链接的列 */
-type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; views: View[] };
+/** kanban：看板，按这一列分列（这一列要在 selects 里）；看板不能是第一个（默认视图是表格） */
+type View = { title: string; kanban?: string; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[] };
+/** columns：列名 → 中文名，也是视图里列的顺序；links：显示成链接的列；selects：显示成单选的列和它的取值（按这个顺序，看板的列也是这个顺序） */
+type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; selects?: Record<string, readonly string[]>; views: View[] };
+
+const COLORS = ["#cfdffe", "#d0f1fd", "#c2f5e9", "#d1f7c4", "#ffeab6", "#fee2d5", "#ffdce5", "#ffdaf6", "#ede2fe", "#eeeeee"];
 
 const OPEN_ORDER: Filter[] = [{ col: "platform_status", op: "eq", value: "待出货" }, { col: "chanboss_status", op: "neq", value: "已打包" }, { col: "chanboss_status", op: "neq", value: "已出库" }];
 
@@ -23,26 +29,34 @@ export function tables(lateDays: number): Table[] {
 	return [
 		{
 			name: "inbox", title: "收件箱", links: ["link"],
-			columns: { kind: "类别", title: "事情", detail: "详情", approve: "批准", due: "期限", shop: "店铺", link: "去哪做", snooze_until: "推迟到", note: "备注", key: "key", open: "开着", opened_at: "开始于", closed_at: "关掉于", updated_at: "更新于" },
+			columns: {
+				kind: "类别", title: "事情", detail: "详情", approve: "批准", done: "处理好了", due: "期限", role: "谁做", shop: "店铺", link: "去哪做", snooze_until: "推迟到", note: "备注",
+				key: "key", open: "开着", opened_at: "开始于", closed_at: "关掉于", updated_at: "更新于",
+			},
 			views: [
 				{
 					title: "要我做的", filters: [{ col: "open", op: "checked" }, { or: [{ col: "snooze_until", op: "blank" }, { col: "snooze_until", op: "lt", sub: "today" }] }],
 					sorts: [["due", "asc"]], group: [["kind", "asc"]], hide: ["key", "open", "opened_at", "closed_at", "updated_at"],
 				},
-				{ title: "最近关掉的", filters: [{ col: "open", op: "notchecked" }, { col: "closed_at", op: "isWithin", sub: "pastWeek" }], sorts: [["closed_at", "desc"]], hide: ["key", "open", "approve", "snooze_until"] },
+				{ title: "最近关掉的", filters: [{ col: "open", op: "notchecked" }, { col: "closed_at", op: "isWithin", sub: "pastWeek" }], sorts: [["closed_at", "desc"]], hide: ["key", "open", "approve", "done", "snooze_until"] },
 			],
 		},
 		{
 			name: "orders", title: "订单",
+			selects: { step: STEPS, chanboss_status: Object.values(CHANBOSS_STATUS) },
 			columns: {
-				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", platform_status: "平台状态", chanboss_status: "chanboss 状态", items_text: "商品",
+				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", step_detail: "细节", platform_status: "平台状态", chanboss_status: "chanboss 状态", items_text: "商品",
 				problem: "问题单", destination: "寄到哪", sourced: "货源齐了", carted: "加购了", paid: "付款了", arrived: "到齐了", created_at: "下单时间", cancelled_at: "取消时间",
 				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "chanboss id", chanboss_time: "chanboss 下单时间", synced_at: "同步于", checked_at: "检查于",
 			},
 			views: [
-				{ title: "待出货", filters: OPEN_ORDER, sorts: [["ship_by", "asc"]], group: [["chanboss_status", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at", "cancelled_at", "platform_status"] },
-				{ title: "快到期", filters: [...OPEN_ORDER, { col: "days_left", op: "lte", value: lateDays }], sorts: [["ship_by", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at", "cancelled_at", "sourced", "carted", "paid", "arrived"] },
 				{ title: "全部", sorts: [["created_at", "desc"]], hide: ["items", "chanboss_id", "chanboss_time"] },
+				// 看板：一列一步，卡片上是订单号、店铺、出货期限、剩几天、细节、商品
+				{
+					title: "待出货", kanban: "step", filters: OPEN_ORDER, sorts: [["ship_by", "asc"]],
+					hide: ["platform_status", "chanboss_status", "problem", "destination", "sourced", "carted", "paid", "arrived", "created_at", "cancelled_at", "items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at"],
+				},
+				{ title: "快到期", filters: [...OPEN_ORDER, { col: "days_left", op: "lt", value: lateDays }], sorts: [["ship_by", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at", "cancelled_at", "sourced", "carted", "paid", "arrived"] },
 			],
 		},
 		{
@@ -110,9 +124,14 @@ export function tables(lateDays: number): Table[] {
 		},
 		{
 			name: "order_settings", title: "订单设置",
-			columns: { channel: "发货线路", chanboss_address: "chanboss 的收货地址", forecast_needs_approval: "预报要批准", late_days: "快到期提前几天", sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id" },
+			columns: {
+				buy_account: "采购账号（1688 userId）", late_days: "快到期提前几天", forecast_needs_approval: "预报要批准", channel: "发货线路", chanboss_address: "chanboss 的收货地址",
+				sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id",
+			},
 			views: [{ title: "设置", hide: ["id"] }],
 		},
+		{ name: "inbox_roles", title: "谁做", columns: { kind: "类别", role: "谁做" }, views: [{ title: "设置" }] },
+		{ name: "accounts_1688", title: "1688 账号", columns: { login_id: "会员名", user_id: "userId", seen_at: "上次见到" }, views: [{ title: "全部" }] },
 	];
 }
 
@@ -165,7 +184,13 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 
 		const [{ late_days }] = await sql`select late_days from order_settings where id = 1` as any;
 		const specs = tables(Number(late_days));
-		const all = (await api<{ list: any[] }>("GET", `/bases/${base.id}/tables`)).list;
+		// 重新读表结构是 NocoDB 的后台任务：等到要的表都出来（最多 60 秒）
+		let all: any[] = [];
+		for (let i = 0; i < 40; i++) {
+			all = (await api<{ list: any[] }>("GET", `/bases/${base.id}/tables`)).list;
+			if (specs.every((t) => all.some((m) => m.table_name === t.name))) break;
+			await new Promise((r) => setTimeout(r, 1500));
+		}
 		let views = 0;
 		for (const [order, t] of specs.entries()) {
 			const model = all.find((m) => m.table_name === t.name);
@@ -175,6 +200,18 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 			for (const [col, title] of Object.entries(t.columns)) {
 				await meta`update nc_columns_v2 set title = ${title} where fk_model_id = ${model.id} and column_name = ${col}`;
 				if (t.links?.includes(col)) await meta`update nc_columns_v2 set uidt = 'URL' where fk_model_id = ${model.id} and column_name = ${col}`;
+			}
+			// 单选：库里还是 text，只在 NocoDB 的元数据里标成单选，取值按顺序（看板的列也是这个顺序）
+			for (const [col, values] of Object.entries(t.selects ?? {})) {
+				const [c] = await meta`select id from nc_columns_v2 where fk_model_id = ${model.id} and column_name = ${col}`;
+				if (!c) continue;
+				await meta`update nc_columns_v2 set uidt = 'SingleSelect' where id = ${c.id}`;
+				await meta`delete from nc_col_select_options_v2 where fk_column_id = ${c.id}`;
+				for (const [i, v] of values.entries()) {
+					const id = `sl${createHash("md5").update(`${c.id}:${v}`).digest("hex").slice(0, 14)}`;
+					await meta`insert into nc_col_select_options_v2 (id, fk_column_id, title, color, "order", base_id, fk_workspace_id, created_at, updated_at)
+						values (${id}, ${c.id}, ${v}, ${COLORS[i % COLORS.length]!}, ${i + 1}, ${model.base_id}, ${model.fk_workspace_id ?? null}, now(), now())`;
+				}
 			}
 		}
 		await api("DELETE", "/cache");
@@ -201,7 +238,8 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 					await api("PATCH", `/views/${viewId}`, { title: spec.title });
 					for (const f of (await api<{ list: any[] }>("GET", `/views/${viewId}/filters`)).list) await api("DELETE", `/filters/${f.id}`);
 					for (const s of (await api<{ list: any[] }>("GET", `/views/${viewId}/sorts`)).list) await api("DELETE", `/sorts/${s.id}`);
-				} else viewId = (await api<any>("POST", `/tables/${model.id}/grids`, { title: spec.title })).id;
+				} else if (spec.kanban) viewId = (await api<any>("POST", `/tables/${model.id}/kanbans`, { title: spec.title, fk_grp_col_id: colId(spec.kanban) })).id;
+				else viewId = (await api<any>("POST", `/tables/${model.id}/grids`, { title: spec.title })).id;
 				for (const f of spec.filters ?? []) {
 					const cond = (c: Cond, extra: object = {}) => ({ fk_column_id: colId(c.col), comparison_op: c.op, comparison_sub_op: c.sub, value: c.value, ...extra });
 					if ("or" in f) {
@@ -210,11 +248,22 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 					} else await api("POST", `/views/${viewId}/filters`, cond(f, { logical_op: "and" }));
 				}
 				for (const [col, direction] of spec.sorts ?? []) await api("POST", `/views/${viewId}/sorts`, { fk_column_id: colId(col), direction });
+				const order = Object.keys(t.columns);
+				const nameOf = (columnId: string) => full.columns.find((c: any) => c.id === columnId)?.column_name as string | undefined;
+				if (spec.kanban) {
+					// 看板：卡片上显示哪些列、什么顺序
+					for (const vc of (await api<{ list: any[] }>("GET", `/views/${viewId}/columns`)).list) {
+						const name = nameOf(vc.fk_column_id);
+						if (!name) continue;
+						await api("PATCH", `/views/${viewId}/columns/${vc.id}`, { show: !(spec.hide ?? []).includes(name), order: order.includes(name) ? order.indexOf(name) + 1 : order.length + 1 });
+					}
+					views++;
+					continue;
+				}
 				// 列的顺序、隐藏、分组
 				const gridCols = await api<any[]>("GET", `/grids/${viewId}/grid-columns`);
-				const order = Object.keys(t.columns);
 				for (const gc of gridCols) {
-					const name = full.columns.find((c: any) => c.id === gc.fk_column_id)?.column_name as string | undefined;
+					const name = nameOf(gc.fk_column_id);
 					if (!name) continue;
 					const g = (spec.group ?? []).findIndex(([c]) => c === name);
 					await api("PATCH", `/grid-columns/${gc.id}`, {

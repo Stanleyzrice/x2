@@ -8,7 +8,7 @@ const T0 = new Date("2026-10-09T02:00:00Z");
 const hours = (h: number) => new Date(T0.getTime() + h * 3600_000);
 const item = (modelId: string, qty: number) => ({ itemId: "I1", modelId, chanbossModelId: `c${modelId}`, name: "红T", spec: modelId === "M1" ? "红色 L" : "白色 L", qty, image: "" });
 const order = (sn: string, qty: number, o: Partial<Order> = {}): Order => ({
-	sn, shop: "ni1206", shipBy: hours(24 * 10), platformStatus: "待出货", chanbossStatus: "待处理", chanbossId: `cb${sn}`, chanbossTime: 1, items: [item("M1", qty)], problem: null, cancelledAt: null, ...o,
+	sn, shop: "ni1206", createdAt: hours(-24), shipBy: hours(24 * 10), platformStatus: "待出货", chanbossStatus: "待处理", chanbossId: `cb${sn}`, chanbossTime: 1, items: [item("M1", qty)], problem: null, cancelledAt: null, ...o,
 });
 const cartWrite = (status = "已核对") => ({
 	id: "1", batch: "1", op: "加购", status, finishedAt: T0,
@@ -19,7 +19,7 @@ const purchase = (qty: number, o: { signed?: boolean; toChanboss?: boolean; trac
 });
 
 const snap = (s: Partial<Snapshot> = {}): Snapshot => ({
-	now: hours(2), settings: { lateDays: 2, chanbossAddress: "chanboss", channel: "海快" },
+	now: hours(2), settings: { lateDays: 6, channel: "海快", buyAccount: "A" }, accounts: new Map([["A", "桥头等白马"]]),
 	orders: [order("1", 1), order("2", 2)],
 	skus: new Map([["M1", { modelId: "M1", itemId: "I1", offerId: "O1", skuId: "S1" }]]),
 	offers: new Map([["O1", { offerId: "O1", title: "红T 货源", live: true, skus: [{ skuId: "S1", specId: "sp1", name: "红色 L", price: 10, stock: 99, image: "" }] }]]),
@@ -52,7 +52,7 @@ test("加购了在购物车里：收件箱「付款」，订单卡在没付款",
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }] }));
 	const pay = r.inbox.find((i) => i.key === "pay:A");
 	assert.ok(pay);
-	assert.match(pay.title, /2 张订单的货 ¥30\.00/);
+	assert.match(pay.title, /「桥头等白马」的购物车里 2 张订单的货 ¥30\.00/);
 	assert.equal(r.orders.get("2")!.step, "没付款");
 	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
 });
@@ -101,7 +101,7 @@ test("取消的订单：货还在购物车里，收件箱「取消」，购物�
 	}));
 	const c = r.inbox.find((i) => i.key === "cancel:1");
 	assert.ok(c);
-	assert.match(c.title, /1 件在购物车里要删/);
+	assert.match(c.title, /购物车里还有 1 件，删掉/);
 	assert.match(r.cart.get("A|O1|S1")!.shouldBuy, /不该买：订单 1 取消了/);
 	// 订单 2 还该买：付款那一行提醒先删掉不该买的
 	assert.match(r.inbox.find((i) => i.key === "pay:A")!.detail, /付款前先删掉/);
@@ -127,8 +127,48 @@ test("选货源：只有一个明显对得上的随加购一起批准；几个�
 	assert.ok(chosen.todo.find((x) => x.kind === "加购"));
 });
 
-test("不是经 x2 加购、chanboss 上已经预报的订单：不准备加购，写出 chanboss 状态", () => {
+test("不是经 x2 加购、chanboss 上已经预报、采购单也对不上的订单：不准备加购，写出 chanboss 状态", () => {
 	const r = checkOrders(snap({ orders: [order("1", 1, { chanbossStatus: "已预报" })] }));
 	assert.equal(r.todo.length, 0);
-	assert.match(r.orders.get("1")!.step, /不是经 x2 加购的/);
+	assert.equal(r.orders.get("1")!.step, "不是经 x2 买的");
+	assert.match(r.orders.get("1")!.stepDetail!, /chanboss：已预报/);
+});
+
+test("在 x2 外面买了：采购单按 1688 规格分给订单（先下单的先分），不再加购，接着预报", () => {
+	// 只买了 1 件：分给先下单的订单 1；订单 2 要 2 件，分不到，照常加购
+	const o1 = order("1", 1, { createdAt: hours(-48) }), o2 = order("2", 2, { createdAt: hours(-24) });
+	const r = checkOrders(snap({ orders: [o1, o2], purchases: [purchase(1)] }));
+	assert.match(r.orders.get("1")!.stepDetail ?? "", /在 x2 外面买的/);
+	assert.equal(r.orders.get("1")!.step, "没预报");
+	const cart = r.todo.find((x) => x.kind === "加购");
+	assert.ok(cart && cart.kind === "加购");
+	assert.deepEqual((cart.propose.writes[0]!.params as CartParams).lines.map((l) => l.sn), ["2"]);
+	assert.ok(r.covered.has("1:M1"));
+	assert.ok(!r.covered.has("2:M1"));
+});
+
+test("x2 加了购、人又在外面买了：购物车那一行不该买（衣帽架 260917A6PM8V15 的情况）", () => {
+	const early = { ...purchase(3), createdAt: hours(-20) };
+	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }], purchases: [early] }));
+	assert.match(r.cart.get("A|O1|S1")!.shouldBuy, /已经在外面买了/);
+	assert.equal(r.inbox.find((i) => i.kind === "付款"), undefined);
+});
+
+test("买家取消：看货走到哪", () => {
+	const cancelled = (o: Partial<Order>) => order("1", 1, { platformStatus: "不成立", cancelledAt: hours(1), ...o });
+	const goods = (r: ReturnType<typeof checkOrders>) => r.inbox.find((i) => i.key === "cancel-goods:1")?.title ?? "";
+	assert.equal(goods(checkOrders(snap({ orders: [cancelled({})] }))), "", "还没买：不用做");
+	assert.match(goods(checkOrders(snap({ orders: [cancelled({})], purchases: [{ ...purchase(1), status: "waitsellersend" }] }))), /申请退款/);
+	assert.match(goods(checkOrders(snap({ orders: [cancelled({})], purchases: [{ ...purchase(1), status: "success" }] }))), /退回 1688 卖家/);
+	assert.match(goods(checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已到齐" })] }))), /chanboss 仓库/);
+	assert.match(goods(checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已打包" })] }))), /到了台湾/);
+	// 只挂着预报：不进收件箱，agent 去取消预报
+	const r = checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已预报" })] }));
+	assert.equal(r.inbox.length, 0);
+	assert.ok(r.todo.find((t) => t.kind === "取消预报"));
+});
+
+test("快到期：不到 6 天、还没打包就给人", () => {
+	const r = checkOrders(snap({ orders: [order("1", 1, { shipBy: hours(24 * 5.9) }), order("2", 1, { shipBy: hours(24 * 6.5) })] }));
+	assert.deepEqual(r.inbox.filter((i) => i.kind === "快到期").map((i) => i.key), ["late:1"]);
 });

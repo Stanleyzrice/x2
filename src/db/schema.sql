@@ -38,8 +38,8 @@ create table if not exists order_settings (
 	-- chanboss 的收货地址：采购单的收货地址里有这一段的，算寄到 chanboss
 	chanboss_address text,
 	forecast_needs_approval boolean not null default true,
-	-- 出货期限前几天算快到期
-	late_days int not null default 2
+	-- 离出货期限不到几天、还没打包，就进收件箱给人（2026-10-09 定的 6 天）
+	late_days int not null default 6
 );
 insert into order_settings (id) values (1) on conflict do nothing;
 
@@ -247,3 +247,29 @@ do $$ begin
 		alter table syncs drop column max_age;
 	end if;
 end $$;
+
+-- 2026-10-09：采购账号。只有一个账号做采购：x2 只往它加购，别的 1688 账号只读（换账号改这一格）。存 1688 的 userId，会员名在 accounts_1688
+alter table order_settings add column if not exists buy_account text;
+
+-- 2026-10-09：见过的 1688 账号：userId → 会员名（给人看）。x2 按账号找浏览器时写
+create table if not exists accounts_1688 (
+	user_id text primary key,
+	login_id text,
+	seen_at timestamptz
+);
+
+-- 2026-10-09：收件箱的「谁做」和「处理好了」。
+-- 谁做：哪一类归谁写在 inbox_roles（人改），x2 每轮照它填；以后分人，在 NocoDB 里按「谁做」各建一个视图。
+-- 处理好了：x2 看不到结果的事（取消的货退回卖家、上架台湾仓、合并发货……），人做完勾上，这一行关掉，以后不再开
+alter table inbox add column if not exists role text;
+alter table inbox add column if not exists done boolean not null default false;
+create table if not exists inbox_roles (
+	kind text primary key,
+	role text not null
+);
+insert into inbox_roles (kind, role)
+select k, '运营' from unnest(array['付款', '批准', '打包', '快到期', '取消', '问题单', '选货源', '登录', '结果未知', '设置']) as k
+on conflict do nothing;
+
+-- 2026-10-09：订单的「卡在哪一步」只放固定的几步（看板按它分列），细节（还差哪件……）放 step_detail
+alter table orders add column if not exists step_detail text;

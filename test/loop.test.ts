@@ -105,3 +105,17 @@ test("收件箱：每轮重算，只更新不重复；同步读全了才关", { 
 	await check(db);
 	assert.equal((await db`select open from inbox where key = 'late:S1'`)[0]!.open, false);
 });
+
+test("收件箱：人勾「处理好了」就关，以后不再开；「谁做」照 inbox_roles 填", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const soon = new Date(Date.now() + 86400_000);
+	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
+		values ('S2', 'ni1206', ${soon}, '待出货', '已预报', 'c2', 1, ${db.json([{ itemId: "I", modelId: "M", chanbossModelId: "cM", name: "白T", spec: "L", qty: 1, image: "" }])}, now())`;
+	await db`update inbox_roles set role = '采购' where kind = '快到期'`;
+	await check(db);
+	assert.deepEqual({ ...(await db`select open, role from inbox where key = 'late:S2'`)[0] }, { open: true, role: "采购" });
+	await db`update inbox set done = true where key = 'late:S2'`;
+	await check(db);
+	await check(db);
+	assert.equal((await db`select open from inbox where key = 'late:S2'`)[0]!.open, false);
+});
