@@ -2,7 +2,7 @@
 
 x2（小二）帮一个人经营网店：到各个网站上读数据、做事，拿不准的请示掌柜。掌柜是运营本人，她在自己的 Mac 上用 coding agent（Claude）使唤 x2。
 
-只为运营真实的需求做事，抽象是这些需求用到的东西的最大公约数。第一个需求是订单：Shopee 上有人下单，要在出货期限前从 1688 买到对的货、预报给仓老板、打包，不重买、不漏买。
+只为运营真实的需求做事，抽象是这些需求用到的东西的最大公约数。第一个需求是订单：Shopee 上有人下单，要在出货期限前从 1688 买到对的货、预报给 chanboss、打包，不重买、不漏买。
 
 ## 四个概念
 
@@ -20,7 +20,7 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 ```sh
 x2 status                      # 同步过期的数据 → 检查 → 更新收件箱 → 数据新不新、收件箱里有什么、agent 能做什么
 x2 status --json               # 给 agent：todo 里有现成的一批写入
-x2 sync orders --force         # 只同步一域：orders 订单（仓老板）、skus 规格（Shopee，一家店一份）、cart 1688 购物车、purchases 采购单
+x2 sync orders --force         # 只同步一域：orders 订单（chanboss）、skus 规格（Shopee，一家店一份）、cart 1688 购物车、purchases 采购单
 x2 source 188862745004         # 给一个规格找货源：这个商品用过的 → 以图搜图 → 按规格名打分
 x2 propose < 一批.json          # 写一批待批准的写入；收件箱加一行「批准」
 x2 approve 12                  # 人在终端里说「批准」时，替人勾上
@@ -85,7 +85,7 @@ x2/
 │ │ ├ shopee/             卖家中心：订单、商品和上架、批量上架、收入、售后、经营数据和营销、聊聊、帮助中心（shopee.md）；ops.ts 是它的读操作
 │ │ ├ 1688.ts             1688：货源、搜索、购物车和加购、采购单、物流
 │ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md 是全部数据接口）
-│ │ └ chanboss.ts         仓老板：订单、预报、库存、退件、扣款流水（chanboss.md）
+│ │ └ chanboss.ts         chanboss：订单、预报、库存、退件、扣款流水（chanboss.md）
 │ ├ db/                   库：连接、schema.sql（建表、加列）、import.ts（把 ~/x2 的 JSON 迁进来，只用一次）
 │ ├ sync/                 同步，一域一个（站点 → 镜像），按 syncs 表的「目标多新」决定读不读
 │ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单），index.ts 读快照、写回收件箱

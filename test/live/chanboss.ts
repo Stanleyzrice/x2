@@ -1,4 +1,4 @@
-// 对真站跑一遍仓老板的读取：只打印字段名和条数
+// 对真站跑一遍 chanboss 的读取：只打印字段名和条数
 import * as c from "../../src/site/chanboss.ts";
 const shape = (v: any): string => Array.isArray(v) ? `[${v.length}] ${v[0] && typeof v[0] === "object" ? Object.keys(v[0]).slice(0, 12).join(",") : ""}` : v && typeof v === "object" ? `{${Object.keys(v).slice(0, 12).join(",")}}` : typeof v;
 const run = async (name: string, f: () => Promise<any>) => {

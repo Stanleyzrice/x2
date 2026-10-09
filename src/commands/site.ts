@@ -16,7 +16,7 @@ export const sites = new Map<string, Site>([
 	["shopee", { describe: "Shopee 卖家中心（台湾站）", ops: shopee }],
 	["1688", { describe: "1688", ops: alibaba }],
 	["zhixia", { describe: "知虾（Shopee 的数据平台；限流：每次隔 6～10 秒、每小时 200 次）", ops: zhixia }],
-	["chanboss", { describe: "仓老板（货代）", ops: chanboss }],
+	["chanboss", { describe: "chanboss（货代）", ops: chanboss }],
 ]);
 
 const camel = (s: string) => s.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());

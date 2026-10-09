@@ -19,7 +19,7 @@ const purchase = (qty: number, o: { signed?: boolean; toChanboss?: boolean; trac
 });
 
 const snap = (s: Partial<Snapshot> = {}): Snapshot => ({
-	now: hours(2), settings: { lateDays: 2, chanbossAddress: "仓老板", channel: "海快" },
+	now: hours(2), settings: { lateDays: 2, chanbossAddress: "chanboss", channel: "海快" },
 	orders: [order("1", 1), order("2", 2)],
 	skus: new Map([["M1", { modelId: "M1", itemId: "I1", offerId: "O1", skuId: "S1" }]]),
 	offers: new Map([["O1", { offerId: "O1", title: "红T 货源", live: true, skus: [{ skuId: "S1", specId: "sp1", name: "红色 L", price: 10, stock: 99, image: "" }] }]]),
@@ -78,7 +78,7 @@ test("付了款寄到我们这里：预报无单号；报过、到齐了：收�
 	assert.equal(arrived.orders.get("1")!.step, "到齐了没打包");
 });
 
-test("寄到仓老板：有了快递单号才预报，填快递单号", () => {
+test("寄到 chanboss：有了快递单号才预报，填快递单号", () => {
 	const none = checkOrders(snap({ writes: [cartWrite()], purchases: [purchase(3, { toChanboss: true })] }));
 	assert.equal(none.todo.find((x) => x.kind === "预报"), undefined);
 	const shipped = checkOrders(snap({ writes: [cartWrite()], purchases: [purchase(3, { toChanboss: true, trackingNo: "YT123" })] }));
@@ -127,7 +127,7 @@ test("选货源：只有一个明显对得上的随加购一起批准；几个�
 	assert.ok(chosen.todo.find((x) => x.kind === "加购"));
 });
 
-test("不是经 x2 加购、仓老板上已经预报的订单：不准备加购，写出仓老板状态", () => {
+test("不是经 x2 加购、chanboss 上已经预报的订单：不准备加购，写出 chanboss 状态", () => {
 	const r = checkOrders(snap({ orders: [order("1", 1, { chanbossStatus: "已预报" })] }));
 	assert.equal(r.todo.length, 0);
 	assert.match(r.orders.get("1")!.step, /不是经 x2 加购的/);

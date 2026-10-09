@@ -38,7 +38,7 @@ export type WriteOp<P = any> = {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const inCart = (lines: CartLine[], offerId: string, skuId: string) => lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
 
-/** 现读仓老板上这几张订单 */
+/** 现读 chanboss 上这几张订单 */
 async function liveOrders(sns: string[]): Promise<Map<string, any>> {
 	const now = Math.floor(Date.now() / 1000);
 	const r = await chanbossOrders(now - 90 * 86400, now, 1, sns, 100);
@@ -70,9 +70,9 @@ const cart: WriteOp<CartP> = {
 		const live = await liveOrders([...new Set(p.lines.map((l) => l.sn))]);
 		for (const l of p.lines) {
 			const o = live.get(l.sn);
-			if (!o) return { skip: `仓老板上读不到订单 ${l.sn}` };
+			if (!o) return { skip: `chanboss 上读不到订单 ${l.sn}` };
 			if (o.platform_status !== "READY_TO_SHIP") return { skip: `订单 ${l.sn} 不是待出货了（${o.platform_status}）` };
-			if (o.status !== "paid") return { skip: `订单 ${l.sn} 在仓老板上已经不是待处理了（${o.status}）：在别处买过了？` };
+			if (o.status !== "paid") return { skip: `订单 ${l.sn} 在 chanboss 上已经不是待处理了（${o.status}）：在别处买过了？` };
 		}
 		const offer = await fetchOffer(sql, p.offerId);
 		if (!offer) return { skip: "货源在 1688 上下架了" };
@@ -105,20 +105,20 @@ const forecastParams = z.object({
 });
 type ForecastP = z.infer<typeof forecastParams>;
 
-/** 预报：在仓老板上报这张订单的货怎么来。寄到我们这里 = 海快 + 无单号；寄到仓老板 = 海快 + 每件的快递单号 */
+/** 预报：在 chanboss 上报这张订单的货怎么来。寄到我们这里 = 海快 + 无单号；寄到 chanboss = 海快 + 每件的快递单号 */
 const forecastOp: WriteOp<ForecastP> = {
-	describe: "在仓老板上预报一张订单",
+	describe: "在 chanboss 上预报一张订单",
 	params: forecastParams,
 	target: (p) => `chanboss:${p.sn}`,
 	key: (p) => `forecast:${p.sn}`,
 	display: (p) => `订单 ${p.sn}：${p.lines.every((l) => !l.trackingNo) ? "无单号" : p.lines.map((l) => l.trackingNo).join("、")}`,
-	untried: "预报的请求体是照仓老板页面的 JS 拼的，还没在真订单上跑过：和运营约好一张单，一起跑 x2 run --try 预报，跑完在仓老板上看一眼",
+	untried: "预报的请求体是照 chanboss 页面的 JS 拼的，还没在真订单上跑过：和运营约好一张单，一起跑 x2 run --try 预报，跑完在 chanboss 上看一眼",
 	where: (_p, fn) => fn(),
 	async prepare(_sql, p) {
 		const o = (await liveOrders([p.sn])).get(p.sn);
-		if (!o) return { skip: `仓老板上读不到订单 ${p.sn}` };
+		if (!o) return { skip: `chanboss 上读不到订单 ${p.sn}` };
 		if (o.platform_status !== "READY_TO_SHIP") return { skip: `订单不是待出货了（${o.platform_status}）` };
-		if (o.status !== "paid") return { skip: `仓老板上已经是 ${o.status} 了：预报过了？` };
+		if (o.status !== "paid") return { skip: `chanboss 上已经是 ${o.status} 了：预报过了？` };
 		return { params: p, before: { status: o.status } };
 	},
 	async submit(sql, p) {

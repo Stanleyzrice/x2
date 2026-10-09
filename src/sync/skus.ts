@@ -1,5 +1,5 @@
 // 同步规格：一家店的在售商品（在那家店的浏览器里读），每个规格一行。人定的两列（货源、1688 规格）同步不改。
-// 只有一个规格的商品用商品 id 当规格 id：仓老板的订单里这种商品的 platform_model_id 就是商品 id，两边对得上
+// 只有一个规格的商品用商品 id 当规格 id：chanboss 的订单里这种商品的 platform_model_id 就是商品 id，两边对得上
 import { inShop } from "../accounts.ts";
 import { liveProducts, type Product } from "../site/shopee/products.ts";
 import type { Sql } from "../db/index.ts";

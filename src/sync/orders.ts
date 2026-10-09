@@ -1,13 +1,13 @@
-// 同步订单：用仓老板的订单列表（两家店的订单都在，带商品、出货期限、平台状态、仓老板状态）。
+// 同步订单：用 chanboss 的订单列表（两家店的订单都在，带商品、出货期限、平台状态、chanboss 状态）。
 // 读最近 60 天下单的，读全了才整批写进 orders；读到一半出错就不写，这一域这一轮算失败。
 // 订单里的规格顺手补进 skus（没有的才加）：那家店的浏览器没连着，也知道卖出了哪些规格
 import { orders as chanbossOrders } from "../site/chanboss.ts";
 import type { Sql } from "../db/index.ts";
 
-/** 仓老板状态：站上的代码 → 仓老板的词。paid、arrive 是推断的（2026-10-09 没有这两种状态的订单可核对） */
+/** chanboss 状态：站上的代码 → chanboss 的词。paid、arrive 是推断的（2026-10-09 没有这两种状态的订单可核对） */
 export const CHANBOSS_STATUS: Record<string, string> = { paid: "待处理", pre_report: "已预报", arrive: "已到齐", packaged: "已打包", delivery: "已出库", other: "其他" };
 
-/** 平台状态：仓老板转来的 Shopee 订单状态 → Shopee 的词 */
+/** 平台状态：chanboss 转来的 Shopee 订单状态 → Shopee 的词 */
 export const PLATFORM_STATUS: Record<string, string> = {
 	UNPAID: "待付款", READY_TO_SHIP: "待出货", PROCESSED: "待出货", RETRY_SHIP: "待出货",
 	SHIPPED: "已出货", TO_CONFIRM_RECEIVE: "已出货", COMPLETED: "已完成", IN_CANCEL: "取消中", CANCELLED: "不成立", TO_RETURN: "退货退款",
@@ -17,7 +17,7 @@ export type Item = { itemId: string; modelId: string; chanbossModelId: string; n
 
 const time = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Number(seconds) * 1000) : null);
 
-/** 仓老板订单列表的一行 → orders 的一行。只有一个规格的商品，仓老板的 platform_model_id 是商品 id */
+/** chanboss 订单列表的一行 → orders 的一行。只有一个规格的商品，chanboss 的 platform_model_id 是商品 id */
 export function orderRow(r: any) {
 	const items: Item[] = ((r.item_detail_new ?? []) as any[]).map((i) => ({
 		itemId: String(i.platform_item_id ?? ""), modelId: String(i.platform_model_id ?? ""), chanbossModelId: String(i.model_id ?? ""),

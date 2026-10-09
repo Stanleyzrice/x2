@@ -35,9 +35,9 @@ export function tables(lateDays: number): Table[] {
 		{
 			name: "orders", title: "订单",
 			columns: {
-				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", platform_status: "平台状态", chanboss_status: "仓老板状态", items_text: "商品",
+				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", platform_status: "平台状态", chanboss_status: "chanboss 状态", items_text: "商品",
 				problem: "问题单", destination: "寄到哪", sourced: "货源齐了", carted: "加购了", paid: "付款了", arrived: "到齐了", created_at: "下单时间", cancelled_at: "取消时间",
-				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "仓老板 id", chanboss_time: "仓老板下单时间", synced_at: "同步于", checked_at: "检查于",
+				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "chanboss id", chanboss_time: "chanboss 下单时间", synced_at: "同步于", checked_at: "检查于",
 			},
 			views: [
 				{ title: "待出货", filters: OPEN_ORDER, sorts: [["ship_by", "asc"]], group: [["chanboss_status", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at", "cancelled_at", "platform_status"] },
@@ -62,7 +62,7 @@ export function tables(lateDays: number): Table[] {
 			name: "purchases", title: "采购单",
 			columns: {
 				order_id: "采购单号", account: "1688 账号", offer_id: "货源", offer_sku_id: "1688 规格", qty: "件数", price: "单价", paid: "实付", status_label: "状态", paid_at: "付款时间",
-				to_chanboss: "寄到仓老板", address: "收货地址", tracking_no: "快递单号", logistics: "物流", signed: "签收了", shipped_at: "发货时间", created_at: "下单时间",
+				to_chanboss: "寄到 chanboss", address: "收货地址", tracking_no: "快递单号", logistics: "物流", signed: "签收了", shipped_at: "发货时间", created_at: "下单时间",
 				line: "行", spec_id: "specId", status: "状态码", raw: "原样", synced_at: "同步于",
 			},
 			views: [
@@ -110,7 +110,7 @@ export function tables(lateDays: number): Table[] {
 		},
 		{
 			name: "order_settings", title: "订单设置",
-			columns: { channel: "发货线路", chanboss_address: "仓老板的收货地址", forecast_needs_approval: "预报要批准", late_days: "快到期提前几天", sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id" },
+			columns: { channel: "发货线路", chanboss_address: "chanboss 的收货地址", forecast_needs_approval: "预报要批准", late_days: "快到期提前几天", sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id" },
 			views: [{ title: "设置", hide: ["id"] }],
 		},
 	];

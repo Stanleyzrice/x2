@@ -23,7 +23,7 @@ async function accounts(sql: Sql): Promise<string[]> {
 }
 
 export const DOMAINS: Record<string, Domain> = {
-	orders: { describe: "订单（仓老板，两家店）", maxMinutes: 20, scopes: async () => [""], run: (sql) => syncOrders(sql) },
+	orders: { describe: "订单（chanboss，两家店）", maxMinutes: 20, scopes: async () => [""], run: (sql) => syncOrders(sql) },
 	skus: {
 		describe: "规格（Shopee 在售商品，一家店一份）", maxMinutes: 1440,
 		scopes: async (sql) => (await sql`select shop_id from shops where enabled order by shop_id`).map((r) => r.shop_id as string),

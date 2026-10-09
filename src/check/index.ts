@@ -9,7 +9,7 @@ const DEPENDS: Record<string, string[]> = {
 	问题单: ["orders"], 选货源: ["orders"], 设置: [], 登录: [], 结果未知: [],
 };
 
-const SITE: Record<string, string> = { orders: "仓老板", skus: "Shopee", cart: "1688", purchases: "1688" };
+const SITE: Record<string, string> = { orders: "chanboss", skus: "Shopee", cart: "1688", purchases: "1688" };
 
 export async function snapshot(sql: Sql): Promise<Snapshot> {
 	const [settings] = await sql`select * from order_settings where id = 1`;

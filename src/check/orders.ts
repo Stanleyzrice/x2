@@ -45,7 +45,7 @@ export const label = (i: { name: string; spec: string }) => `${short(i.name)} / 
 const DAY = 86_400_000;
 
 export const isCancelled = (o: Order) => o.platformStatus === "不成立" || o.platformStatus === "取消中";
-/** 已经过了「已打包」：剩下是仓老板和 Shopee 的事 */
+/** 已经过了「已打包」：剩下是 chanboss 和 Shopee 的事 */
 export const isPacked = (o: Order) => o.chanbossStatus === "已打包" || o.chanbossStatus === "已出库" || ["已出货", "已完成", "退货退款"].includes(o.platformStatus);
 export const isOpen = (o: Order) => o.platformStatus === "待出货" && !isPacked(o);
 
@@ -119,11 +119,11 @@ export function checkOrders(s: Snapshot): Result {
 		const arrived = paid && ps.every((p) => p.signed);
 		if (paid && ps.some((p) => p.toChanboss === null)) needAddress = true;
 		const toChanboss = ps.map((p) => p.toChanboss === true);
-		const destination = !paid ? null : toChanboss.every(Boolean) ? "寄到仓老板" : toChanboss.some(Boolean) ? "两边都有" : "寄到我们这里";
+		const destination = !paid ? null : toChanboss.every(Boolean) ? "寄到 chanboss" : toChanboss.some(Boolean) ? "两边都有" : "寄到我们这里";
 
 		// 卡在哪一步
 		let step: string;
-		if (!needsBuy && !viaX2.has(o.sn)) step = `仓老板：${o.chanbossStatus}（不是经 x2 加购的）`;
+		if (!needsBuy && !viaX2.has(o.sn)) step = `chanboss：${o.chanbossStatus}（不是经 x2 加购的）`;
 		else if (!sourced) step = `没货源：${sources.filter((x) => x.src.state !== "有" && x.src.state !== "新").map((x) => label(x.i)).join("、")}`;
 		else if (!carted) step = sources.some((x) => flying.has(`${o.sn}:${x.i.modelId}`)) ? "加购等批准" : "没加购";
 		else if (!paid) step = "没付款";
@@ -131,7 +131,7 @@ export function checkOrders(s: Snapshot): Result {
 		else if (destination === "寄到我们这里") {
 			const missing = sources.filter((x) => !(x.line?.purchases ?? []).every((p) => p.signed)).map((x) => label(x.i));
 			step = missing.length ? `货没到齐（还差 ${missing.join("、")}）` : "到齐了没打包";
-		} else step = o.chanbossStatus === "已到齐" ? "等仓老板打包" : "等仓老板收货";
+		} else step = o.chanbossStatus === "已到齐" ? "等 chanboss 打包" : "等 chanboss 收货";
 		computed.set(o.sn, { daysLeft, sourced, carted, paid, arrived, destination, step });
 
 		// 选货源、找货源：只看还要买的订单
@@ -161,9 +161,9 @@ export function checkOrders(s: Snapshot): Result {
 			if (o.shipBy && (!p.due || o.shipBy < p.due)) p.due = o.shipBy;
 			paySet.set(line.account, p);
 		}
-		// 预报：付了款还没报的。寄到我们这里报无单号；寄到仓老板的要每件都有快递单号
+		// 预报：付了款还没报的。寄到我们这里报无单号；寄到 chanboss 的要每件都有快递单号
 		if (needsBuy && paid && !forecastFlying.has(o.sn) && destination !== "两边都有") {
-			const byChanboss = destination === "寄到仓老板";
+			const byChanboss = destination === "寄到 chanboss";
 			const ready = !byChanboss || sources.every((x) => (x.line?.purchases ?? []).every((p) => p.trackingNo));
 			if (ready) forecasts.push({
 				sn: o.sn, chanbossId: o.chanbossId, chanbossTime: o.chanbossTime,
@@ -174,7 +174,7 @@ export function checkOrders(s: Snapshot): Result {
 		if (destination === "寄到我们这里" && arrived && !needsBuy) inbox.push({
 			key: `pack:${o.sn}`, kind: "打包", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS,
 			title: `打包：订单 ${o.sn} 的货到齐了`,
-			detail: `${o.items.map((i) => `${label(i)} × ${i.qty}`).join("\n")}\n按这张订单装好，在仓老板上打印 SKU 拣货单贴上，寄给仓老板`,
+			detail: `${o.items.map((i) => `${label(i)} × ${i.qty}`).join("\n")}\n按这张订单装好，在 chanboss 上打印 SKU 拣货单贴上，寄给 chanboss`,
 		});
 		// 快到期
 		if (daysLeft !== null && daysLeft <= s.settings.lateDays) inbox.push({
@@ -185,7 +185,7 @@ export function checkOrders(s: Snapshot): Result {
 	}
 
 	function problem(o: Order): InboxItem {
-		return { key: `problem:${o.sn}`, kind: "问题单", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS, title: `问题单：订单 ${o.sn} 在仓老板标了问题`, detail: o.problem ?? "" };
+		return { key: `problem:${o.sn}`, kind: "问题单", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS, title: `问题单：订单 ${o.sn} 在 chanboss 标了问题`, detail: o.problem ?? "" };
 	}
 
 	// 取消的订单：购物车里没有它的货；预报取消了；已经买了的货有去处（只看最近 14 天取消的）
@@ -197,14 +197,14 @@ export function checkOrders(s: Snapshot): Result {
 		const reported = o.chanbossStatus === "已预报" || o.chanbossStatus === "已到齐";
 		const todoLines = [
 			...inCart.map((x) => `${label(x.i)} × ${x.line!.cartQty} 在 1688 购物车里：删掉`),
-			...(reported ? [`仓老板上是「${o.chanbossStatus}」：取消预报${o.chanbossStatus === "已到齐" ? "，到了的货定去处" : ""}`] : []),
+			...(reported ? [`chanboss 上是「${o.chanbossStatus}」：取消预报${o.chanbossStatus === "已到齐" ? "，到了的货定去处" : ""}`] : []),
 			...bought.map((x) => `${label(x.i)} × ${x.line!.paidQty} 已经买了：定去处（留着下次用、退货）`),
 		];
 		if (todoLines.length) inbox.push({
 			key: `cancel:${o.sn}`, kind: "取消", shop: o.shop, due: null, link: inCart.length ? CART_URL : CHANBOSS_ORDERS,
 			title: `取消：订单 ${o.sn} 取消了，${[
 				inCart.length ? `${inCart.reduce((n, x) => n + x.line!.cartQty, 0)} 件在购物车里要删` : "",
-				reported ? "仓老板上要取消预报" : "",
+				reported ? "chanboss 上要取消预报" : "",
 				bought.length ? "买了的货要定去处" : "",
 			].filter(Boolean).join("，")}`,
 			detail: todoLines.join("\n"),
@@ -252,7 +252,7 @@ export function checkOrders(s: Snapshot): Result {
 	}
 	if (needAddress && !s.settings.chanbossAddress) inbox.push({
 		key: "setting:chanboss_address", kind: "设置", shop: null, due: null, link: null,
-		title: "设置：在「订单设置」里填仓老板的收货地址", detail: "x2 用它认出哪些采购单是寄到仓老板的；没填时都当成寄到我们这里",
+		title: "设置：在「订单设置」里填 chanboss 的收货地址", detail: "x2 用它认出哪些采购单是寄到 chanboss 的；没填时都当成寄到我们这里",
 	});
 
 	// ── agent 要做的 ──

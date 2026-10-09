@@ -7,7 +7,7 @@ import { approve, propose } from "../propose.ts";
 import { run } from "../run.ts";
 import { DOMAINS, sync } from "../sync/index.ts";
 
-const NAMES: Record<string, string> = { orders: "仓老板", skus: "规格", cart: "购物车", purchases: "采购单" };
+const NAMES: Record<string, string> = { orders: "chanboss", skus: "规格", cart: "购物车", purchases: "采购单" };
 
 const ago = (d: Date | null) => {
 	if (!d) return "没读过";

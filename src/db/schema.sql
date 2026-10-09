@@ -30,12 +30,12 @@ create table if not exists shops (
 -- 订单设置：只有一行
 create table if not exists order_settings (
 	id int primary key default 1 check (id = 1),
-	-- 发货线路：海快（仓老板的 sendway_id 752）。line_id、warehouse_id 是仓老板上这条线路的线路和仓库（2026-10-09 读已预报的订单：1111、5176）
+	-- 发货线路：海快（chanboss 的 sendway_id 752）。line_id、warehouse_id 是 chanboss 上这条线路的线路和仓库（2026-10-09 读已预报的订单：1111、5176）
 	channel text not null default '海快',
 	sendway_id int not null default 752,
 	line_id int not null default 1111,
 	warehouse_id int not null default 5176,
-	-- 仓老板的收货地址：采购单的收货地址里有这一段的，算寄到仓老板
+	-- chanboss 的收货地址：采购单的收货地址里有这一段的，算寄到 chanboss
 	chanboss_address text,
 	forecast_needs_approval boolean not null default true,
 	-- 出货期限前几天算快到期
@@ -71,7 +71,7 @@ create table if not exists source_options (
 
 -- ── 镜像（同步来的，人只看） ──
 
--- 订单：用仓老板的订单列表（两家店都在）。订单号就是 Shopee 的订单号
+-- 订单：用 chanboss 的订单列表（两家店都在）。订单号就是 Shopee 的订单号
 create table if not exists orders (
 	sn text primary key,
 	shop_id text,
@@ -80,13 +80,13 @@ create table if not exists orders (
 	ship_by timestamptz,
 	platform_status text,
 	chanboss_status text,
-	-- 仓老板上这张订单的 id、下单时间（秒）：预报要带
+	-- chanboss 上这张订单的 id、下单时间（秒）：预报要带
 	chanboss_id text,
 	chanboss_time bigint,
 	-- 商品：[{ itemId, modelId, chanbossModelId, name, spec, qty, image }]
 	items jsonb not null default '[]',
 	items_text text,
-	-- 仓老板标的问题（没有是 null）
+	-- chanboss 标的问题（没有是 null）
 	problem text,
 	cancelled_at timestamptz,
 	synced_at timestamptz,
