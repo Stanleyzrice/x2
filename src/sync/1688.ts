@@ -79,15 +79,18 @@ export async function syncPurchases(sql: Sql, account: string, pages = 3): Promi
 		for (const o of orders) {
 			const t = trace.get(o.orderId);
 			for (const [line, i] of o.items.entries()) {
+				// 1688 规格：采购单的每一行自带 skuId（2026-10-09 核对过）；没有时按货源里的规格从 specId 换（只有一个规格的货源 skuId 是货源 id）
 				const skus = known.get(i.offerId) ?? [];
-				const skuId = i.specId ? skus.find((s) => s.specId === i.specId)?.skuId ?? null : i.offerId;
+				const skuId = i.skuId || (i.specId ? skus.find((s) => s.specId === i.specId)?.skuId ?? null : i.offerId);
 				const logistics = t?.traces.find((x) => x.trackingNo === i.trackingNo)?.status ?? null;
+				// 签收了：这一行 1688 上是「已收货」、收了件，或者物流里有「签收」
+				const signed = i.status === "success" || i.received >= i.quantity || (logistics !== null && signedOf(logistics));
 				await tx`
 					insert into purchases ${tx({
 						order_id: o.orderId, line, account, offer_id: i.offerId, spec_id: i.specId, offer_sku_id: skuId, qty: i.quantity, price: i.price, paid: o.paid,
-						status: o.status, status_label: o.statusLabel, created_at: date(o.createdAt), paid_at: date(o.paidAt),
+						status: o.status, status_label: i.statusLabel || o.statusLabel, created_at: date(o.createdAt), paid_at: date(o.paidAt),
 						address: o.address, to_chanboss: chanboss_address && o.address ? o.address.includes(chanboss_address) : null,
-						tracking_no: i.trackingNo || null, shipped_at: date(i.shippedAt), logistics, signed: logistics === null ? false : signedOf(logistics),
+						tracking_no: i.trackingNo || null, shipped_at: date(i.shippedAt), logistics, signed,
 						raw: tx.json(o.raw as any), synced_at: at,
 					})}
 					on conflict (order_id, line) do update set

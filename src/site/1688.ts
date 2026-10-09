@@ -194,9 +194,10 @@ export async function addToCart(offerId: string, specId: string, quantity: numbe
 export type BuyerOrder = {
 	orderId: string; status: string; statusLabel: string; createdAt: string; paidAt: number | null;
 	goods: number; freight: number; discount: number; paid: number;
-	/** 收货地址：还没有真的采购单核对过字段（2026-10-09），从名字带 address、addr、receiver 的字段里找；找不到是空字符串 */
+	/** 收货地址：采购单列表里没有（2026-10-09 对 crystal 账号的 50 张核对过），从名字带 address、addr、receiver 的字段里找；找不到是空字符串。要的话得读采购单详情 */
 	address: string;
-	items: { offerId: string; specId: string; quantity: number; price: number; trackingNo: string; shippedAt: number | null }[];
+	/** 每一行（一个 1688 规格）：skuId（只有一个规格的货源是空的）、这一行的状态（已发货、已收货……）、已收件数 */
+	items: { offerId: string; specId: string; skuId: string; name: string; spec: string; quantity: number; price: number; status: string; statusLabel: string; received: number; trackingNo: string; shippedAt: number | null }[];
 	/** 原样的一行：字段核对过以前留着查 */
 	raw: unknown;
 };
@@ -229,8 +230,10 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 		goods: yuan(o.sumProductPayment), freight: yuan(o.carriage), discount: yuan(o.allPromotionFee), paid: yuan(o.sumPayment),
 		address: addressOf(o), raw: o,
 		items: ((o.orderEntries ?? []) as any[]).map((e) => ({
-			offerId: String(e.sourceId ?? ""), specId: String(e.specId ?? ""),
+			offerId: String(e.sourceId ?? ""), specId: String(e.specId ?? ""), skuId: String(e.skuId ?? ""), name: String(e.productName ?? ""),
+			spec: ((e.specInfo?.specItems ?? []) as any[]).map((x) => x.specValue).join(" / "),
 			quantity: Number(e.quantity?.realAmount ?? e.quantity?.calAmount ?? e.quantity ?? 0), price: yuan(e.price),
+			status: String(e.entryStatus ?? ""), statusLabel: String(e.entryStatusLabel ?? ""), received: Number(e.entryExtension?.receivedQuantity ?? 0),
 			trackingNo: String(e.entryExtension?.trackingNo ?? ""), shippedAt: e.entryExtension?.sendgt ? Number(e.entryExtension.sendgt) : null,
 		})),
 	}));
