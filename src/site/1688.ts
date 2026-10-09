@@ -194,7 +194,7 @@ export async function addToCart(offerId: string, specId: string, quantity: numbe
 export type BuyerOrder = {
 	orderId: string; status: string; statusLabel: string; createdAt: string; paidAt: number | null;
 	goods: number; freight: number; discount: number; paid: number;
-	/** 收货地址：采购单列表里没有（2026-10-09 对 crystal 账号的 50 张核对过），从名字带 address、addr、receiver 的字段里找；找不到是空字符串。要的话得读采购单详情 */
+	/** 收货地址：采购单列表里没有（2026-10-09 对 50 张真采购单核对过），从名字带 address、addr、receiver 的字段里找；找不到是空字符串。要的话得读采购单详情 */
 	address: string;
 	/** 每一行（一个 1688 规格）：skuId（只有一个规格的货源是空的）、这一行的状态（已发货、已收货……）、已收件数 */
 	items: { offerId: string; specId: string; skuId: string; name: string; spec: string; quantity: number; price: number; status: string; statusLabel: string; received: number; trackingNo: string; shippedAt: number | null }[];

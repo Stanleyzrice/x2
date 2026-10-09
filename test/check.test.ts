@@ -19,7 +19,7 @@ const purchase = (qty: number, o: { signed?: boolean; toChanboss?: boolean; trac
 });
 
 const snap = (s: Partial<Snapshot> = {}): Snapshot => ({
-	now: hours(2), settings: { lateDays: 6, channel: "海快", buyAccount: "A" }, accounts: new Map([["A", "桥头等白马"]]),
+	now: hours(2), settings: { lateDays: 6, channel: "海快", buyAccount: "A" }, accounts: new Map([["A", "采购员"]]),
 	orders: [order("1", 1), order("2", 2)],
 	skus: new Map([["M1", { modelId: "M1", itemId: "I1", offerId: "O1", skuId: "S1" }]]),
 	offers: new Map([["O1", { offerId: "O1", title: "红T 货源", live: true, skus: [{ skuId: "S1", specId: "sp1", name: "红色 L", price: 10, stock: 99, image: "" }] }]]),
@@ -52,7 +52,7 @@ test("加购了在购物车里：收件箱「付款」，订单卡在没付款",
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }] }));
 	const pay = r.inbox.find((i) => i.key === "pay:A");
 	assert.ok(pay);
-	assert.match(pay.title, /「桥头等白马」的购物车里 2 张订单的货 ¥30\.00/);
+	assert.match(pay.title, /「采购员」的购物车里 2 张订单的货 ¥30\.00/);
 	assert.equal(r.orders.get("2")!.step, "没付款");
 	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
 });
@@ -147,7 +147,7 @@ test("在 x2 外面买了：采购单按 1688 规格分给订单（先下单的�
 	assert.ok(!r.covered.has("2:M1"));
 });
 
-test("x2 加了购、人又在外面买了：购物车那一行不该买（衣帽架 260917A6PM8V15 的情况）", () => {
+test("x2 加了购、人又在外面买了：购物车那一行不该买", () => {
 	const early = { ...purchase(3), createdAt: hours(-20) };
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }], purchases: [early] }));
 	assert.match(r.cart.get("A|O1|S1")!.shouldBuy, /已经在外面买了/);
