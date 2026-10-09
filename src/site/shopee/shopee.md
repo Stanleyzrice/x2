@@ -15,7 +15,7 @@
 
 | 文件 | 函数 | 接口 |
 |---|---|---|
-| `seller.ts` | `shop` | `GET /api/selleraccount/user_info/`（user_id = 店铺 id）、`GET /api/v3/general/get_shop_info/` |
+| `seller.ts` | `shop` | `GET /api/selleraccount/shop_info/`（shop_id 是店铺 id）、`GET /api/selleraccount/user_info/`（user_id 是卖家账号，不是店铺 id）、`GET /api/v3/general/get_shop_info/` |
 | `orders.ts` | `orderIndex`、`orders`、`toShipOrders` | `POST /api/v3/order/search_order_list_index` |
 | | `orderCards` | `POST /api/v3/order/get_order_list_card_list`（一次最多 5 张） |
 | | `oneOrder` | `GET /api/v3/order/get_one_order` |

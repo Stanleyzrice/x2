@@ -73,25 +73,25 @@ export async function performance(start: number, end: number, period: "past7days
 	return { total: Number(b.result?.total ?? 0), rows: b.result?.items ?? [] };
 }
 
-export type Category = { id: number; name: string; children: Category[] };
+export type Category = { id: string; name: string; children: Category[] };
 
 /** Shopee 的类目树（台湾站，全店共用） */
 export async function categoryTree(): Promise<Category[]> {
 	const b = await seller("/api/v3/category/get_category_tree");
-	const conv = (n: any): Category => ({ id: Number(n.id), name: String(n.display_name ?? n.name ?? n.id), children: (n.children ?? []).map(conv) });
+	const conv = (n: any): Category => ({ id: String(n.id), name: String(n.display_name ?? n.name ?? n.id), children: (n.children ?? []).map(conv) });
 	const list = (b.data?.list ?? []) as any[];
 	if (!list.length) throw new Error("Shopee 类目树是空的（没登录，或被风控）");
 	return list.map(conv);
 }
 
-export type Attribute = { id: number; name: string; mandatory: boolean; maxValues: number; values: { valueId: number; name: string }[] };
+export type Attribute = { id: string; name: string; mandatory: boolean; maxValues: number; values: { valueId: string; name: string }[] };
 
 /** 叶子类目的属性：必填的决定能不能上架；可选值只能从 values 里挑 */
 export async function attributes(categoryId: number): Promise<Attribute[]> {
 	const b = await seller("/api/v3/listing-upload/component/get_attribute_tree", { body: { category_id: categoryId } });
 	return ((b.data?.list?.[0]?.attribute_tree ?? []) as any[]).map((a) => ({
-		id: Number(a.attribute_id), name: String(a.display_name ?? a.name ?? ""), mandatory: Boolean(a.mandatory), maxValues: Number(a.attribute_info?.max_value_count ?? 1),
-		values: ((a.children ?? []) as any[]).map((c) => ({ valueId: Number(c.value_id), name: String(c.display_name ?? c.name ?? "") })),
+		id: String(a.attribute_id), name: String(a.display_name ?? a.name ?? ""), mandatory: Boolean(a.mandatory), maxValues: Number(a.attribute_info?.max_value_count ?? 1),
+		values: ((a.children ?? []) as any[]).map((c) => ({ valueId: String(c.value_id), name: String(c.display_name ?? c.name ?? "") })),
 	}));
 }
 

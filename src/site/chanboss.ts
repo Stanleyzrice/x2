@@ -21,7 +21,7 @@ async function api<T = any>(path: string, req: { query?: Record<string, string |
 		if (!token) return { code: 90000, message: "没有登录" };
 		const url = new URL(path, location.origin);
 		for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
-		const r = await fetch(url, { method: body === null ? "GET" : "POST", headers: { "x-wh-sessionkey": token, ...(body === null ? {} : { "content-type": "application/json" }) }, body: body ?? undefined });
+		const r = await fetch(url.href, { method: body === null ? "GET" : "POST", headers: { "x-wh-sessionkey": token, ...(body === null ? {} : { "content-type": "application/json" }) }, body: body ?? undefined });
 		return r.json().catch(() => ({ code: -1, message: `HTTP ${r.status}` }));
 	}, `${API}${path}`, Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])), req.body === undefined ? null : JSON.stringify(req.body));
 	if (Number(b?.code) === 90000 || /失效|session/i.test(String(b?.message ?? ""))) throw new NeedsHuman("仓老板没有登录（或会话失效）：在浏览器里登录 c.chanboss.com");
@@ -74,12 +74,13 @@ export async function balance(from: number, to: number, pageIndex = 1) {
 
 // ── x2 chanboss <操作> ──
 
-const range = { from: day("开始"), to: day("结束", true) };
+// 和 shopee 一样叫 --start、--end
+const range = { start: day("开始"), end: day("结束", true) };
 
 export const ops: Ops = {
-	identity: get("登录着的仓老板账号", undefined, () => identity()),
+	identity: get("登录着的仓老板账号", undefined, async () => { const i = await identity(); return { ...i, userId: String(i.userId) }; }),
 	orders: byPage("入仓单（仓库替我们发的 Shopee 订单），按下单时间筛", z.object({ ...range, sns: strs("只读这几张 Shopee 订单号（最多 100）").optional() }), async (p, n) => {
-		const r = await orders(p.from, p.to, n, p.sns ?? []);
+		const r = await orders(p.start, p.end, n, p.sns ?? []);
 		return { rows: r.rows, more: n < r.pageCount };
 	}),
 	stock: byPage("库存（含库存是 0 的）", undefined, async (_, n) => {
@@ -91,7 +92,7 @@ export const ops: Ops = {
 		return { rows: r.rows, more: n < r.pageCount };
 	}),
 	putaway: byPage("退件在库：上架 shelf、分拣中 sorting、已分出 sort_out", z.object({ status: z.enum(["shelf", "sorting", "sort_out"]).describe("状态"), ...range }), async (p, n) => {
-		const r = await putaway(p.status, p.from, p.to, n);
+		const r = await putaway(p.status, p.start, p.end, n);
 		return { rows: r.rows, more: n < r.pageCount };
 	}),
 	"return-changes": byPage("退件换货", undefined, async (_, n) => {
@@ -99,7 +100,7 @@ export const ops: Ops = {
 		return { rows: r.rows, more: n < r.pageCount };
 	}),
 	balance: byPage("扣款流水", z.object(range), async (p, n) => {
-		const r = await balance(p.from, p.to, n);
+		const r = await balance(p.start, p.end, n);
 		return { rows: r.rows, more: n < r.pageCount };
 	}),
 };

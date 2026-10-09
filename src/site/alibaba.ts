@@ -100,18 +100,23 @@ export async function account(): Promise<{ userId: string; loginId: string }> {
 export type SearchHit = { offerId: string; url: string; title: string; price: number; minQty: number; sold: string; shop: string; image: string };
 
 /** 在 1688 上按关键词搜货源（第一页）。搜索页的关键词是 GBK 编码，照 lilto 的做法在搜索框里填、提交表单，不自己拼地址。
- * 读的是页面上的卡片（2026-08-29 的页面结构），改版了会读不到，报错 */
+ * 读的是页面上的卡片（2026-08-29 的页面结构），改版了会读不到，报错。
+ * 2026-10-09 查过：一页 60 个，先只出 10 来个，往下滚才一批批加载；价格拆成几段（¥、0、.03），要读整个 .price-item；
+ * 起订量（≥N 个）多数卡片上没有，没有时 minQty 是 0 */
 export async function search(keyword: string): Promise<SearchHit[]> {
 	const p = await page("https://s.1688.com");
 	await p.goto("https://s.1688.com/selloffer/offer_search.htm");
 	const sent = await p.run((keyword: string) => {
+		if (/login|passport|punish/.test(location.href) || document.querySelector(".nc_wrapper,.baxia-dialog,#nc_1_wrapper")) return "blocked";
 		const input = document.querySelector<HTMLInputElement>("input[name=keywords]");
-		if (!input?.form) return false;
+		if (!input?.form) return "none";
 		input.value = keyword;
 		input.form.submit();
-		return true;
+		return "sent";
 	}, keyword);
-	if (!sent) throw new Error("1688 搜索页没有搜索框：要登录、要过滑块，或者改版了");
+	if (sent === "blocked") throw new NeedsHuman("1688 要登录或要过滑块：在浏览器里处理一下");
+	if (sent === "none") throw new Error("1688 搜索页没有搜索框：页面可能改版了");
+	let seen = -1, still = 0, last: SearchHit[] | null = null;
 	for (let i = 0; i < 30; i++) {
 		await new Promise((r) => setTimeout(r, 1000));
 		const got = await p.run((keyword: string) => {
@@ -119,6 +124,8 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 			if (document.readyState !== "complete" || (document.querySelector<HTMLInputElement>("input[name=keywords]")?.value ?? "").trim() !== keyword.trim()) return null;
 			const cards = [...document.querySelectorAll<HTMLAnchorElement>('a[data-tracker="offer"][href*="offerId="], a[class*="offerCard--"][href*="offerId="], a.search-offer-item, a.search-offer-wrapper')];
 			if (!cards.length) return /空空如也/.test(document.body.innerText) ? { hits: [] } : null;
+			// 滚到底，让页面接着加载这一页后面的卡片
+			window.scrollTo(0, document.body.scrollHeight);
 			return {
 				hits: cards.map((card: HTMLAnchorElement) => {
 					const offerId = card.href.match(/offerId=(\d+)/)?.[1] ?? "";
@@ -128,8 +135,9 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 					const img = card.querySelector("img");
 					return {
 						offerId, url: `https://detail.1688.com/offer/${offerId}.html`,
-						title: (card.querySelector<HTMLElement>('[class*="titleText--"]')?.innerText ?? card.innerText.split("\n")[0] ?? "").trim(),
-						price: Number.parseFloat((card.querySelector<HTMLElement>('.price-item .text-main, [class*="priceItem--"], [class*="hoverPriceValue--"]')?.innerText ?? "").replace(/[^\d.]/g, "")) || 0,
+						title: (card.querySelector<HTMLElement>('.title-text, [class*="titleText--"]')?.innerText ?? card.innerText.split("\n")[0] ?? "").trim(),
+						// 卡片上那一行的价格（悬停浮层里的是阶梯价），整个 .price-item：¥、整数、小数是分开的几段
+						price: Number.parseFloat((card.querySelector<HTMLElement>('.offer-price-row .price-item, .price-item, [class*="priceItem--"], [class*="hoverPriceValue--"]')?.innerText ?? "").replace(/[^\d.]/g, "")) || 0,
 						minQty: Number.parseInt(min.replace(/[^\d]/g, ""), 10) || 0,
 						sold, shop: descs.filter((v) => v !== min && v !== sold && !/回头率|包运费|先采后付/.test(v)).pop() ?? "",
 						image: img?.src || img?.getAttribute("data-src") || "",
@@ -138,8 +146,13 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 			};
 		}, keyword);
 		if (got && "error" in got) throw new NeedsHuman(got.error);
-		if (got) return got.hits;
+		if (!got) continue;
+		last = got.hits;
+		// 卡片数连着两次不再变多，才算这一页加载完
+		if (got.hits.length > seen) { seen = got.hits.length; still = 0; continue; }
+		if (++still >= 2) return got.hits;
 	}
+	if (last) return last;
 	throw new Error("1688 搜索结果 30 秒没出来：页面可能改版了");
 }
 

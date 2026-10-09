@@ -1,7 +1,7 @@
 // x2 shopee <操作>：卖家中心的读操作（写不在这里：见 op.ts）
 import { writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { all, byPage, day, flag, get, ints, list, num, type Ops, str } from "../op.ts";
+import { all, byPage, day, flag, get, ints, list, num, type Ops, parseJson, str } from "../op.ts";
 import { conversations, messages, unreplied } from "./chat.ts";
 import { income, incomeComponents } from "./finance.ts";
 import { article, articles } from "./help.ts";
@@ -22,7 +22,7 @@ async function save(b64: string, out: string) {
 }
 
 export const ops: Ops = {
-	shop: get("当前登录的店铺：shopId、名字、评分", undefined, () => shop()),
+	shop: get("当前登录的店铺：shopId（店铺 id）、userId（卖家账号 id）、店名、账号名、评分", undefined, () => shop()),
 
 	// ── 订单 ──
 	orders: all("一个标签下的全部订单（订单号、出货期限、商品和规格、包裹）",
@@ -44,7 +44,7 @@ export const ops: Ops = {
 	"count-limit": get("商品额度：已发布、下架的、上限", undefined, () => countLimit()),
 	"category-tree": all("Shopee 台湾站的类目树", undefined, () => categoryTree()),
 	attributes: all("叶子类目的属性：必填的、可选值", z.object({ category: num("叶子类目 id") }), (p) => attributes(p.category)),
-	"recommended-category": get("Shopee 按商品名（和一张已传的图）推荐的类目", z.object({ name: str("商品名"), image: z.string().default("").describe("已传的图片 id") }),
+	"recommended-category": get("Shopee 按商品名（和一张已传的图）推荐的类目", z.object({ name: str("商品名"), image: z.string().default("").describe("已传的图片 id（例商品资料 images 里的；只给商品名时站点常回空的 {}）") }),
 		(p) => recommendedCategory(p.name, p.image)),
 	"shipping-days": get("各类目的出货天数范围和现货的出货天数", undefined, () => shippingDays()),
 	performance: byPage("数据中心的商品表现：销售额、订单、件数、曝光、点击、访客、加购、转化",
@@ -118,7 +118,7 @@ export const ops: Ops = {
 		const r = await unreplied(cursor ?? "");
 		return { rows: r.rows, next: r.next && r.next !== cursor ? r.next : null };
 	}),
-	messages: all("一个会话最近的 30 条消息（谁发的按 from_shop_id 认）", z.object({ conversation: str("会话 id") }), (p) => messages(p.conversation)),
+	messages: all("一个会话最近的 30 条消息（谁发的按 from_shop_id 认：等于 x2 shopee shop 的 shopId 是我们发的）", z.object({ conversation: str("会话 id") }), (p) => messages(p.conversation)),
 
 	// ── 批量上架、帮助中心 ──
 	"mass-records": all("最近的批量上传记录", undefined, () => records()),
@@ -127,7 +127,7 @@ export const ops: Ops = {
 		async (p) => save(await template(p.category), p.out)),
 	"record-file": get("下载一次批量上传的坏行报告（xlsx）存到 --out", z.object({ record: num("记录 id"), out: str("存到哪个文件") }),
 		async (p) => save(await recordFile(p.record), p.out)),
-	articles: byPage("帮助中心一个二级分类下的文章", z.object({ category: num("帮助中心的分类 id（不是商品类目）") }), async (p, n) => {
+	articles: byPage("帮助中心一个二级分类下的文章", z.object({ category: num("帮助中心的二级分类 id（不是商品类目）：卖家中心 /edu/category?sub_cat_id= 里的，例 43；一级分类回空") }), async (p, n) => {
 		const r = await articles(p.category, n, 50);
 		return { rows: r.rows, more: (n + 1) * 50 < r.total };
 	}, 0),
@@ -135,6 +135,6 @@ export const ops: Ops = {
 
 	raw: get("逃生口：GET 卖家中心的任一接口，回原样的 JSON（只 GET：POST 可能是写）", z.object({
 		path: str("接口路径，例 /api/v3/general/get_shop_info/"),
-		query: z.preprocess((v) => (typeof v === "string" ? JSON.parse(v) : v), z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).default({}).describe("查询参数，JSON 对象"),
+		query: z.preprocess(parseJson, z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).default({}).describe("查询参数，JSON 对象"),
 	}), (p) => seller(p.path, { method: "GET", query: p.query })),
 };

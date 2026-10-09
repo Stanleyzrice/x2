@@ -35,7 +35,7 @@ async function webchat<T = any>(path: string, req: { method?: "GET" | "POST"; qu
 			const url = new URL(path, location.origin);
 			url.searchParams.set("csrf_token", String(s.p_token));
 			for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
-			const res = await fetch(url, { method, credentials: "include", headers: { authorization: `Bearer ${s.token}`, "content-type": "application/json", "x-shop-region": "TW" }, body: body ?? undefined });
+			const res = await fetch(url.href, { method, credentials: "include", headers: { authorization: `Bearer ${s.token}`, "content-type": "application/json", "x-shop-region": "TW" }, body: body ?? undefined });
 			return { status: res.status, json: await res.json().catch(() => null) };
 		}, `${API}${path}`, req.method ?? (req.body === undefined ? "GET" : "POST"), Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])), req.body === undefined ? null : JSON.stringify(req.body));
 		if (r.status === 401 && !again) continue;

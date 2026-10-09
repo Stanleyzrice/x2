@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { z } from "zod";
 import { runOp, type Site } from "../src/commands/site.ts";
 import { Usage } from "../src/errors.ts";
-import { byPage, day, get, ints, str } from "../src/site/op.ts";
+import { byPage, day, get, ints, parseJson, str } from "../src/site/op.ts";
+import { needsHuman } from "../src/site/shopee/seller.ts";
+import { bySales30Day } from "../src/site/zhixia.ts";
 
 // 一个假的站点：items 一页 2 行，共 5 行
 const seen: unknown[] = [];
@@ -16,6 +18,7 @@ const fake: Site = {
 			return { rows: all.slice((n - 1) * 2, n * 2), more: n * 2 < all.length };
 		}),
 		when: get("时间", z.object({ start: day("开始"), end: day("结束", true) }), async (p) => p),
+		raw: get("JSON 参数", z.object({ query: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}) }), async (p) => p),
 	},
 };
 
@@ -59,4 +62,22 @@ test("--help 回帮助文本，列出参数", async () => {
 	assert.ok("help" in r);
 	assert.match(r.help, /--shop-id <string>\s+必填/);
 	assert.match(r.help, /--path <1,2,…>\s+默认 \[\]/);
+});
+
+test("Shopee 的 401、403、要验证算要人处理，别的出错不算", () => {
+	assert.equal(needsHuman(403, { code: 1, message: "token not found" }), true);
+	assert.equal(needsHuman(401, null), true);
+	assert.equal(needsHuman(200, { error: 1, error_msg: "請輸入密碼" }), true);
+	assert.equal(needsHuman(500, { code: 1, message: "server error" }), false);
+	assert.equal(needsHuman(200, { code: 2, message: "invalid param" }), false);
+});
+
+test("知虾热词商品按 30 天销量从高到低排，没有销量的排最后", () => {
+	const rows = [{ itemId: "1", itemDataList: [{ sales30Day: "7" }] }, { itemId: "2", itemDataList: [] }, { itemId: "3", itemDataList: [{ sales30Day: "99" }] }];
+	assert.deepEqual(bySales30Day(rows).map((r) => r.itemId), ["3", "1", "2"]);
+});
+
+test("JSON 参数：合法的转成对象，不合法的是 Usage（不是一般错误）", async () => {
+	assert.deepEqual(await value(["raw", "--query", '{"a":1}']), { query: { a: 1 } });
+	await assert.rejects(runOp("fake", fake, ["raw", "--query", "{bad"]), Usage);
 });

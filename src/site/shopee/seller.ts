@@ -25,7 +25,8 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 		url.searchParams.set("SPC_CDS", cookie("SPC_CDS"));
 		url.searchParams.set("SPC_CDS_VER", "2");
 		try {
-			const r = await fetch(url, {
+			// 传字符串，不传 URL 对象：有的页面（例 /edu 帮助中心）包了一层 fetch，只认字符串（e.match is not a function）
+			const r = await fetch(url.href, {
 				method, credentials: "include",
 				headers: { accept: "application/json", "x-csrftoken": cookie("csrftoken"), ...(body === null ? {} : { "content-type": "application/json" }) },
 				body: body ?? undefined,
@@ -45,6 +46,9 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 const codeOf = (json: any): number | undefined => (json?.code ?? json?.error) === undefined ? undefined : Number(json.code ?? json.error);
 const messageOf = (json: any) => String(json?.user_message ?? json?.message ?? json?.msg ?? json?.error_msg ?? "");
 
+/** 出错的回应里，哪些要人处理：401、403（没登录、token 失效，页面不一定跳登录页），或要再输一次密码、验证（财务区） */
+export const needsHuman = (status: number, json: any) => status === 401 || status === 403 || /密碼|驗證/.test(messageOf(json));
+
 /** 读：回 JSON，业务码不是 0、HTTP 出错、没登录都抛错 */
 export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
 	const r = await call(path, req);
@@ -52,8 +56,10 @@ export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
 	if (r.kind === "unknown") throw new Error(`Shopee ${path}：${r.why}`);
 	if (r.json === null) throw new Error(`Shopee ${path}：HTTP ${r.status} ${r.text}`);
 	const code = codeOf(r.json);
-	if (r.status >= 400 || (code !== undefined && code !== 0)) throw new Error(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}`);
-	return r.json as T;
+	if (r.status < 400 && (code === undefined || code === 0)) return r.json as T;
+	// 出错了才看要不要人处理：成功的响应里也可能出现「驗證」这类字
+	if (needsHuman(r.status, r.json)) throw new NeedsHuman(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}。没登录或要再验证一次：在浏览器里打开卖家中心处理好再试`);
+	throw new Error(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}`);
 }
 
 /** 写的结果。done：站点回成功；refused：站点回了失败（确定没做）；unknown：没拿到站点的答复，可能已经做了，调用方不许重发，先回读 */
@@ -69,9 +75,12 @@ export async function write(path: string, req: Req): Promise<Write> {
 	return code === 0 ? { kind: "done", data: r.json.data } : { kind: "refused", code, why: messageOf(r.json) };
 }
 
-/** 当前登录的店铺：user_id 就是店铺 id */
-export async function shop(): Promise<{ shopId: string; name: string; rating: number | null }> {
+/** 当前登录的店铺。shopId 是店铺 id（订单的 shop_id、聊聊消息的 from_shop_id）；userId 是卖家账号的 user_id（聊聊消息的 from_id、广告账户 id）。
+ * 两个不一样（2026-10-09 查过：店铺 1554182542，账号 1555026956），别拿 user_id 当店铺 id */
+export async function shop(): Promise<{ shopId: string; userId: string; name: string; username: string; rating: number | null }> {
+	const s = await seller("/api/selleraccount/shop_info/");
 	const u = await seller("/api/selleraccount/user_info/");
-	const s = await seller("/api/v3/general/get_shop_info/").catch(() => null);
-	return { shopId: String(u.data?.user_id ?? ""), name: String(u.data?.user_name ?? ""), rating: s?.data?.rating_star ?? null };
+	const r = await seller("/api/v3/general/get_shop_info/").catch(() => null);
+	if (!s.data?.shop_id) throw new Error("Shopee 没有回店铺 id（/api/selleraccount/shop_info/）");
+	return { shopId: String(s.data.shop_id), userId: String(u.data?.user_id ?? ""), name: String(s.data.name ?? ""), username: String(u.data?.user_name ?? ""), rating: r?.data?.rating_star ?? null };
 }

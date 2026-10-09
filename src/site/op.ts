@@ -52,6 +52,12 @@ export const strs = (describe: string) =>
 export const ints = (describe: string) =>
 	z.preprocess((v) => (typeof v === "string" ? v.split(",").map((s) => s.trim()).filter(Boolean).map(Number) : v), z.array(z.number().int())).meta({ description: describe, placeholder: "1,2,…" });
 
+/** 给 z.preprocess 用：命令行上的 JSON 字符串 → 值；不是合法 JSON 原样留着，让后面的校验报成用法不对（不是一般错误） */
+export const parseJson = (v: unknown) => {
+	if (typeof v !== "string") return v;
+	try { return JSON.parse(v); } catch { return v; }
+};
+
 const DAY = 86400, TW = 8 * 3600;
 /** 台湾时间的一天：YYYY-MM-DD → 那天零点的秒数（end 时是那天 23:59:59）；给的是秒数原样用 */
 export const day = (describe: string, end = false) =>

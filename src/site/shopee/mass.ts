@@ -13,10 +13,10 @@ async function download(path: string): Promise<string> {
 		const url = new URL(path, location.origin);
 		url.searchParams.set("SPC_CDS", cookie("SPC_CDS"));
 		url.searchParams.set("SPC_CDS_VER", "2");
-		const res = await fetch(url, { credentials: "include", headers: { "x-csrftoken": cookie("csrftoken") } });
+		const res = await fetch(url.href, { credentials: "include", headers: { "x-csrftoken": cookie("csrftoken") } });
 		if (!res.ok) return { error: `HTTP ${res.status}` };
 		const bytes = new Uint8Array(await res.arrayBuffer());
-		if (bytes.length < 1000) return { error: `只有 ${bytes.length} 字节，不像 xlsx` };
+		if (bytes.length < 1000) return { error: `只有 ${bytes.length} 字节，不像 xlsx：${new TextDecoder().decode(bytes).slice(0, 200)}` };
 		let bin = "";
 		for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
 		return { b64: btoa(bin) };

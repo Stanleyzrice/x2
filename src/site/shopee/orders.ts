@@ -68,7 +68,8 @@ export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {
 			shopId: String(refs.find((r) => String(r.order_id) === orderId)?.shop_id ?? refs[0]!.shop_id),
 			status: String(units[0]?.status_info?.status ?? card.status_info?.status ?? ""),
 			shipBy: time(card.order_ext_info?.ship_by_date),
-			total: Number(units[0]?.payment_info?.total_price ?? 0),
+			// 订单卡片的金额是新台币乘 100000（2026-10-09：卡片 21000000，get_one_order 的 total_price 是 210）
+			total: Number(units[0]?.payment_info?.total_price ?? 0) / 100000,
 			items: items.map((it: any) => ({
 				itemId: String(it.inner_item_ext_info?.item_id ?? ""),
 				modelId: String(it.inner_item_ext_info?.model_id ?? ""),

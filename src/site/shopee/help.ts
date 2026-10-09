@@ -15,9 +15,11 @@ async function help(path: string, query: Record<string, string>): Promise<any> {
 }
 
 /** 帮助中心一个二级分类下的文章列表（一页最多 50）。categoryId 是帮助中心自己的分类 id，不是商品类目 id */
-export async function articles(categoryId: number, pageIndex = 0, pageSize = 20): Promise<{ total: number; rows: { articleId: string; title: string; rtime: number }[] }> {
+export async function articles(categoryId: number, pageIndex = 0, pageSize = 20): Promise<{ total: number; rows: { articleId: string; title: string; rtime: string | null }[] }> {
 	const d = await help("/help/api/v3/article/list/", { page_index: String(pageIndex), page_size: String(pageSize), l2_cat_id: String(categoryId) });
-	return { total: Number(d.total ?? 0), rows: ((d.article_list ?? []) as any[]).map((a) => ({ articleId: String(a.article_id), title: String(a.title ?? "").trim(), rtime: Number(a.rtime ?? 0) })) };
+	// rtime 是发布时间（站点给秒），换成 ISO
+	const iso = (v: unknown) => (Number(v) > 0 ? new Date(Number(v) * 1000).toISOString() : null);
+	return { total: Number(d.total ?? 0), rows: ((d.article_list ?? []) as any[]).map((a) => ({ articleId: String(a.article_id), title: String(a.title ?? "").trim(), rtime: iso(a.rtime) })) };
 }
 
 /** 一篇文章：原样的 data（title、content 是 HTML；分节的在 content_list） */

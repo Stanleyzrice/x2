@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { page } from "../browser.ts";
 import { NeedsHuman } from "../errors.ts";
-import { all, byPage, get, ints, num, type Ops, str } from "./op.ts";
+import { all, byPage, get, ints, num, type Ops, parseJson, str } from "./op.ts";
 import * as store from "../store.ts";
 
 const ORIGIN = "https://shopee.mobduos.com";
@@ -33,7 +33,8 @@ async function throttle(): Promise<void> {
 /** x2 打开知虾标签页时要落在工作台页面上（有 webpackJsonp），不是随便一页 */
 export async function ready(): Promise<void> {
 	const p = await page(ORIGIN);
-	const ok = await p.run(() => Boolean((window as any).webpackJsonp) && !location.pathname.startsWith("/workbench/login"));
+	// 首页（/）也有 webpackJsonp，但没有工作台的 store：要在 /workbench/ 下面
+	const ok = await p.run(() => Boolean((window as any).webpackJsonp) && location.pathname.startsWith("/workbench/") && !location.pathname.startsWith("/workbench/login"));
 	if (!ok) await p.goto(`${ORIGIN}/workbench/home`);
 }
 
@@ -69,19 +70,23 @@ const at = (path: number[]) => (path.length ? { catId: path.at(-1), level: path.
 
 // ── 类目 ──
 
-export type Category = { id: number; name: string; children: Category[] };
+export type Category = { id: string; name: string; children: Category[] };
 
 /** 类目树（三级）。读页面 store 里登录时就载入的 state.user.catList，不发请求 */
 export async function categories(): Promise<Category[]> {
 	await ready();
 	const p = await page(ORIGIN);
-	return p.run(() => {
-		const conv = (n: any): any => ({ id: Number(n.value), name: String(n.label), children: (n.children ?? []).map(conv) });
-		return (document.querySelector<any>("#app")?.__vue__?.$store?.state?.user?.catList ?? []).map(conv);
+	const tree = await p.run(() => {
+		const conv = (n: any): any => ({ id: String(n.value), name: String(n.label), children: (n.children ?? []).map(conv) });
+		const list = document.querySelector<any>("#app")?.__vue__?.$store?.state?.user?.catList;
+		return Array.isArray(list) && list.length ? list.map(conv) : null;
 	});
+	// 没有类目树就是没登录（或页面没载入工作台）：别当成空的
+	if (!tree) throw new NeedsHuman("知虾的工作台没有类目树：在浏览器里登录知虾、打开工作台再试");
+	return tree;
 }
 
-/** 热销类目榜：path 下一级的各类目，按昨天（DAY）的销量排；path 为空是一级类目 */
+/** 热销类目榜：path 下一级的各类目，按昨天（DAY）的销量排；path 为空是全站的二级类目（不是一级，2026-10-09 查过） */
 export async function sellWell(path: number[] = [], pageNum = 1, pageSize = 100): Promise<{ total: number; rows: Row[] }> {
 	const b = await api<{ data: Row[]; total: string }>("/industryAnalysis/sellWell", { type: "DAY", field: "sales", sortType: "DESC", isBorder: 0, pageNum, pageSize, ...at(path) });
 	return { total: Number(b.total ?? 0), rows: b.data ?? [] };
@@ -101,13 +106,21 @@ export async function hotWords(path: number[]): Promise<{ total: number; updateT
 	return { total: Number(b.total ?? 0), updateTime: b.updateTime ?? null, rows: b.hotWordList ?? [] };
 }
 
-/** 一个词在一个类目里按 30 天销量排的商品（竞品），每页最多 200 个；每个商品带上架时间 createTime */
-export async function hotWordItems(hotWordId: number, path: number[], pageNum = 1, pageSize = 200): Promise<{ total: number; rows: Row[] }> {
+/** 一个词在一个类目里的全部商品（竞品），按 30 天销量（itemDataList[0].sales30Day）从高到低；每个商品带上架时间 ctime。
+ * 站点不管 pageNum、pageSize、field、orderType：每次都回全部（2026-10-09：第 1、2 页都是同样的 1680 个，按 itemId 排），
+ * 页面自己在浏览器里排序、截前 100 个。所以只发一次，在这里排 */
+export async function hotWordItems(hotWordId: number, path: number[]): Promise<{ total: number; rows: Row[] }> {
 	const b = await api<{ itemListInfo: Row[]; total: string }>("/hotWordDetail/hotWordItemSalesDetail", {
-		exampleType: "DAY", word: String(hotWordId), field: "sales", orderType: "DESC", pageNum, pageSize, isBorder: 0, ...at(path),
+		exampleType: "DAY", word: String(hotWordId), field: "sales", orderType: "DESC", pageNum: 1, pageSize: 200, isBorder: 0, ...at(path),
 	});
-	return { total: Number(b.total ?? 0), rows: b.itemListInfo ?? [] };
+	return { total: Number(b.total ?? 0), rows: bySales30Day(b.itemListInfo ?? []) };
 }
+
+/** 按 30 天销量从高到低排（没有的排最后） */
+export const bySales30Day = (rows: Row[]): Row[] => {
+	const sales = (r: Row) => Number(r.itemDataList?.[0]?.sales30Day ?? -1) || 0;
+	return [...rows].sort((a, b) => sales(b) - sales(a));
+};
 
 const word = (hotWordId: number) => ({ hotWordId, updateKey: 1 });
 /** 一个词最近 30 天每天的搜索量、销量（charts；顺序不保证，按 timest 排） */
@@ -144,16 +157,14 @@ const hotWord = z.object({ word: num("热搜词 id（hot-words 里的）") });
 
 export const ops: Ops = {
 	categories: all("类目树（三级）", undefined, () => categories()),
-	"sell-well": byPage("热销类目榜：path 下一级的各类目，按昨天的销量排", z.object({ path: path.default([]) }), async (p, n) => {
+	"sell-well": byPage("热销类目榜：path 下一级的各类目，按昨天的销量排；不给 path 是全站的二级类目", z.object({ path: path.default([]) }), async (p, n) => {
 		const r = await sellWell(p.path, n);
 		return { rows: r.rows, more: n * 100 < r.total };
 	}),
 	"category-daily": get("一个类目最近 30 天每天的数据（销量、销售额、商品数……）", z.object({ path }), (p) => categoryDaily(p.path)),
 	"hot-words": get("一个类目的热搜词（最多 1000 个）；searchVal 是全站搜索量，sales30day 是本类目 30 天销量", z.object({ path }), (p) => hotWords(p.path)),
-	"hot-word-items": byPage("一个词在一个类目里按 30 天销量排的商品（竞品）", z.object({ word: num("热搜词 id"), path }), async (p, n) => {
-		const r = await hotWordItems(p.word, p.path, n);
-		return { rows: r.rows, more: n * 200 < r.total };
-	}),
+	// 站点每次回全部商品、不分页：一次读完（以前按页翻，每页都是同样的全部，翻到底会重复好几遍）
+	"hot-word-items": all("一个词在一个类目里的全部商品（竞品），按 30 天销量从高到低", z.object({ word: num("热搜词 id"), path }), async (p) => (await hotWordItems(p.word, p.path)).rows),
 	"demand-change": get("一个词最近 30 天每天的搜索量、销量（按 timest 排）", hotWord, (p) => demandChange(p.word)),
 	competition: get("一个词的竞争环境：商品数、店铺数、集中度……", hotWord, (p) => competition(p.word)),
 	"price-line": get("一个词的价格带：各价格区间的商品数、销量", hotWord, (p) => priceLine(p.word)),
@@ -163,6 +174,6 @@ export const ops: Ops = {
 	"similar-1688": all("用一张图在 1688 上找同款", z.object({ image: str("图片地址"), n: num("最多几个").default(4) }), (p) => similar1688(p.image, p.n)),
 	raw: get("逃生口：GET 知虾的任一接口（照样限流），回原样的响应体", z.object({
 		path: str("/api/shopee-report-service/pro 之后的一段，例 /hotWord/hotWordList"),
-		params: z.preprocess((v) => (typeof v === "string" ? JSON.parse(v) : v), z.record(z.string(), z.unknown())).default({}).describe("参数，JSON 对象"),
+		params: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}).describe("参数，JSON 对象"),
 	}), (p) => api(p.path, p.params)),
 };

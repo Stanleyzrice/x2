@@ -10,7 +10,7 @@ await run("categoryDaily", () => z.categoryDaily(path));
 const hw = await run("hotWords", () => z.hotWords(path));
 const w = hw?.rows?.[0]; console.log("   word", w?.word, w?.hotWordId, "searchVal", w?.searchVal, "sales30day", w?.sales30day);
 if (w) {
-	await run("hotWordItems", () => z.hotWordItems(Number(w.hotWordId), path, 1, 20));
+	await run("hotWordItems", () => z.hotWordItems(Number(w.hotWordId), path));
 	await run("demandChange", () => z.demandChange(Number(w.hotWordId)));
 	await run("competition", () => z.competition(Number(w.hotWordId)));
 	await run("priceLine", () => z.priceLine(Number(w.hotWordId)));

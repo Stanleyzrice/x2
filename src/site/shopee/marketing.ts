@@ -48,9 +48,10 @@ export async function campaigns(start: number, end: number, offset = 0): Promise
 /** 一个商品广告计划的详情：campaign（类型、预算、目标 ROAS、期间）和 ads_list */
 export const campaign = async (campaignId: string) => (await pas("product/get", { campaign_id: Number(campaignId) })).data;
 
-/** 一个计划在期间内的表现：report_aggregate 汇总、report_by_time 逐日（key 是秒）。type 是计划的类型（例 product_gms） */
+/** 一个计划在期间内的表现：report_aggregate 汇总、report_by_time 逐日（key 是那天零点的秒）。type 是计划的类型（例 product_gms）。
+ * agg_interval 是几个 15 分钟：1 是每 15 分钟（7 天 672 个点、半 MB），96 是一天（2026-10-09 查过） */
 export async function campaignGraph(campaignId: string, type: string, start: number, end: number): Promise<any> {
-	return (await pas("report/get_time_graph", { agg_interval: 1, agg_type: type, campaign_type: type, start_time: start, end_time: end, need_ratio: true, filter_params: { campaign_id: Number(campaignId) } })).data;
+	return (await pas("report/get_time_graph", { agg_interval: 96, agg_type: type, campaign_type: type, start_time: start, end_time: end, need_ratio: true, filter_params: { campaign_id: Number(campaignId) } })).data;
 }
 
 /** 自动选品广告里各商品的表现，一页 10 个（只能 10）；翻页用回的 next_page_token，空的是到底。
