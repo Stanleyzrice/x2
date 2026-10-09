@@ -86,7 +86,7 @@ x2/
 │ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md 是全部数据接口）
 │ │ └ chanboss.ts         chanboss：订单、预报、库存、退件、扣款流水（chanboss.md）
 │ ├ db/                   库：连接、schema.sql（建表、加列）、import.ts（把 ~/x2 的 JSON 迁进来，只用一次）
-│ ├ read.ts               现读：chanboss 订单（写回订单看板）、采购账号的购物车和采购单（带物流、退款）、要买的商品的货源；哪样没读成记下来
+│ ├ read.ts               现读：chanboss 订单（写回订单看板）、1688 的购物车和采购单（带物流、退款）、要买的商品的货源；哪样没读成记下来；同一个进程 2 分钟内读过的复用
 │ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单），index.ts 拼快照（现读的 + 库里人定的）、写回收件箱
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入

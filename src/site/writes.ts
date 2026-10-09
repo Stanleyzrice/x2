@@ -74,7 +74,8 @@ const cart: WriteOp<CartP> = {
 	async prepare(sql, p) {
 		const account = (await buyAccount(sql))!.userId;
 		if (p.account && p.account !== account) return { skip: `只往采购账号加购，这一项写的是另一个账号 ${p.account}` };
-		// 现读一遍（chanboss 订单、采购账号的购物车和采购单）再对一次：在这之间有人在外面买了、或者已经加进购物车了，就不加（免得买重）
+		// 现读 1688 的购物车和采购单再对一次：准备和执行之间有人在外面买了、或者已经加进购物车了，就不加（免得买重）。
+		// 同一次 x2 run 里 2 分钟内读过的复用（一批几项不用每项重读）；读不全就停
 		const covered = (await current(sql)).covered;
 		const dup = p.lines.filter((l) => covered.has(`${l.sn}:${l.modelId}`));
 		if (dup.length) return { skip: `订单 ${dup.map((l) => l.sn).join("、")} 的货已经买了或者在购物车里了（刚读的采购单、购物车）` };

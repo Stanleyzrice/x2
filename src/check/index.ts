@@ -2,7 +2,8 @@
 // 收件箱（只更新不重复，条件不成立就关）、订单上算出来的列、规格定了货源以后删掉它剩下的候选。
 // 只有这一行靠的那几样这一轮都读成功了，才关它：漏读不算做完。人勾了「处理好了」的（x2 看不到结果的事），关掉以后不再开
 import type { Sql } from "../db/index.ts";
-import { readAll, type Read, type Reads } from "../read.ts";
+import { NeedsHuman } from "../errors.ts";
+import { read1688, type Read, type Reads } from "../read.ts";
 import { checkOrders, type InboxItem, planned, type Result, type Snapshot, type Todo } from "./orders.ts";
 
 /** 一行收件箱靠哪几样现读：订单（chanboss）、购物车、采购单（1688 账号 userId；null 是每个账号） */
@@ -45,9 +46,17 @@ export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 	};
 }
 
-/** 现在该做的（现读一遍，不写库）：x2 propose、x2 run 用它确认一项写入现在还该做 */
+/** 现在该做的（不写库）：x2 propose、x2 run 加购前用它确认一项写入现在还该做。
+ * 只现读 1688 的购物车、采购单（同一个进程 2 分钟内读过的复用）；订单、货源用库里的（上一次 x2 status 读的，要做的那几张订单 x2 run 另外现读 chanboss）。
+ * 1688 读不全就停：拿漏读的采购单去对，会把买过的当成没买、买重 */
 export async function current(sql: Sql): Promise<Result & { planned: ReturnType<typeof planned> }> {
-	const r = checkOrders(await snapshot(sql, await readAll(sql)));
+	const reads = await read1688(sql);
+	const bad = reads.results.find((r) => !r.ok);
+	if (bad) {
+		const why = `1688 ${reads.accounts.get(bad.who) ?? ""} ${bad.what}读不了，先不往下做（免得买重）：${bad.error}`.replace(/\s+/, " ");
+		throw bad.blocked ? new NeedsHuman(why) : new Error(why);
+	}
+	const r = checkOrders(await snapshot(sql, reads));
 	return { ...r, planned: planned(r) };
 }
 

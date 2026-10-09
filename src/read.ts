@@ -1,6 +1,7 @@
 // 现读：x2 status 每次经浏览器把要用的站点数据读进内存，不存库（只有订单写回库，给 NocoDB 的看板看）。
 // 读什么：chanboss 的订单（两家店都在）；每个登录着的 1688 账号的购物车、采购单（带物流、进行中的退款）。
-// 哪一样读不了就记下来（results）：检查照常算，靠它关的收件箱这一轮不关（漏读不算做完）
+// 哪一样读不了就记下来（results）：检查照常算，靠它关的收件箱这一轮不关（漏读不算做完）。
+// 同一个进程里 2 分钟内读过的复用（x2 run 一批几项加购、x2 source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
 import { alibabaAccounts, buyAccount, in1688, shopNames } from "./accounts.ts";
 import type { CartLine, Purchase } from "./check/reconcile.ts";
 import { type Sql } from "./db/index.ts";
@@ -103,6 +104,21 @@ export type Reads = {
 	results: Read[];
 };
 
+const REUSE_MS = 2 * 60_000;
+const memo = new Map<string, { at: number; value: Promise<unknown> }>();
+const fresh = (key: string, maxAge: number) => { const m = memo.get(key); return m && Date.now() - m.at < maxAge ? m : null; };
+
+/** 同一个进程里 maxAge 以内读过的（key 一样）复用，不再发请求；读失败的不留，下次再读 */
+export function reuse<T>(key: string, fn: () => Promise<T>, maxAge = REUSE_MS): Promise<T> {
+	const m = fresh(key, maxAge);
+	if (m) return m.value as Promise<T>;
+	const value = fn();
+	memo.set(key, { at: Date.now(), value });
+	value.catch(() => { if (memo.get(key)?.value === value) memo.delete(key); });
+	return value;
+}
+const again = (key: string) => (fresh(key, REUSE_MS) ? "（2 分钟内读过，复用）" : "");
+
 async function attempt<T>(results: Read[], what: string, who: string, fn: () => Promise<T>, rows: (v: T) => number): Promise<T | null> {
 	try {
 		const v = await fn();
@@ -114,25 +130,31 @@ async function attempt<T>(results: Read[], what: string, who: string, fn: () => 
 	}
 }
 
-/** 现读一遍：chanboss 订单写回 orders（看板），1688 的购物车、采购单留在内存里 */
+/** 现读一遍：chanboss 订单写回 orders（看板），要买的商品的货源更新快照，1688 的购物车、采购单留在内存里 */
 export async function readAll(sql: Sql, log: (s: string) => void = console.error): Promise<Reads> {
 	const results: Read[] = [];
-	log("读 chanboss 订单");
-	await attempt(results, "订单", "chanboss", () => writeOrders(sql), (n) => n);
+	log(`读 chanboss 订单${again("订单")}`);
+	await attempt(results, "订单", "chanboss", () => reuse("订单", () => writeOrders(sql)), (n) => n);
 	// 要买的商品（chanboss 上待处理的订单里的）：现读它用这个的货源，更新快照，规格才配得准、下架了才知道
 	const toBuy = (await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.platform_status = '待出货' and o.chanboss_status = '待处理'`).map((r) => r.id as string);
 	if (toBuy.length) {
-		log(`读要买的商品的货源（${toBuy.length} 个商品）`);
-		await attempt(results, "货源", "1688", () => refreshChosen(sql, toBuy), (n) => n);
+		const key = `货源:${[...toBuy].sort().join(",")}`;
+		log(`读要买的商品的货源（${toBuy.length} 个商品）${again(key)}`);
+		await attempt(results, "货源", "1688", () => reuse(key, () => refreshChosen(sql, toBuy)), (n) => n);
 	}
+	return read1688(sql, log, results);
+}
+
+/** 1688：每个登录着的账号的购物车、采购单（带物流、进行中的退款）。x2 propose、x2 run 加购前只读这些：订单、货源用库里的 */
+export async function read1688(sql: Sql, log: (s: string) => void = console.error, results: Read[] = []): Promise<Reads> {
 	const accounts = new Map((await alibabaAccounts().catch(() => [])).map((a) => [a.userId, a.loginId]));
 	const buy = await attempt(results, "采购账号", "1688", () => buyAccount(sql), () => 1);
 	const cart: CartLine[] = [], purchases: Purchase[] = [];
 	for (const [userId, loginId] of accounts) {
-		log(`读 1688 ${loginId} 的购物车、采购单`);
-		const c = await attempt(results, "购物车", userId, () => in1688(userId, () => readCart()), (v) => v.length);
+		log(`读 1688 ${loginId} 的购物车、采购单${again(`采购单:${userId}`)}`);
+		const c = await attempt(results, "购物车", userId, () => reuse(`购物车:${userId}`, () => in1688(userId, () => readCart())), (v) => v.length);
 		if (c) cart.push(...c.map((l) => ({ account: userId, offerId: l.offerId, skuId: l.skuId, qty: l.quantity })));
-		const p = await attempt(results, "采购单", userId, () => readPurchases(userId), (v) => v.length);
+		const p = await attempt(results, "采购单", userId, () => reuse(`采购单:${userId}`, () => readPurchases(userId)), (v) => v.length);
 		if (p) purchases.push(...p);
 	}
 	return { cart, purchases, accounts, buyAccount: buy?.userId ?? null, results };
