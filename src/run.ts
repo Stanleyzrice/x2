@@ -35,7 +35,7 @@ export async function run(sql: Sql, opts: { batch?: string; tryOps?: string[] } 
 		const op = ops[w.op];
 		if (!op) continue;
 		try {
-			const r = await op.where(w.params, () => op.check(w.params, w.readback?.before, false));
+			const r = await op.where(sql, w.params, () => op.check(w.params, w.readback?.before, false));
 			if (r.done) {
 				await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as any), finished_at: new Date() });
 				await op.after?.(sql, w.params);
@@ -80,7 +80,7 @@ export async function run(sql: Sql, opts: { batch?: string; tryOps?: string[] } 
 		last = Date.now();
 		console.error(`${w.op}：${w.display}`);
 		try {
-			const outcome = await op.where(w.params, async () => {
+			const outcome = await op.where(sql, w.params, async () => {
 				const prepared = await op.prepare(sql, w.params);
 				if ("skip" in prepared) return { skip: prepared.skip };
 				const params = prepared.params;

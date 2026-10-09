@@ -5,11 +5,11 @@
 // 3. submit：提交一次，回三态：做了、被拒、结果未知（没拿到答复）
 // 4. check：读回来，和 before 比：做了、没做、看不出（看不出就是结果未知，不重发）
 import { z } from "zod";
-import { in1688 } from "../accounts.ts";
+import { buyAccount, in1688 } from "../accounts.ts";
 import type { Sql } from "../db/index.ts";
 import { current } from "../check/index.ts";
-import { fetchOffer, syncCart, syncPurchases } from "../sync/1688.ts";
-import { account as alibabaAccount, addToCart, cart as readCart, type CartLine } from "./1688.ts";
+import { NeedsHuman } from "../errors.ts";
+import { addToCart, cart as readCart, type CartLine, Gone, offer as readOffer } from "./1688.ts";
 import { forecast, NO_TRACKING, orders as chanbossOrders } from "./chanboss.ts";
 
 export type Submitted = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
@@ -27,7 +27,7 @@ export type WriteOp<P = any> = {
 	/** 还没在真站点上跑过：第一次要和运营约好一个对象，一起跑 x2 run --try <操作> */
 	untried?: string;
 	/** 在哪个浏览器里做 */
-	where: <T>(p: P, fn: () => Promise<T>) => Promise<T>;
+	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
 	prepare: (sql: Sql, p: P) => Promise<Prepared<P>>;
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
 	/** fresh：刚提交完就读（这时没变化就是没做）；不是 fresh 时（过了一阵再核）没变化也可能是人动过，只认「做了」 */
@@ -49,9 +49,9 @@ async function liveOrders(sns: string[]): Promise<Map<string, any>> {
 const cartParams = z.object({
 	offerId: z.string(), skuId: z.string(), qty: z.number().int().positive(), title: z.string(), sku: z.string(), price: z.number().nullable(),
 	lines: z.array(z.object({ sn: z.string(), modelId: z.string(), qty: z.number().int().positive() })).min(1),
-	/** 随这次加购一起批准的新货源（规格 id）：加上了才写进规格 */
+	/** 随这次加购一起批准的新货源（店里的商品 id）：加上了才标成「用这个」 */
 	newSources: z.array(z.string()).default([]),
-	/** 加在哪个 1688 账号（userId）：x2 propose 填采购账号；没设采购账号时用登录着的那个，执行时记下 */
+	/** 加在哪个 1688 账号（userId）：执行时填采购账号，记下 */
 	account: z.string().optional(),
 	/** 1688 规格的 specId：执行时现读货源填上 */
 	specId: z.string().optional(),
@@ -65,14 +65,16 @@ const cart: WriteOp<CartP> = {
 	target: (p) => `1688:${p.offerId}:${p.skuId}`,
 	key: (p) => `cart:${p.lines.map((l) => `${l.sn}:${l.modelId}`).sort().join(",")}`,
 	display: (p) => `${p.title} / ${p.sku} × ${p.qty}（订单 ${[...new Set(p.lines.map((l) => l.sn))].join("、")}）${p.newSources.length ? "（新货源）" : ""}`,
-	where: (p, fn) => (p.account ? in1688(p.account, fn) : fn()),
+	// 只往采购账号加购：在登录着它的浏览器里做
+	where: async (sql, p, fn) => {
+		const a = await buyAccount(sql);
+		if (!a) throw new NeedsHuman("订单设置里没填采购账号（1688 会员名）");
+		return in1688(p.account ?? a.userId, fn);
+	},
 	async prepare(sql, p) {
-		const [{ buy }] = await sql`select buy_account as buy from order_settings where id = 1` as any;
-		const account = p.account ?? buy ?? (await alibabaAccount()).userId;
-		if (buy && account !== buy) return { skip: `只往采购账号（${buy}）加购，这一项写的是 ${account}` };
-		// 现读这个账号的购物车和采购单，再对一次：在这之间有人在外面买了、或者已经加进购物车了，就不加（免得买重）
-		await syncCart(sql, account);
-		await syncPurchases(sql, account, 1);
+		const account = (await buyAccount(sql))!.userId;
+		if (p.account && p.account !== account) return { skip: `只往采购账号加购，这一项写的是另一个账号 ${p.account}` };
+		// 现读一遍（chanboss 订单、采购账号的购物车和采购单）再对一次：在这之间有人在外面买了、或者已经加进购物车了，就不加（免得买重）
 		const covered = (await current(sql)).covered;
 		const dup = p.lines.filter((l) => covered.has(`${l.sn}:${l.modelId}`));
 		if (dup.length) return { skip: `订单 ${dup.map((l) => l.sn).join("、")} 的货已经买了或者在购物车里了（刚读的采购单、购物车）` };
@@ -83,10 +85,15 @@ const cart: WriteOp<CartP> = {
 			if (o.platform_status !== "READY_TO_SHIP") return { skip: `订单 ${l.sn} 不是待出货了（${o.platform_status}）` };
 			if (o.status !== "paid") return { skip: `订单 ${l.sn} 在 chanboss 上已经不是待处理了（${o.status}）：在别处买过了？` };
 		}
-		const offer = await fetchOffer(sql, p.offerId);
-		if (!offer) return { skip: "货源在 1688 上下架了" };
+		// 现读 1688 商品：下架了、没这个规格了，把这个货源标成用不了（检查当成没货源，agent 重新找）
+		const broken = async (why: string) => {
+			await sql`update sources set broken = ${why}, read_at = now() where offer_id = ${p.offerId} and chosen`;
+			return { skip: why };
+		};
+		const offer = await readOffer(p.offerId).catch((e) => { if (e instanceof Gone) return null; throw e; });
+		if (!offer) return broken("货源在 1688 上下架了");
 		const sku = offer.skus.find((s) => s.skuId === p.skuId);
-		if (!sku) return { skip: "1688 上没有这个规格了" };
+		if (!sku) return broken("1688 上没有这个规格了");
 		if (sku.stock < p.qty) return { skip: `1688 库存 ${sku.stock}，要 ${p.qty}` };
 		if (p.price !== null && sku.price > p.price * 1.1) return { skip: `1688 价格从 ¥${p.price} 涨到 ¥${sku.price}（超过 10%）` };
 		await sleep(1500);
@@ -101,9 +108,11 @@ const cart: WriteOp<CartP> = {
 		const d = now - Number(before?.inCart ?? 0);
 		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
 	},
+	// 随这次加购一起批准的新货源（店里的商品 id）：那一行标成「用这个」（这个商品还没定货源时）
 	async after(sql, p) {
-		for (const modelId of p.newSources) {
-			await sql`update skus set offer_id = ${p.offerId}, offer_sku_id = ${p.skuId}, sourced_at = now() where model_id = ${modelId} and offer_id is null`;
+		for (const itemId of p.newSources) {
+			await sql`update sources set chosen = true, chosen_at = now() where item_id = ${itemId} and offer_id = ${p.offerId}
+				and not exists (select 1 from sources c where c.item_id = ${itemId} and c.chosen)`;
 		}
 	},
 };
@@ -122,7 +131,7 @@ const forecastOp: WriteOp<ForecastP> = {
 	key: (p) => `forecast:${p.sn}`,
 	display: (p) => `订单 ${p.sn}：${p.lines.every((l) => !l.trackingNo) ? "无单号" : p.lines.map((l) => l.trackingNo).join("、")}`,
 	untried: "预报的请求体是照 chanboss 页面的 JS 拼的，还没在真订单上跑过：和运营约好一张单，一起跑 x2 run --try 预报，跑完在 chanboss 上看一眼",
-	where: (_p, fn) => fn(),
+	where: (_sql, _p, fn) => fn(),
 	async prepare(_sql, p) {
 		const o = (await liveOrders([p.sn])).get(p.sn);
 		if (!o) return { skip: `chanboss 上读不到订单 ${p.sn}` };

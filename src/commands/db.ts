@@ -20,7 +20,7 @@ export async function dbCommand(args: string[], json: boolean): Promise<void> {
 		const sql = await db();
 		// 订单先同步进来：加购记录的件数从订单里取
 		const r = await importJson(sql, dir, acct);
-		return console.log(json ? JSON.stringify(r) : `迁进库：货源 ${r.offers} 家，规格的货源 ${r.sources} 个，加购 ${r.cartWrites} 行（${r.cartLines} 个订单行；${r.skipped} 个找不到订单或货源，没迁）`);
+		return console.log(json ? JSON.stringify(r) : `迁进库：商品的货源 ${r.sources} 个，加购 ${r.cartWrites} 行（${r.cartLines} 个订单行；${r.skipped} 个找不到订单或货源，没迁）`);
 	}
-	throw new Usage("x2 db migrate：建表、加列；x2 db import [目录] [--account 1688 账号]：把 ~/x2 的 JSON 迁进库（先 x2 sync orders）");
+	throw new Usage("x2 db migrate：建表、加列；x2 db import [目录] [--account 1688 账号]：把 ~/x2 的 JSON 迁进库（先 x2 status，订单读进来）");
 }

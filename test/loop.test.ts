@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import postgres from "postgres";
 import { z } from "zod";
 import { check } from "../src/check/index.ts";
+import type { Reads } from "../src/read.ts";
 import { migrate } from "../src/db/index.ts";
 import { Usage } from "../src/errors.ts";
 import { approve, propose } from "../src/propose.ts";
@@ -19,12 +20,15 @@ const submitted: number[] = [];
 const fake: WriteOp<{ n: number }> = {
 	describe: "试写", params: z.object({ n: z.number() }),
 	target: (p) => `t:${p.n}`, key: (p) => `k:${p.n}`, display: (p) => `第 ${p.n} 项`,
-	where: (_p, fn) => fn(),
+	where: (_sql, _p, fn) => fn(),
 	prepare: async (_sql, p) => ({ params: p, before: { n: p.n } }),
 	submit: async (_sql, p) => { submitted.push(p.n); return outcome.get(p.n)?.sent ?? { kind: "done" }; },
 	check: async (p) => ({ done: outcome.has(p.n) ? outcome.get(p.n)!.done : true, readback: { n: p.n } }),
 };
 const ops = { 试写: fake };
+
+/** 这一轮现读的结果（假的）：只读了 chanboss 订单，ok 是成没成 */
+const reads = (ok = true): Reads => ({ cart: [], purchases: [], accounts: new Map(), buyAccount: null, results: [{ what: "订单", who: "chanboss", ok }] });
 
 before(async () => {
 	if (!sql) return;
@@ -67,7 +71,7 @@ test("写入：批准了才做；结果未知停下这一批，不重发；人�
 	assert.deepEqual(submitted, [1, 2]);
 
 	// 这一批没有待批准的了：检查关掉「批准」那一行
-	await check(db);
+	await check(db, reads());
 	const [closed] = await db`select open from inbox where key = ${`approve:${p.batch}`}`;
 	assert.equal(closed!.open, false);
 });
@@ -84,38 +88,34 @@ test("写入：取消勾的不做；被拒的记下原因", { skip: !sql && "没
 	assert.deepEqual(rows.map((x) => [x.n, x.status]), [["3", "没做"], ["4", "被拒"]]);
 });
 
-test("收件箱：每轮重算，只更新不重复；同步读全了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("收件箱：每轮重算，只更新不重复；这一轮读成功了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const soon = new Date(Date.now() + 86400_000);
 	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
 		values ('S1', 'ni1206', ${soon}, '待出货', '已预报', 'c1', 1, ${db.json([{ itemId: "I", modelId: "M", chanbossModelId: "cM", name: "红T", spec: "L", qty: 1, image: "" }])}, now())`;
-	await db`insert into syncs (name, scope, max_minutes, result) values ('orders', '', 20, '成功')`;
-	await check(db);
-	await check(db);
+	await check(db, reads());
+	await check(db, reads());
 	const open = await db`select key, open from inbox where key = 'late:S1'`;
 	assert.deepEqual(open.map((x) => ({ ...x })), [{ key: "late:S1", open: true }]);
 
-	// 订单打包了，但这一轮同步失败：不关
+	// 订单打包了，但这一轮 chanboss 没读成：不关
 	await db`update orders set chanboss_status = '已打包' where sn = 'S1'`;
-	await db`update syncs set result = '失败' where name = 'orders'`;
-	await check(db);
+	await check(db, reads(false));
 	assert.equal((await db`select open from inbox where key = 'late:S1'`)[0]!.open, true);
-	// 同步成功了：关
-	await db`update syncs set result = '成功' where name = 'orders'`;
-	await check(db);
+	// 读成了：关
+	await check(db, reads(true));
 	assert.equal((await db`select open from inbox where key = 'late:S1'`)[0]!.open, false);
 });
 
-test("收件箱：人勾「处理好了」就关，以后不再开；「谁做」照 inbox_roles 填", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("收件箱：人勾「处理好了」就关，以后不再开", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const soon = new Date(Date.now() + 86400_000);
 	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
 		values ('S2', 'ni1206', ${soon}, '待出货', '已预报', 'c2', 1, ${db.json([{ itemId: "I", modelId: "M", chanbossModelId: "cM", name: "白T", spec: "L", qty: 1, image: "" }])}, now())`;
-	await db`update inbox_roles set role = '采购' where kind = '快到期'`;
-	await check(db);
-	assert.deepEqual({ ...(await db`select open, role from inbox where key = 'late:S2'`)[0] }, { open: true, role: "采购" });
+	await check(db, reads());
+	assert.deepEqual({ ...(await db`select open, role from inbox where key = 'late:S2'`)[0] }, { open: true, role: "运营" });
 	await db`update inbox set done = true where key = 'late:S2'`;
-	await check(db);
-	await check(db);
+	await check(db, reads());
+	await check(db, reads());
 	assert.equal((await db`select open from inbox where key = 'late:S2'`)[0]!.open, false);
 });

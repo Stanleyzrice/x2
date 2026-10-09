@@ -8,7 +8,7 @@
 import postgres from "postgres";
 import { createHash } from "node:crypto";
 import { STEPS } from "./check/orders.ts";
-import { CHANBOSS_STATUS } from "./sync/orders.ts";
+import { CHANBOSS_STATUS } from "./read.ts";
 import type { Sql } from "./db/index.ts";
 import { NeedsHuman } from "./errors.ts";
 
@@ -24,8 +24,8 @@ const COLORS = ["#cfdffe", "#d0f1fd", "#c2f5e9", "#d1f7c4", "#ffeab6", "#fee2d5"
 
 const OPEN_ORDER: Filter[] = [{ col: "platform_status", op: "eq", value: "待出货" }, { col: "chanboss_status", op: "neq", value: "已打包" }, { col: "chanboss_status", op: "neq", value: "已出库" }];
 
-/** 侧栏从上到下的顺序；每张表的第一个视图是默认视图 */
-export function tables(lateDays: number): Table[] {
+/** 侧栏从上到下的顺序；每张表的第一个视图是默认视图。只放人要看、要填的：要人做的都在收件箱里，站点上有的不存 */
+export function tables(): Table[] {
 	return [
 		{
 			name: "inbox", title: "收件箱", links: ["link"],
@@ -45,18 +45,17 @@ export function tables(lateDays: number): Table[] {
 			name: "orders", title: "订单",
 			selects: { step: STEPS, chanboss_status: Object.values(CHANBOSS_STATUS) },
 			columns: {
-				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", step_detail: "细节", platform_status: "平台状态", chanboss_status: "chanboss 状态", items_text: "商品",
-				problem: "问题单", destination: "寄到哪", sourced: "货源齐了", carted: "加购了", paid: "付款了", arrived: "到齐了", created_at: "下单时间", cancelled_at: "取消时间",
-				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "chanboss id", chanboss_time: "chanboss 下单时间", synced_at: "同步于", checked_at: "检查于",
+				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", step_detail: "细节", items_text: "商品", platform_status: "平台状态", chanboss_status: "chanboss 状态",
+				problem: "问题单", destination: "寄到哪", created_at: "下单时间", cancelled_at: "取消时间", checked_at: "检查于",
+				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "chanboss id", chanboss_time: "chanboss 下单时间",
 			},
 			views: [
-				{ title: "全部", sorts: [["created_at", "desc"]], hide: ["items", "chanboss_id", "chanboss_time"] },
+				{ title: "全部", sorts: [["created_at", "desc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time"] },
 				// 看板：一列一步，卡片上是订单号、店铺、出货期限、剩几天、细节、商品
 				{
 					title: "待出货", kanban: "step", filters: OPEN_ORDER, sorts: [["ship_by", "asc"]],
-					hide: ["platform_status", "chanboss_status", "problem", "destination", "sourced", "carted", "paid", "arrived", "created_at", "cancelled_at", "items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at"],
+					hide: ["platform_status", "chanboss_status", "problem", "destination", "created_at", "cancelled_at", "checked_at", "items", "shop_id", "chanboss_id", "chanboss_time"],
 				},
-				{ title: "快到期", filters: [...OPEN_ORDER, { col: "days_left", op: "lt", value: lateDays }], sorts: [["ship_by", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time", "synced_at", "checked_at", "cancelled_at", "sourced", "carted", "paid", "arrived"] },
 			],
 		},
 		{
@@ -76,28 +75,15 @@ export function tables(lateDays: number): Table[] {
 			],
 		},
 		{
-			name: "source_options", title: "货源候选", links: ["sku_image", "image"],
+			name: "sources", title: "货源", links: ["url", "image", "item_image"],
 			columns: {
-				sku_name: "店里的规格", chosen: "用这个", name: "1688 规格", offer_title: "货源", price: "价格", stock: "库存", missing: "缺", score: "像不像", sure: "明显对得上", origin: "从哪来",
-				image: "1688 的图", sku_image: "店里的图", model_id: "规格 id", offer_id: "货源 id", offer_sku_id: "1688 规格 id", found_at: "找到于",
-			},
-			views: [{ title: "选货源", sorts: [["score", "desc"]], group: [["sku_name", "asc"]], hide: ["model_id", "offer_id", "offer_sku_id", "found_at", "sku_name"] }],
-		},
-		{
-			name: "cart", title: "购物车",
-			columns: { should_buy: "该不该买", offer_id: "货源", offer_sku_id: "1688 规格", qty: "件数", orders: "订单", account: "1688 账号", synced_at: "同步于" },
-			views: [{ title: "购物车", group: [["should_buy", "asc"]] }],
-		},
-		{
-			name: "purchases", title: "采购单",
-			columns: {
-				order_id: "采购单号", account: "1688 账号", offer_id: "货源", offer_sku_id: "1688 规格", qty: "件数", price: "单价", paid: "实付", status_label: "状态", paid_at: "付款时间",
-				to_chanboss: "寄到 chanboss", address: "收货地址", tracking_no: "快递单号", logistics: "物流", signed: "签收了", shipped_at: "发货时间", created_at: "下单时间",
-				line: "行", spec_id: "specId", status: "状态码", raw: "原样", synced_at: "同步于",
+				item_name: "店里的商品", chosen: "用这个", title: "货源", url: "链接", score: "像不像", missing: "对不上的规格", sure: "明显对得上", origin: "从哪来", broken: "用不了",
+				image: "货源的图", item_image: "店里的图", site: "站点", read_at: "读到于", skus: "货源的规格（快照）", offer_id: "货源 id", item_id: "商品 id", found_at: "找到于", chosen_at: "定下于",
 			},
 			views: [
-				{ title: "在路上", filters: [{ col: "paid_at", op: "notblank" }, { col: "signed", op: "notchecked" }], sorts: [["paid_at", "asc"]], hide: ["line", "spec_id", "status", "raw", "synced_at"] },
-				{ title: "全部", sorts: [["created_at", "desc"]], hide: ["raw"] },
+				// 选货源：还没定的货源，按店里的商品分组；定了以后剩下的删掉，空了就是选完了
+				{ title: "选货源", filters: [{ col: "chosen", op: "notchecked" }], sorts: [["score", "desc"]], group: [["item_name", "asc"]], hide: ["skus", "offer_id", "item_id", "found_at", "chosen_at", "broken", "read_at", "site"] },
+				{ title: "定了的", filters: [{ col: "chosen", op: "checked" }], sorts: [["item_name", "asc"]], hide: ["chosen", "score", "missing", "sure", "skus", "item_id", "found_at"] },
 			],
 		},
 		{
@@ -106,48 +92,16 @@ export function tables(lateDays: number): Table[] {
 				id: "编号", batch: "批次", op: "操作", display: "内容", include: "做", status: "状态", error: "原因", target: "对象", key: "防重复", params: "参数", response: "站点的回应",
 				readback: "回读", host: "电脑", created_at: "准备于", started_at: "开始于", finished_at: "结束于", cost: "费用",
 			},
-			views: [
-				{ title: "全部", sorts: [["id", "desc"]], hide: ["target", "key", "params", "response", "readback"] },
-				{ title: "待批准", filters: [{ col: "status", op: "eq", value: "待批准" }], sorts: [["id", "asc"]], group: [["batch", "asc"]], hide: ["target", "key", "params", "response", "readback", "started_at", "finished_at"] },
-				{ title: "结果未知", filters: [{ or: [{ col: "status", op: "eq", value: "结果未知" }, { col: "status", op: "eq", value: "不一致" }, { col: "status", op: "eq", value: "已提交" }] }], sorts: [["id", "asc"]] },
-			],
-		},
-		{
-			name: "syncs", title: "同步",
-			columns: { name: "读什么", scope: "店铺或账号", last_ok_at: "上次读到", result: "结果", error: "原因", blocked: "要人处理", max_minutes: "目标多新（分钟）", last_at: "上次读", rows: "行数", host: "电脑" },
-			views: [{ title: "数据新不新", sorts: [["last_ok_at", "asc"]] }],
-		},
-		{
-			name: "skus", title: "规格", links: ["image"],
-			columns: {
-				item_name: "商品", name: "规格", offer_id: "货源", offer_sku_id: "1688 规格", status: "状态", price: "价格", stock: "库存", image: "图", model_id: "规格 id", item_id: "商品 id",
-				shop_id: "店铺 id", sourced_at: "定货源于", synced_at: "同步于",
-			},
-			views: [{ title: "全部", sorts: [["item_name", "asc"]] }, { title: "在售没货源", filters: [{ col: "status", op: "eq", value: "在售" }, { col: "offer_id", op: "blank" }], sorts: [["item_name", "asc"]] }],
-		},
-		{
-			name: "offers", title: "货源", links: ["url", "image"],
-			columns: { title: "标题", live: "在售", min_qty: "起订量", unit: "单位", url: "链接", image: "图", offer_id: "货源 id", props: "属性", skus: "1688 规格", read_at: "读到于" },
-			views: [{ title: "全部", sorts: [["read_at", "desc"]], hide: ["props", "skus"] }],
-		},
-		{
-			name: "shops", title: "店铺",
-			columns: {
-				account: "账号名", name: "店名", enabled: "启用", shop_id: "店铺 id", user_id: "账号 id", browser: "浏览器", target_margin: "目标利润率", min_profit: "最低利润额", fx_rate: "汇率",
-				forwarder_per_kg: "货代每公斤", weight_step: "计重步长", order_fee: "每单固定费", platform_fee_rate: "平台费率", risk_reserve: "风险预留", watermark: "水印", watermark_text: "水印文字",
-			},
-			views: [{ title: "设置" }],
+			views: [{ title: "全部", sorts: [["id", "desc"]], hide: ["target", "key", "params", "response", "readback"] }],
 		},
 		{
 			name: "order_settings", title: "订单设置",
 			columns: {
-				buy_account: "采购账号（1688 userId）", late_days: "快到期提前几天", ship_wait_hours: "付款后几小时没发货算异常", forecast_needs_approval: "预报要批准", channel: "发货线路", chanboss_address: "chanboss 的收货地址",
-				sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id",
+				buy_account: "采购账号（1688 会员名）", late_days: "快到期提前几天", ship_wait_hours: "付款后几小时没发货算异常", forecast_needs_approval: "预报要批准",
+				channel: "发货线路", sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id",
 			},
 			views: [{ title: "设置", hide: ["id"] }],
 		},
-		{ name: "inbox_roles", title: "谁做", columns: { kind: "类别", role: "谁做" }, views: [{ title: "设置" }] },
-		{ name: "accounts_1688", title: "1688 账号", columns: { login_id: "会员名", user_id: "userId", seen_at: "上次见到" }, views: [{ title: "全部" }] },
 	];
 }
 
@@ -198,8 +152,7 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 		await api("POST", `/bases/${base.id}/meta-diff/${source.id}`).catch((e) => log(`重新读表结构：${(e as Error).message}`));
 		await api("PATCH", `/bases/${base.id}/sources/${source.id}`, { is_schema_readonly: true });
 
-		const [{ late_days }] = await sql`select late_days from order_settings where id = 1` as any;
-		const specs = tables(Number(late_days));
+		const specs = tables();
 		// 重新读表结构是 NocoDB 的后台任务：等到要的表都出来（最多 60 秒）
 		let all: any[] = [];
 		for (let i = 0; i < 40; i++) {

@@ -1,5 +1,6 @@
 // 检查订单：拿 docs/orders.md「每一步怎样算做完」和「异常」对一遍库，算出收件箱、agent 要做的，和订单上「卡在哪一步」等列。
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
+import { matchSku } from "../similar.ts";
 import { type CartLine, type CartWrite, type Line, type Need, type Purchase, reconcile } from "./reconcile.ts";
 
 export type Item = { itemId: string; modelId: string; chanbossModelId: string; name: string; spec: string; qty: number; image: string };
@@ -7,10 +8,11 @@ export type Order = {
 	sn: string; shop: string | null; createdAt: Date | null; shipBy: Date | null; platformStatus: string; chanbossStatus: string; chanbossId: string; chanbossTime: number;
 	items: Item[]; problem: string | null; cancelledAt: Date | null;
 };
-export type Sku = { modelId: string; itemId: string | null; offerId: string | null; skuId: string | null };
-export type OfferSku = { skuId: string; specId: string; name: string; price: number; stock: number; image: string };
-export type Offer = { offerId: string; title: string | null; live: boolean; skus: OfferSku[] };
-export type Option = { modelId: string; offerId: string; skuId: string; sure: boolean; chosen: boolean };
+/** 货源的一个规格（快照里的） */
+export type SourceSku = { skuId: string; specId: string; name: string; price: number; stock: number; image: string };
+/** 货源（sources 表的一行）：店里一个商品 × 一个货源。chosen 的是这个商品现在的货源（一个商品只用一个）；没 chosen 的是还在挑的，sure 是 x2 认为明显对得上的。
+ * title、skus 是快照（x2 现读这个货源时更新）：店里的规格按名字在 skus 里配 */
+export type Source = { itemId: string; offerId: string; title: string | null; skus: SourceSku[]; chosen: boolean; sure: boolean; broken: string | null };
 export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null };
 /** 到货问题：人在 NocoDB 的表单里报的、还没处理好的（错货、少件、坏了……） */
 export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
@@ -19,7 +21,7 @@ export type Issue = { id: string; sn: string; item: string | null; kind: string;
 export type Settings = { lateDays: number; channel: string; buyAccount: string | null; shipWaitHours?: number };
 
 export type Snapshot = {
-	now: Date; settings: Settings; orders: Order[]; skus: Map<string, Sku>; offers: Map<string, Offer>; options: Option[];
+	now: Date; settings: Settings; orders: Order[]; sources: Source[];
 	writes: Write[]; purchases: Purchase[]; cart: CartLine[]; issues: Issue[];
 	/** 1688 账号：userId → 会员名 */
 	accounts: Map<string, string>;
@@ -27,25 +29,25 @@ export type Snapshot = {
 
 export type InboxItem = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
 /** step：卡在哪一步（下面 STEPS 里的一个，看板按它分列）；stepDetail：细节（还差哪件、哪个规格没货源……） */
-export type Computed = { daysLeft: number | null; sourced: boolean; carted: boolean; paid: boolean; arrived: boolean; destination: string | null; step: string; stepDetail: string | null };
-/** 加购这个写操作的参数：同一个 1688 规格的几张订单合成一行。newSources：随这次加购一起批准的新货源 */
+export type Computed = { daysLeft: number | null; destination: string | null; step: string; stepDetail: string | null };
+/** 加购这个写操作的参数：同一个货源规格的几张订单合成一行。newSources：随这次加购一起批准的新货源（店里的商品 id） */
 export type CartParams = {
 	offerId: string; skuId: string; qty: number; title: string; sku: string; price: number | null;
 	lines: { sn: string; modelId: string; qty: number }[]; newSources: string[]; account?: string;
 };
 export type ForecastParams = { sn: string; chanbossId: string; chanbossTime: number; lines: { modelId: string; chanbossModelId: string; qty: number; trackingNo: string | null }[] };
 export type Todo =
-	| { kind: "找货源"; why: string; models: { modelId: string; name: string; why: string }[]; command: string }
+	| { kind: "找货源"; why: string; items: { itemId: string; name: string; why: string }[]; command: string }
 	| { kind: "加购" | "预报"; why: string; propose: { title: string; writes: { op: string; params: CartParams | ForecastParams }[] } }
 	| { kind: "取消预报"; why: string; orders: string[] }
 	| { kind: "核清"; why: string; writes: string[]; command: string };
 
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
-export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; chosenSources: Option[]; covered: Set<string> };
+export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };
 
 /** 卡在哪一步：按流程排（看板的列也是这个顺序） */
 export const STEPS = [
-	"没货源", "没加购", "加购等批准", "没付款", "没预报", "预报等批准", "货没到齐", "到货有问题", "到齐了没打包", "等 chanboss 收货", "等 chanboss 打包",
+	"没货源", "规格对不上", "没加购", "加购等批准", "没付款", "没预报", "预报等批准", "货没到齐", "到货有问题", "到齐了没打包", "等 chanboss 收货", "等 chanboss 打包",
 	"不是经 x2 买的", "已打包", "取消了",
 ] as const;
 
@@ -71,8 +73,11 @@ export function checkOrders(s: Snapshot): Result {
 	const inbox: InboxItem[] = [];
 	const todo: Todo[] = [];
 	const computed = new Map<string, Computed>();
-	const chosenSources = new Map<string, Option>();
 	const who = (account: string) => s.accounts.get(account) ?? account;
+	/** 店里的商品 → 用这个的货源 */
+	const chosenOf = new Map(s.sources.filter((x) => x.chosen).map((x) => [x.itemId, x]));
+	/** 货源 → 快照（给人看名字、价格） */
+	const offerOf = new Map(s.sources.map((x) => [x.offerId, x]));
 
 	// ── 加购记录、采购单 → 对采购单 ──
 	const cartWrites: CartWrite[] = s.writes
@@ -80,8 +85,9 @@ export function checkOrders(s: Snapshot): Result {
 		.map((w) => ({ id: w.id, account: w.params.account, offerId: w.params.offerId, skuId: w.params.skuId, at: w.finishedAt ?? s.now, lines: w.params.lines }));
 	// 每个订单行（有货源的）都拿去对剩下的采购单：x2 外面买的也认得出来；x2 加了购、人又另外买了，也认得出来
 	const needs: Need[] = s.orders.flatMap((o) => o.items.flatMap((i) => {
-		const sku = s.skus.get(i.modelId);
-		return sku?.offerId && sku.skuId && o.createdAt ? [{ sn: o.sn, modelId: i.modelId, qty: i.qty, offerId: sku.offerId, skuId: sku.skuId, createdAt: o.createdAt }] : [];
+		const src = chosenOf.get(i.itemId);
+		const sku = src ? matchSku(i.spec, src.skus) : null;
+		return src && sku && o.createdAt ? [{ sn: o.sn, modelId: i.modelId, qty: i.qty, offerId: src.offerId, skuId: sku.skuId, createdAt: o.createdAt, until: o.cancelledAt }] : [];
 	}));
 	const lines = reconcile(cartWrites, s.purchases, s.cart, needs);
 	const rank = { 已付款: 0, 在购物车: 1, 不见了: 2 } as const;
@@ -98,30 +104,24 @@ export function checkOrders(s: Snapshot): Result {
 	const forecastFlying = new Set(s.writes.filter((w) => w.op === "预报" && IN_FLIGHT.has(w.status)).map((w) => w.params.sn as string));
 
 	// ── 货源 ──
-	const optionsOf = new Map<string, Option[]>();
-	for (const o of s.options) optionsOf.set(o.modelId, [...(optionsOf.get(o.modelId) ?? []), o]);
-	type Source = { state: "有" | "新" | "待选" | "没有" | "失效"; offerId?: string; skuId?: string; why?: string };
-	const sourceOf = (modelId: string): Source => {
-		const sku = s.skus.get(modelId);
-		const chosen = optionsOf.get(modelId)?.find((o) => o.chosen);
-		if (chosen && (sku?.offerId !== chosen.offerId || sku?.skuId !== chosen.skuId)) {
-			chosenSources.set(modelId, chosen);
-			return { state: "有", offerId: chosen.offerId, skuId: chosen.skuId };
-		}
-		if (sku?.offerId && sku.skuId) {
-			const offer = s.offers.get(sku.offerId);
-			if (offer && !offer.live) return { state: "失效", why: "货源在 1688 上下架了" };
-			if (offer && offer.skus.length && !offer.skus.some((x) => x.skuId === sku.skuId)) return { state: "失效", why: "1688 上没有这个规格了" };
-			return { state: "有", offerId: sku.offerId, skuId: sku.skuId };
-		}
-		const opts = optionsOf.get(modelId) ?? [];
-		const sure = opts.filter((o) => o.sure);
-		if (sure.length === 1) return { state: "新", offerId: sure[0]!.offerId, skuId: sure[0]!.skuId };
+	// 一个商品一个货源；店里的规格按名字在货源的规格里配（配不上：规格对不上，要人看）
+	type SourceState = { state: "有" | "新" | "待选" | "没有" | "失效" | "规格对不上"; src?: Source; sku?: SourceSku; why?: string };
+	const sourceOf = (i: Item): SourceState => {
+		const pick = (src: Source, state: "有" | "新"): SourceState => {
+			const sku = matchSku(i.spec, src.skus);
+			return sku ? { state, src, sku } : { state: "规格对不上", src, why: `「${i.spec || "（单规格）"}」在货源「${short(src.title ?? src.offerId)}」里找不到对得上的规格` };
+		};
+		const chosen = chosenOf.get(i.itemId);
+		if (chosen) return chosen.broken ? { state: "失效", why: chosen.broken } : pick(chosen, "有");
+		const opts = s.sources.filter((x) => x.itemId === i.itemId);
+		const sure = opts.filter((x) => x.sure);
+		if (sure.length === 1) return pick(sure[0]!, "新");
 		return opts.length ? { state: "待选" } : { state: "没有" };
 	};
 
-	const toFind = new Map<string, { modelId: string; name: string; why: string }>();
-	const toChoose = new Map<string, { item: Item; due: Date | null; shop: string | null; n: number }>();
+	const toFind = new Map<string, { itemId: string; name: string; why: string }>();
+	const toChoose = new Map<string, { item: Item; due: Date | null; shop: string | null }>();
+	const unmatched = new Map<string, { item: Item; why: string; due: Date | null; shop: string | null }>();
 	const cartPlan = new Map<string, CartParams>();
 	const forecasts: ForecastParams[] = [];
 	const unforecast: string[] = [];
@@ -131,11 +131,11 @@ export function checkOrders(s: Snapshot): Result {
 		const daysLeft = o.shipBy ? Math.round(((o.shipBy.getTime() - s.now.getTime()) / DAY) * 10) / 10 : null;
 		if (isCancelled(o)) { checkCancelled(o); continue; }
 		if (!isOpen(o)) {
-			computed.set(o.sn, { daysLeft, sourced: true, carted: true, paid: true, arrived: true, destination: null, step: isPacked(o) ? "已打包" : o.platformStatus, stepDetail: o.chanbossStatus || null });
+			computed.set(o.sn, { daysLeft, destination: null, step: isPacked(o) ? "已打包" : o.platformStatus, stepDetail: o.chanbossStatus || null });
 			if (o.problem && !isPacked(o)) inbox.push(problem(o));
 			continue;
 		}
-		const sources = o.items.map((i) => ({ i, src: sourceOf(i.modelId), line: lineOf.get(`${o.sn}:${i.modelId}`) }));
+		const sources = o.items.map((i) => ({ i, src: sourceOf(i), line: lineOf.get(`${o.sn}:${i.modelId}`) }));
 		const needsBuy = o.chanbossStatus === "待处理";
 		const sourced = sources.every((x) => x.src.state === "有" || x.src.state === "新");
 		const carted = sources.every((x) => x.line && x.line.state !== "不见了");
@@ -150,7 +150,11 @@ export function checkOrders(s: Snapshot): Result {
 		let step: (typeof STEPS)[number];
 		let stepDetail: string | null = null;
 		if (!needsBuy && !paid) { step = "不是经 x2 买的"; stepDetail = `chanboss：${o.chanbossStatus}；采购单对不上（规格没有货源，或者在别的账号买的）`; }
-		else if (!sourced) { step = "没货源"; stepDetail = sources.filter((x) => x.src.state !== "有" && x.src.state !== "新").map((x) => label(x.i)).join("、"); }
+		else if (!sourced) {
+			const bad = sources.filter((x) => x.src.state !== "有" && x.src.state !== "新");
+			step = bad.every((x) => x.src.state === "规格对不上") ? "规格对不上" : "没货源";
+			stepDetail = bad.map((x) => label(x.i)).join("、");
+		}
 		else if (!carted && !paid) step = sources.some((x) => flying.has(`${o.sn}:${x.i.modelId}`)) ? "加购等批准" : "没加购";
 		else if (!paid) step = "没付款";
 		else if (needsBuy) step = forecastFlying.has(o.sn) ? "预报等批准" : "没预报";
@@ -163,27 +167,25 @@ export function checkOrders(s: Snapshot): Result {
 		const issues = s.issues.filter((x) => x.sn === o.sn);
 		if (issues.length && (step === "货没到齐" || step === "到齐了没打包")) { step = "到货有问题"; stepDetail = issues.map(issueText).join("；"); }
 		if (sources.some((x) => boughtOutside.has(`${o.sn}:${x.i.modelId}`))) stepDetail = [stepDetail, "在 x2 外面买的"].filter(Boolean).join("；");
-		computed.set(o.sn, { daysLeft, sourced, carted, paid, arrived, destination, step, stepDetail });
+		computed.set(o.sn, { daysLeft, destination, step, stepDetail });
 
 		// 选货源、找货源：只看还要买、还没买的订单行
 		if (needsBuy) for (const { i, src, line } of sources) {
 			if (line?.state === "已付款") continue;
-			if (src.state === "没有" || src.state === "失效") toFind.set(i.modelId, { modelId: i.modelId, name: label(i), why: src.why ?? "没有货源" });
-			if (src.state === "待选") {
-				const had = toChoose.get(i.modelId);
-				toChoose.set(i.modelId, { item: i, shop: o.shop, n: (had?.n ?? 0) + i.qty, due: had?.due && o.shipBy && had.due < o.shipBy ? had.due : o.shipBy });
-			}
+			const due = (had: { due: Date | null } | undefined) => (had?.due && o.shipBy && had.due < o.shipBy ? had.due : o.shipBy);
+			if (src.state === "没有" || src.state === "失效") toFind.set(i.itemId, { itemId: i.itemId, name: short(i.name, 20), why: src.why ?? "没有货源" });
+			if (src.state === "待选") toChoose.set(i.itemId, { item: i, shop: o.shop, due: due(toChoose.get(i.itemId)) });
+			if (src.state === "规格对不上") unmatched.set(i.modelId, { item: i, why: src.why!, shop: o.shop, due: due(unmatched.get(i.modelId)) });
 		}
 		// 加购：还要买、货源齐了的订单，没加过（或加的不见了）、没在外面买、也没有在路上的
 		if (needsBuy && sourced) for (const { i, src, line } of sources) {
 			if ((line && line.state !== "不见了") || flying.has(`${o.sn}:${i.modelId}`)) continue;
-			const k = `${src.offerId}:${src.skuId}`;
-			const offer = s.offers.get(src.offerId!);
-			const sku = offer?.skus.find((x) => x.skuId === src.skuId);
-			const c = cartPlan.get(k) ?? { offerId: src.offerId!, skuId: src.skuId!, qty: 0, title: offer?.title ?? src.offerId!, sku: sku?.name || "（单规格）", price: sku?.price ?? null, lines: [], newSources: [] };
+			const x = src.src!, sku = src.sku!;
+			const k = `${x.offerId}:${sku.skuId}`;
+			const c = cartPlan.get(k) ?? { offerId: x.offerId, skuId: sku.skuId, qty: 0, title: x.title ?? x.offerId, sku: sku.name || "（单规格）", price: sku.price, lines: [], newSources: [] };
 			c.qty += i.qty;
 			c.lines.push({ sn: o.sn, modelId: i.modelId, qty: i.qty });
-			if (src.state === "新" && !c.newSources.includes(i.modelId)) c.newSources.push(i.modelId);
+			if (src.state === "新" && !c.newSources.includes(i.itemId)) c.newSources.push(i.itemId);
 			cartPlan.set(k, c);
 		}
 		// 付款：加购了还在购物车里的
@@ -241,7 +243,7 @@ export function checkOrders(s: Snapshot): Result {
 	// chanboss 上的预报：不重要了，agent 去取消
 	function checkCancelled(o: Order) {
 		const mine = o.items.map((i) => ({ i, line: lineOf.get(`${o.sn}:${i.modelId}`) }));
-		computed.set(o.sn, { daysLeft: null, sourced: false, carted: mine.some((x) => x.line), paid: false, arrived: false, destination: null, step: "取消了", stepDetail: o.chanbossStatus || null });
+		computed.set(o.sn, { daysLeft: null, destination: null, step: "取消了", stepDetail: o.chanbossStatus || null });
 		const inCart = lines.filter((l) => l.sn === o.sn && l.cartQty > 0);
 		if (inCart.length) inbox.push({
 			key: `cancel:${o.sn}`, kind: "取消", shop: o.shop, due: null, link: CART_URL,
@@ -282,14 +284,18 @@ export function checkOrders(s: Snapshot): Result {
 	}
 
 	// ── 收件箱：选货源、付款 ──
-	for (const [modelId, c] of toChoose) inbox.push({
-		key: `source:${modelId}`, kind: "选货源", shop: c.shop, due: c.due, link: null,
-		title: `选货源：${label(c.item)} 拿不准用哪个 1688 规格（要买 ${c.n} 件）`, detail: `候选在「选货源」里，勾一个「用这个」`,
+	for (const [itemId, c] of toChoose) inbox.push({
+		key: `source:${itemId}`, kind: "选货源", shop: c.shop, due: c.due, link: null,
+		title: `选货源：${short(c.item.name, 20)} 拿不准用哪个货源`, detail: `找到的货源在「货源」的「选货源」里，勾一个「用这个」`,
+	});
+	for (const [modelId, c] of unmatched) inbox.push({
+		key: `sku:${modelId}`, kind: "规格对不上", shop: c.shop, due: c.due, link: null,
+		title: `规格对不上：${label(c.item)}`, detail: `${c.why}。把店里的规格名改得和货源的一样，或者换货源`,
 	});
 	const offerName = (l: Line) => {
-		const offer = s.offers.get(l.offerId);
-		const sku = offer?.skus.find((x) => x.skuId === l.skuId);
-		return { name: `${short(offer?.title ?? l.offerId)} / ${sku?.name || "（单规格）"}`, price: sku?.price ?? null };
+		const x = offerOf.get(l.offerId);
+		const sku = x?.skus.find((k) => k.skuId === l.skuId);
+		return { name: `${short(x?.title ?? l.offerId)} / ${sku?.name || "（单规格）"}`, price: sku?.price ?? null };
 	};
 	const cartRows = new Map<string, { orders: string[]; shouldBuy: string }>();
 	for (const l of lines) if (l.cartQty > 0) {
@@ -342,7 +348,7 @@ export function checkOrders(s: Snapshot): Result {
 	}
 
 	// ── agent 要做的 ──
-	if (toFind.size) todo.push({ kind: "找货源", why: `${toFind.size} 个规格没有货源或货源失效`, models: [...toFind.values()], command: `x2 source ${[...toFind.keys()].join(" ")}` });
+	if (toFind.size) todo.push({ kind: "找货源", why: `${toFind.size} 个商品没有货源或货源用不了`, items: [...toFind.values()], command: `x2 source ${[...toFind.keys()].join(" ")}` });
 	if (cartPlan.size) {
 		const plan = [...cartPlan.values()].map((c) => (s.settings.buyAccount ? { ...c, account: s.settings.buyAccount } : c));
 		const sns = new Set(plan.flatMap((c) => c.lines.map((l) => l.sn)));
@@ -362,7 +368,7 @@ export function checkOrders(s: Snapshot): Result {
 	const unknown = s.writes.filter((w) => w.status === "结果未知" || w.status === "已提交");
 	if (unknown.length) todo.push({ kind: "核清", why: `${unknown.length} 个写入结果未知：先读回来`, writes: unknown.map((w) => w.id), command: "x2 run" });
 
-	return { inbox, orders: computed, cart: new Map([...cartRows].map(([k, r]) => [k, { orders: r.orders.join("、"), shouldBuy: r.shouldBuy }])), todo, chosenSources: [...chosenSources.values()],
+	return { inbox, orders: computed, cart: new Map([...cartRows].map(([k, r]) => [k, { orders: r.orders.join("、"), shouldBuy: r.shouldBuy }])), todo,
 		covered: new Set([...lineOf.values()].filter((l) => l.state !== "不见了").map((l) => `${l.sn}:${l.modelId}`)) };
 }
 

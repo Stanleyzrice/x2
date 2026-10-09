@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compare, rank } from "../src/similar.ts";
+import { compare, matchSku, rank } from "../src/similar.ts";
 
 // 例子都是 2026-09-30 真实订单里的规格名和它们的 1688 货源
 const rack = [
@@ -27,4 +27,11 @@ test("kitty 地垫：款式号和尺寸都要对上", () => {
 	const [best] = rank("kitty貓款式2,60*90cm【硅藻泥】3mm", skus);
 	assert.equal(best!.name, "kitty猫款式2 / 60*90cm【硅藻泥】3mm");
 	assert.deepEqual(best!.missing, []);
+});
+
+test("在货源的规格里配店里的规格：只有一个对得上才配；单规格直接用；配不上回 null", () => {
+	const skus = [{ name: "L20黑色（最大拉力12kg）" }, { name: "L20银色（最大拉力12kg）" }, { name: "L42黑色（最大拉力69kg）" }];
+	assert.equal(matchSku("L20黑色（最大拉力12kg）", skus)?.name, "L20黑色（最大拉力12kg）");
+	assert.equal(matchSku("L42銀色（最大拉力69kg）", skus), null);
+	assert.equal(matchSku("", [{ name: "" }])?.name, "");
 });

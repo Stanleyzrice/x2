@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type CartParams, checkOrders, type ForecastParams, type Order, type Snapshot } from "../src/check/orders.ts";
+import { type CartParams, checkOrders, type ForecastParams, type Order, type Snapshot, type Source } from "../src/check/orders.ts";
 import { reconcile } from "../src/check/reconcile.ts";
 
 // docs/orders.md 的例子：订单 1 买红T ×1，订单 2 买红T ×2；红T 的货源是 1688 的 O1 / S1
@@ -18,12 +18,13 @@ const purchase = (qty: number, o: { signed?: boolean; toChanboss?: boolean; trac
 	account: "A", orderId: "P1", offerId: "O1", offerSkuId: "S1", qty, createdAt: hours(1), status: "waitsellersend", toChanboss: o.toChanboss ?? false, trackingNo: o.trackingNo ?? null, signed: o.signed ?? false,
 });
 
+const sku = (skuId: string, name: string) => ({ skuId, specId: `sp${skuId}`, name, price: 10, stock: 99, image: "" });
+const source = (o: Partial<Source> = {}): Source => ({ itemId: "I1", offerId: "O1", title: "红T 货源", skus: [sku("S1", "红色 L"), sku("S2", "白色 L")], chosen: false, sure: false, broken: null, ...o });
+
 const snap = (s: Partial<Snapshot> = {}): Snapshot => ({
 	now: hours(2), settings: { lateDays: 6, channel: "海快", buyAccount: "A" }, accounts: new Map([["A", "采购员"]]),
 	orders: [order("1", 1), order("2", 2)],
-	skus: new Map([["M1", { modelId: "M1", itemId: "I1", offerId: "O1", skuId: "S1" }]]),
-	offers: new Map([["O1", { offerId: "O1", title: "红T 货源", live: true, skus: [{ skuId: "S1", specId: "sp1", name: "红色 L", price: 10, stock: 99, image: "" }] }]]),
-	options: [], writes: [], purchases: [], cart: [], issues: [], ...s,
+	sources: [source({ chosen: true })], writes: [], purchases: [], cart: [], issues: [], ...s,
 });
 
 test("对采购单：采购单的件数按加购的先后分给订单，差的看购物车，都没有是不见了", () => {
@@ -108,23 +109,23 @@ test("取消的订单：货还在购物车里，收件箱「取消」，购物�
 });
 
 test("选货源：只有一个明显对得上的随加购一起批准；几个候选拿不准的进收件箱", () => {
-	const noSku = new Map([["M1", { modelId: "M1", itemId: "I1", offerId: null, skuId: null }]]);
-	const sure = checkOrders(snap({ skus: noSku, options: [{ modelId: "M1", offerId: "O1", skuId: "S1", sure: true, chosen: false }] }));
+	const sure = checkOrders(snap({ sources: [source({ sure: true })] }));
 	const t = sure.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.deepEqual((t.propose.writes[0]!.params as CartParams).newSources, ["M1"]);
+	assert.deepEqual((t.propose.writes[0]!.params as CartParams).newSources, ["I1"]);
 
-	const unsure = checkOrders(snap({ skus: noSku, options: [{ modelId: "M1", offerId: "O1", skuId: "S1", sure: false, chosen: false }, { modelId: "M1", offerId: "O2", skuId: "S2", sure: false, chosen: false }] }));
-	assert.ok(unsure.inbox.find((i) => i.key === "source:M1"));
+	const unsure = checkOrders(snap({ sources: [source(), source({ offerId: "O2" })] }));
+	assert.ok(unsure.inbox.find((i) => i.key === "source:I1"));
 	assert.equal(unsure.todo.find((x) => x.kind === "加购"), undefined);
 	assert.match(unsure.orders.get("1")!.step, /没货源/);
 
-	const none = checkOrders(snap({ skus: noSku }));
+	const none = checkOrders(snap({ sources: [] }));
 	assert.ok(none.todo.find((x) => x.kind === "找货源"));
 
-	const chosen = checkOrders(snap({ skus: noSku, options: [{ modelId: "M1", offerId: "O1", skuId: "S1", sure: false, chosen: true }] }));
-	assert.deepEqual(chosen.chosenSources.map((o) => o.modelId), ["M1"]);
-	assert.ok(chosen.todo.find((x) => x.kind === "加购"));
+	// 定下的货源用不了了（加购前现读发现下架）：当成没货源，agent 重新找
+	const broken = checkOrders(snap({ sources: [source({ chosen: true, broken: "货源在 1688 上下架了" })] }));
+	assert.match(broken.todo.find((x) => x.kind === "找货源")!.why, /没有货源或货源用不了/);
+	assert.equal(broken.todo.find((x) => x.kind === "加购"), undefined);
 });
 
 test("不是经 x2 加购、chanboss 上已经预报、采购单也对不上的订单：不准备加购，写出 chanboss 状态", () => {
@@ -202,4 +203,24 @@ test("1688 付了款，过了 48 小时还没发货：给人催", () => {
 	const r = checkOrders(snap({ writes: [cartWrite()], purchases: [waiting] }));
 	assert.match(r.inbox.find((i) => i.key === "unshipped:P1")!.title, /付款 52 小时了还没发货（订单 1、2）/);
 	assert.equal(checkOrders(snap({ purchases: [{ ...waiting, paidAt: hours(-10) }] })).inbox.find((i) => i.kind === "没发货"), undefined);
+});
+
+test("一个商品一个货源：店里的规格按名字在货源的规格里配；配不上进收件箱「规格对不上」，不加购", () => {
+	const r = checkOrders(snap({ sources: [source({ chosen: true, skus: [sku("S9", "蓝色 XL")] })] }));
+	assert.equal(r.orders.get("1")!.step, "规格对不上");
+	assert.ok(r.inbox.find((i) => i.key === "sku:M1"));
+	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
+	// 配上了：加购用配上的货源规格
+	const ok = checkOrders(snap());
+	const t = ok.todo.find((x) => x.kind === "加购");
+	assert.ok(t && t.kind === "加购");
+	assert.equal((t.propose.writes[0]!.params as CartParams).skuId, "S1");
+});
+
+test("取消的订单只分到取消以前下的采购单", () => {
+	const o = order("1", 1, { platformStatus: "不成立", createdAt: hours(-48), cancelledAt: hours(-24) });
+	const after = { ...purchase(1), createdAt: hours(-10), status: "waitbuyerreceive" };
+	assert.equal(checkOrders(snap({ orders: [o], purchases: [after] })).inbox.find((i) => i.key === "cancel-goods:1"), undefined);
+	const before = { ...after, createdAt: hours(-30) };
+	assert.ok(checkOrders(snap({ orders: [o], purchases: [before] })).inbox.find((i) => i.key === "cancel-goods:1"));
 });

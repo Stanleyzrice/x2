@@ -14,8 +14,8 @@ export type Purchase = {
 	refund?: { status: string; label: string; kind: string | null } | null;
 };
 export type CartLine = { account: string; offerId: string; skuId: string; qty: number };
-/** 还没经 x2 付款的订单行：拿剩下的采购单去对。createdAt 是订单的下单时间 */
-export type Need = { sn: string; modelId: string; qty: number; offerId: string; skuId: string; createdAt: Date };
+/** 还没经 x2 付款的订单行：拿剩下的采购单去对。createdAt 是订单的下单时间；until 是取消的时间（取消以后下的采购单不是给它买的） */
+export type Need = { sn: string; modelId: string; qty: number; offerId: string; skuId: string; createdAt: Date; until?: Date | null };
 
 export type Bought = { orderId: string; qty: number; status: string; toChanboss: boolean | null; trackingNo: string | null; signed: boolean; refund: Purchase["refund"] };
 export type Line = {
@@ -78,7 +78,8 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 	const paid = new Set(out.filter((l) => l.state === "已付款").map((l) => `${l.sn}:${l.modelId}`));
 	for (const n of [...needs].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sn.localeCompare(b.sn))) {
 		if (paid.has(`${n.sn}:${n.modelId}`)) continue;
-		const slots = [...pool.entries()].filter(([k]) => k.endsWith(`|${n.offerId}|${n.skuId}`)).flatMap(([, s]) => s);
+		const slots = [...pool.entries()].filter(([k]) => k.endsWith(`|${n.offerId}|${n.skuId}`)).flatMap(([, s]) => s)
+			.filter((s) => !n.until || !s.p.createdAt || s.p.createdAt.getTime() <= n.until.getTime());
 		const free = slots.filter((s) => !s.p.createdAt || s.p.createdAt.getTime() >= n.createdAt.getTime() - SKEW_MS).reduce((sum, s) => sum + s.left, 0);
 		if (free < n.qty) continue;
 		const used = take(slots.sort((a, b) => (a.p.createdAt?.getTime() ?? Infinity) - (b.p.createdAt?.getTime() ?? Infinity)), n.qty, n.createdAt);

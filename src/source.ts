@@ -1,71 +1,100 @@
-// 选货源：给一个规格定货源和 1688 规格。agent 先自己找（x2 source）：这个商品用过的货源 → 以图搜图（知虾）→ 按规格名打分。
-// 规格名里的数字、颜色都对得上，而且只有一个对得上的：记成「明显对得上」（sure），随加购一起批准，人批准了加购，货源才写进规格；
-// 对不上、或者几个都像：都写成货源候选，收件箱加一行「选货源」，人在 NocoDB 的「选货源」里勾「用这个」
+// 选货源：给店里的一个商品定一个货源（一个商品只用一个货源；店里的规格加购时按名字在货源的规格里配）。
+// agent 先自己找（x2 source）：拿商品图经知虾以图搜图，每个找到的货源，看店里卖过的规格在它里面有几个对得上。
+// 卖过的规格都对得上、而且只有它这样：标成「明显对得上」（sure），随加购一起批准，人批准了加购，这个货源才标成「用这个」；
+// 别的都写成还在挑的货源，收件箱加一行「选货源」，人在 NocoDB 的「选货源」里勾「用这个」。人贴了链接（--url）就直接用它。
+// 货源的样子（标题、图、规格）存一份快照，x2 每次现读就更新；买之前一律现读
 import type { Sql } from "./db/index.ts";
 import { Usage } from "./errors.ts";
-import { type Offer, offerIdOf } from "./site/1688.ts";
+import { Gone, type Offer, offer as readOffer, offerIdOf } from "./site/1688.ts";
 import { ready as zhixiaReady, similar1688 } from "./site/zhixia.ts";
-import { rank } from "./similar.ts";
-import { fetchOffers } from "./sync/1688.ts";
+import { matchSku } from "./similar.ts";
 
-type Candidate = { offer: Offer; skuId: string; name: string; image: string; price: number; stock: number; score: number; missing: string[]; origin: string };
-export type Found = { modelId: string; name: string; sure: { offerId: string; skuId: string; title: string; sku: string } | null; options: number; why: string };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const live = (id: string) => readOffer(id).catch((e) => { if (e instanceof Gone) return null; throw e; });
 
-/** 一家货源里和这个规格最像的几个 1688 规格 */
-const fromOffer = (spec: string, o: Offer, top: number, origin: string): Candidate[] =>
-	rank(spec, o.skus).slice(0, top).map((s) => ({ offer: o, skuId: s.skuId, name: s.name, image: s.image || o.image, price: s.price, stock: s.stock, score: s.score, missing: s.missing, origin }));
+/** 现读的货源写进这个商品这一行的快照 */
+export async function snapshot(sql: Sql, itemId: string, o: Offer): Promise<void> {
+	await sql`update sources set url = ${o.url}, title = ${o.title}, image = ${o.image}, skus = ${sql.json(o.skus as any)}, read_at = now(), broken = null
+		where item_id = ${itemId} and offer_id = ${o.offerId}`;
+}
 
-/** 对得上：规格名里的数字、颜色都有；有规格名时还要一半以上的字对得上（单规格的商品没有规格名，只看数字、颜色） */
-const clean = (spec: string, c: Candidate) => c.missing.length === 0 && (!spec || c.score >= 0.5);
+/** 用这个的货源用不了了（下架）：写原因，检查当成没货源，agent 重新找 */
+export async function markBroken(sql: Sql, itemId: string, offerId: string, why: string): Promise<void> {
+	await sql`update sources set broken = ${why}, read_at = now() where item_id = ${itemId} and offer_id = ${offerId} and chosen`;
+}
 
-export async function findSources(sql: Sql, modelIds: string[], url?: string): Promise<Found[]> {
+/** 现读这几个商品用这个的货源，更新快照；下架的标成用不了。隔 1.5 秒一个（1688 对频率敏感） */
+export async function refreshChosen(sql: Sql, itemIds: string[]): Promise<number> {
+	if (itemIds.length === 0) return 0;
+	const rows = await sql`select item_id, offer_id from sources where chosen and item_id in ${sql(itemIds)}`;
+	for (const [i, r] of rows.entries()) {
+		if (i > 0) await sleep(1500);
+		const o = await live(r.offer_id);
+		if (o) await snapshot(sql, r.item_id, o);
+		else await markBroken(sql, r.item_id, r.offer_id, "货源在 1688 上下架了");
+	}
+	return rows.length;
+}
+
+type Scored = { offer: Offer; matched: number; total: number; missing: string[]; origin: string };
+export type Found = { itemId: string; name: string; chosen: string | null; sure: string | null; options: number; why: string };
+
+/** 一个货源像不像：店里卖过的规格，有几个能在它的规格里配上 */
+const score = (specs: string[], o: Offer, origin: string): Scored => {
+	const missing = specs.filter((s) => !matchSku(s, o.skus));
+	return { offer: o, matched: specs.length - missing.length, total: specs.length, missing, origin };
+};
+
+export async function findSources(sql: Sql, itemIds: string[], url?: string): Promise<Found[]> {
 	const pasted = url ? offerIdOf(url) : null;
 	if (url && !pasted) throw new Usage(`认不出 1688 链接：${url}`);
 	const out: Found[] = [];
-	for (const modelId of modelIds) {
-		const [sku] = await sql`select model_id, item_id, item_name, name, image, offer_id, offer_sku_id from skus where model_id = ${modelId}`;
-		if (!sku) throw new Usage(`库里没有规格 ${modelId}（先 x2 sync orders）`);
-		const spec = String(sku.name ?? "");
-		const label = `${sku.item_name ?? ""} / ${spec || "（单规格）"}`;
-		let cands: Candidate[] = [];
+	for (const itemId of itemIds) {
+		// 店里的商品：从最近 60 天的订单里取名字、图、卖过的规格
+		const rows = await sql`select distinct i->>'name' as name, i->>'image' as image, i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`;
+		if (!rows.length) throw new Usage(`最近 60 天的订单里没有商品 ${itemId}（先 x2 status）`);
+		const name = String(rows[0]!.name), image = String(rows[0]!.image ?? "");
+		const specs = [...new Set(rows.map((r) => String(r.spec ?? "")))];
+		let found: Scored[] = [];
 		if (pasted) {
-			const o = (await fetchOffers(sql, [pasted], "读贴的货源")).get(pasted);
-			if (o) cands = fromOffer(spec, o, 8, "人贴的链接");
-		} else {
-			const used = (await sql`select distinct offer_id from skus where item_id = ${sku.item_id} and offer_id is not null`).map((r) => r.offer_id as string);
-			const got = await fetchOffers(sql, used, "读这个商品用过的货源");
-			const live = [...got.values()].filter((o): o is Offer => o !== null);
-			cands = live.flatMap((o) => fromOffer(spec, o, live.length === 1 ? 5 : 3, "这个商品用过的"));
-			// 用过的货源里没有对得上的：拿商品图以图搜图，每家只出最像的一个规格
-			if (!cands.some((c) => clean(spec, c)) && sku.image) {
-				await zhixiaReady();
-				console.error(`以图搜图：${label}`);
-				const hits = await similar1688(String(sku.image).replace(/_tn$/, ""), 8);
-				const found = await fetchOffers(sql, hits.map((h) => h.offerId).filter((id) => !used.includes(id)), "读搜到的货源");
-				cands.push(...[...found.values()].filter((o): o is Offer => o !== null).flatMap((o) => fromOffer(spec, o, 1, "以图搜图")));
+			const o = await live(pasted);
+			if (o) found = [score(specs, o, "人贴的链接")];
+		} else if (image) {
+			await zhixiaReady();
+			console.error(`以图搜图：${name}`);
+			const hits = await similar1688(image.replace(/_tn$/, ""), 8);
+			for (const [i, h] of hits.entries()) {
+				if (i > 0) await sleep(1500);
+				console.error(`读搜到的货源 ${i + 1}/${hits.length}：${h.offerId}`);
+				const o = await live(h.offerId);
+				if (o) found.push(score(specs, o, "以图搜图"));
 			}
 		}
-		cands.sort((a, b) => Number(clean(spec, b)) - Number(clean(spec, a)) || b.score - a.score);
-		const ok = cands.filter((c) => clean(spec, c));
-		const sure = ok.length === 1 && !pasted ? ok[0]! : null;
+		found.sort((a, b) => b.matched - a.matched);
+		const all = found.filter((f) => f.matched === f.total);
+		const sure = !pasted && all.length === 1 ? all[0]! : null;
 		await sql.begin(async (tx) => {
-			await tx`delete from source_options where model_id = ${modelId} and not chosen`;
-			for (const c of cands.slice(0, 8)) {
+			// 换货源：原来用这个的（用不了了，或者人贴了新链接）不再用
+			if (pasted) await tx`update sources set chosen = false where item_id = ${itemId} and chosen`;
+			else await tx`update sources set chosen = false where item_id = ${itemId} and chosen and broken is not null`;
+			await tx`delete from sources where item_id = ${itemId} and not chosen`;
+			for (const f of found) {
 				await tx`
-					insert into source_options ${tx({
-						model_id: modelId, offer_id: c.offer.offerId, offer_sku_id: c.skuId, sku_name: label, sku_image: sku.image, offer_title: c.offer.title, name: c.name || "（单规格）",
-						image: c.image, price: c.price, stock: c.stock, score: Math.round(c.score * 100) / 100, missing: c.missing.join("、") || null, origin: c.origin, sure: c === sure,
+					insert into sources ${tx({
+						item_id: itemId, site: "1688", offer_id: f.offer.offerId, item_name: name, item_image: image, url: f.offer.url, title: f.offer.title, image: f.offer.image,
+						skus: tx.json(f.offer.skus as any), read_at: new Date(), score: f.total ? Math.round((f.matched / f.total) * 100) / 100 : null, missing: f.missing.join("、") || null,
+						origin: f.origin, sure: f === sure, chosen: Boolean(pasted),
 					})}
-					on conflict (model_id, offer_id, offer_sku_id) do update set name = excluded.name, image = excluded.image, price = excluded.price, stock = excluded.stock,
-						score = excluded.score, missing = excluded.missing, origin = excluded.origin, sure = excluded.sure, found_at = now()`;
+					on conflict (item_id, offer_id) do update set url = excluded.url, title = excluded.title, image = excluded.image, skus = excluded.skus, read_at = excluded.read_at,
+						score = excluded.score, missing = excluded.missing, origin = excluded.origin, sure = excluded.sure, chosen = excluded.chosen, broken = null, found_at = now()`;
 			}
 		});
 		out.push({
-			modelId, name: label, options: Math.min(8, cands.length),
-			sure: sure ? { offerId: sure.offer.offerId, skuId: sure.skuId, title: sure.offer.title, sku: sure.name || "（单规格）" } : null,
-			why: sure ? "规格名里的数字、颜色都对上，而且只有它对上：随加购一起批准"
-				: cands.length === 0 ? "没找到候选：贴一个 1688 链接（x2 source <规格> --url …），或者请人在 1688 上找"
-				: ok.length > 1 ? `${ok.length} 个都对得上：请人在「选货源」里勾` : "没有对得上的：请人在「选货源」里勾，或者贴链接",
+			itemId, name, options: found.length, chosen: pasted && found.length ? found[0]!.offer.title : null, sure: sure?.offer.title ?? null,
+			why: pasted ? (found.length ? `用人贴的货源${found[0]!.missing.length ? `（对不上的规格：${found[0]!.missing.join("、")}）` : ""}` : "贴的货源在 1688 上下架了")
+				: sure ? "卖过的规格都对得上，而且只有它这样：随加购一起批准"
+				: found.length === 0 ? "没找到：贴一个 1688 链接（x2 source <商品> --url …），或者请人在 1688 上找"
+				: all.length > 1 ? `${all.length} 个货源都对得上：请人在「选货源」里勾` : "没有规格全对得上的：请人在「选货源」里勾，或者贴链接",
 		});
 	}
 	return out;

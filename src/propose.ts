@@ -13,7 +13,8 @@ const IN_FLIGHT = ["待批准", "已批准", "已提交", "结果未知", "不�
 export async function propose(sql: Sql, input: unknown, ops: Record<string, WriteOp> = WRITES): Promise<{ batch: string; writes: { id: string; display: string; status: string }[] }> {
 	const p = input as Proposal;
 	if (!p || typeof p.title !== "string" || !Array.isArray(p.writes) || p.writes.length === 0) throw new Usage("x2 propose 从 stdin 读 JSON：{ title, writes: [{ op, params }] }（x2 status --json 的 todo 里有现成的）");
-	const ok = (await current(sql)).planned;
+	// 加购、预报只收检查算出来该做的：现读一遍再对（别的写操作不用）
+	const ok = p.writes.some((w) => w.op === "加购" || w.op === "预报") ? (await current(sql)).planned : { cart: new Set<string>(), forecast: new Set<string>() };
 	const [{ needs, buy }] = await sql`select forecast_needs_approval as needs, buy_account as buy from order_settings where id = 1` as any;
 	const rows = p.writes.map((w, i) => {
 		const op = ops[w.op];

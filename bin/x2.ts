@@ -3,7 +3,7 @@
 // 输出约定：stdout 只放结果；stderr 只放进度、日志；--json 时出错也在 stdout：{ "error": { "kind", "message" } }。
 // 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先回读）
 import { dbCommand } from "../src/commands/db.ts";
-import { approveCommand, proposeCommand, runCommand, status, syncCommand } from "../src/commands/loop.ts";
+import { approveCommand, proposeCommand, runCommand, status } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
 import { nocodbCommand } from "../src/commands/nocodb.ts";
 import { sourceCommand } from "../src/commands/source.ts";
@@ -16,7 +16,6 @@ const [cmd, ...args] = argv.filter((a) => a !== "--json");
 
 const commands: Record<string, () => Promise<void>> = {
 	status: () => status(args, json),
-	sync: () => syncCommand(args, json),
 	propose: () => proposeCommand(args, json),
 	approve: () => approveCommand(args, json),
 	run: () => runCommand(args, json),
@@ -29,8 +28,7 @@ const commands: Record<string, () => Promise<void>> = {
 const help = [
 	"x2 <命令> [参数…] [--json]",
 	"推进（见 docs/loop.md）：",
-	"  x2 status [--no-sync]          同步过期的数据 → 检查 → 更新收件箱 → 说要做什么",
-	"  x2 sync [域…] [--shop 店] [--force]  同步：orders 订单、skus 规格、cart 1688 购物车、purchases 采购单；给了域就不管过没过期",
+	"  x2 status                      现读站点 → 检查 → 更新收件箱 → 说要做什么",
 	"  x2 propose < 一批.json          写一批待批准的写入（x2 status --json 的 todo 里有现成的）；收件箱加一行「批准」",
 	"  x2 approve <批次>               替人勾「批准」（人在终端里说了批准时）",
 	"  x2 run [--batch N] [--try 操作]  执行批准了的写入：先核清结果未知的，再一个一个做、读回来",

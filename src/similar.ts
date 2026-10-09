@@ -44,3 +44,12 @@ export function compare(mine: string, theirs: string): Compared {
 export function rank<T extends { name: string }>(mine: string, items: readonly T[]): (T & Compared)[] {
 	return items.map((it) => ({ ...it, ...compare(mine, it.name) })).sort((x, y) => y.score - x.score);
 }
+
+/** 店里的规格名，在货源的规格里配一个：数字、颜色都对上、一半以上的字对上，而且只有一个这样的（明显比别的像也算）。
+ * 只有一个规格的货源（店里也没有规格名）直接用它。配不上、或者几个都一样像，回 null：要人看 */
+export function matchSku<T extends { name: string }>(spec: string, skus: readonly T[]): T | null {
+	if (skus.length === 1 && (!spec || !skus[0]!.name)) return skus[0]!;
+	const ok = rank(spec, skus).filter((s) => s.missing.length === 0 && (!spec || s.score >= 0.5));
+	if (ok.length === 1 || (ok.length > 1 && ok[0]!.score - ok[1]!.score >= 0.2)) return skus.find((s) => s.name === ok[0]!.name) ?? null;
+	return null;
+}

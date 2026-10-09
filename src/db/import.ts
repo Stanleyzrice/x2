@@ -1,6 +1,6 @@
 // 把 ~/x2 的 JSON（x2 buy 时代的数据）迁进库，只用一次：
-// - offers.json（货源缓存）→ offers
-// - sources.json 里的 spec（规格 → 货源、1688 规格，每个规格以最新的一条为准）→ skus 的货源两列；link（商品 → 货源）是更早的线索，不迁
+// - sources.json 里的 spec（规格 → 货源）→ 按商品合起来，一个商品一个货源，写进 sources 当「用这个」（标题、图、规格的快照取自 offers.json）；
+//   link（商品 → 货源）是更早的线索，不迁。offers.json 本身不迁：1688 商品详情现读
 // - carted.json（加购过的订单号 + 规格）→ 写入（加购、成功）：同一次加的（时间一样、1688 规格一样）合成一行。件数取订单里的，1688 账号由调用方给
 // orders.json 不迁：x2 sync 重新同步
 import { readFile } from "node:fs/promises";
@@ -24,14 +24,23 @@ export async function importJson(sql: Sql, dir: string, account: string) {
 	for (const s of specs) latest.set(s.modelId, s);
 
 	return sql.begin(async (tx) => {
-		for (const o of Object.values(offers)) {
-			await tx`
-				insert into offers ${tx({ offer_id: o.offerId, url: o.url, title: o.title, image: o.image, unit: o.unit, min_qty: o.minQty, props: tx.json(o.props as any), skus: tx.json(o.skus as any), live: true, read_at: null })}
-				on conflict (offer_id) do nothing`;
-		}
+		// 以前是一个规格一条；现在一个商品一个货源：按商品合起来，取最新定的那个货源
+		const byItem = new Map<string, { offerId: string; at: string; name: string; image: string }>();
 		for (const s of latest.values()) {
-			await tx`insert into skus (model_id) values (${s.modelId}) on conflict do nothing`;
-			await tx`update skus set offer_id = ${s.offerId}, offer_sku_id = ${s.skuId}, sourced_at = ${new Date(s.at)} where model_id = ${s.modelId} and offer_id is null`;
+			const [row] = await tx`select i from orders o, jsonb_array_elements(o.items) i where i->>'modelId' = ${s.modelId} order by o.created_at desc limit 1`;
+			const item = row?.i as { itemId: string; name: string; image: string } | undefined;
+			if (!item) continue;
+			const had = byItem.get(item.itemId);
+			if (!had || had.at < s.at) byItem.set(item.itemId, { offerId: s.offerId, at: s.at, name: item.name, image: item.image });
+		}
+		for (const [itemId, x] of byItem) {
+			const o = offers[x.offerId];
+			await tx`
+				insert into sources ${tx({
+					item_id: itemId, site: "1688", offer_id: x.offerId, item_name: x.name, item_image: x.image, url: o?.url ?? `https://detail.1688.com/offer/${x.offerId}.html`,
+					title: o?.title ?? null, image: o?.image ?? null, skus: tx.json((o?.skus ?? []) as any), read_at: null, origin: "以前定的", chosen: true, chosen_at: new Date(x.at),
+				})}
+				on conflict do nothing`;
 		}
 		// 加购记录：按「时间 + 1688 规格」合成一行写入
 		const groups = new Map<string, { at: string; spec: Spec; lines: { sn: string; modelId: string; qty: number }[] }>();
@@ -58,6 +67,6 @@ export async function importJson(sql: Sql, dir: string, account: string) {
 					${`cart:${g.lines.map((l) => `${l.sn}:${l.modelId}`).sort().join(",")}`}, '成功', '从 carted.json 迁来（x2 buy cart 加的，读回来核对过购物车件数）',
 					${new Date(g.at)}, ${new Date(g.at)}, ${new Date(g.at)}, 'carted.json')`;
 		}
-		return { offers: Object.keys(offers).length, sources: latest.size, cartWrites: groups.size, cartLines: carted.length - missing, skipped: missing };
+		return { sources: byItem.size, cartWrites: groups.size, cartLines: carted.length - missing, skipped: missing };
 	});
 }
