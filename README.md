@@ -9,8 +9,8 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 | 概念 | 是什么 | 例 |
 |---|---|---|
 | **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `site/writes.ts`，只由 `x2 run` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
-| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准）、写入的记录、站点数据的镜像。表的结构在 `src/db/schema.sql`，x2 建和改；人在 NocoDB 里看和填 | 订单、规格、收件箱、写入 |
-| **循环** | 同步（站点 → 库）→ 检查（算出收件箱和 agent 要做的）→ agent 准备写入、人在收件箱里做和批准 → `x2 run` 执行、读回来 → 下一轮。做完 = 收件箱是空的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 propose`、`x2 run` |
+| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准、到货问题）、写入的记录、给团队看的订单看板。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在 NocoDB 里看和填 | 收件箱、写入、货源、订单 |
+| **循环** | 现读站点 → 检查（算出收件箱和 agent 要做的）→ agent 准备写入、人在收件箱里做和批准 → `x2 run` 执行、读回来 → 下一轮。做完 = 收件箱是空的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 propose`、`x2 run` |
 | **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步等人 | `.claude/skills/orders/SKILL.md` |
 
 人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报）只有一条路：agent 用 `x2 propose` 写成待批准的写入，人在收件箱里批准，`x2 run` 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
@@ -18,10 +18,9 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 ## 推进：x2 status
 
 ```sh
-x2 status                      # 同步过期的数据 → 检查 → 更新收件箱 → 数据新不新、收件箱里有什么、agent 能做什么
+x2 status                      # 现读站点 → 检查 → 更新收件箱 → 读到了什么、收件箱里有什么、agent 能做什么
 x2 status --json               # 给 agent：todo 里有现成的一批写入
-x2 sync orders --force         # 只同步一域：orders 订单（chanboss）、skus 规格（Shopee，一家店一份）、cart 1688 购物车、purchases 采购单
-x2 source 188862745004         # 给一个规格找货源：这个商品用过的 → 以图搜图 → 按规格名打分
+x2 source <商品 id>             # 给店里一个商品找货源：以图搜图，看卖过的规格有几成配得上；--url <链接> 用人贴的
 x2 propose < 一批.json          # 写一批待批准的写入；收件箱加一行「批准」
 x2 approve 12                  # 人在终端里说「批准」时，替人勾上
 x2 run                         # 执行批准了的写入
@@ -66,7 +65,7 @@ x2 schema                                   # 全部操作的说明和参数（J
 
 5. **字段**：id 一律是字符串（Shopee、1688 的订单号超过 JS 数字的精度）；时间用 ISO 8601。读来的原样字段（`any` 的行）先照站点的样子给，用到时再整理。
 6. **自描述**：`x2 <站点>`、`x2 <站点> <操作> --help`、`x2 schema`。
-7. **读不写库**：读操作不碰库，同步才写。
+7. **读不写库**：`x2 <站点> <操作>` 不碰库；只有 `x2 status` 把订单写回看板、更新货源快照。
 
 ## 目录
 
@@ -87,14 +86,14 @@ x2/
 │ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md 是全部数据接口）
 │ │ └ chanboss.ts         chanboss：订单、预报、库存、退件、扣款流水（chanboss.md）
 │ ├ db/                   库：连接、schema.sql（建表、加列）、import.ts（把 ~/x2 的 JSON 迁进来，只用一次）
-│ ├ sync/                 同步，一域一个（站点 → 镜像），按 syncs 表的「目标多新」决定读不读
-│ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单），index.ts 读快照、写回收件箱
+│ ├ read.ts               现读：chanboss 订单（写回订单看板）、采购账号的购物车和采购单（带物流、退款）、要买的商品的货源；哪样没读成记下来
+│ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单），index.ts 拼快照（现读的 + 库里人定的）、写回收件箱
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入
-│ ├ source.ts             x2 source：选货源
+│ ├ source.ts             x2 source：选货源，更新货源快照
 │ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB
-│ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色
-│ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、sync、propose、approve、run）、source.ts、db.ts
+│ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色；matchSku 加购时按店里的规格名在货源的规格里配
+│ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、db.ts、nocodb.ts
 ├ .claude/skills/
 │ └ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 对采购单 → 预报 → 人打包
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本

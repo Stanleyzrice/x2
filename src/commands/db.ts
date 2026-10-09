@@ -18,7 +18,7 @@ export async function dbCommand(args: string[], json: boolean): Promise<void> {
 		// carted.json 里的加购是在 x2 的浏览器登录着的 1688 账号上加的：不给就现读
 		const acct = i >= 0 ? rest[i + 1]! : (await account()).userId;
 		const sql = await db();
-		// 订单先同步进来：加购记录的件数从订单里取
+		// 订单先由 x2 status 读进来：加购记录的件数从订单里取
 		const r = await importJson(sql, dir, acct);
 		return console.log(json ? JSON.stringify(r) : `迁进库：商品的货源 ${r.sources} 个，加购 ${r.cartWrites} 行（${r.cartLines} 个订单行；${r.skipped} 个找不到订单或货源，没迁）`);
 	}

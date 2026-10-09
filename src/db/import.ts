@@ -1,8 +1,8 @@
 // 把 ~/x2 的 JSON（x2 buy 时代的数据）迁进库，只用一次：
 // - sources.json 里的 spec（规格 → 货源）→ 按商品合起来，一个商品一个货源，写进 sources 当「用这个」（标题、图、规格的快照取自 offers.json）；
 //   link（商品 → 货源）是更早的线索，不迁。offers.json 本身不迁：1688 商品详情现读
-// - carted.json（加购过的订单号 + 规格）→ 写入（加购、成功）：同一次加的（时间一样、1688 规格一样）合成一行。件数取订单里的，1688 账号由调用方给
-// orders.json 不迁：x2 sync 重新同步
+// - carted.json（加购过的订单号 + 规格）→ 写入（加购、成功）：同一次加的（时间一样、货源的规格一样）合成一行。件数取订单里的，1688 账号由调用方给
+// orders.json 不迁：x2 status 现读 chanboss 重写
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Offer } from "../site/1688.ts";
@@ -42,7 +42,7 @@ export async function importJson(sql: Sql, dir: string, account: string) {
 				})}
 				on conflict do nothing`;
 		}
-		// 加购记录：按「时间 + 1688 规格」合成一行写入
+		// 加购记录：按「时间 + 货源的规格」合成一行写入
 		const groups = new Map<string, { at: string; spec: Spec; lines: { sn: string; modelId: string; qty: number }[] }>();
 		let missing = 0;
 		for (const c of carted) {

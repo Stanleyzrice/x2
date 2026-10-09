@@ -10,7 +10,7 @@ export type Sql = postgres.Sql;
 let conn: Sql | null = null;
 let ready: Promise<void> | null = null;
 
-/** 哪台电脑：写进同步、写入，换一台电脑接着做时看得出是谁做的 */
+/** 哪台电脑：写进写入，换一台电脑接着做时看得出是谁做的 */
 export const host = hostname();
 
 export async function migrate(sql: Sql): Promise<void> {

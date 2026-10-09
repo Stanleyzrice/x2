@@ -32,7 +32,7 @@ const help = [
 	"  x2 propose < 一批.json          写一批待批准的写入（x2 status --json 的 todo 里有现成的）；收件箱加一行「批准」",
 	"  x2 approve <批次>               替人勾「批准」（人在终端里说了批准时）",
 	"  x2 run [--batch N] [--try 操作]  执行批准了的写入：先核清结果未知的，再一个一个做、读回来",
-	"  x2 source [规格…] [--url 链接]   给规格找货源；不给规格就找检查算出来缺的",
+	"  x2 source [商品…] [--url 链接]   给店里的商品找货源（以图搜图）；不给商品就找检查算出来缺的",
 	"  x2 db migrate | import          建表；把 ~/x2 的 JSON 迁进库（只用一次）",
 	"  x2 nocodb                       按 docs/loop.md「视图」建 NocoDB：连库、中文名、视图（可以重复跑）",
 	"读站点（只读）：",

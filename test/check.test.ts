@@ -38,7 +38,7 @@ test("对采购单：采购单的件数按加购的先后分给订单，差的�
 	assert.deepEqual(reconcile([w], [{ ...purchase(3), createdAt: hours(-48) }], []).map((l) => l.state), ["不见了", "不见了"]);
 });
 
-test("货源齐了、没加购：agent 准备一行加购，同一个 1688 规格的两张订单合在一起", () => {
+test("货源齐了、没加购：agent 准备一行加购，同一个货源的规格的两张订单合在一起", () => {
 	const r = checkOrders(snap());
 	const t = r.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
@@ -135,7 +135,7 @@ test("不是经 x2 加购、chanboss 上已经预报、采购单也对不上的�
 	assert.match(r.orders.get("1")!.stepDetail!, /chanboss：已预报/);
 });
 
-test("在 x2 外面买了：采购单按 1688 规格分给订单（先下单的先分），不再加购，接着预报", () => {
+test("在 x2 外面买了：采购单按货源的规格分给订单（先下单的先分），不再加购，接着预报", () => {
 	// 只买了 1 件：分给先下单的订单 1；订单 2 要 2 件，分不到，照常加购
 	const o1 = order("1", 1, { createdAt: hours(-48) }), o2 = order("2", 2, { createdAt: hours(-24) });
 	const r = checkOrders(snap({ orders: [o1, o2], purchases: [purchase(1)] }));

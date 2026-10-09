@@ -53,14 +53,14 @@ const cartParams = z.object({
 	newSources: z.array(z.string()).default([]),
 	/** 加在哪个 1688 账号（userId）：执行时填采购账号，记下 */
 	account: z.string().optional(),
-	/** 1688 规格的 specId：执行时现读货源填上 */
+	/** 货源的规格的 specId：执行时现读货源填上 */
 	specId: z.string().optional(),
 });
 type CartP = z.infer<typeof cartParams>;
 
-/** 加购：把一个 1688 规格加进购物车（同一个规格的几张订单合成一行）。同一个规格加两次，车里是两倍：结果未知不重发 */
+/** 加购：把货源的一个规格加进购物车（同一个规格的几张订单合成一行）。同一个规格加两次，车里是两倍：结果未知不重发 */
 const cart: WriteOp<CartP> = {
-	describe: "把一个 1688 规格加进购物车",
+	describe: "把货源的一个规格加进购物车",
 	params: cartParams,
 	target: (p) => `1688:${p.offerId}:${p.skuId}`,
 	key: (p) => `cart:${p.lines.map((l) => `${l.sn}:${l.modelId}`).sort().join(",")}`,
