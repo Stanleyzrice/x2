@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import type { Pics } from "./images.ts";
 import type { Settings } from "./make.ts";
-import { type Product, productInfo } from "./product.ts";
+import { detailFits, type Product, productInfo } from "./product.ts";
 import { OLD_SPECS, specsOf, specsProblems } from "./variants.ts";
 
 /** 商品稿（库里的一行）→ 要建的商品；缺的写成问题。规格只读存着的那一份（先核一遍规格的规矩）；已删除的图不用 */
@@ -32,7 +32,7 @@ export function productOf(l: any, s: Settings): { product?: Product; info?: Reco
 		attributes: l.attributes ?? [], preOrder: s.preOrder, daysToShip: Number(l.days_to_ship), minPurchase: s.minPurchase, channels: s.channels,
 		tiers, variants: specs.variants.map((v) => ({ ...v, priceTwd: v.priceTwd! })),
 		images: usable(pics.main).slice(0, 9).map((p) => p.imageId!),
-		detail: usable(pics.detail).slice(0, 12).map((p) => ({ id: p.imageId!, width: p.width!, height: p.height! })),
+		detail: usable(pics.detail).filter((p) => detailFits(p.width!, p.height!)).slice(0, 12).map((p) => ({ id: p.imageId!, width: p.width!, height: p.height! })),
 		optionImages, sizeChart: null,
 	};
 	try {

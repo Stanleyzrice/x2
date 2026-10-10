@@ -33,13 +33,16 @@ export type Product = {
 	variants: (Variant & { priceTwd: number })[];
 	/** 主图的图片 id（第一张是封面，最多 9 张） */
 	images: string[];
-	/** 详情图：图片 id 和真实宽高（宽 ≥ 700、高 ≥ 32） */
+	/** 详情图：图片 id 和真实宽高（见 detailFits） */
 	detail: { id: string; width: number; height: number }[];
 	/** 规格图：1688 原图地址 → 成品的图片 id */
 	optionImages: Record<string, string>;
 	/** 尺码表的图片 id（不要就是空） */
 	sizeChart: string | null;
 };
+
+/** 详情图 Shopee 收不收：宽 ≥ 700、高 ≥ 32、宽高比在 0.5–32 之间（太长的回 1000100256 description.richtext.image.aspect.ratio.range） */
+export const detailFits = (width: number, height: number) => width >= 700 && height >= 32 && width / height >= 0.5 && width / height <= 32;
 
 /** 商品稿 → product_info。规格（std_tier_variation_list、model_list 的 tier_index）照存着的结构；规格不对、缺图、详情图尺寸不够、渠道不认得都抛错，不缺着交 */
 export function productInfo(p: Product): Record<string, unknown> {
@@ -67,7 +70,7 @@ export function productInfo(p: Product): Record<string, unknown> {
 	if (!logistics_channels.some((c) => c.enabled)) throw new Error("未开任何物流渠道");
 	const fields: Record<string, unknown>[] = [{ type: 0, value: p.description.replace(/<[^>]*>/g, "").trim().slice(0, 3000) }];
 	for (const d of p.detail) {
-		if (!(d.width >= 700 && d.height >= 32)) throw new Error(`详情图 ${d.id} 尺寸不够（${d.width}×${d.height}，宽要 ≥ 700、高 ≥ 32）`);
+		if (!detailFits(d.width, d.height)) throw new Error(`详情图 ${d.id} 尺寸不合 Shopee 的要求（${d.width}×${d.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`);
 		fields.push({ type: 1, value: d.id, width: d.width, height: d.height });
 	}
 	if (p.images.length === 0) throw new Error("缺主图");

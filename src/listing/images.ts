@@ -8,6 +8,7 @@ import { geminiJson, type Image, model } from "../service/gemini.ts";
 import { type Bytes, fetchImage, inspect } from "../service/image.ts";
 import { uploadImages } from "../site/shopee/products.ts";
 import { saveTranslation, translationState } from "../site/writes.ts";
+import { detailFits } from "./product.ts";
 import { SCREEN_VERSION, screen, type Verdict } from "./screen.ts";
 import { type Mark, markKey, watermark } from "./watermark.ts";
 
@@ -178,7 +179,7 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 			bytes.set(b.sha256, b);
 		} catch (e) { p.drop = `取不到：${(e as Error).message}`; continue; }
 		if (p.width! <= 10 || p.height! <= 10) { p.drop = `占位图（${p.width}×${p.height}）`; continue; }
-		if (pics.detail.includes(p) && (p.width! < 700 || p.height! < 32)) { p.drop = `详情图太小（${p.width}×${p.height}，宽要 ≥ 700）`; continue; }
+		if (pics.detail.includes(p) && !detailFits(p.width!, p.height!)) { p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`; continue; }
 		const s = await screened(sql, bytes.get(p.sha!)!);
 		Object.assign(p, s);
 		if (s.verdict === "d") p.drop = "有供应商痕迹或写给 1688 买家的说明（工厂、批发、联系方式、人民币价、售后、定制……）";

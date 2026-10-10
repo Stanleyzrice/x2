@@ -237,7 +237,9 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 	// 规格不对、缺图、详情图太窄：不缺着交
 	assert.throws(() => productInfo({ ...draft(), variants: draft().variants.map((v) => ({ ...v, options: [0, 0] })) }), /同一格/);
 	assert.throws(() => productInfo({ ...draft(), optionImages: {} }), /未传/);
-	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 1, height: 1 }] }), /尺寸不够/);
+	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 1, height: 1 }] }), /尺寸不合/);
+	// 太长的详情图（宽高比 < 0.5）Shopee 回 1000100256：不交
+	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 790, height: 1714 }] }), /宽高比 0\.5–32/);
 });
 
 test("读回来核对：图片可以是地址；价格、库存、规格对不上要写出来", () => {
@@ -464,4 +466,11 @@ test("译图检查：象寄改了商品上的字、还有简体字、转错的�
 	assert.equal(translatedDrop(c({ text: ["至好の方式快速吸水易幹"], wrong: ["易幹 → 易乾"] })), "译图有转错的字：易幹 → 易乾");
 	assert.equal(translatedDrop(c({ text: ["較頑固汙漬", "質量問題", "防滑 S", "瞬吸快乾"], wrong: ["汙 → 污", "質量 → 品質", "防滑 S → 防滑 vs", "瞬吸快幹 → 瞬吸快乾"] })), null);
 	assert.equal(translatedDrop(c({ text: ["易幹"], wrong: ["易幹 → 易乾"], productText: ["浴水 → 重画"] })), "象寄改了商品上印的字：浴水 → 重画；译图有转错的字：易幹 → 易乾");
+});
+
+test("组商品：太长的详情图（宽高比 < 0.5）不用，后面的补上", () => {
+	const d = (id: string, width: number, height: number) => ({ from: `${id}.jpg`, imageId: id, width, height });
+	const images = { main: [pic("m1")], detail: [d("d1", 790, 1122), d("d2", 790, 1714), d("d3", 800, 800)], options: [pic("o1", "k.jpg")], waiting: [] };
+	const r = productOf(ready({ images }), settingsOf(shopRow));
+	assert.deepEqual(r.product!.detail.map((x) => x.id), ["d1", "d3"]);
 });
