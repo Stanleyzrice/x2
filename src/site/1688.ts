@@ -136,46 +136,47 @@ export type SearchHit = { offerId: string; url: string; title: string; price: nu
  * 起订量（≥N 个）多数卡片上没有，没有时 minQty 是 0 */
 export async function search(keyword: string): Promise<SearchHit[]> {
 	const p = await page("https://s.1688.com");
-	await p.goto("https://s.1688.com/selloffer/offer_search.htm");
-	const sent = await p.run((keyword: string) => {
-		if (/login|passport|punish/.test(location.href) || document.querySelector(".nc_wrapper,.baxia-dialog,#nc_1_wrapper")) return "blocked";
-		const input = document.querySelector<HTMLInputElement>("input[name=keywords]");
-		if (!input?.form) return "none";
-		input.value = keyword;
-		input.form.submit();
-		return "sent";
-	}, keyword);
-	if (sent === "blocked") throw new NeedsHuman("1688 要登录或要过滑块：在浏览器里处理一下");
-	if (sent === "none") throw new Error("1688 搜索页没有搜索框：页面可能改版了");
+	// 搜索页没有带 name 的搜索框了：关键词直接放在地址里（charset=utf8 才认 UTF-8）
+	await p.goto(`https://s.1688.com/selloffer/offer_search.htm?keywords=${encodeURIComponent(keyword)}&charset=utf8`);
 	let seen = -1, still = 0, last: SearchHit[] | null = null;
 	for (let i = 0; i < 30; i++) {
 		await new Promise((r) => setTimeout(r, 1000));
-		const got = await p.run((keyword: string) => {
+		const got = await p.run(() => {
 			if (/login|passport|punish/.test(location.href) || document.querySelector(".nc_wrapper,.baxia-dialog,#nc_1_wrapper")) return { error: "1688 要登录或要过滑块：在浏览器里处理一下" };
-			if (document.readyState !== "complete" || (document.querySelector<HTMLInputElement>("input[name=keywords]")?.value ?? "").trim() !== keyword.trim()) return null;
-			const cards = [...document.querySelectorAll<HTMLAnchorElement>('a[data-tracker="offer"][href*="offerId="], a[class*="offerCard--"][href*="offerId="], a.search-offer-item, a.search-offer-wrapper')];
-			if (!cards.length) return /空空如也/.test(document.body.innerText) ? { hits: [] } : null;
+			if (document.readyState !== "complete") return null;
+			const cards = [...document.querySelectorAll<HTMLAnchorElement>('a[class*="feedCard--"], a[data-tracker="offer"][href*="offerId="], a[class*="offerCard--"][href*="offerId="], a.search-offer-item, a.search-offer-wrapper')];
+			if (!cards.length) return /空空如也|没有找到/.test(document.body.innerText) ? { hits: [] } : null;
 			// 滚到底，让页面接着加载这一页后面的卡片
 			window.scrollTo(0, document.body.scrollHeight);
+			const text = (el: Element | null) => ((el as HTMLElement | null)?.innerText ?? "").trim();
 			return {
-				hits: cards.map((card: HTMLAnchorElement) => {
-					const offerId = card.href.match(/offerId=(\d+)/)?.[1] ?? "";
-					const descs = [...card.querySelectorAll<HTMLElement>('.desc-text, [class*="descText--"]')].map((e) => e.innerText.trim());
-					const min = descs.find((v) => /^[≥>]/.test(v)) || (card.querySelector<HTMLElement>('[class*="hoverPriceQty--"]')?.innerText ?? "").trim();
+				hits: cards.map((card) => {
+					// 广告卡片的链接里没有货源 id：跳过
+					const offerId = card.href.match(/\/offer\/(\d+)\.html/)?.[1] ?? card.href.match(/offerId=(\d+)/)?.[1] ?? "";
+					const descs = [...card.querySelectorAll('[class*="descText--"], .desc-text')].map(text);
+					const min = descs.find((v) => /^[≥>]\s*\d/.test(v) || /\d+\s*件起批/.test(v)) || text(card.querySelector('[class*="hoverPriceQty--"]'));
 					const sold = descs.find((v) => /^(?:全网)?\d[\d.+万]*件$/.test(v)) || "";
-					const img = card.querySelector("img");
+					// 标题：卡片里第一段长文字（不在描述、价格、店铺那几块里）
+					const titleEl = card.querySelector('[class*="title--"], .title-text, [class*="titleText--"]')
+						?? [...card.querySelectorAll<HTMLElement>("div, span")].find((el) => {
+							const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent ?? "").join("").trim();
+							return own.length >= 8 && !/desc|price|seller|channel/i.test(String(el.className));
+						}) ?? null;
+					const price = text(card.querySelector('[class*="priceMain--"]')) + text(card.querySelector('[class*="priceSub--"]'))
+						|| text(card.querySelector('.offer-price-row .price-item, .price-item, [class*="priceItem--"], [class*="hoverPriceValue--"]'));
+					const img = card.querySelector<HTMLImageElement>('img:not([class*="Icon"]):not([class*="icon"])');
 					return {
 						offerId, url: `https://detail.1688.com/offer/${offerId}.html`,
-						title: (card.querySelector<HTMLElement>('.title-text, [class*="titleText--"]')?.innerText ?? card.innerText.split("\n")[0] ?? "").trim(),
-						// 卡片上那一行的价格（悬停浮层里的是阶梯价），整个 .price-item：¥、整数、小数是分开的几段
-						price: Number.parseFloat((card.querySelector<HTMLElement>('.offer-price-row .price-item, .price-item, [class*="priceItem--"], [class*="hoverPriceValue--"]')?.innerText ?? "").replace(/[^\d.]/g, "")) || 0,
+						title: text(titleEl) || (card.innerText.split("\n")[0] ?? "").trim(),
+						price: Number.parseFloat(price.replace(/[^\d.]/g, "")) || 0,
 						minQty: Number.parseInt(min.replace(/[^\d]/g, ""), 10) || 0,
-						sold, shop: descs.filter((v) => v !== min && v !== sold && !/回头率|包运费|先采后付/.test(v)).pop() ?? "",
+						sold,
+						shop: text(card.querySelector('[class*="sellerInformationText--"]')) || descs.filter((v) => v !== min && v !== sold && !/回头率|包运费|先采后付/.test(v)).pop() || "",
 						image: img?.src || img?.getAttribute("data-src") || "",
 					};
 				}).filter((h) => h.offerId),
 			};
-		}, keyword);
+		});
 		if (got && "error" in got) throw new NeedsHuman(got.error);
 		if (!got) continue;
 		last = got.hits;
