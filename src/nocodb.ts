@@ -84,7 +84,7 @@ export function tables(): Table[] {
 			selects: { step: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
 			columns: {
 				title: "标题", shop: "店铺", step: "当前步骤", step_detail: "说明", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", category_name: "类目",
-				problems: "待补充", weight_kg: "重量（kg，人工填写）", freight_rmb: "国内运费（元/件，人工填写）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
+				problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
 				strategy: "策略", cancelled: "放弃", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
 				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "Gemini 文字检查", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间",
 			},

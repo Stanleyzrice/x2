@@ -42,6 +42,7 @@ const help = [
 	"上品（见 docs/listing.md）：",
 	"  x2 listing add <店> <1688 链接…>  添加货源（--strategy 名字：从哪个策略来）",
 	"  x2 listing make [商品稿…]         做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性",
+	"  x2 listing estimate <商品稿> [--weight kg] [--freight 元/件]   估 1688 没给的重量、读不到的国内运费（只填空着的），马上重新核价",
 	"  x2 listing show <商品稿>          写文案要用的事实",
 	"  x2 listing text <商品稿> --title … --description … [--tiers JSON]   agent 写的标题、描述和规格名",
 	"  x2 listing list                  所有商品稿走到哪了",

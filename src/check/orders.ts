@@ -43,7 +43,14 @@ export type Todo =
 	| { kind: "核清"; why: string; writes: string[]; command: string }
 	// 上品（docs/listing.md）：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；上架是一批写入（建商品、上架），交给 x2 propose
 	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查"; why: string; ids: string[]; command: string }
+	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[]; command: string }
 	| { kind: "上架"; why: string; propose: { title: string; writes: { op: string; params: Record<string, unknown> }[] } };
+
+/** agent 估重量、国内运费的一份商品稿：缺什么（needs），和估要用的事实（1688 的标题、每个规格、运费） */
+export type EstimateItem = {
+	id: string; shop: string; needs: ("重量" | "国内运费")[]; title: string;
+	specs: { spec: string; priceRmb: number; weightKg: number | null }[]; freight: unknown; freeShipping: boolean;
+};
 
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
 export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };

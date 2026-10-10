@@ -1,5 +1,6 @@
 // 做商品稿（x2 listing make）：读货源 → 排规格、核价 → 做图 → 类目、属性、备货天数 → 记进商品稿。docs/listing.md「每一步怎样算做完」。
-// 缺的（重量、国内运费、类目不在本店范围、要填字的属性）记成问题，检查把它们放进收件箱给人；人填了以后再跑一次，做过的不重做
+// 缺的（类目不在本店范围、要填字的属性……）记成问题，检查把它们放进收件箱给人；人处理了以后再跑一次，做过的不重做。
+// 1688 没给的重量、读不到的国内运费不算问题：agent 估（x2 listing estimate，只填空着的），写完照货源快照重新核价（reprice），不用再读 1688
 import { alibabaAccounts, in1688, inShop } from "../accounts.ts";
 import { type Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
@@ -8,7 +9,7 @@ import { attributes as attributeTree, type Category, categoryTree, recommendedCa
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
-import { removedOf, type Specs, specsFrom, specsOf, specsProblems, specsText, type Variant } from "./variants.ts";
+import { limitProblems, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
 
 /** 店铺设置（库里的一行）→ 核价参数、水印、上品的默认值 */
@@ -30,21 +31,64 @@ export function settingsOf(row: any) {
 }
 export type Settings = ReturnType<typeof settingsOf>;
 
-/** 每个规格核价：售价、重量（1688 没给的用人填的）、库存（1688 现在的库存和库存上限的小的）。缺重量、缺国内运费的不算（售价是 null），问题写出来。
- * 最多 50 个、最高价不超过最低价 5 倍在 limitProblems */
-export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): { variants: Variant[]; problems: string[] } {
-	const problems: string[] = [];
-	const noWeight = variants.filter((v) => !(v.weightKg && v.weightKg > 0));
-	if (noWeight.length && !opts.weightKg) problems.push(`重量：1688 缺 ${noWeight.length} 个规格的重量，请在「重量」里填写（kg）`);
-	if (opts.freightRmb === null) problems.push("国内运费：货源不包邮，请在「国内运费」里填写（元 / 件；包邮填 0）");
-	const out = variants.map((v): Variant => {
+/** 每个规格核价：售价、重量（1688 没给的用商品稿的「重量」）、库存（1688 现在的库存和库存上限的小的）。缺重量、缺国内运费的不算（售价是 null）。
+ * 定不了价的、超过上限的在 pricingProblems */
+export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): Variant[] {
+	return variants.map((v): Variant => {
 		const weightKg = v.weightKg && v.weightKg > 0 ? v.weightKg : opts.weightKg;
 		const stock = Math.min(v.stock, s.stockCap);
 		if (!weightKg || opts.freightRmb === null) return { ...v, weightKg, stock, priceTwd: null };
 		return { ...v, weightKg, stock, priceTwd: minPrice(v.costRmb, opts.freightRmb, weightKg, s.params, s.preOrder) };
 	});
-	if (out.some((v) => v.priceTwd === null) && !problems.length) problems.push("核价：有规格怎么定价都过不了毛利的两道门");
-	return { variants: out, problems };
+}
+
+const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+
+/** 国内运费（元 / 件）：商品稿的「国内运费」（agent 估的、人填的）；空着就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有是 null */
+export const freightOf = (offer: Partial<Offer> | null | undefined, column: unknown): number | null =>
+	num(column) ?? offer?.freight?.costRmb ?? (offer?.tags?.freeShipping ? 0 : null);
+
+/** 货源快照里 1688 给的每个规格的重量（规格 id → kg；没给的不在里面） */
+const weightsOf = (offer: Partial<Offer> | null | undefined) => new Map((offer?.skus ?? []).filter((k) => (k.weightKg ?? 0) > 0).map((k) => [k.skuId, k.weightKg!]));
+
+export type Need = "重量" | "国内运费";
+/** agent 要估的：重量（有规格 1688 没给重量，「重量」也空着）、国内运费（1688 读不到，「国内运费」也空着）。人填过的不算缺 */
+export function estimateNeeds(l: any): Need[] {
+	const specs = specsOf(l.variants);
+	if (!l.offer || !specs) return [];
+	const weights = weightsOf(l.offer);
+	const needs: Need[] = [];
+	if (num(l.weight_kg) === null && specs.variants.some((v) => !weights.has(v.skuId))) needs.push("重量");
+	if (freightOf(l.offer, l.freight_rmb) === null) needs.push("国内运费");
+	return needs;
+}
+
+/** 核价以后的问题（现算，不存进商品稿的 problems：「重量」「国内运费」一改就变）：缺的先由 agent 估；都有了还有规格定不了价的、超过上限的给人 */
+export function pricingProblems(specs: Specs, needs: Need[]): string[] {
+	if (needs.length) return [`缺${needs.join("、")}：agent 估（x2 listing estimate）`];
+	return [...(specs.variants.some((v) => v.priceTwd === null) ? ["核价：有规格怎么定价都过不了毛利的两道门"] : []), ...limitProblems(specs)];
+}
+
+/** 重新核价（不读 1688）：照货源快照里 1688 给的重量，和商品稿的「重量」「国内运费」，重算每个规格的重量、售价。还没做商品稿回 null。
+ * changed：用的重量、国内运费和存着的不一样（agent 估了、人改了「重量」「国内运费」），要存 */
+export function reprice(l: any, s: Settings): { specs: Specs; freightRmb: number | null; changed: boolean } | null {
+	const specs = specsOf(l.variants);
+	if (!l.offer || !specs) return null;
+	const weights = weightsOf(l.offer);
+	const freightRmb = freightOf(l.offer, l.freight_rmb);
+	const variants = priceVariants(specs.variants.map((v) => ({ ...v, weightKg: weights.get(v.skuId) ?? null })), s, { weightKg: num(l.weight_kg), freightRmb });
+	const changed = (l.pricing?.freightRmb ?? null) !== freightRmb || variants.some((v, i) => v.weightKg !== specs.variants[i]!.weightKg);
+	return { specs: { tiers: specs.tiers, variants }, freightRmb, changed };
+}
+
+/** 重新核价，用的重量、国内运费变了才存（规格、规格和价格、核价参数）。l 跟着改；回存了没有 */
+export async function savePrices(sql: Sql, l: any, s: Settings): Promise<boolean> {
+	const r = reprice(l, s);
+	if (!r?.changed) return false;
+	const fields = { variants: r.specs, variants_text: specsText(r.specs, removedOf(l.offer, l.removed_variants)), pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
+	await sql`update listings set variants = ${sql.json(fields.variants as any)}, variants_text = ${fields.variants_text}, pricing = ${sql.json(fields.pricing as any)}, updated_at = now() where id = ${l.id}`;
+	Object.assign(l, fields);
+	return true;
 }
 
 let tree: Map<string, string> | null = null;
@@ -91,13 +135,12 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	const problems: string[] = [];
 	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，无法单件购买`);
 
-	// 2. 规格、核价：有货的、没移除的规格排成 Shopee 的规格（上一版的名字按 1688 层名、原值对回去），每个规格核价，再核一遍规格的规矩。
-	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填
-	const freight = l.freight_rmb !== null ? Number(l.freight_rmb) : o.freight?.costRmb ?? (o.tags?.freeShipping ? 0 : null);
+	// 2. 规格、核价：有货的、没移除的规格排成 Shopee 的规格（上一版的名字按 1688 层名、原值对回去），每个规格核价，再核一遍规格的结构。
+	// 缺重量、缺国内运费的售价先空着（agent 估）；定不了价的、超过上限的现算（pricingProblems），不存
+	const freight = freightOf(o, l.freight_rmb);
 	const built = specsFrom(o, l.removed_variants ?? [], specsOf(l.variants));
-	const priced = priceVariants(built.specs.variants, s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
-	const specs: Specs = { tiers: built.specs.tiers, variants: priced.variants };
-	problems.push(...built.problems, ...priced.problems, ...specsProblems(specs));
+	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, { weightKg: num(l.weight_kg), freightRmb: freight }) };
+	problems.push(...built.problems, ...structureProblems(specs));
 
 	// 3. 图、类目、属性、备货天数：在这家店的浏览器里
 	const done = await inShop(s.shopId, async () => {

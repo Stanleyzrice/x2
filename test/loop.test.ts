@@ -246,3 +246,33 @@ test("x2 listing keep：按附件上的名字找图，x2 去掉的放回来、�
 	const titles = (t: string) => (JSON.parse(t) as { title: string }[]).map((a) => a.title);
 	assert.deepEqual([titles(now!.main_images), titles(now!.detail_images)], [["主图 1", "主图 2"], ["详情图 2"]]);
 });
+
+test("x2 listing estimate：只填空着的「重量」「国内运费」，人填过的不动；写完马上重新核价，人改了也照着重算", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const specs = {
+		tiers: [{ source: "颜色", name: "顏色", options: [{ source: "黑猫", name: "黑貓", image: null }, { source: "白猫", name: "白貓", image: null }] }],
+		variants: [0, 1].map((k) => ({ sku: `LT6-${k}`, skuId: `${k}`, specId: `${k}`, options: [k], costRmb: 10, stock: 9, weightKg: k ? null : 0.3, priceTwd: null })),
+	};
+	const offer = { offerId: "6", title: "猫咪地垫", props: [], skus: [{ skuId: "0", attrs: ["黑猫"], weightKg: 0.3 }, { skuId: "1", attrs: ["白猫"] }], tags: { freeShipping: false } };
+	const [l] = await db`insert into listings (shop, offer_id, offer, variants, pricing) values ('cheeroutdoor', '6', ${db.json(offer)}, ${db.json(specs)}, ${db.json({ freightRmb: null })}) returning id::text`;
+	const id = l!.id as string;
+	await assert.rejects(listing(["estimate", id, "--weight", "0"]), Usage);
+	await assert.rejects(listing(["estimate", id]), Usage);
+	const r = await listing(["estimate", id, "--weight", "1", "--freight", "10"]);
+	assert.deepEqual([r.notes, r.needs, r.problems], [["重量：记为 1 kg", "国内运费：记为 10 元/件"], [], []]);
+	const [now] = await db`select weight_kg, freight_rmb, variants, pricing from listings where id = ${id}`;
+	assert.deepEqual([Number(now!.weight_kg), Number(now!.freight_rmb), now!.pricing.freightRmb], [1, 10, 10]);
+	assert.deepEqual(now!.variants.variants.map((v: any) => v.weightKg), [0.3, 1]);
+	assert.ok(now!.variants.variants.every((v: any) => v.priceTwd > 0));
+	// 人在 NocoDB 改成 0.8：agent 再估也不改；照人改的重新核价
+	await db`update listings set weight_kg = 0.8 where id = ${id}`;
+	const again = await listing(["estimate", id, "--weight", "2"]);
+	assert.deepEqual(again.notes, ["重量：已有 0.8 kg（人填的或估过的），不改"]);
+	const [kept] = await db`select weight_kg, variants from listings where id = ${id}`;
+	assert.deepEqual([Number(kept!.weight_kg), kept!.variants.variants.map((v: any) => v.weightKg)], [0.8, [0.3, 0.8]]);
+	// 人又改成 0.9：下一次 x2 status 的检查就重新核价
+	await db`update listings set weight_kg = 0.9 where id = ${id}`;
+	await check(db, reads());
+	const [checked] = await db`select variants, step, step_detail from listings where id = ${id}`;
+	assert.deepEqual(checked!.variants.variants.map((v: any) => v.weightKg), [0.3, 0.9]);
+});

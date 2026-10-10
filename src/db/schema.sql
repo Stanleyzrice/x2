@@ -198,7 +198,7 @@ create table if not exists shop_settings (
 insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd) values ('ni1206', '348425', 0, 60), ('cheeroutdoor', '1554182542', 0.015, 0) on conflict do nothing;
 
 -- 商品稿：一个货源 × 一家店。x2 做（读货源、类目属性、规格和价格、图），agent 写标题和描述，人在 NocoDB 里审稿。
--- 人改：标题、描述、重量、国内运费、放弃（cancelled）、备注、策略；主图、详情图（删掉的那张就不要了）
+-- 人改：标题、描述、重量、国内运费、放弃（cancelled）、备注、策略；主图、详情图（删掉的那张就不要了）。重量、国内运费空着的 agent 估
 create table if not exists listings (
 	id bigserial primary key,
 	shop text not null,
@@ -207,7 +207,7 @@ create table if not exists listings (
 	-- 从哪个策略来（现在都是人选的）：以后按策略看效果
 	strategy text not null default '人选',
 	cancelled boolean not null default false,
-	-- 人工填写：1688 没给重量时，每个规格都用它（kg）；国内运费（元 / 件）：货源包邮自动是 0，不知道就空着
+	-- 1688 没给重量时，每个规格都用它（kg）；国内运费（元 / 件）：1688 读不到时用它（包邮、读得到的不用填）。空着的 agent 估（往重了、往高了估），人可以改
 	weight_kg numeric check (weight_kg > 0),
 	freight_rmb numeric check (freight_rmb >= 0),
 	title text,

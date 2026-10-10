@@ -280,7 +280,7 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 import { checkListings } from "../src/check/listings.ts";
 import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop } from "../src/listing/audit.ts";
 import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
-import { settingsOf } from "../src/listing/make.ts";
+import { estimateNeeds, freightOf, pricingProblems, reprice, settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
 
 const shopRow = { shop: "cheeroutdoor", shop_id: "1554182542", fx: "4.4", price_per_kg_rmb: "10.8", label_fee_rmb: "1.5", weight_rounding_kg: "0.01", return_loss_rate: "0.03", min_margin_rate: "0.25", min_margin_rmb: "8", commission_rate: "0.06", pre_order_rate: "0.03", payment_rate: "0.025", coin_rate: "0.015", free_shipping_rate: "0.06", free_shipping_min_twd: "0", shipping_net_twd: "0", pre_order: true, min_purchase: 1, stock_cap: 50, channels: "30005,30006", categories: null, watermark_text: "新新家居日用好物賣場", watermark_size: 64, watermark_opacity: "0.35", watermark_position: "center", paused: null };
@@ -290,12 +290,17 @@ const colors = (): Specs => ({
 	tiers: [{ source: "颜色", name: "顏色", options: [{ source: "黑色", name: "黑色", image: "k.jpg" }, { source: "绿色", name: "綠色", image: null }] }],
 	variants: [1, 2].map((n, i) => ({ sku: `LT952803717616-${n}`, skuId: String(n), specId: String(n), options: [i], costRmb: 1, stock: 9, weightKg: 1.6, priceTwd: 295 })),
 });
-const ready = (o: Record<string, unknown> = {}) => ({
-	id: "7", shop: "cheeroutdoor", offer_id: "952803717616", cancelled: false, listed_at: null, product_id: null, problems: null,
-	offer: { title: "雨衣" }, title: "輕便雨衣 成人連身 防水透氣 騎車通勤", description: "防水雨衣，騎車通勤用", category_path: [100637, 101324], days_to_ship: 10, attributes: [],
-	variants: colors(),
-	images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")] }, removed_images: [], audit: null, ...o,
-});
+/** 一份做好、写好文案的商品稿：1688 给了每个规格的重量（货源快照照规格来）、包邮 */
+const ready = (o: Record<string, unknown> = {}) => {
+	const variants = o.variants ?? colors();
+	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({ skuId: v.skuId, attrs: [v.sku], weightKg: v.weightKg }));
+	return {
+		id: "7", shop: "cheeroutdoor", offer_id: "952803717616", cancelled: false, listed_at: null, product_id: null, problems: null, weight_kg: null, freight_rmb: null,
+		offer: { title: "雨衣", tags: { freeShipping: true }, skus },
+		title: "輕便雨衣 成人連身 防水透氣 騎車通勤", description: "防水雨衣，騎車通勤用", category_path: [100637, 101324], days_to_ship: 10, attributes: [],
+		variants, images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")] }, removed_images: [], audit: null, ...o,
+	};
+};
 
 test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能做的进 todo", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
@@ -306,9 +311,9 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	assert.deepEqual(old.steps.get("7"), { step: "待做商品稿", detail: "规格为旧格式，待重做商品稿" });
 	assert.deepEqual([old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).command], ["做商品稿", "1 份商品稿的规格是旧格式，要重做", "x2 listing make 7"]);
 	assert.deepEqual(productOf(ready({ variants: [] }), s.get("cheeroutdoor")!).problems, [OLD_SPECS]);
-	const fix = run(ready({ problems: "重量：1688 缺 2 个规格的重量" }));
+	const fix = run(ready({ problems: "类目：推荐的「雨衣」不在本店允许的类目里" }));
 	assert.equal(fix.steps.get("7")!.step, "待补充");
-	assert.match(fix.inbox[0]!.title, /待补充：重量/);
+	assert.match(fix.inbox[0]!.title, /待补充：类目/);
 	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
 	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
 	assert.deepEqual([run(ready()).steps.get("7")!.step, run(ready()).todo[0]!.kind], ["待 Gemini 文字检查", "Gemini 文字检查"]);
@@ -456,6 +461,58 @@ test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明�
 	// 提交了批准：说明里照样有挑出的问题
 	const waiting = checkListings([{ ...l, audit }], s, [{ id: "1", batch: "1", op: "建商品", status: "待批准", params: { listingId: "7" }, finishedAt: null }]);
 	assert.match(waiting.steps.get("7")!.detail!, /^收件箱里有「批准」\nGemini 文字检查挑出 3 条：/);
+});
+
+test("估重量、国内运费：1688 有的用 1688 的；1688 没给、「重量」「国内运费」也空着的才要 agent 估，人填过的不算缺", () => {
+	const l = (o: Record<string, unknown> = {}) => ({ offer: { title: "雨衣", skus: [{ skuId: "1", weightKg: 0.3 }, { skuId: "2" }], freight: null, tags: { freeShipping: false } }, variants: colors(), weight_kg: null, freight_rmb: null, ...o });
+	assert.deepEqual(estimateNeeds(l()), ["重量", "国内运费"]);
+	assert.deepEqual(estimateNeeds(l({ weight_kg: "0.8", freight_rmb: "0" })), []);
+	// 1688 都给了重量；包邮、读得到运费：不用估
+	const all = [{ skuId: "1", weightKg: 0.3 }, { skuId: "2", weightKg: 0.5 }];
+	assert.deepEqual(estimateNeeds(l({ offer: { skus: all, tags: { freeShipping: true } } })), []);
+	assert.deepEqual(estimateNeeds(l({ offer: { skus: all, freight: { costRmb: 8 } } })), []);
+	assert.equal(freightOf({ freight: { costRmb: 8 } } as any, "12"), 12);
+	assert.equal(freightOf({ tags: { freeShipping: true } } as any, null), 0);
+	// 还没做商品稿：不估
+	assert.deepEqual(estimateNeeds({ offer: null, variants: null }), []);
+});
+
+test("重新核价（不读 1688）：1688 给的重量照用，没给的用「重量」；「重量」「国内运费」变了才要存", () => {
+	const s = settingsOf(shopRow);
+	const specs: Specs = { ...colors(), variants: colors().variants.map((v) => ({ ...v, weightKg: v.skuId === "1" ? 1.6 : null, priceTwd: v.skuId === "1" ? 295 : null })) };
+	const l = { offer: { skus: [{ skuId: "1", weightKg: 1.6 }, { skuId: "2" }], tags: { freeShipping: true } }, variants: specs, weight_kg: null, freight_rmb: null, pricing: { freightRmb: 0 } };
+	assert.equal(reprice(l, s)!.changed, false);
+	assert.deepEqual(pricingProblems(specs, estimateNeeds(l)), ["缺重量：agent 估（x2 listing estimate）"]);
+	// agent 估了 1 kg：1688 给了的规格照用 1688 的
+	const r = reprice({ ...l, weight_kg: "1" }, s)!;
+	assert.deepEqual([r.changed, r.specs.variants.map((v) => [v.weightKg, v.priceTwd])], [true, [[1.6, minPrice(1, 0, 1.6, s.params, true)], [1, minPrice(1, 0, 1, s.params, true)]]]);
+	assert.deepEqual(pricingProblems(r.specs, []), []);
+	// 存了以后再算：不用再存；人把「重量」改成 2、填了国内运费：要存
+	const saved = { ...l, weight_kg: "1", variants: r.specs, pricing: { freightRmb: r.freightRmb } };
+	assert.equal(reprice(saved, s)!.changed, false);
+	assert.deepEqual(reprice({ ...saved, weight_kg: "2" }, s)!.specs.variants.map((v) => v.weightKg), [1.6, 2]);
+	assert.deepEqual([reprice({ ...saved, freight_rmb: "5" }, s)!.freightRmb, reprice({ ...saved, freight_rmb: "5" }, s)!.changed], [5, true]);
+	// 都有了还定不了价的给人
+	assert.deepEqual(pricingProblems({ ...r.specs, variants: r.specs.variants.map((v) => ({ ...v, priceTwd: null })) }, []), ["核价：有规格怎么定价都过不了毛利的两道门"]);
+});
+
+test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估（带着 1688 的标题和规格），不进收件箱", () => {
+	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
+	const l = { ...ready(), offer: { title: "可爱猫咪地垫", skus: [{ skuId: "1", attrs: ["黑猫", "40*60"], weightKg: 0.3 }, { skuId: "2", attrs: ["白猫", "40*60"] }], freight: null, tags: { freeShipping: false } } };
+	const r = checkListings([l], s, []);
+	assert.deepEqual(r.steps.get("7"), { step: "待做商品稿", detail: "缺重量、国内运费：agent 估" });
+	assert.deepEqual(r.inbox, []);
+	const t = r.todo.find((x) => x.kind === "估重量、国内运费");
+	assert.ok(t && t.kind === "估重量、国内运费");
+	assert.match(t.why, /^商品稿 7 缺重量、国内运费：.*重量往重了估（轻的写 1 kg），国内运费往高了估/);
+	assert.deepEqual(t.items, [{ id: "7", shop: "cheeroutdoor", needs: ["重量", "国内运费"], title: "可爱猫咪地垫", specs: [{ spec: "黑猫 / 40*60", priceRmb: 1, weightKg: 0.3 }, { spec: "白猫 / 40*60", priceRmb: 1, weightKg: null }], freight: null, freeShipping: false }]);
+	assert.match(productOf(l, s.get("cheeroutdoor")!).problems.join(), /缺重量、国内运费：agent 估/);
+	// 人的问题还没处理：待补充、进收件箱（不再叫人填重量、国内运费），agent 照样可以先估
+	const both = checkListings([{ ...l, problems: "类目：推荐的「地垫」不在本店允许的类目里" }], s, []);
+	assert.deepEqual([both.steps.get("7")!.step, both.todo.map((x) => x.kind)], ["待补充", ["估重量、国内运费"]]);
+	assert.doesNotMatch(both.inbox[0]!.detail, /重量|国内运费/);
+	// 估了：往下走
+	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待 Gemini 文字检查");
 });
 
 test("译图检查：象寄改了商品上的字、还有简体字、转错的字，这张不用；模型说的简体字、错字要在它抄的字里，还要过 OpenCC", () => {

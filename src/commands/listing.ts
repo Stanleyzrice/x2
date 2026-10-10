@@ -1,6 +1,8 @@
 // x2 listing：上品（docs/listing.md）。
 // x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
 // x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
+// x2 listing estimate <商品稿> [--weight <kg>] [--freight <元/件>]
+//                                                    agent 估 1688 没给的重量、读不到的国内运费：只填空着的（人填过的不动），写完马上重新核价（不读 1688）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description … [--tiers <JSON>]
 //                                                    agent 写的标题、描述和规格名（也可以从 stdin 读 [{ id, title, description, tiers: [{ name, options: [名字…] }] }]），
@@ -11,10 +13,11 @@
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
 //                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
+import { z } from "zod";
 import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { make, settingsOf } from "../listing/make.ts";
+import { estimateNeeds, freightOf, make, pricingProblems, savePrices, settingsOf } from "../listing/make.ts";
 import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, auditKey, dropAudited, issueLine, restoreAudited, textCheck } from "../listing/audit.ts";
 import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
@@ -63,12 +66,54 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const results = [];
 		for (const id of ids) {
 			console.error(`── 商品稿 ${id}`);
-			results.push(await make(sql, id));
-			// 做好的图马上放进 NocoDB 的附件（不等下一次 x2 status）
+			const r = await make(sql, id);
+			// 做好的图马上放进 NocoDB 的附件（不等下一次 x2 status）；缺重量、国内运费的告诉 agent 估，定不了价的、超过上限的现算
 			const [l] = await sql`select * from listings where id = ${id}`;
 			if (l) await syncImages(sql, l);
+			const specs = l ? specsOf(l.variants) : null;
+			const needs = l ? estimateNeeds(l) : [];
+			results.push({ ...r, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] });
 		}
-		return out(results, results.map((r) => `商品稿 ${r.id}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
+		const hint = (r: { id: string; needs: string[] }) => (r.needs.length ? `\n  估：x2 listing estimate ${r.id}${r.needs.includes("重量") ? " --weight <kg>" : ""}${r.needs.includes("国内运费") ? " --freight <元/件>" : ""}` : "");
+		return out(results, results.map((r) => `商品稿 ${r.id}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
+	}
+
+	if (sub === "estimate") {
+		// agent 估 1688 没给的重量、读不到的国内运费：只填空着的、缺的（人填过的不动），写完马上重新核价（不读 1688）
+		const usage = "x2 listing estimate <商品稿> [--weight <kg>] [--freight <元/件>]（1688 没给的重量往重了估，轻的写 1；读不到的国内运费往高了估）";
+		const id = plain(rest, "--weight", "--freight")[0];
+		const given = z.object({ weight: z.coerce.number().positive().finite().optional(), freight: z.coerce.number().nonnegative().finite().optional() })
+			.safeParse({ weight: flag(rest, "--weight"), freight: flag(rest, "--freight") });
+		if (!id || !given.success || (given.data.weight === undefined && given.data.freight === undefined)) throw new Usage(usage);
+		const [l] = await sql`select * from listings where id = ${id}`;
+		if (!l) throw new Usage(`没有商品稿 ${id}`);
+		if (!l.offer || !specsOf(l.variants)) throw new Usage(`商品稿 ${id} 还没做好：先 x2 listing make ${id}`);
+		const needs = estimateNeeds(l);
+		const notes: string[] = [], set: Record<string, number> = {};
+		const { weight, freight } = given.data;
+		if (weight !== undefined) {
+			if (l.weight_kg !== null) notes.push(`重量：已有 ${Number(l.weight_kg)} kg（人填的或估过的），不改`);
+			else if (!needs.includes("重量")) notes.push("重量：1688 给了每个规格的重量，不用估");
+			else { set.weight_kg = weight; notes.push(`重量：记为 ${weight} kg`); }
+		}
+		if (freight !== undefined) {
+			const known = freightOf(l.offer, null);
+			if (l.freight_rmb !== null) notes.push(`国内运费：已有 ${Number(l.freight_rmb)} 元/件（人填的或估过的），不改`);
+			else if (known !== null) notes.push(`国内运费：${l.offer.tags?.freeShipping ? "货源包邮" : `1688 读得到（${known} 元/件）`}，不用估`);
+			else { set.freight_rmb = freight; notes.push(`国内运费：记为 ${freight} 元/件`); }
+		}
+		// 只写还空着的（两个 x2 同时估，先写的算）
+		if (set.weight_kg !== undefined) await sql`update listings set weight_kg = ${set.weight_kg}, updated_at = now() where id = ${id} and weight_kg is null`;
+		if (set.freight_rmb !== undefined) await sql`update listings set freight_rmb = ${set.freight_rmb}, updated_at = now() where id = ${id} and freight_rmb is null`;
+		const [now] = await sql`select * from listings where id = ${id}`;
+		const [row] = await sql`select * from shop_settings where shop = ${now!.shop}`;
+		await savePrices(sql, now, settingsOf(row));
+		const left = estimateNeeds(now);
+		const problems = [...String(now!.problems ?? "").split("\n").filter(Boolean), ...pricingProblems(specsOf(now!.variants)!, left)];
+		return out({ id, notes, needs: left, problems, prices: now!.variants_text }, [
+			`商品稿 ${id}：${notes.join("；")}`, `规格和价格：\n  ${String(now!.variants_text ?? "").split("\n").join("\n  ")}`,
+			problems.length ? `还有：${problems.join("；")}` : "核价好了（下一步看 x2 status）",
+		].join("\n"));
 	}
 
 	if (sub === "show") {
@@ -84,7 +129,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		})) : [];
 		const facts = {
 			id: String(l.id), shop: l.shop, offerTitle: l.offer?.title ?? null, category: l.category_name, attributes: l.attributes_text,
-			variants: specs?.variants.length ?? 0, tiers, weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))], tags: l.offer?.tags ?? null,
+			variants: specs?.variants.length ?? 0, tiers, weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))], needs: estimateNeeds(l), tags: l.offer?.tags ?? null,
 			title: l.title, description: l.description, problems: l.offer && !specs ? OLD_SPECS : l.problems,
 		};
 		return out(facts, JSON.stringify(facts, null, 1));
@@ -185,7 +230,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map((r) => `${r.id} ${r.shop} ${r.offer_id} ${r.step ?? "（还没检查）"}${r.title ? `「${r.title}」` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | make | show | text | audit | keep | drop | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */

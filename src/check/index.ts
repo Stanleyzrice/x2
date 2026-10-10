@@ -5,7 +5,7 @@ import type { Sql } from "../db/index.ts";
 import { IMAGE } from "../site/shopee/seller.ts";
 import { NeedsHuman } from "../errors.ts";
 import { read1688, type Read, type Reads } from "../read.ts";
-import { settingsOf, type Settings } from "../listing/make.ts";
+import { savePrices, settingsOf, type Settings } from "../listing/make.ts";
 import { LABEL, usedPics } from "../listing/product.ts";
 import { isSingle, specsOf } from "../listing/variants.ts";
 import { checkListings } from "./listings.ts";
@@ -118,12 +118,18 @@ export async function syncImages(sql: Sql, l: any): Promise<void> {
 	Object.assign(l, { images, removed_images: [...removed], main_images: att.main_images, detail_images: att.detail_images, option_images: att.option_images });
 }
 
-/** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点 */
+/** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点。
+ * 还没建的先对一下附件（人删的图），「重量」「国内运费」改过的重新核价（不读 1688） */
 async function listingsCheck(sql: Sql) {
 	const rows = await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
-	for (const l of rows) if (!l.cancelled && !l.product_id) await syncImages(sql, l);
 	const settings = new Map<string, Settings>();
 	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「已暂停」 */ } }
+	for (const l of rows) {
+		if (l.cancelled || l.product_id) continue;
+		await syncImages(sql, l);
+		const s = settings.get(l.shop);
+		if (s) await savePrices(sql, l, s);
+	}
 	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('建商品', '上架') and include`;
 	return checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })));
 }
