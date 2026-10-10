@@ -1,5 +1,5 @@
-// NocoDB：收件箱，团队看进度和结果，人填、选、批准。x2 nocodb 按 docs/loop.md「视图」建好它：连上库、表和列的中文名、侧栏顺序、视图（筛选、排序、分组、隐藏的列）。
-// 可以重复跑：同名的视图删了重建。NocoDB 只读写库，不碰站点。
+// NocoDB：收件箱，团队看进度和结果，人填、选、批准。x2 nocodb 按 docs/loop.md「视图」建好它：连上库、表和列的中文名、侧栏顺序、视图（筛选、排序、分组、隐藏的列、行高），
+// x2 用的表（图）从侧栏藏起来。一张表一个表格视图（到货问题、商品稿另有一个表单）。可以重复跑：默认视图改成第一个，别的视图删了重建。NocoDB 只读写库，不碰站点。
 // NocoDB 对外部的库「改名」就是改表名，改列会按它的理解重写列定义（2026-10-09 试过：改一个列的标题，去掉了 NOT NULL）。所以：
 // - 库在 NocoDB 里设成「表结构只读」：表的结构只由 schema.sql 改
 // - 中文名、侧栏顺序、显示成链接、显示值直接写 NocoDB 自己的元数据库（nc_models_v2、nc_columns_v2），再清它的缓存
@@ -16,18 +16,21 @@ import { NeedsHuman } from "./errors.ts";
 type Cond = { col: string; op: string; value?: string | number; sub?: string };
 /** 一个条件，或几个「或」起来的条件；最外层的几项「且」起来 */
 type Filter = Cond | { or: Cond[] };
-/** kanban：看板，按这一列分列（这一列要在 selects 里）；form：表单（人填一行新的），fields 是表单上的列和它的说明，required 是必填的。看板、表单不能是第一个（默认视图是表格） */
-type View = { title: string; kanban?: string; gallery?: string; form?: { heading: string; fields: Record<string, string>; required?: string[] }; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[] };
+/** 不给 form 是表格：group 分组（单选列的组按取值的顺序排），rowHeight 行高（0 矮、1 中、2 高、3 很高）。
+ * form：表单（人填一行新的），fields 是表单上的列和它的说明，required 是必填的；表单不能是第一个（默认视图是表格） */
+type View = { title: string; form?: { heading: string; fields: Record<string, string>; required?: string[] }; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[]; rowHeight?: number };
 /** columns：列名 → 中文名，也是视图里列的顺序；links：显示成链接的列；attachments：显示成附件的列（库里是 JSON 文本）；
- * selects：显示成单选的列和它的取值（按这个顺序，看板的列也是这个顺序）；primary：显示值（主列），卡片、关联里看到的是它。gallery：画廊视图，封面是这个附件列 */
+ * selects：显示成单选的列和它的取值（按这个顺序，分组也是这个顺序）；primary：显示值（主列，表格的第一列），关联里看到的是它 */
 type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; attachments?: string[]; selects?: Record<string, readonly string[]>; primary?: string; views: View[] };
 
-/** 商品稿里给 x2 用的 JSON 列：视图里都藏起来 */
-const LISTING_JSON = ["offer", "images", "variants", "pricing", "audit", "attributes", "category_path", "category_id", "removed_images", "removed_variants", "kept_images", "offer_read_at"];
+/** 商品稿里给 x2 用的列（JSON、hash……）：视图里都藏起来 */
+const LISTING_HIDDEN = ["offer", "images", "variants", "pricing", "audit", "attributes", "category_path", "category_id", "removed_images", "removed_variants", "kept_images", "offer_read_at",
+	"pick_snapshot", "approved_hash", "content_hash", "unapproved_why", "noted", "step"];
+
+/** x2 用的表：库里留着，NocoDB 的侧栏里藏起来（标成多对多的中间表，NocoDB 默认不显示） */
+export const HIDDEN_TABLES = ["images", "shop_images"];
 
 const COLORS = ["#cfdffe", "#d0f1fd", "#c2f5e9", "#d1f7c4", "#ffeab6", "#fee2d5", "#ffdce5", "#ffdaf6", "#ede2fe", "#eeeeee"];
-
-const OPEN_ORDER: Filter[] = [{ col: "platform_status", op: "eq", value: "待出货" }, { col: "chanboss_status", op: "neq", value: "已打包" }, { col: "chanboss_status", op: "neq", value: "已出库" }];
 
 /** 侧栏从上到下的顺序；每张表的第一个视图是默认视图。只放人要看、要填的：要人做的都在收件箱里，站点上有的不存 */
 export function tables(): Table[] {
@@ -43,7 +46,6 @@ export function tables(): Table[] {
 					title: "待处理", filters: [{ col: "open", op: "checked" }, { or: [{ col: "snooze_until", op: "blank" }, { col: "snooze_until", op: "lt", sub: "today" }] }],
 					sorts: [["due", "asc"]], group: [["kind", "asc"]], hide: ["key", "open", "opened_at", "closed_at", "updated_at"],
 				},
-				{ title: "近 7 天已关闭", filters: [{ col: "open", op: "notchecked" }, { col: "closed_at", op: "isWithin", sub: "pastWeek" }], sorts: [["closed_at", "desc"]], hide: ["key", "open", "approve", "done", "snooze_until"] },
 			],
 		},
 		{
@@ -54,21 +56,15 @@ export function tables(): Table[] {
 				problem: "问题单", destination: "收货地址", created_at: "下单时间", cancelled_at: "取消时间", checked_at: "检查时间",
 				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "chanboss id", chanboss_time: "chanboss 下单时间",
 			},
-			views: [
-				{ title: "全部", sorts: [["created_at", "desc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time"] },
-				// 看板：一列一步，卡片上是订单号、店铺、出货期限、剩余天数、说明、商品
-				{
-					title: "待出货", kanban: "step", filters: OPEN_ORDER, sorts: [["ship_by", "asc"]],
-					hide: ["platform_status", "chanboss_status", "problem", "destination", "created_at", "cancelled_at", "checked_at", "items", "shop_id", "chanboss_id", "chanboss_time"],
-				},
-			],
+			// 按当前步骤分组（按流程，已打包、已取消在最后），出货期限近的在前
+			views: [{ title: "全部", group: [["step", "asc"]], sorts: [["ship_by", "asc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time"] }],
 		},
 		{
 			name: "arrival_issues", title: "到货问题",
 			selects: { kind: ["错货", "少件", "损坏", "其他"], resolution: ["退换", "重新采购", "无需处理"] },
 			columns: { sn: "订单号", item: "商品和规格", kind: "问题类型", qty: "件数", note: "备注", resolution: "处理方式", done: "已处理", reported_at: "上报时间", done_at: "处理时间", id: "编号" },
 			views: [
-				{ title: "未处理", filters: [{ col: "done", op: "notchecked" }], sorts: [["reported_at", "asc"]], hide: ["id", "done_at"] },
+				{ title: "全部", sorts: [["done", "asc"], ["reported_at", "desc"]], hide: ["id"] },
 				{
 					title: "上报到货问题",
 					form: {
@@ -81,21 +77,18 @@ export function tables(): Table[] {
 		},
 		{
 			name: "listings", title: "商品稿", attachments: ["main_images", "detail_images", "option_images"], primary: "nickname",
-			selects: { step: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
+			// 当前步骤显示的是 step_group（照 step 算的 enum，组按 LISTING_STEPS 的顺序排）；step 是 x2 写的文本，藏起来
+			selects: { step_group: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
 			columns: {
-				nickname: "简称", title: "标题", shop: "店铺", step: "当前步骤", step_detail: "说明", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", category_name: "类目",
-				problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
-				strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", pick_snapshot: "选品快照", cancelled: "放弃", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
-				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "Gemini 文字检查", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间",
+				nickname: "简称", approve: "批准上架", step_group: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", detail_images: "详情图",
+				title: "标题", description: "描述", category_name: "类目", attributes_text: "属性", problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）", days_to_ship: "备货天数",
+				cancelled: "放弃", strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", approved_at: "批准时间", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
+				pick_snapshot: "选品快照", offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "Gemini 文字检查", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id",
+				removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间", approved_hash: "批准时的内容（hash）", content_hash: "内容（hash）", unapproved_why: "去掉勾的原因", noted: "看过的备注", step: "当前步骤（文本）",
 			},
 			views: [
-				{ title: "全部", sorts: [["id", "desc"]], hide: [...LISTING_JSON] },
-				// 审稿：待批准的、待补充的，封面是主图；说明里有 Gemini 文字检查挑出的问题；删掉不要的图就是在「主图」「详情图」里删附件（「规格图」只看，删了下一轮写回去）
-				{
-					title: "审稿", gallery: "main_images", filters: [{ or: [{ col: "step", op: "eq", value: "待批准" }, { col: "step", op: "eq", value: "待补充" }] }],
-					sorts: [["id", "asc"]], hide: [...LISTING_JSON, "detail_images", "description", "created_at", "updated_at", "listed_at", "product_id", "offer_id", "id", "pick_snapshot"],
-				},
-				{ title: "当前步骤", kanban: "step", filters: [{ col: "cancelled", op: "notchecked" }], sorts: [["id", "asc"]], hide: [...LISTING_JSON, "description", "detail_images", "option_images", "created_at", "updated_at", "pick_snapshot"] },
+				// 按当前步骤分组：待批准、待补充在最前，已上架、已放弃在最后。行调高，主图、规格图、详情图看得见缩略图；删掉不要的图就是在「主图」「详情图」里删附件（「规格图」只看，删了下一轮写回去）
+				{ title: "全部", group: [["step_group", "asc"]], sorts: [["id", "asc"]], hide: LISTING_HIDDEN, rowHeight: 2 },
 				{
 					title: "添加货源",
 					form: { heading: "添加 1688 货源", fields: { shop: "上品的店铺", offer_id: "1688 商品链接（完整粘贴）", note: "补充说明（例：选它的理由）" }, required: ["shop", "offer_id"] },
@@ -125,9 +118,8 @@ export function tables(): Table[] {
 				image: "货源的图", item_image: "店里的图", site: "站点", read_at: "读取时间", skus: "货源的规格（快照）", offer_id: "货源 id", item_id: "商品 id", found_at: "发现时间", chosen_at: "选定时间",
 			},
 			views: [
-				// 待选货源：还没定的货源，按店里的商品分组；定了以后剩下的删掉，空了就是选完了
-				{ title: "待选货源", filters: [{ col: "chosen", op: "notchecked" }], sorts: [["score", "desc"]], group: [["item_name", "asc"]], hide: ["skus", "offer_id", "item_id", "found_at", "chosen_at", "broken", "read_at", "site", "sku_exceptions"] },
-				{ title: "已选定", filters: [{ col: "chosen", op: "checked" }], sorts: [["item_name", "asc"]], hide: ["chosen", "score", "missing", "sure", "skus", "item_id", "found_at"] },
+				// 按店里的商品分组，选用的在前；定了货源以后剩下的候选删掉：一组里没有勾「选用」的就是还没选
+				{ title: "全部", group: [["item_name", "asc"]], sorts: [["chosen", "desc"], ["score", "desc"]], hide: ["skus", "offer_id", "item_id", "found_at", "read_at", "site"] },
 			],
 		},
 		{
@@ -157,11 +149,6 @@ export function tables(): Table[] {
 				categories: "允许的类目（JSON）", shop_id: "Shopee 店铺 id", updated_at: "更新时间",
 			},
 			views: [{ title: "设置", hide: ["categories"] }],
-		},
-		{
-			name: "images", title: "图（x2 用的）",
-			columns: { sha256: "sha256", kind: "类型", source: "来源", from_sha: "原图", width: "宽", height: "高", verdict: "筛字", checks: "检查结果", created_at: "创建时间", mime: "格式", bytes: "字节" },
-			views: [{ title: "全部", sorts: [["created_at", "desc"]], hide: ["bytes", "checks"] }],
 		},
 	];
 }
@@ -240,7 +227,7 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 			}
 			// 显示值（主列）：卡片、关联里看到的是它
 			if (t.primary) await meta`update nc_columns_v2 set pv = (column_name = ${t.primary}) where fk_model_id = ${model.id}`;
-			// 单选：库里还是 text，只在 NocoDB 的元数据里标成单选，取值按顺序（看板的列也是这个顺序）
+			// 单选：库里是 text（商品稿的当前步骤是 enum），只在 NocoDB 的元数据里标成单选，取值按顺序。NocoDB 按值排组，不按取值的顺序
 			for (const [col, values] of Object.entries(t.selects ?? {})) {
 				const [c] = await meta`select id from nc_columns_v2 where fk_model_id = ${model.id} and column_name = ${col}`;
 				if (!c) continue;
@@ -253,9 +240,11 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 				}
 			}
 		}
+		// x2 用的表从侧栏藏起来（NocoDB 不显示多对多的中间表）；库里的表不动
+		await meta`update nc_models_v2 set mm = true where base_id = ${base.id} and table_name in ${meta(HIDDEN_TABLES)}`;
 		await api("DELETE", "/cache");
 
-		// 3. 视图：第一个是默认视图（改名、清掉原来的筛选和排序），其余同名的删了重建
+		// 3. 视图：第一个是默认视图（改名、清掉原来的筛选和排序），别的视图都删了，按 spec 重建
 		for (const t of specs) {
 			const model = all.find((m) => m.table_name === t.name);
 			if (!model) continue;
@@ -269,7 +258,7 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 			// 默认视图：NocoDB 不标 is_default，是排在最前的那个（建表时自带）
 			const def = [...existing].sort((a, b) => Number(a.order) - Number(b.order))[0];
 			const isDef = (v: any) => v.id === def?.id;
-			for (const v of existing) if (!isDef(v) && t.views.some((s) => s.title === v.title)) await api("DELETE", `/views/${v.id}`);
+			for (const v of existing) if (!isDef(v)) await api("DELETE", `/views/${v.id}`);
 			for (const [i, spec] of t.views.entries()) {
 				let viewId: string;
 				if (i === 0 && def) {
@@ -278,8 +267,6 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 					for (const f of (await api<{ list: any[] }>("GET", `/views/${viewId}/filters`)).list) await api("DELETE", `/filters/${f.id}`);
 					for (const s of (await api<{ list: any[] }>("GET", `/views/${viewId}/sorts`)).list) await api("DELETE", `/sorts/${s.id}`);
 				} else if (spec.form) viewId = (await api<any>("POST", `/tables/${model.id}/forms`, { title: spec.title, heading: spec.form.heading })).id;
-				else if (spec.kanban) viewId = (await api<any>("POST", `/tables/${model.id}/kanbans`, { title: spec.title, fk_grp_col_id: colId(spec.kanban) })).id;
-				else if (spec.gallery) viewId = (await api<any>("POST", `/tables/${model.id}/galleries`, { title: spec.title, fk_cover_image_col_id: colId(spec.gallery) })).id;
 				else viewId = (await api<any>("POST", `/tables/${model.id}/grids`, { title: spec.title })).id;
 				for (const f of spec.filters ?? []) {
 					const cond = (c: Cond, extra: object = {}) => ({ fk_column_id: colId(c.col), comparison_op: c.op, comparison_sub_op: c.sub, value: c.value, ...extra });
@@ -306,17 +293,8 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 					views++;
 					continue;
 				}
-				if (spec.kanban || spec.gallery) {
-					// 看板、画廊：卡片上显示哪些列、什么顺序
-					for (const vc of (await api<{ list: any[] }>("GET", `/views/${viewId}/columns`)).list) {
-						const name = nameOf(vc.fk_column_id);
-						if (!name) continue;
-						await api("PATCH", `/views/${viewId}/columns/${vc.id}`, { show: !(spec.hide ?? []).includes(name), order: order.includes(name) ? order.indexOf(name) + 1 : order.length + 1 });
-					}
-					views++;
-					continue;
-				}
-				// 列的顺序、隐藏、分组
+				// 行高、列的顺序、隐藏、分组
+				await api("PATCH", `/grids/${viewId}`, { row_height: spec.rowHeight ?? 0 });
 				const gridCols = await api<any[]>("GET", `/grids/${viewId}/grid-columns`);
 				for (const gc of gridCols) {
 					const name = nameOf(gc.fk_column_id);

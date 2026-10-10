@@ -277,7 +277,7 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 	assert.equal(daysToShip(1, rules), null);
 });
 
-import { checkListings } from "../src/check/listings.ts";
+import { checkListings, LISTING_STEPS, UNAPPROVED } from "../src/check/listings.ts";
 import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop } from "../src/listing/audit.ts";
 import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "../src/listing/make.ts";
@@ -317,22 +317,42 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
 	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
 	assert.deepEqual([run(ready()).steps.get("7")!.step, run(ready()).todo[0]!.kind], ["待 Gemini 文字检查", "Gemini 文字检查"]);
-	// 查过了、内容没变：待批准，一批两个写入（建商品、上架）
+	// 查过了：待批准，收件箱提醒去勾；内容的 hash 记下来
 	const l = ready();
-	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
+	const p = productOf(l, s.get("cheeroutdoor")!);
+	const key = auditKey(p.product!);
 	const ok = run({ ...l, audit: { key, textIssues: [], images: [] } });
 	assert.deepEqual(ok.steps.get("7"), { step: "待批准", detail: null });
-	const t = ok.todo.find((x) => x.kind === "上架");
-	assert.ok(t && t.kind === "上架");
-	assert.deepEqual(t.propose.writes.map((w) => w.op), ["建商品", "上架"]);
-	assert.equal((t.propose.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
+	assert.deepEqual([ok.hashes.get("7"), ok.approved, ok.inbox.map((x) => [x.key, x.title])], [p.hash, [], [["listing-approve:cheeroutdoor", "待批准：cheeroutdoor 1 个商品稿"]]]);
+	assert.equal(ok.todo.find((x) => x.kind === "上架"), undefined);
+	// 勾了、内容和勾的时候一样：已批准，x2 run 建商品、上架
+	const yes = run({ ...l, audit: { key }, approve: true, approved_hash: p.hash });
+	assert.equal(yes.steps.get("7")!.step, "已批准");
+	assert.deepEqual([yes.approved[0]!.writes.map((w) => w.op), yes.inbox, yes.todo.find((x) => x.kind === "上架")?.why], [["建商品", "上架"], [], "已勾「批准上架」：雨衣（cheeroutdoor，#7）"]);
+	assert.equal((yes.approved[0]!.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
+	// 内容变了（另一个 hash，或勾着的时候又改过）：去掉勾，说明写为什么
+	for (const h of ["别的", "changed"]) {
+		const changed = run({ ...l, audit: { key }, approve: true, approved_hash: h, approved_at: "t1" });
+		assert.deepEqual([changed.steps.get("7")!.step, changed.approvals.get("7"), changed.approved], ["待批准", { at: "t1", clear: UNAPPROVED.changed }, []]);
+		assert.equal(changed.steps.get("7")!.detail, UNAPPROVED.changed);
+	}
+	// 勾的时候 hash 还没算（刚改过）：认下现在的内容
+	const fresh = run({ ...l, audit: { key }, approve: true, approved_hash: null, approved_at: "t1" });
+	assert.deepEqual([fresh.steps.get("7")!.step, fresh.approvals.get("7")], ["已批准", { at: "t1", capture: p.hash }]);
+	// 还没到待批准就勾了：去掉勾
+	assert.deepEqual(run({ ...l, approve: true, approved_at: "t1" }).approvals.get("7"), { at: "t1", clear: UNAPPROVED.early("待 Gemini 文字检查") });
+	// 去掉了勾的原因、上次被拒的原因写在说明里
+	assert.equal(run({ ...l, audit: { key }, unapproved_why: "建商品被拒：…" }).steps.get("7")!.detail, "建商品被拒：…");
+	assert.equal(run({ ...l, audit: { key } }, [{ id: "3", op: "建商品", status: "被拒", error: "10004", params: { listingId: "7" } }, { id: "4", op: "上架", status: "未执行", params: { listingId: "7" } }]).steps.get("7")!.detail, "上次建商品被拒：10004");
 	// 查过以后改了标题：要再查
 	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待 Gemini 文字检查");
-	// 待批准、待上架、已上架、已放弃、已暂停
-	assert.equal(run(l, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "待批准");
+	// 以前经 x2 propose 准备、还待批准的写入不算在做；已批准、结果未知的算（建商品中）
+	assert.equal(run({ ...l, audit: { key } }, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "待批准");
+	assert.equal(run({ ...l, audit: { key } }, [{ op: "建商品", status: "结果未知", params: { listingId: "7" } }]).steps.get("7")!.step, "建商品中");
+	// 建好了还没上架：勾着就接着上架，没勾的等人勾
 	const built = run({ ...l, product_id: "51567712845" });
-	assert.equal(built.steps.get("7")!.step, "待上架");
-	assert.deepEqual((built.todo[0] as any).propose.writes.map((w: any) => w.op), ["上架"]);
+	assert.deepEqual([built.steps.get("7")!.step, built.approved], ["待上架", []]);
+	assert.deepEqual(run({ ...l, product_id: "51567712845", approve: true }).approved[0]!.writes.map((w) => w.op), ["上架"]);
 	assert.equal(run({ ...l, listed_at: new Date() }).steps.get("7")!.step, "已上架");
 	assert.equal(run({ ...l, cancelled: true }).steps.get("7")!.step, "已放弃");
 	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "已暂停");
@@ -457,10 +477,10 @@ test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明�
 	] };
 	const r = checkListings([{ ...l, audit }], s, []);
 	assert.deepEqual(r.steps.get("7"), { step: "待批准", detail: ["Gemini 文字检查挑出 3 条：", "1. 文案：規格名「綠色」寫成「绿色」", "2. 详情图 2：「质量保证」（x2 已去掉）", "3. 主图 1：「随心定制」", "x2 去掉的图要用，告诉 agent"].join("\n") });
-	assert.deepEqual([r.inbox, r.todo.map((x) => x.kind)], [[], ["上架"]]);
-	// 提交了批准：说明里照样有挑出的问题
-	const waiting = checkListings([{ ...l, audit }], s, [{ id: "1", batch: "1", op: "建商品", status: "待批准", params: { listingId: "7" }, finishedAt: null }]);
-	assert.match(waiting.steps.get("7")!.detail!, /^收件箱里有「批准」\nGemini 文字检查挑出 3 条：/);
+	assert.deepEqual([r.inbox.map((x) => x.kind), r.todo.map((x) => x.kind)], [["商品稿"], []]);
+	// 勾了「批准上架」：说明里照样有挑出的问题
+	const yes = checkListings([{ ...l, audit, approve: true, approved_hash: productOf(l, s.get("cheeroutdoor")!).hash }], s, []);
+	assert.match(yes.steps.get("7")!.detail!, /^已勾「批准上架」：等 x2 run 建商品、上架\nGemini 文字检查挑出 3 条：/);
 });
 
 test("估重量、国内运费：1688 有的用 1688 的；1688 没给、「重量」「国内运费」也空着的才要 agent 估，人填过的不算缺", () => {
@@ -548,11 +568,12 @@ test("检查：收件箱、todo、批准的标题、写入的显示都写「简�
 	const l = ready({ nickname: "轻便雨衣" });
 	assert.equal(checkListings([{ ...l, problems: "类目：推荐的「雨衣」不在本店允许的类目里" }], s, []).inbox[0]!.title, "商品稿：轻便雨衣（cheeroutdoor）待补充：类目：推荐的「雨衣」不在本店允许的类目里");
 	assert.equal(checkListings([{ ...l, title: null }], s, []).todo[0]!.why, "轻便雨衣（cheeroutdoor，#7）：还没写");
-	const t = checkListings([{ ...l, audit: { key: auditKey(productOf(l, s.get("cheeroutdoor")!).product!), textIssues: [], images: [] } }], s, []).todo.find((x) => x.kind === "上架");
-	assert.ok(t && t.kind === "上架");
-	assert.equal(t.why, "待批准上架：轻便雨衣（cheeroutdoor，#7）");
-	assert.match(t.propose.title, /^上架 轻便雨衣（cheeroutdoor）：/);
-	assert.deepEqual(t.propose.writes.map((w) => WRITES[w.op]!.display(w.params)), ["建商品 轻便雨衣（cheeroutdoor）", "上架 轻便雨衣（cheeroutdoor）"]);
+	const p = productOf(l, s.get("cheeroutdoor")!);
+	const audited = { ...l, audit: { key: auditKey(p.product!), textIssues: [], images: [] } };
+	assert.equal(checkListings([audited], s, []).inbox[0]!.detail.split("\n")[0], "轻便雨衣（cheeroutdoor）");
+	const r = checkListings([{ ...audited, approve: true, approved_hash: p.hash }], s, []);
+	assert.equal(r.todo.find((x) => x.kind === "上架")!.why, "已勾「批准上架」：轻便雨衣（cheeroutdoor，#7）");
+	assert.deepEqual(r.approved[0]!.writes.map((w) => WRITES[w.op]!.display(w.params)), ["建商品 轻便雨衣（cheeroutdoor）", "上架 轻便雨衣（cheeroutdoor）"]);
 });
 
 test("译图检查：象寄改了商品上的字、还有简体字、转错的字，这张不用；模型说的简体字、错字要在它抄的字里，还要过 OpenCC", () => {
@@ -655,4 +676,23 @@ test("报价：照做商品稿排规格、按店铺设置核价，不做图、�
 	const r = quote(read, s, { weightKg: 1, freightRmb: 10 });
 	assert.deepEqual([r.freightRmb, r.freightAssumed, r.weightAssumed, r.problems], [8, false, null, ["货源：起订量 3，无法单件购买"]]);
 	assert.equal(quote({ ...o, tags: { ...o.tags!, freeShipping: true }, freight: { costRmb: 0, to: "" } }, s, { weightKg: 1, freightRmb: 10 }).freightRmb, 0);
+});
+
+test("备注：人写了或改了备注、agent 还没看过的进 todo（带原文）；看过的（noted 和备注一样）、放弃了的不进", () => {
+	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
+	const todo = (o: Record<string, unknown>) => checkListings([ready({ nickname: "轻便雨衣", ...o })], s, []).todo.find((x) => x.kind === "备注");
+	const t = todo({ note: "标题别写「成人」" });
+	assert.ok(t && t.kind === "备注");
+	assert.deepEqual(t.items, [{ id: "7", name: "轻便雨衣（cheeroutdoor，#7）", note: "标题别写「成人」" }]);
+	assert.equal(todo({ note: "标题别写「成人」", noted: "标题别写「成人」" }), undefined);
+	assert.ok(todo({ note: "标题别写「成人」，也别写「連身」", noted: "标题别写「成人」" }));
+	assert.equal(todo({ note: "  " }), undefined);
+	assert.equal(todo({ note: "不上了", cancelled: true }), undefined);
+});
+
+test("当前步骤的顺序：库里的 enum listing_step 和 LISTING_STEPS 一样（NocoDB 按它排组）", async () => {
+	const schema = await (await import("node:fs/promises")).readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
+	const m = schema.match(/create type listing_step as enum \(([^)]*)\)/);
+	assert.deepEqual(m![1]!.split(",").map((x) => x.trim().replace(/^'|'$/g, "")), [...LISTING_STEPS]);
+	for (const step of LISTING_STEPS) assert.ok(schema.includes(`when '${step}' then '${step}'::listing_step`), step);
 });

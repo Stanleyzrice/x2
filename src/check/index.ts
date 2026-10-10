@@ -134,8 +134,14 @@ export async function listingsCheck(sql: Sql, ids?: string[]) {
 		const s = settings.get(l.shop);
 		if (s) await savePrices(sql, l, s);
 	}
-	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('建商品', '上架') and include`;
-	const r = checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })));
+	const writes = await sql`select id, batch, op, status, params, finished_at, error from writes where op in ('建商品', '上架') and include`;
+	const r = checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at, error: w.error })));
+	// 内容的 hash（勾「批准上架」时触发器记下它）；勾：内容变了去掉（只改读到的那一次勾；JS 的时间只到毫秒），勾的时候 hash 还没算的认下现在的内容（勾了以后内容又变了，触发器记成 changed，就认不上）
+	for (const [id, h] of r.hashes) await sql`update listings set content_hash = ${h} where id = ${id} and content_hash is distinct from ${h}`;
+	for (const [id, a] of r.approvals) {
+		if ("clear" in a) await sql`update listings set approve = false, unapproved_why = ${a.clear} where id = ${id} and approve and date_trunc('milliseconds', approved_at) is not distinct from ${a.at}`;
+		else await sql`update listings set approved_hash = ${a.capture} where id = ${id} and approve and approved_hash is null and date_trunc('milliseconds', approved_at) is not distinct from ${a.at}`;
+	}
 	for (const [id, c] of r.steps) await sql`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
 	return r;
 }
@@ -148,7 +154,7 @@ export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 
 	let opened = 0, closed = 0;
 	await sql.begin(async (tx) => {
-		// 商品定了货源（人勾了「选用」、随加购批准了）：它剩下的候选用完了，删掉（「待选货源」空了就是选完了）
+		// 商品定了货源（人勾了「选用」、随加购批准了）：它剩下的候选用完了，删掉（「货源」里一组没有勾「选用」的就是还没选）
 		await tx`delete from sources o where not o.chosen and exists (select 1 from sources c where c.item_id = o.item_id and c.chosen)`;
 		await tx`update sources set chosen_at = now() where chosen and chosen_at is null`;
 		await tx`update arrival_issues set done_at = now() where done and done_at is null`;

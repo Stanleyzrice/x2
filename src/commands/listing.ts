@@ -18,10 +18,12 @@
 // x2 listing keep <商品稿> <主图 N、详情图 N…>          保留的图：x2 去掉的放回来，以后检查再挑它也不去掉（人说了才用）
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
 //                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
+// x2 listing approve <商品稿…>                        人在终端里说「批准」：替人勾「批准上架」（只勾待批准、待上架的；有一份不行就都不勾），x2 run 建商品、上架
+// x2 listing noted <商品稿…>                          照人写的「备注」做完：记下看过的备注（备注再改，x2 status 的 todo 又给出来）
 // x2 listing list                                    所有商品稿走到哪了
 // 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
 import { z } from "zod";
-import { syncImages } from "../check/index.ts";
+import { listingsCheck, syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
 import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
@@ -320,6 +322,38 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out({ id, name: listingName(l), dropped: r.skus, left, merged: r.merged }, `${listingName(l)}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);
 	}
 
+	if (sub === "approve") {
+		// 和人在 NocoDB 里勾是同一个勾：先重算（内容的 hash 是最新的），勾上时触发器记下这一刻的内容；再重算一次，当前步骤变成已批准
+		const ids = z.array(z.string().regex(/^\d+$/)).min(1).safeParse(plain(rest));
+		if (!ids.success) throw new Usage("x2 listing approve <商品稿…>（人在终端里说了「批准」才用）");
+		const want = [...new Set(ids.data)];
+		const name = await namesOf(sql, want);
+		await listingsCheck(sql, want);
+		const rows = await sql`select id::text, step, approve from listings where id in ${sql(want)}`;
+		const bad = want.flatMap((id) => {
+			const r = rows.find((x) => x.id === id);
+			if (!r) return [`没有商品稿 ${id}`];
+			return r.approve || r.step === "待批准" || r.step === "待上架" ? [] : [`${name(id)}是「${r.step ?? "还没检查"}」，不是待批准`];
+		});
+		if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没勾`);
+		await sql`update listings set approve = true where id in ${sql(want)} and not approve`;
+		const r = await listingsCheck(sql, want);
+		const done = want.map((id) => ({ id, name: name(id), step: r.steps.get(id)?.step ?? null, detail: r.steps.get(id)?.detail ?? null }));
+		return out(done, [...done.map((x) => `${x.name}：${x.step}`), "下一步：x2 run"].join("\n"));
+	}
+
+	if (sub === "noted") {
+		// 记下看过的备注原文；人写的备注不改
+		const ids = z.array(z.string().regex(/^\d+$/)).min(1).safeParse(plain(rest));
+		if (!ids.success) throw new Usage("x2 listing noted <商品稿…>（照备注做完以后）");
+		const want = [...new Set(ids.data)];
+		const rows = await sql`update listings set noted = note where id in ${sql(want)} returning id::text, note`;
+		const missing = want.filter((id) => !rows.some((r) => r.id === id));
+		if (missing.length) throw new Usage(`没有商品稿 ${missing.join("、")}`);
+		const name = await namesOf(sql, want);
+		return out(rows.map((r) => ({ id: r.id, name: name(r.id), note: r.note })), rows.map((r) => `${name(r.id)}：看过备注「${r.note ?? ""}」`).join("\n"));
+	}
+
 	if (sub === "list") {
 		const rows = (await sql`select id::text, shop, nickname, offer_id, offer->>'title' as offer_title, strategy, title, step, step_detail, problems, product_id from listings where not cancelled order by id`)
 			.map((r) => ({ ...r, name: listingName({ ...r, offer: { title: r.offer_title } }) }));
@@ -327,7 +361,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | approve | noted | list（见 docs/listing.md）");
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */

@@ -9,11 +9,11 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 | 概念 | 是什么 | 例 |
 |---|---|---|
 | **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `site/writes.ts`，只由 `x2 run` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
-| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准、到货问题、商品稿）、写入的记录、给团队看的订单看板。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在 NocoDB 里看和填 | 收件箱、写入、货源、订单、商品稿 |
+| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准、到货问题、商品稿）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在 NocoDB 里看和填 | 收件箱、写入、货源、订单、商品稿 |
 | **循环** | 现读站点 → 检查（算出收件箱和 agent 要做的）→ agent 准备写入、人在收件箱里做和批准 → `x2 run` 执行、读回来 → 下一轮。做完 = 收件箱是空的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 propose`、`x2 run` |
 | **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步等人 | `.claude/skills/orders/SKILL.md`、`.claude/skills/listing/SKILL.md` |
 
-人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报、建商品、上架）只有一条路：agent 用 `x2 propose` 写成待批准的写入，人在收件箱里批准，`x2 run` 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
+人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报、建商品、上架）只有一条路：人批准（加购、预报：agent 用 `x2 propose` 写成待批准的写入，人在收件箱里勾「批准」；建商品、上架：人在 NocoDB「商品稿」里勾「批准上架」），`x2 run` 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
 
 ## 推进：x2 status
 
@@ -23,7 +23,7 @@ x2 status --json               # 给 agent：todo 里有现成的一批写入
 x2 source <商品 id>             # 给店里一个商品找货源：以图搜图，看卖过的规格有几成配得上；--url <链接> 用人贴的
 x2 propose < 一批.json          # 写一批待批准的写入；收件箱加一行「批准」
 x2 approve 12                  # 人在终端里说「批准」时，替人勾上
-x2 run                         # 执行批准了的写入
+x2 run                         # 执行批准了的写入；勾了「批准上架」的商品稿建商品、上架
 x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_NOCODB_URL、X2_NOCODB_EMAIL、X2_NOCODB_PASSWORD、X2_NOCODB_META_URL）
 ```
 
@@ -36,6 +36,8 @@ x2 listing make --jobs 3                # 做商品稿：读货源、规格和�
 x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不到的国内运费由 agent 估（只填空着的），马上重新核价
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description … --tiers … --nickname …   # agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查
+x2 listing approve 3 5                  # 人在终端里说「批准」时，替人勾「批准上架」
+x2 listing noted 3                      # 照人写的「备注」做完：记下看过（备注再改，todo 又给出来）
 x2 listing list                         # 每份商品稿的简称、当前步骤
 x2 strategy list                        # 选品的策略：第几版、每个出了几份商品稿、上架了几个
 x2 strategy set 搜索缺口 --how … --why …   # 改策略要写为什么：版本号加 1，记进变更记录（x2 strategy log 搜索缺口）
@@ -43,7 +45,7 @@ x2 rule add "<规矩>" --why …              # 选品规矩（所有策略共�
 x2 listing add cheeroutdoor <1688 链接> --strategy 搜索缺口 --why … --evidence …   # 按策略选的：记下选品理由、依据、当时的策略和规矩
 ```
 
-建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
+建商品、上架是写入：人在 NocoDB「商品稿」里一份一份勾「批准上架」→ `x2 run`（勾了以后内容变了，x2 去掉勾）。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
 
 两家店各开一个浏览器（Chrome 的不同用户），1688、知虾、chanboss 登录在其中一个里。x2 按登录选浏览器（每个进程现读一次，不存库）：Shopee 按店，1688、知虾、chanboss 用登录着的那个；要强制指定，设 `X2_BROWSER`（浏览器在 cdp-relay 里的 id）。几个 x2 同时跑：同一个浏览器的同一个站点一次只让一个进程用，别的排队（stderr 写着在等谁）；1688 的页面两次加载之间隔 3 秒，跳了滑块验证就停下（退出码 3，说在哪个浏览器里拉）。
 
@@ -82,7 +84,7 @@ x2 schema                                   # 全部操作的说明和参数（J
 
 5. **字段**：id 一律是字符串（Shopee、1688 的订单号超过 JS 数字的精度）；时间用 ISO 8601。读来的原样字段（`any` 的行）先照站点的样子给，用到时再整理。
 6. **自描述**：`x2 <站点>`、`x2 <站点> <操作> --help`、`x2 schema`。
-7. **读不写库**：`x2 <站点> <操作>` 不碰库；只有 `x2 status` 把订单写回看板、更新货源快照。
+7. **读不写库**：`x2 <站点> <操作>` 不碰库；只有 `x2 status` 把订单写回库、更新货源快照。
 
 ## 目录
 
@@ -104,7 +106,7 @@ x2/
 │ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md 是全部数据接口）
 │ │ └ chanboss.ts         chanboss：订单、预报、库存、退件、扣款流水（chanboss.md）
 │ ├ db/                   库：连接、schema.sql（建表、加列）、import.ts（一次性迁数据进来）
-│ ├ read.ts               现读：chanboss 订单（写回订单看板）、1688 的购物车和采购单（带物流、退款）、要买的商品的货源；哪样没读成记下来；同一个进程 2 分钟内读过的复用
+│ ├ read.ts               现读：chanboss 订单（写回库）、1688 的购物车和采购单（带物流、退款）、要买的商品的货源；哪样没读成记下来；同一个进程 2 分钟内读过的复用
 │ ├ check/                检查：纯函数（orders.ts、reconcile.ts 采购单分给订单、listings.ts 商品稿），index.ts 拼快照（现读的 + 库里人定的）、写回收件箱
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入

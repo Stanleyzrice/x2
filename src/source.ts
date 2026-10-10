@@ -1,7 +1,7 @@
 // 选货源：给店里的一个商品定一个货源（一个商品只用一个货源；店里的规格加购时按名字在货源的规格里配，配不上的看人定的规格例外）。
 // agent 先自己找（x2 source）：拿商品图经知虾以图搜图，每个找到的货源，看店里卖过的规格在它里面有几个对得上。
 // 卖过的规格都对得上、而且只有它这样：标成「明显匹配」（sure），随加购一起批准，人批准了加购，这个货源才标成「选用」；
-// 别的都写成还在挑的货源，收件箱加一行「选货源」，人在 NocoDB 的「待选货源」里勾「选用」。人贴了链接（--url）就直接用它。
+// 别的都写成还在挑的货源，收件箱加一行「选货源」，人在 NocoDB 的「货源」里勾「选用」。人贴了链接（--url）就直接用它。
 // 货源的样子（标题、图、规格）存一份快照，x2 每次现读就更新；买之前一律现读
 import type { SourceSku } from "./check/orders.ts";
 import type { Sql } from "./db/index.ts";
@@ -96,7 +96,7 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 			why: pasted ? (found.length ? `用人贴的货源${found[0]!.missing.length ? `（未匹配的规格：${found[0]!.missing.join("、")}）` : ""}` : "贴的货源已在 1688 下架")
 				: sure ? "卖过的规格都对得上，而且只有它这样：随加购一起批准"
 				: found.length === 0 ? "没找到：贴一个 1688 链接（x2 source <商品> --url …），或者请人在 1688 上找"
-				: all.length > 1 ? `${all.length} 个货源都对得上：请人在「待选货源」里勾` : "没有规格全对得上的：请人在「待选货源」里勾，或者贴链接",
+				: all.length > 1 ? `${all.length} 个货源都对得上：请人在「货源」里勾` : "没有规格全对得上的：请人在「货源」里勾，或者贴链接",
 		});
 	}
 	return out;

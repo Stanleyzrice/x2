@@ -45,7 +45,7 @@ function todoLine(t: Todo): string {
 	if (t.kind === "找货源") return `找货源：${t.why}（${t.command}）`;
 	if (t.kind === "核清") return `核清：${t.why}（${t.command}）`;
 	if (t.kind === "取消预报") return `取消预报：${t.why}`;
-	if (t.kind === "做商品稿" || t.kind === "写文案" || t.kind === "Gemini 文字检查" || t.kind === "估重量、国内运费") return `${t.kind}：${t.why}（${t.command}）`;
+	if (t.kind === "做商品稿" || t.kind === "写文案" || t.kind === "Gemini 文字检查" || t.kind === "估重量、国内运费" || t.kind === "上架" || t.kind === "备注") return `${t.kind}：${t.why}（${t.command}）`;
 	return `${t.kind}：${t.why}（x2 status --json 的 todo 里有现成的一批，看过交给 x2 propose）`;
 }
 

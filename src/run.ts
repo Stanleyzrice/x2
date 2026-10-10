@@ -2,10 +2,12 @@
 // 1. 收件箱里勾了「批准」的批次：勾着「执行」的写入改成已批准，取消勾的改成未执行
 // 2. 先核清：已提交（记了意图、进程挂了）、结果未知的写入，读回来；还核不清的，它所在的批次这次不做，同一个对象上的也不做
 // 3. 一批一批、一个一个执行：现读（还该不该做）→ 记意图（已提交）→ 提交一次 → 读回来。结果未知就停下这一批，不重发
+// 0. 上品：人勾了「批准上架」的商品稿，先按检查的规则重算（内容和勾的时候对不上就去掉勾），勾着、内容没变的生成建商品、上架的写入（已批准，一份商品稿一批）
 // 4. 执行完（成功、被拒、不一致、结果未知都算）：涉及的商品稿按检查的规则重算当前步骤、说明，写回库（不读站点；收件箱等 x2 status 重算）
 import { listingsCheck } from "./check/index.ts";
 import { type Sql, host } from "./db/index.ts";
-import { NeedsHuman } from "./errors.ts";
+import { NeedsHuman, Usage } from "./errors.ts";
+import { addWrites } from "./propose.ts";
 import { type WriteOp, WRITES } from "./site/writes.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -23,18 +25,46 @@ type Outcome = { ran: Ran[]; unknown: boolean; blocked: string | null };
 
 /** ops：写操作的声明（测试换成假的） */
 export async function run(sql: Sql, opts: Opts = {}, ops: Record<string, WriteOp> = WRITES): Promise<Outcome> {
+	// 给了批次的（做商品稿时译图跑自己那一批）不碰商品稿的勾
+	if (!opts.batch) await approvedListings(sql, ops);
 	const r = await execute(sql, opts, ops);
 	await refreshListings(sql, r.ran);
 	return r;
 }
 
-/** 4. 这一次碰过的商品稿（建商品、上架的写入）：马上重算当前步骤，NocoDB 里不用等下一次 x2 status。出错只记在 stderr：写入的结果照样要报给人 */
+/** 0. 勾了「批准上架」、还没上架的商品稿：重算（去掉内容变了的勾），勾着、内容没变的生成写入。
+ * 以前经 x2 propose 准备、还待批准的建商品、上架不再执行（批准改成了勾）：标成未执行 */
+async function approvedListings(sql: Sql, ops: Record<string, WriteOp>): Promise<void> {
+	await sql`update writes set status = '未执行', error = '建商品、上架改成在商品稿上勾「批准上架」：这一项不再执行', finished_at = now() where op in ('建商品', '上架') and status = '待批准'`;
+	const ids = (await sql`select id::text from listings where approve and not cancelled and listed_at is null order by id`).map((x) => x.id as string);
+	if (!ids.length) return;
+	const r = await listingsCheck(sql, ids);
+	for (const l of r.approved) {
+		const rows = l.writes.map((w) => {
+			const op = ops[w.op];
+			if (!op) throw new Error(`没有 ${w.op} 这个写操作`);
+			const params = op.params.parse(w.params);
+			return { op: w.op, params, target: op.target(params), key: op.key(params), display: op.display(params), status: "已批准" };
+		});
+		// 同一个对象还有没做完的（另一个 x2 run 刚生成）：这次不再生成
+		await sql.begin((tx) => addWrites(tx, rows)).catch((e) => { if (!(e instanceof Usage)) throw e; });
+	}
+}
+
+/** 4. 这一次碰过的商品稿（建商品、上架的写入）：建商品、上架被拒或没执行的去掉勾（原因写进说明，改好了再勾，免得每次 x2 run 都再交一次），
+ * 再马上重算当前步骤，NocoDB 里不用等下一次 x2 status。出错只记在 stderr：写入的结果照样要报给人 */
 async function refreshListings(sql: Sql, ran: Ran[]): Promise<void> {
 	const ids = [...new Set(ran.map((x) => x.id))];
 	if (!ids.length) return;
 	try {
-		const rows = await sql`select distinct params->>'listingId' as id from writes where id in ${sql(ids)} and op in ('建商品', '上架') and params ? 'listingId'`;
-		if (rows.length) await listingsCheck(sql, rows.map((x) => x.id as string));
+		const rows = await sql`select id::text as write, params->>'listingId' as id from writes where id in ${sql(ids)} and op in ('建商品', '上架') and params ? 'listingId'`;
+		const why = new Map<string, string>();
+		for (const x of ran) {
+			const l = rows.find((r) => r.write === x.id)?.id as string | undefined;
+			if (l && (x.status === "被拒" || x.status === "未执行") && !why.has(l)) why.set(l, `${x.op}${x.status}：${x.why ?? ""}。去掉了勾：改好了再勾「批准上架」`);
+		}
+		for (const [id, w] of why) await sql`update listings set approve = false, unapproved_why = ${w} where id = ${id} and approve`;
+		if (rows.length) await listingsCheck(sql, [...new Set(rows.map((x) => x.id as string))]);
 	} catch (e) {
 		console.error(`更新商品稿的当前步骤没成功（下一次 x2 status 会再算）：${(e as Error).message}`);
 	}
@@ -53,7 +83,7 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 	let blocked: string | null = null;
 
 	// 2. 核清（给了批次只核这一批的：做商品稿时译图跑自己那一批，不顺带去读 1688 的购物车）
-	const unsure = await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') ${opts.batch ? sql`and batch = ${opts.batch}` : sql``} order by id` as unknown as Row[];
+	const unsure = await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') ${opts.batch ? sql`and batch = ${opts.batch}` : sql``} order by writes.id` as unknown as Row[];
 	for (const w of unsure) {
 		const op = ops[w.op];
 		if (!op) continue;
@@ -76,10 +106,10 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 	}
 	if (blocked) return { ran, unknown: ran.some((r) => r.status === "结果未知"), blocked };
 
-	// 3. 执行
+	// 3. 执行（按数字排：选出来的 id、batch 是文本，按它排 10 会排在 9 前面）
 	const todo = await sql`
 		select id::text, batch::text, op, target, key, params, display, status, readback from writes
-		where status = '已批准' and include ${opts.batch ? sql`and batch = ${opts.batch}` : sql``} order by batch, id` as unknown as Row[];
+		where status = '已批准' and include ${opts.batch ? sql`and batch = ${opts.batch}` : sql``} order by writes.batch, writes.id` as unknown as Row[];
 	let last = 0;
 	for (const w of todo) {
 		const op = ops[w.op];

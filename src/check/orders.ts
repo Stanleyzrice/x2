@@ -13,7 +13,7 @@ export type SourceSku = { skuId: string; specId: string; name: string; price: nu
 /** 货源（sources 表的一行）：店里一个商品 × 一个货源。chosen 的是这个商品现在的货源（一个商品只用一个）；没 chosen 的是还在挑的，sure 是 x2 认为明显匹配的。
  * title、skus 是快照（x2 现读这个货源时更新）：店里的规格按名字在 skus 里配；配不上的看 exceptions（规格例外，人定的） */
 export type Source = { itemId: string; offerId: string; title: string | null; skus: SourceSku[]; chosen: boolean; sure: boolean; broken: string | null; exceptions?: string | null };
-export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null };
+export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null; error?: string | null };
 /** 到货问题：人在 NocoDB 的表单里上报的、未处理的（错货、少件、损坏……） */
 export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
 /** buyAccount：采购账号（1688 userId），x2 只往它加购 */
@@ -28,7 +28,7 @@ export type Snapshot = {
 };
 
 export type InboxItem = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
-/** step：当前步骤（下面 STEPS 里的一个，看板按它分列）；stepDetail：说明（哪件未到、哪个规格缺货源……） */
+/** step：当前步骤（下面 STEPS 里的一个，NocoDB 里订单按它分组）；stepDetail：说明（哪件未到、哪个规格缺货源……） */
 export type Computed = { daysLeft: number | null; destination: string | null; step: string; stepDetail: string | null };
 /** 加购这个写操作的参数：同一个货源规格的几张订单合成一行。newSources：随这次加购一起批准的新货源（店里的商品 id） */
 export type CartParams = {
@@ -41,10 +41,10 @@ export type Todo =
 	| { kind: "加购" | "预报"; why: string; propose: { title: string; writes: { op: string; params: CartParams | ForecastParams }[] } }
 	| { kind: "取消预报"; why: string; orders: string[] }
 	| { kind: "核清"; why: string; writes: string[]; command: string }
-	// 上品（docs/listing.md）：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；上架是一批写入（建商品、上架），交给 x2 propose
-	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查"; why: string; ids: string[]; command: string }
+	// 上品（docs/listing.md）：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；上架：人勾了「批准上架」的，x2 run 建商品、上架；备注：照人写的备注做
+	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查" | "上架"; why: string; ids: string[]; command: string }
 	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[]; command: string }
-	| { kind: "上架"; why: string; propose: { title: string; writes: { op: string; params: Record<string, unknown> }[] } };
+	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; command: string };
 
 /** agent 估重量、国内运费的一份商品稿：缺什么（needs），和估要用的事实（1688 的标题、每个规格、运费） */
 export type EstimateItem = {
@@ -55,7 +55,7 @@ export type EstimateItem = {
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
 export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };
 
-/** 当前步骤：按流程排（看板的列也是这个顺序） */
+/** 当前步骤：按流程排（NocoDB 里订单按它分组，组也是这个顺序） */
 export const STEPS = [
 	"缺货源", "规格不匹配", "待加购", "加购待批准", "待 1688 付款", "待预报", "预报待批准", "待到齐", "有到货问题", "待打包", "待 chanboss 收货", "待 chanboss 打包",
 	"外部采购", "已打包", "已取消",
@@ -299,7 +299,7 @@ export function checkOrders(s: Snapshot): Result {
 	// ── 收件箱：选货源、付款 ──
 	for (const [itemId, c] of toChoose) inbox.push({
 		key: `source:${itemId}`, kind: "选货源", shop: c.shop, due: c.due, link: null,
-		title: `选货源：${short(c.item.name, 20)} 待人工选定`, detail: `找到的货源在「货源」的「待选货源」里，勾选一个「选用」`,
+		title: `选货源：${short(c.item.name, 20)} 待人工选定`, detail: `找到的货源在「货源」里（按店里的商品分组），勾选一个「选用」`,
 	});
 	// 规格不匹配：人定哪个配哪个，写进货源那一行的「规格例外」（照抄第一个最像的，不对就改）；或者换货源
 	for (const [modelId, c] of unmatched) {
