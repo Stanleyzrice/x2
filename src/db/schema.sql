@@ -155,6 +155,124 @@ create table if not exists orders (
 	checked_at timestamptz
 );
 
+-- ── 上品（docs/listing.md） ──
+
+-- 店铺设置：一家店一行，人定的：核价参数、上品的默认值、允许的类目、水印、暂停上品。在 NocoDB 里改；比例在 0–1、汇率大于 0，填错存不进
+-- 核价参数的默认值是 lilto 的 landed-cost.json（2026-09-02 依账单和结算截图定）
+create table if not exists shop_settings (
+	shop text primary key,
+	-- Shopee 的店铺 id：x2 按它找这家店的浏览器（不是卖家账号 id，两个不一样）
+	shop_id text not null unique,
+	-- 核价（docs/listing.md「核价」）
+	fx numeric not null default 4.4 check (fx > 0),
+	price_per_kg_rmb numeric not null default 10.8 check (price_per_kg_rmb >= 0),
+	label_fee_rmb numeric not null default 1.5 check (label_fee_rmb >= 0),
+	weight_rounding_kg numeric not null default 0.01 check (weight_rounding_kg >= 0),
+	return_loss_rate numeric not null default 0.03 check (return_loss_rate between 0 and 1),
+	min_margin_rate numeric not null default 0.25 check (min_margin_rate between 0 and 1),
+	min_margin_rmb numeric not null default 8 check (min_margin_rmb >= 0),
+	commission_rate numeric not null default 0.06 check (commission_rate between 0 and 1),
+	pre_order_rate numeric not null default 0.03 check (pre_order_rate between 0 and 1),
+	payment_rate numeric not null default 0.025 check (payment_rate between 0 and 1),
+	coin_rate numeric not null default 0 check (coin_rate between 0 and 1),
+	free_shipping_rate numeric not null default 0.06 check (free_shipping_rate between 0 and 1),
+	free_shipping_min_twd numeric not null default 0 check (free_shipping_min_twd >= 0),
+	shipping_net_twd numeric not null default 0,
+	-- 上品的默认值：预售（出货天数取类目的上限）、起购量、库存（取 1688 现在的库存和它的小的）、开哪些物流渠道（渠道 id，逗号分隔；30019 不支持较长备货）
+	pre_order boolean not null default true,
+	min_purchase int not null default 1 check (min_purchase >= 1),
+	stock_cap int not null default 50 check (stock_cap >= 0),
+	channels text not null default '30005,30006,30012,30015,30017,30018,30020',
+	-- 允许的叶子类目 id（JSON 数组）；空是不限
+	categories jsonb,
+	-- 水印：文字空着就不能上品（两家店的封面要不一样）
+	watermark_text text,
+	watermark_size int not null default 32 check (watermark_size between 8 and 200),
+	watermark_opacity numeric not null default 0.35 check (watermark_opacity between 0 and 1),
+	watermark_position text not null default 'bottom-right' check (watermark_position in ('top-left', 'top-right', 'center', 'bottom-left', 'bottom-right')),
+	-- 暂停上品：写原因（例 店铺被限制）；空是不暂停
+	paused text,
+	updated_at timestamptz not null default now()
+);
+-- 两家店的平台费不一样：ni1206 的免运方案费每单最低 NT$60；cheeroutdoor 有虾币回馈 1.5%
+insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd) values ('ni1206', '348425', 0, 60), ('cheeroutdoor', '1554182542', 0.015, 0) on conflict do nothing;
+
+-- 商品稿：一个货源 × 一家店。x2 做（读货源、类目属性、规格和价格、图），agent 写标题和描述，人在 NocoDB 里审稿。
+-- 人改：标题、描述、重量、国内运费、不上了、备注、策略；主图、详情图（删掉的那张就不要了）
+create table if not exists listings (
+	id bigserial primary key,
+	shop text not null references shop_settings (shop),
+	offer_id text not null,
+	-- 从哪个策略来（现在都是人选的）：以后按策略看效果
+	strategy text not null default '人选',
+	cancelled boolean not null default false,
+	-- 人填：1688 没给重量时，每个规格都用它（kg）；国内运费（元 / 件）：货源包邮自动是 0，不知道就空着
+	weight_kg numeric check (weight_kg > 0),
+	freight_rmb numeric check (freight_rmb >= 0),
+	title text,
+	description text,
+	note text,
+	-- x2 做的：货源快照（标题、链接、主图、详情图、规格、服务、起订量）
+	offer jsonb,
+	offer_read_at timestamptz,
+	category_id bigint,
+	category_path jsonb,
+	category_name text,
+	-- 必填属性：[{ attribute_id, attribute_values: [{ value_id }] }]；attributes_text 给人看
+	attributes jsonb,
+	attributes_text text,
+	days_to_ship int,
+	-- 规格：[{ sku, skuId, specId, specs, costRmb, weightKg, stock, image, priceTwd }]
+	variants jsonb not null default '[]',
+	variants_text text,
+	-- 图：{ main: [...], detail: [...], options: {...}, sizeChart }，每张 { from（原图地址）, sha（原图）, final（成品）, imageId, width, height, verdict }
+	images jsonb not null default '{}',
+	-- 给人在 NocoDB 里看、删的图（NocoDB 的附件：Shopee 的图片地址）
+	main_images jsonb,
+	detail_images jsonb,
+	-- 核价用的参数快照
+	pricing jsonb,
+	-- 台湾成品审核（Gemini）
+	audit jsonb,
+	-- 检查算出来的
+	problems text,
+	step text,
+	step_detail text,
+	-- 建好以后
+	product_id text,
+	listed_at timestamptz,
+	created_at timestamptz not null default now(),
+	updated_at timestamptz not null default now(),
+	unique (shop, offer_id)
+);
+
+-- 图：一张图一行（字节的 sha256；1688 的地址带缓存参数，按地址认会重复付钱）。
+-- 原图记来源和筛字结果；译图存字节（付过钱，象寄的地址大约 80 天失效）；checks 是 Gemini 的结果，按「检查:版本:模型」存
+create table if not exists images (
+	sha256 text primary key,
+	kind text not null,
+	source text,
+	from_sha text,
+	mime text,
+	width int,
+	height int,
+	bytes bytea,
+	verdict text,
+	checks jsonb not null default '{}',
+	created_at timestamptz not null default now()
+);
+
+-- 成品传到哪家店、Shopee 的图片 id
+create table if not exists shop_images (
+	shop text not null,
+	sha256 text not null,
+	image_id text not null,
+	width int,
+	height int,
+	uploaded_at timestamptz not null default now(),
+	primary key (shop, sha256)
+);
+
 -- ── 加列（表建好以后加的列写在这里） ──
 
 -- 规格例外：店里的规格按名字在货源的规格里配不上时，人定的。一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）；

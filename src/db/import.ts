@@ -70,3 +70,35 @@ export async function importJson(sql: Sql, dir: string, account: string) {
 		return { sources: byItem.size, cartWrites: groups.size, cartLines: carted.length - missing, skipped: missing };
 	});
 }
+
+// lilto 的店铺设置（act/operating/shop-settings，本机镜像 ~/.lilto/cos 下）→ shop_settings：允许的类目、水印。只用一次，只填还空着的格子（人在 NocoDB 改过的不覆盖）。
+// lilto 按卖家账号 id 记店：348440 是 ni1206，1555026956 是 cheeroutdoor
+const LILTO_SHOPS: Record<string, string> = { "348440": "ni1206", "1555026956": "cheeroutdoor" };
+
+export async function importShopSettings(sql: Sql, dir: string): Promise<{ shop: string; categories: number; watermark: string }[]> {
+	const { readdir } = await import("node:fs/promises");
+	const latest = new Map<string, any>();
+	for (const f of (await readdir(dir)).filter((f) => f.endsWith(".jsonl"))) {
+		for (const line of (await readFile(join(dir, f), "utf8")).split("\n").filter(Boolean)) {
+			const r = JSON.parse(line);
+			const shop = LILTO_SHOPS[String(r.shopId)];
+			if (shop && (!latest.has(shop) || String(r.at) > String(latest.get(shop).at))) latest.set(shop, r);
+		}
+	}
+	const out: { shop: string; categories: number; watermark: string }[] = [];
+	for (const [shop, r] of latest) {
+		const ids = ((r.allowedCategoryIds ?? []) as unknown[]).map(String).filter((x) => /^\d+$/.test(x));
+		const w = r.watermark ?? {};
+		await sql`update shop_settings set
+			categories = coalesce(categories, ${ids.length ? sql.json(ids) : null}),
+			watermark_text = coalesce(watermark_text, ${w.text || null}),
+			watermark_size = case when watermark_text is null and ${Number(w.sizePx) || null}::int is not null then ${Number(w.sizePx) || 32} else watermark_size end,
+			watermark_opacity = case when watermark_text is null and ${w.opacity ?? null}::numeric is not null then ${Number(w.opacity ?? 0.35)} else watermark_opacity end,
+			watermark_position = case when watermark_text is null and ${w.position ?? null}::text is not null then ${String(w.position ?? "bottom-right")} else watermark_position end,
+			updated_at = now()
+			where shop = ${shop}`;
+		const [now] = await sql`select jsonb_array_length(coalesce(categories, '[]')) as n, watermark_text from shop_settings where shop = ${shop}`;
+		out.push({ shop, categories: Number(now!.n), watermark: String(now!.watermark_text ?? "") });
+	}
+	return out;
+}
