@@ -188,7 +188,9 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 		} catch (e) { p.drop = `取不到：${(e as Error).message}`; return; }
 		if (p.width! <= 10 || p.height! <= 10) { p.drop = `占位图（${p.width}×${p.height}）`; return; }
 		if (pics.detail.includes(p) && !detailFits(p.width!, p.height!)) { p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`; return; }
-		const s = await screened(sql, bytes.get(p.sha!)!);
+		// 问 Gemini 出错（超时……）只丢这一张，不挡商品稿；没缓存，下次做商品稿再问
+		const s = await screened(sql, bytes.get(p.sha!)!).catch((e: Error) => { p.drop = `筛字出错：${e.message}`; return null; });
+		if (!s) return;
 		Object.assign(p, s);
 		if (s.verdict === "d") p.drop = "有供应商痕迹或写给 1688 买家的说明（工厂、批发、联系方式、人民币价、售后、定制……）";
 	}));
@@ -234,7 +236,8 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 		const check = toTranslate.filter((p) => p.translated && !p.drop);
 		if (check.length) log(`检查译图（${new Set(check.map((p) => p.translated)).size} 张）`);
 		await Promise.all(check.map(async (p) => {
-			const why = translatedDrop(await translatedChecked(sql, bytes.get(p.sha!)!, p.translated!));
+			const c = await translatedChecked(sql, bytes.get(p.sha!)!, p.translated!).catch((e: Error) => { p.drop = `译图检查出错：${e.message}`; return null; });
+			const why = c && translatedDrop(c);
 			if (why) p.drop = why;
 		}));
 	}
