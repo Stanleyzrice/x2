@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import postgres from "postgres";
 import { z } from "zod";
-import { check } from "../src/check/index.ts";
+import { check, syncImages } from "../src/check/index.ts";
 import type { Reads } from "../src/read.ts";
 import { migrate } from "../src/db/index.ts";
 import { Usage } from "../src/errors.ts";
@@ -136,3 +136,27 @@ test("规格例外：x2 source --spec 写进用这个的货源那一行；两边
 	const [row] = await db`select sku_exceptions from sources where item_id = 'RACK'`;
 	assert.equal(row!.sku_exceptions, "特粗26管雙層側三網150金+輪 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮");
 });
+
+test("商品稿的图和 NocoDB 附件：x2 放上去；人删了哪张记下来，以后不用；新做好的照样加进去", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const pic = (id: string) => ({ from: `${id}.jpg`, imageId: id, width: 800, height: 800 });
+	const images = { main: [pic("m1"), pic("m2"), { from: "m3.jpg", drop: "有供应商痕迹" }], detail: [pic("d1")], options: [], waiting: [] };
+	const [l] = await db`insert into listings (shop, offer_id, images) values ('cheeroutdoor', '1', ${db.json(images)}) returning *`;
+	await syncImages(db, l);
+	const ids = (col: string) => (JSON.parse(l![col]) as { url: string }[]).map((a) => a.url.split("/").pop());
+	assert.deepEqual(ids("main_images"), ["m1", "m2"]);
+	assert.deepEqual(ids("detail_images"), ["d1"]);
+	// 人在 NocoDB 删了 m1
+	await db`update listings set main_images = ${JSON.stringify([{ url: "https://down-tw.img.susercontent.com/file/m2", title: "主图 2" }])} where id = ${l!.id}`;
+	const [after] = await db`select * from listings where id = ${l!.id}`;
+	await syncImages(db, after);
+	const [now] = await db`select removed_images, main_images from listings where id = ${l!.id}`;
+	assert.deepEqual(now!.removed_images, ["m1"]);
+	// 重做商品稿以后多了一张 m4：照样加进去，m1 还是不用
+	await db`update listings set images = ${db.json({ ...images, main: [...images.main, pic("m4")], shown: after!.images.shown })} where id = ${l!.id}`;
+	const [again] = await db`select * from listings where id = ${l!.id}`;
+	await syncImages(db, again);
+	const [last] = await db`select main_images from listings where id = ${l!.id}`;
+	assert.deepEqual((JSON.parse(last!.main_images) as { url: string }[]).map((a) => a.url.split("/").pop()), ["m2", "m4"]);
+});
+
