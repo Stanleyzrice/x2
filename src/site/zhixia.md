@@ -2,7 +2,7 @@
 
 读者是给 x2 加知虾操作的 agent。
 
-2026-09-30 从知虾页面的代码里读出来的：各页面的 webpack 模块里，每个接口是一个函数 `{url, method, params}`。这里只收和数据有关的；账号、支付、消息、后台管理的没收。前缀都是 `/api/shopee-report-service/pro`，下表省略。
+从知虾页面的代码里读出来的：各页面的 webpack 模块里，每个接口是一个函数 `{url, method, params}`。这里只收和数据有关的；账号、支付、消息、后台管理的没收。前缀都是 `/api/shopee-report-service/pro`，下表省略。
 
 怎么调：`api(路径, 参数)`（`zhixia.ts`），它带上 `siteId`、过限流、用页面的 axios 发。参数要看页面怎么传：在对应页面上找组件，读 `组件.$options.methods.getList` 的源码（`zhixia.ts` 里的具名函数就是这样查出来的）。回的外壳不统一：多数在 `data`，热搜词在 `hotWordList`，热词商品在 `itemListInfo`，长尾词在 `payload`。
 

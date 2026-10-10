@@ -101,7 +101,7 @@ export async function recommendedCategory(name: string, imageId = ""): Promise<a
 	return (await seller("/api/v3/category/get_recommended_category", { body: { item_id: 0, name, image: imageId, description: "", description_type: "normal" } })).data;
 }
 
-/** 各类目的出货天数范围（较长备货）和现货的出货天数 */
+/** 各类目的备货天数范围（较长备货）和现货的备货天数 */
 export async function shippingDays(): Promise<{ inStock: number; rules: { categoryIds: string[]; min: number; max: number }[] }> {
 	const b = await seller("/api/v3/product/get_product_constraints/");
 	return {

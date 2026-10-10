@@ -1,7 +1,7 @@
-// 类目、属性、出货天数：照 lilto 的 shopee_base.py（快照 1c8a7926）。docs/listing.md「每一步怎样算做完」
+// 类目、属性、备货天数：照 lilto 的 shopee_base.py（快照 1c8a7926）。docs/listing.md「每一步怎样算做完」
 // 类目：Shopee 按标题加一张已传的图推荐（只给标题回空），取第一个；要在本店允许的类目里。
 // 属性：只送必填的，值一字不差取自属性树（编的值发布被拒）：只有「是 / 否」的选「否」，有「其他」「一般」的选它，不然选第一个；
-// 要填字的必填属性（属性树里没有可选值）不拿标题编，交给人。出货天数取这个类目的上限（10、15、30 天）
+// 要填字的必填属性（属性树里没有可选值）不拿标题编，交给人。备货天数取这个类目的上限（10、15、30 天）
 import type { Attribute } from "../site/shopee/products.ts";
 
 /** get_recommended_category 的 data → 第一个推荐的类目路径（叶子在最后）和名字 */
@@ -27,7 +27,7 @@ export function pickAttributes(tree: Attribute[]): { attributes: { attribute_id:
 	return { attributes, text, missing };
 }
 
-/** 这个类目的出货天数上限（预售）；类目没有规则回 null */
+/** 这个类目的备货天数上限（预售）；类目没有规则回 null */
 export function daysToShip(categoryId: number, rules: { categoryIds: string[]; min: number; max: number }[]): number | null {
 	const r = rules.find((x) => x.categoryIds.includes(String(categoryId)));
 	return r ? r.max : null;

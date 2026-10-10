@@ -57,7 +57,7 @@ export function orderRow(r: any) {
 /** 1688 的物流状态里有「签收」就算签收了 */
 export const signedOf = (status: string) => /签收/.test(status);
 
-/** 一个 1688 账号的采购单（最近 pages 页 + 「退款售后」里更早的）→ 对采购单用的行。有进行中退款的行再读退款详情 */
+/** 一个 1688 账号的采购单（最近 pages 页 + 「退款售后」里更早的）→ 采购单分给订单用的行。有进行中退款的行再读退款详情 */
 export async function readPurchases(account: string, pages = 3): Promise<Purchase[]> {
 	return in1688(account, async () => {
 		const byId = new Map<string, BuyerOrder>();

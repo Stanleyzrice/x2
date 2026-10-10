@@ -112,7 +112,7 @@ export function readbackProblems(sent: any, got: any, channels: any[]): string[]
 	check("重量", num(got?.weight?.value) === num(sent.weight.value));
 	check("主图", JSON.stringify((got?.images ?? []).map(imageId)) === JSON.stringify(sent.images));
 	check("尺码表", imageId(got?.size_chart_info?.size_chart) === imageId(sent.size_chart_info.size_chart));
-	check("出货天数", Object.entries(sent.pre_order_info).every(([k, v]) => got?.pre_order_info?.[k] === v));
+	check("备货天数", Object.entries(sent.pre_order_info).every(([k, v]) => got?.pre_order_info?.[k] === v));
 	const enabled = new Set(channels.filter((c) => c.enabled).map((c) => String(c.channel_id ?? c.channelid ?? "")));
 	const wanted = new Set((sent.logistics_channels as any[]).filter((c) => c.enabled).map((c) => String(c.channelid)));
 	check("物流渠道", enabled.size === wanted.size && [...wanted].every((c) => enabled.has(c)));

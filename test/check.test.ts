@@ -27,7 +27,7 @@ const snap = (s: Partial<Snapshot> = {}): Snapshot => ({
 	sources: [source({ chosen: true })], writes: [], purchases: [], cart: [], issues: [], ...s,
 });
 
-test("对采购单：采购单的件数按加购的先后分给订单，差的看购物车，都没有是不见了", () => {
+test("采购单分给订单：采购单的件数按加购的先后分给订单，差的看购物车，都没有是不见了", () => {
 	const w = { id: "1", account: "A", offerId: "O1", skuId: "S1", at: T0, lines: [{ sn: "1", modelId: "M1", qty: 1 }, { sn: "2", modelId: "M1", qty: 2 }] };
 	const all = reconcile([w], [purchase(3, { signed: true })], []);
 	assert.deepEqual(all.map((l) => [l.sn, l.state]), [["1", "已付款"], ["2", "已付款"]]);

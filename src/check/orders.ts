@@ -82,7 +82,7 @@ export function checkOrders(s: Snapshot): Result {
 	/** 货源 → 快照（给人看名字、价格） */
 	const offerOf = new Map(s.sources.map((x) => [x.offerId, x]));
 
-	// ── 加购记录、采购单 → 对采购单 ──
+	// ── 加购记录、采购单 → 采购单分给订单 ──
 	const cartWrites: CartWrite[] = s.writes
 		.filter((w) => w.op === "加购" && DONE.has(w.status) && w.params.account)
 		.map((w) => ({ id: w.id, account: w.params.account, offerId: w.params.offerId, skuId: w.params.skuId, at: w.finishedAt ?? s.now, lines: w.params.lines }));

@@ -46,7 +46,7 @@ export const ops: Ops = {
 	attributes: all("叶子类目的属性：必填的、可选值", z.object({ category: num("叶子类目 id") }), (p) => attributes(p.category)),
 	"recommended-category": get("Shopee 按商品名（和一张已传的图）推荐的类目", z.object({ name: str("商品名"), image: z.string().default("").describe("已传的图片 id（例商品资料 images 里的；只给商品名时站点常回空的 {}）") }),
 		(p) => recommendedCategory(p.name, p.image)),
-	"shipping-days": get("各类目的出货天数范围和现货的出货天数", undefined, () => shippingDays()),
+	"shipping-days": get("各类目的备货天数范围和现货的备货天数", undefined, () => shippingDays()),
 	performance: byPage("数据中心的商品表现：销售额、订单、件数、曝光、点击、访客、加购、转化",
 		z.object({ start: day("开始"), end: day("结束", true), period: z.enum(["past7days", "past30days"]).describe("期间") }),
 		async (p, n) => {

@@ -6,12 +6,12 @@
 
 - 凭证是 localStorage 的 `__tk`，放进 `x-wh-sessionkey` 请求头（没有 cookie）。外壳 `{ code, data, message }`：10000 成功，90000 会话失效。
 - 接口前缀 `/api/v2/common/cangboss`。页面 JS 里的路径写成 `/cangboss/…`，前面的 `/api/v2/common` 是它的 axios 的 baseURL。
-- 列表不按登录的账号过滤：每个都要带 `seller_id`，只用 `/sso/check` 读到的自己的 id（lilto 查到的越权）。
+- 列表不按登录的账号过滤：每个都要带 `seller_id`，只用 `/sso/check` 读到的自己的 id（不带会读到别的卖家的）。
 - 两次请求隔 2 秒以上。
 
 ## 订单（`/order/list_order`，POST）
 
-一行是一张订单。用到的字段（2026-10-09 对 64 张真订单核对过）：
+一行是一张订单。用到的字段（对真订单核对过）：
 
 | 字段 | 意思 |
 |---|---|
@@ -20,7 +20,7 @@
 | `platform_create_time` | 下单时间（秒）：预报的 `order_time` |
 | `platform_shop_id`、`shop_name` | 店铺 id（= Shopee 的 shop_id）、店名 |
 | `platform_status` | Shopee 的状态：READY_TO_SHIP、CANCELLED、COMPLETED、TO_CONFIRM_RECEIVE、TO_RETURN…… |
-| `status` | chanboss 状态：paid 待处理、pre_report 已预报、arrive 已到齐、packaged 已打包、delivery 已出库及以后、other 取消等。paid、arrive 是推断的（这批数据里没有） |
+| `status` | chanboss 状态：paid 待处理、pre_report 已预报、arrive 已到齐、packaged 已打包、delivery 已出库及以后、other 取消等。paid、arrive 是推断的，还没对真数据核对 |
 | `ship_deadline_time` | 出货期限（秒，chanboss 上叫「截止」） |
 | `item_detail_new[]` | 商品：`platform_item_id`、`platform_model_id`（Shopee 的规格 id；只有一个规格的商品是商品 id）、`model_id`（chanboss 的规格 id，预报要带）、`model_name`、`count`、`image` |
 | `problem`、`problem_note`、`problem_type` | 问题单 |
@@ -29,7 +29,7 @@
 
 ## 同步订单（从 Shopee 拉进 chanboss）
 
-新订单不会马上自己进 chanboss：要在订单页「同步订单」。2026-10-10 读页面的 JS 找到的（组件 PullOrderModal，标题「同步订单」；接口模块 51083）：
+新订单不会马上自己进 chanboss：要在订单页「同步订单」。读页面的 JS 找到的（组件 PullOrderModal，标题「同步订单」；接口模块 51083）：
 
 - **批量同步**（按时间段）：`POST /api/v2/common/shopee/order/sync_order`（前缀是 `/api/v2/common`，后面直接 `/shopee/…`，没有 `/cangboss`）
   ```json
@@ -44,7 +44,7 @@
 
 ## 预报（写，还没在真订单上跑过）
 
-2026-10-09 读页面的 JS 找到的（`/assets/chunk-*.js`，webpack 模块 15342 是接口，38262、91182 是预报用的帮手）：
+读页面的 JS 找到的（`/assets/chunk-*.js`，webpack 模块 15342 是接口，38262、91182 是预报用的帮手）：
 
 - **单张**：`POST /pack/add_report_new`。打拣货单时的「自动预报」这样发：
   ```json

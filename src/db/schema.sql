@@ -178,7 +178,7 @@ create table if not exists shop_settings (
 	free_shipping_rate numeric not null default 0.06 check (free_shipping_rate between 0 and 1),
 	free_shipping_min_twd numeric not null default 0 check (free_shipping_min_twd >= 0),
 	shipping_net_twd numeric not null default 0,
-	-- 上品的默认值：预售（出货天数取类目的上限）、起购量、库存（取 1688 现在的库存和它的小的）、开哪些物流渠道（渠道 id，逗号分隔；30019 不支持较长备货）
+	-- 上品的默认值：预售（备货天数取类目的上限）、起购量、库存（取 1688 现在的库存和它的小的）、开哪些物流渠道（渠道 id，逗号分隔；30019 不支持较长备货）
 	pre_order boolean not null default true,
 	min_purchase int not null default 1 check (min_purchase >= 1),
 	stock_cap int not null default 50 check (stock_cap >= 0),

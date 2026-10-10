@@ -1,4 +1,4 @@
-// 做商品稿（x2 listing make）：读货源 → 排规格、核价 → 做图 → 类目、属性、出货天数 → 记进商品稿。docs/listing.md「每一步怎样算做完」。
+// 做商品稿（x2 listing make）：读货源 → 排规格、核价 → 做图 → 类目、属性、备货天数 → 记进商品稿。docs/listing.md「每一步怎样算做完」。
 // 缺的（重量、国内运费、类目不在本店范围、要填字的属性）记成问题，检查把它们放进收件箱给人；人填了以后再跑一次，做过的不重做
 import { alibabaAccounts, in1688, inShop } from "../accounts.ts";
 import { type Sql } from "../db/index.ts";
@@ -101,7 +101,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	const priced = priceVariants(variantsOf(o), s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
 	problems.push(...priced.problems);
 
-	// 3. 图、类目、属性、出货天数：在这家店的浏览器里
+	// 3. 图、类目、属性、备货天数：在这家店的浏览器里
 	const done = await inShop(s.shopId, async () => {
 		// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
 		const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark!, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: priced.variants.map((v) => v.image).filter((x): x is string => Boolean(x)) }, log);
@@ -125,7 +125,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		Object.assign(out, { attributes: attrs.attributes, attributes_text: attrs.text.join("\n") || null });
 		if (attrs.missing.length) problems.push(`属性：必填的「${attrs.missing.join("、")}」要人填字`);
 		const days = daysToShip(leaf, (await shippingDays()).rules);
-		if (days === null) problems.push("出货天数：这个类目读不到出货天数的规则");
+		if (days === null) problems.push("备货天数：这个类目读不到备货天数的规则");
 		out.days_to_ship = days;
 		return out;
 	});

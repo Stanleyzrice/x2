@@ -52,16 +52,16 @@
 | `chat.ts` | `conversations`、`unreplied`、`messages` | `/webchat/api/v1.2/conversations`、`conversation/list`、`conversations/<id>/messages` |
 | `help.ts` | `articles`、`article` | `GET /help/api/v3/article/list/`、`detail/` |
 
-2026-09-30 对真店跑过 `test/live/shopee.ts`，读的都通了。写的都没在 x2 里跑过：是 lilto 旧工作台跑通过的做法，第一次用时人确认后再跑。
+读的都对真店跑通过（`test/live/shopee.ts`）。写的除了上品用的，都还没在 x2 里接上；第一次用时和人一起跑。
 
 ## 只能在页面上点的（没写成函数）
 
-这几样 lilto 旧工作台是操作页面做的，不是调接口。要做时照这里的做法，在对应的页面上找元素、找 React 的状态。
+这几样没有接口可调，要操作页面：照这里的做法，在对应的页面上找元素、找 React 的状态。
 
 | 做什么 | 页面 | 做法 |
 |---|---|---|
 | 回复评价 | `/portal/shop/rating`（评价管理） | 按钮 `[data-testid="reply-button"]`，从它的 React fiber 往上找 `memoizedProps.info`，核对 `commentId`、`orderId` 和评价原文；点开后在 `[data-testid="reply-modal"]` 的 textarea 里用原生的 value setter 填字、发 input 事件，再点 `[data-testid="reply-submit-button"]` |
-| 发聊聊 | `/new-webchat/conversations` | 消息走 WebSocket（SharedWorker `webchat/worker.js`，socket.io），不是 HTTP。旧做法：`window.postMessage({type: "MiniChatRedirect", userId, shopId, conversationId, isFromSearch: true})` 打开会话；在 `textarea[placeholder="輸入文字"]` 里填字；从 redux store 的 `conversationReducer`、`entityReducer.conversations` 核对会话和最新消息 id 没变；再点输入框旁边唯一的 `i` 图标 |
+| 发聊聊 | `/new-webchat/conversations` | 消息走 WebSocket（SharedWorker `webchat/worker.js`，socket.io），不是 HTTP。做法：`window.postMessage({type: "MiniChatRedirect", userId, shopId, conversationId, isFromSearch: true})` 打开会话；在 `textarea[placeholder="輸入文字"]` 里填字；从 redux store 的 `conversationReducer`、`entityReducer.conversations` 核对会话和最新消息 id 没变；再点输入框旁边唯一的 `i` 图标 |
 | 建商品优惠券 | `/portal/marketing/vouchers/new?usecase=2` | 从输入框的 React fiber 找到表单对象（有 `fields["convertFields.items"]`），用 `form.setValuesIn` 填、`form.validate()`，再点「確認」 |
 | 广告：从自动选品里移出一个商品、单独开广告 | — | `POST /api/pas/v1/product/gms/item/edit`（`type: "delete"`）、`POST /api/pas/v1/product/publish`（`bidding_strategy: "roi_two"`，预算和 ROAS 乘 100000）；lilto 做过，没搬 |
 

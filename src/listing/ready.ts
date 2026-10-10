@@ -17,7 +17,7 @@ export function productOf(l: any, s: Settings): { product?: Product; info?: Reco
 	const variants = ((l.variants ?? []) as Priced[]).map((v) => ({ ...v }));
 	if (variants.some((v) => v.priceTwd === null)) problems.push("有规格没定价");
 	if (!l.category_path?.length) problems.push("还没定类目");
-	if (!l.days_to_ship) problems.push("还没定出货天数");
+	if (!l.days_to_ship) problems.push("还没定备货天数");
 	if (problems.length) return { problems };
 	// 规格图被筛掉的选项不挂图
 	const optionImages = Object.fromEntries(usable(pics.options).map((p) => [p.from, p.imageId!]));
