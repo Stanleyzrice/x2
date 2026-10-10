@@ -2,7 +2,8 @@
 // 查过的事实（2026-09-30）：tradeModel.skuMap 是规格（specAttrs 用「&gt;」连接几个属性，例「kitty猫款式5&gt;20*30cm【硅藻泥】3mm」）；
 // offerDetail.skuProps 是属性（prop，例「颜色」「尺寸」）和它的取值（value: {name, imageUrl}），第一个属性的取值带图片；只有一个规格的货源没有 skuMap。
 // 2026-10-10 核对过：mainImageList 是 { fullPathImageURI }；detailDescription.freightInfo.skuWeight 按 skuId 记运费重量（kg），没有的用 unitWeight；
-// 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee
+// 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee；
+// freightInfo.totalCost 是寄到账号默认地址（recieveAddress）买 1 件的运费（页面上的「运费¥8起」）
 import { z } from "zod";
 import { page } from "../browser.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
@@ -13,7 +14,9 @@ export type Sku = { skuId: string; specId: string; name: string; attrs: string[]
 export type Prop = { name: string; values: { name: string; image: string }[] };
 /** 货源的服务：一件代发、包邮、48 小时发货（deliveryDays 是卖家承诺几天内发货） */
 export type Tags = { onePsale: boolean; freeShipping: boolean; ship48h: boolean; deliveryDays: number | null };
-export type Offer = { offerId: string; url: string; title: string; image: string; unit: string; minQty: number; props: Prop[]; skus: Sku[]; images?: string[]; detailUrl?: string | null; tags?: Tags };
+/** 国内运费：寄到 1688 账号的默认地址（就是我们这里）买 1 件要多少（元）；包邮是 0，读不到是 null */
+export type Freight = { costRmb: number | null; to: string };
+export type Offer = { offerId: string; url: string; title: string; image: string; unit: string; minQty: number; props: Prop[]; skus: Sku[]; images?: string[]; detailUrl?: string | null; tags?: Tags; freight?: Freight };
 
 /** 1688 链接或货源 id → 货源 id（纯数字）；认不出是 null */
 export function offerIdOf(linkOrId: string): string | null {
@@ -49,6 +52,8 @@ export async function offer(offerId: string): Promise<Offer> {
 		};
 		const images = [...new Set([...((d.mainImageList ?? []) as any[]).map((i) => https(i?.fullPathImageURI ?? i)), ...((data?.gallery?.fields?.mainImage ?? []) as unknown[]).map(https)].filter(Boolean))];
 		const detailUrl = https(d.detailUrl ?? data?.description?.fields?.detailUrl) || null;
+		const cost = Number(freight.totalCost);
+		const freightOut = { costRmb: tags.freeShipping ? 0 : Number.isFinite(cost) && freight.totalCost !== undefined && freight.totalCost !== null ? cost : null, to: String(freight.recieveAddress ?? "") };
 		const hasSkus = (t.skuMap ?? []).length > 0;
 		const props = hasSkus
 			? ((d.skuProps ?? []) as { prop?: string; value?: { name: string; imageUrl?: string }[] }[])
@@ -62,7 +67,7 @@ export async function offer(offerId: string): Promise<Offer> {
 				return { skuId: String(s.skuId), specId: s.specId ?? "", name: attrs.join(" / "), attrs, price: Number(s.price || s.discountPrice || t.minPrice), stock: Number(s.canBookCount ?? 0), image: valueImages.get(attrs[0]!) ?? "", weightKg: weightOf(s.skuId) };
 			})
 			: [{ skuId: String(t.offerId), specId: "", name: "", attrs: [], price: Number(t.minPrice), stock: Number(t.canBookedAmount ?? 0), image: d.mainImageList?.[0]?.fullPathImageURI ?? "", weightKg: weightOf(t.offerId) }];
-		return { offerId: String(t.offerId), url, title: d.subject, image: images[0] ?? "", unit: t.unit ?? "", minQty: Number(t.beginAmount ?? 1), props, skus, images, detailUrl, tags };
+		return { offerId: String(t.offerId), url, title: d.subject, image: images[0] ?? "", unit: t.unit ?? "", minQty: Number(t.beginAmount ?? 1), props, skus, images, detailUrl, tags, freight: freightOut };
 	}, url);
 	if ("error" in got) throw new NeedsHuman(`读 1688 货源 ${offerId}：${got.error}`);
 	if ("gone" in got) throw new Gone(`1688 货源 ${offerId} 不存在或已下架`);

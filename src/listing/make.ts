@@ -97,7 +97,8 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，一件一件买不了`);
 
 	// 2. 规格、核价
-	const freight = l.freight_rmb !== null ? Number(l.freight_rmb) : o.tags?.freeShipping ? 0 : null;
+	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填
+	const freight = l.freight_rmb !== null ? Number(l.freight_rmb) : o.freight?.costRmb ?? (o.tags?.freeShipping ? 0 : null);
 	const priced = priceVariants(variantsOf(o), s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
 	problems.push(...priced.problems);
 
@@ -132,7 +133,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 
 	return save(sql, id, {
 		...done,
-		offer: { offerId: o.offerId, url: o.url, title: o.title, images: o.images, detail, tags: o.tags, minQty: o.minQty, props: o.props, skus: o.skus },
+		offer: { offerId: o.offerId, url: o.url, title: o.title, images: o.images, detail, tags: o.tags, freight: o.freight, minQty: o.minQty, props: o.props, skus: o.skus },
 		offer_read_at: new Date(),
 		variants: priced.variants,
 		variants_text: priced.variants.map((v) => `${v.specs.map((x) => x.value).join(" / ") || "（单规格）"}：${v.priceTwd ? `NT$${v.priceTwd}` : "未定价"}，库存 ${v.stock}，${v.weightKg ?? "?"} kg`).join("\n"),
