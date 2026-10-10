@@ -5,8 +5,8 @@
 // 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee；
 // freightInfo.totalCost 是寄到账号默认地址（recieveAddress）买 1 件的运费（页面上的「运费¥8起」）
 import { z } from "zod";
-import { page } from "../browser.ts";
-import { NeedsHuman, Usage } from "../errors.ts";
+import { challenge, page } from "../browser.ts";
+import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { all, byPage, get, type Ops, str, strs } from "./op.ts";
 
 /** attrs：每个属性的取值，顺序同 Offer.props */
@@ -89,15 +89,23 @@ export async function detailImages(detailUrl: string): Promise<string[]> {
 // 购物车、加购、采购单、物流都在页面里用页面自己的 lib.mtop.request 发（签名由它算）。依据 lilto 的 packages/presets/src/1688.ts（2026-09-24 读的 mtop.js 源码）：
 // 站点回 SUCCESS 时 resolve；站点回别的 ret 时 reject 整个响应（带 api）；库自己超时、解析失败时 reject 的对象没有 api，这时请求可能已经到了站点
 
-/** ok：站点回 SUCCESS；site：站点回了别的 ret（确定是站点的答复）；unknown：没有站点的答复（超时、解析失败），请求可能已经到了站点；blocked：要登录或过滑块 */
-type Mtop = { kind: "ok"; data: any } | { kind: "site"; ret: string } | { kind: "unknown"; ret: string } | { kind: "blocked"; ret: string };
+/** ok：站点回 SUCCESS；site：站点回了别的 ret（确定是站点的答复）；unknown：没有站点的答复（超时、解析失败），请求可能已经到了站点；
+ * blocked：要登录，或要过滑块验证（challenge），请求没发出去或站点没受理 */
+type Mtop = { kind: "ok"; data: any } | { kind: "site"; ret: string } | { kind: "unknown"; ret: string } | { kind: "blocked"; ret: string; challenge?: boolean };
 
-/** 打开 url（它要有 lib.mtop），在页面里调一个 mtop 接口 */
+/** 在 url 这一页（它要有 lib.mtop）里调一个 mtop 接口。标签页已经在这一页、lib.mtop 也在的，不再加载（同一页上发几个请求，少加载几次 1688）。
+ * 发之前就跳了滑块验证的算没发（blocked）；发了以后页面弹出验证框的，browser.ts 抛 Challenge（请求可能在人拉过滑块以后才到站点） */
 async function mtop(url: string, api: string, data: Record<string, string>): Promise<Mtop> {
-	const p = await page(new URL(url).origin);
-	await p.goto(url);
-	return p.run(async (api: string, data: Record<string, string>) => {
-		if (/login|passport|punish/.test(location.href)) return { kind: "blocked" as const, ret: "1688 要登录或要过滑块：在浏览器里处理一下" };
+	const u = new URL(url);
+	const p = await page(u.origin);
+	try {
+		if (!(await p.run((path: string) => location.pathname === path && Boolean((window as any).lib?.mtop), u.pathname))) await p.goto(url);
+	} catch (e) {
+		if (e instanceof Challenge) return { kind: "blocked", ret: e.message, challenge: true };
+		throw e;
+	}
+	const r = await p.run(async (api: string, data: Record<string, string>) => {
+		if (/login|passport|punish/.test(location.href)) return { kind: "blocked" as const, ret: "1688 要登录：在浏览器里登录 1688" };
 		const lib = (window as any).lib;
 		if (!lib?.mtop) return { kind: "site" as const, ret: "页面没加载好（没有 lib.mtop），没有发请求" };
 		try {
@@ -106,15 +114,19 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 		} catch (e: any) {
 			const ret = ((e?.ret ?? []) as string[]).join("，") || String(e);
 			if (!e?.api) return { kind: "unknown" as const, ret };
-			if (/FAIL_SYS_SESSION_EXPIRED|FAIL_SYS_USER_VALIDATE/.test(ret)) return { kind: "blocked" as const, ret };
+			// 网关要过滑块（阿里系风控）：站点没受理
+			if (/FAIL_SYS_USER_VALIDATE|RGV587_ERROR/.test(ret)) return { kind: "challenge" as const, ret };
+			if (/FAIL_SYS_SESSION_EXPIRED/.test(ret)) return { kind: "blocked" as const, ret };
 			return { kind: "site" as const, ret };
 		}
 	}, api, data);
+	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser)).message, challenge: true } : r;
 }
 
 /** 读的接口：不是 ok 就抛错 */
 async function read(url: string, api: string, data: Record<string, string>, what: string): Promise<any> {
 	const r = await mtop(url, api, data);
+	if (r.kind === "blocked" && r.challenge) throw new Challenge(r.ret);
 	if (r.kind === "blocked") throw new NeedsHuman(`${what}：${r.ret}`);
 	if (r.kind !== "ok") throw new Error(`${what}：${r.ret}`);
 	return r.data;

@@ -42,7 +42,7 @@ x2 strategy list                        # 选品的策略：每个出了几份�
 
 建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
 
-两家店各开一个浏览器（Chrome 的不同用户）：x2 每个连着的浏览器读一次登录着的店和 1688 账号，按店、按账号选。只连着一个浏览器、或要手动选时，用 `X2_BROWSER`。
+两家店各开一个浏览器（Chrome 的不同用户），1688、知虾、chanboss 登录在其中一个里。x2 按登录选浏览器（每个进程现读一次，不存库）：Shopee 按店，1688、知虾、chanboss 用登录着的那个；要强制指定，设 `X2_BROWSER`（浏览器在 cdp-relay 里的 id）。几个 x2 同时跑：同一个浏览器的同一个站点一次只让一个进程用，别的排队（stderr 写着在等谁）；1688 的页面两次加载之间隔 3 秒，跳了滑块验证就停下（退出码 3，说在哪个浏览器里拉）。
 
 ## 读站点：x2 <站点> <操作>
 
@@ -60,6 +60,7 @@ x2 schema                                   # 全部操作的说明和参数（J
 - 列表（list）默认翻到底，`--pages N` 只翻 N 页，`--cursor <next>` 从上次停下的地方接着翻；输出 `{ rows, next }`，`next` 是 null 就是到底了。
 - 只收读。写不进通用入口：写只经 `x2 propose` → 人批准 → `x2 run`。
 - 逃生口：`x2 shopee raw --path …`、`x2 zhixia raw --path …`，只 GET。
+- Shopee 按店读：连着几家店时给 `--shop <店>`（账号名，例 `x2 shopee orders --shop ni1206`）；只有一个浏览器登录着 Shopee 时不用给。
 
 ## 输出约定
 
@@ -88,8 +89,9 @@ x2/
 ├ AGENTS.md               agent 开起来做什么、不许做什么（CLAUDE.md 引它）
 ├ docs/                   loop.md 循环怎么转；orders.md 订单；listing.md 上品；glossary.md 词
 ├ src/
-│ ├ browser.ts            唯一碰 cdp-relay 的地方：选浏览器（using）、用自己开的标签页、在页面里发请求
-│ ├ accounts.ts           按店找浏览器：每个浏览器里登录着哪家店、哪个 1688 账号
+│ ├ browser.ts            唯一碰 cdp-relay 的地方：选浏览器（using、按登录）、排队、用自己开的标签页、在页面里发请求、认出 1688 的滑块验证
+│ ├ accounts.ts           按登录找浏览器：每个浏览器里登录着哪家店、哪个 1688 账号，知虾、chanboss 登录在哪个里
+│ ├ lock.ts               跨进程的锁：同一个浏览器的同一个站点一次一个 x2 进程，1688 的页面加载隔开（~/x2/locks/）
 │ ├ errors.ts             错误分类和退出码：用法不对、要人处理
 │ ├ site/                 一个站点一个文件（大的一个目录），只管「怎么请求、怎么从响应里取出数据」；各站的接口一览和坑在同目录的 .md
 │ │ ├ op.ts               读操作的声明（get、list）和参数的类型（日期、逗号分隔的一列……）
@@ -118,4 +120,4 @@ x2/
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
 ```
 
-数据都在库里。本机只留一个文件：`~/x2/zhixia-usage.json`（知虾最近一小时的请求时间，限流用，几个 x2 进程共用）。凭证（库的密码，Gemini、象寄的 key）在环境变量里，或者写在仓库根目录的 `.env`（x2 启动时读，环境里已经有的不覆盖；不进 git）。
+数据都在库里。本机只留 `~/x2` 下的：`zhixia-usage.json`（知虾最近一小时的请求时间，限流用，几个 x2 进程共用）、`locks/`（几个 x2 进程排队的锁、1688 上一次加载页面的时间）。凭证（库的密码，Gemini、象寄的 key）在环境变量里，或者写在仓库根目录的 `.env`（x2 启动时读，环境里已经有的不覆盖；不进 git）。

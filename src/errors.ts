@@ -7,6 +7,9 @@ export class Usage extends Error {}
 /** 要人处理：没登录、要过滑块、浏览器没连上。请运营在浏览器里处理好再重试。退出码 3 */
 export class NeedsHuman extends Error {}
 
+/** 要人处理里的一种：站点跳了滑块验证（不是没登录）。人在那个浏览器里拉一下再重试 */
+export class Challenge extends NeedsHuman {}
+
 export const EXIT = { error: 1, usage: 2, human: 3, unknown: 4 } as const;
 
 export function kindOf(e: unknown): "usage" | "human" | "error" {

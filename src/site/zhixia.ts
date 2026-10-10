@@ -2,9 +2,10 @@
 // 请求要签名（x-risk-token 由页面现算），照请求重发会让令牌作废：用页面自己的 axios 发——webpack 模块 b775，
 // 注册一个模块拿到 require 再取它（模块 id 每次唯一：同名模块 webpack 不再执行工厂函数）。
 // 限流（lilto 2026-08-29 复盘：5 分钟 1150 次，令牌被作废）：两次请求隔 6～10 秒，每小时最多 200 次，都走 api()；
-// 次数记在 ~/x2/zhixia-usage.json，几个 x2 进程共用。回 401、602（没登录、令牌作废）立刻抛错，调用方停下，不换参数重试
+// 次数记在 ~/x2/zhixia-usage.json，几个 x2 进程共用：api() 从等限流到发完请求一直拿着知虾的锁（browser.ts 的 hold），几个进程不会同时算、同时发。
+// 回 401、602（没登录、令牌作废）立刻抛错，调用方停下，不换参数重试
 import { z } from "zod";
-import { page } from "../browser.ts";
+import { hold, page } from "../browser.ts";
 import { NeedsHuman } from "../errors.ts";
 import { all, byPage, get, ints, num, type Ops, parseJson, str } from "./op.ts";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -58,23 +59,25 @@ export async function ready(): Promise<void> {
 /** 用页面的 axios 发一个请求，回整个响应体（各接口的外壳不一样：有的在 data，有的在 hotWordList、payload）。
  * path 是 /api/shopee-report-service/pro 之后的一段；siteId 不用给，取页面当前的站点 */
 export async function api<T = any>(path: string, params: Record<string, unknown> = {}, method: "get" | "post" = "get"): Promise<T> {
-	await ready();
-	await throttle();
-	const p = await page(ORIGIN);
-	const body = await p.run(async (url: string, params: Record<string, unknown>, method: string) => {
-		if (location.pathname.startsWith("/workbench/login")) return { code: 401, msg: "没有登录" };
-		const w = window as any;
-		if (!w.webpackJsonp) return { code: -1, msg: "页面还没加载好：不是知虾的工作台页面" };
-		if (!w.__x2Http) {
-			const holder: { req: any } = { req: null };
-			const id = `x2-http-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-			w.webpackJsonp.push([[id], { [id]: (_m: unknown, _e: unknown, r: any) => { holder.req = r; } }, [[id]]]);
-			w.__x2Http = holder.req("b775").a;
-		}
-		const siteId = document.querySelector<any>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
-		const all = { siteId, ...params };
-		return w.__x2Http({ url, method, ...(method === "get" ? { params: all } : { data: all }), validateStatus: () => true });
-	}, `${PRO}${path}`, params, method);
+	const body = await hold(ORIGIN, async () => {
+		await ready();
+		await throttle();
+		const p = await page(ORIGIN);
+		return p.run(async (url: string, params: Record<string, unknown>, method: string) => {
+			if (location.pathname.startsWith("/workbench/login")) return { code: 401, msg: "没有登录" };
+			const w = window as any;
+			if (!w.webpackJsonp) return { code: -1, msg: "页面还没加载好：不是知虾的工作台页面" };
+			if (!w.__x2Http) {
+				const holder: { req: any } = { req: null };
+				const id = `x2-http-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+				w.webpackJsonp.push([[id], { [id]: (_m: unknown, _e: unknown, r: any) => { holder.req = r; } }, [[id]]]);
+				w.__x2Http = holder.req("b775").a;
+			}
+			const siteId = document.querySelector<any>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
+			const all = { siteId, ...params };
+			return w.__x2Http({ url, method, ...(method === "get" ? { params: all } : { data: all }), validateStatus: () => true });
+		}, `${PRO}${path}`, params, method);
+	});
 	const b = body as { code?: number; msg?: string };
 	if (b.code === 401 || b.code === 602) throw new NeedsHuman("知虾没有登录（或令牌失效）：在浏览器里登录知虾再试");
 	if (b.code !== undefined && Number(b.code) !== 200) throw new Error(`知虾 ${path} 回：${b.code} ${b.msg ?? ""}`);
