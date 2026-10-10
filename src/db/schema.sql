@@ -235,7 +235,7 @@ create table if not exists listings (
 	detail_images text,
 	-- 核价用的参数快照
 	pricing jsonb,
-	-- 台湾成品审核（Gemini）
+	-- Gemini 文字检查的结果（只提示，不挡）
 	audit jsonb,
 	-- 检查算出来的
 	problems text,
@@ -309,7 +309,7 @@ alter table listings alter column variants drop not null;
 alter table listings alter column variants drop default;
 -- 规格图：第一层每个选项一张（标题是选项名），NocoDB 的附件（JSON 文本）。只给人看：x2 照规格写回去，人删了不记
 alter table listings add column if not exists option_images text;
--- 保留的图（Shopee 的图片 id）：台湾成品审核挑出、人看过说要用的图（人说了，agent 用 x2 listing audit --accept 写）；以后审核再挑它也不挡
+-- 保留的图（Shopee 的图片 id）：人看过说要用的图（人说了，agent 用 x2 listing keep 写）：x2 去掉的放回来，以后 Gemini 文字检查再挑它也不去掉
 alter table listings add column if not exists kept_images jsonb not null default '[]';
 -- 商品稿的店铺不用外键（NocoDB 会把外键变成关联列，表单里就不能直接选店）；x2 做商品稿时核对店铺设置里有没有这家店
 alter table listings drop constraint if exists listings_shop_fkey;

@@ -1,13 +1,14 @@
 // 检查商品稿（docs/listing.md「每一步怎样算做完」）：每份的当前步骤、要人做的进收件箱、agent 能做的进 todo。纯函数，读写库在 index.ts
-import { auditIssues, auditKey } from "../listing/audit.ts";
+import { auditIssues, auditKey, auditNotes } from "../listing/audit.ts";
 import type { Settings } from "../listing/make.ts";
+import { imageNames } from "../listing/product.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
 import { specsOf } from "../listing/variants.ts";
 import type { InboxItem, Todo, Write } from "./orders.ts";
 
 /** 当前步骤：按流程排（NocoDB 看板的列也是这个顺序） */
-export const LISTING_STEPS = ["待做商品稿", "待补充", "待写文案", "待台湾审核", "台湾审核未通过", "待批准", "建商品中", "待上架", "已上架", "已暂停", "已放弃"] as const;
+export const LISTING_STEPS = ["待做商品稿", "待补充", "待写文案", "待 Gemini 文字检查", "待批准", "建商品中", "待上架", "已上架", "已暂停", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
 
 const IN_FLIGHT = new Set(["待批准", "已批准", "已提交", "结果未知", "不一致"]);
@@ -15,18 +16,20 @@ const short = (s: string, n = 20) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 export function checkListings(listings: any[], settings: Map<string, Settings>, writes: Write[]): { inbox: InboxItem[]; todo: Todo[]; steps: Map<string, { step: ListingStep; detail: string | null }> } {
 	const inbox: InboxItem[] = [], steps = new Map<string, { step: ListingStep; detail: string | null }>();
-	const toMake: string[] = [], stale: string[] = [], toWrite: { id: string; why: string }[] = [], toAudit: string[] = [];
+	const toMake: string[] = [], stale: string[] = [], toWrite: { id: string; why: string }[] = [], toCheck: string[] = [];
 	const ready: { op: string; params: Record<string, unknown> }[] = [], readyIds: string[] = [];
 	for (const l of listings) {
 		const id = String(l.id);
 		const s = settings.get(l.shop);
 		const name = short(String(l.title ?? l.offer?.title ?? `货源 ${l.offer_id}`));
 		const set = (step: ListingStep, detail: string | null = null) => steps.set(id, { step, detail });
+		// Gemini 文字检查挑出的问题（只提示）：带编号写进说明，图写附件上的名字
+		const notes = () => (l.audit ? auditNotes(auditIssues(l.audit, l.kept_images ?? [], imageNames(l.images ?? {}, specsOf(l.variants)))) : null);
 		if (l.cancelled) { set("已放弃"); continue; }
 		if (!s) { set("已暂停", "店铺设置无法读取：检查 NocoDB「店铺设置」里这家店填的数"); continue; }
 		if (l.listed_at) { set("已上架", l.product_id ? `商品 ${l.product_id}` : null); continue; }
 		const mine = writes.filter((w) => (w.op === "建商品" || w.op === "上架") && String(w.params?.listingId) === id && IN_FLIGHT.has(w.status));
-		if (mine.some((w) => w.status === "待批准")) { set("待批准", "收件箱里有「批准」"); continue; }
+		if (mine.some((w) => w.status === "待批准")) { set("待批准", ["收件箱里有「批准」", notes()].filter(Boolean).join("\n")); continue; }
 		if (mine.length) { set("建商品中", mine.map((w) => `${w.op}：${w.status}`).join("；")); continue; }
 		if (l.product_id) {
 			set("待上架", `商品 ${l.product_id}（下架）`);
@@ -59,22 +62,9 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			inbox.push({ key: `listing-fix:${id}`, kind: "商品稿", shop: l.shop, due: null, link: null, title: `商品稿：${name}（${l.shop}）待补充：${r.problems[0]}`, detail: r.problems.join("\n") });
 			continue;
 		}
-		if (!l.audit || l.audit.key !== auditKey(r.product, s.mark?.text ?? "")) { set("待台湾审核"); toAudit.push(id); continue; }
-		// 审核挑出的问题：改掉，或人放行（文案的放行记在审核里，图的放行是保留的图）才算通过。
-		// 挑出的图 x2 先处理（印在商品上的不算、详情图上后加的文案去掉），剩下的（多是封面、规格图）给人：换掉或放行
-		const open = auditIssues(l.audit, l.kept_images ?? []).filter((x) => x.status === "待处理");
-		if (open.length) {
-			const text = open.filter((x) => x.kind === "文案"), imgs = open.filter((x) => x.kind === "图");
-			set("台湾审核未通过", open.slice(0, 3).map((x) => `${x.n}. ${x.text}`).join("；"));
-			if (text.length) toWrite.push({ id, why: `台湾审核挑出文案的问题：${text.map((x) => `${x.n}. ${x.text}`).join("；")}` });
-			if (imgs.length) inbox.push({
-				key: `listing-image:${id}`, kind: "商品稿", shop: l.shop, due: null, link: null,
-				title: `商品稿：${name}（${l.shop}）台湾审核挑出 ${imgs.length} 张图有问题`,
-				detail: `${imgs.map((x) => `${x.n}. ${x.role ?? "图"} ${x.image}：${x.text}`).join("\n")}\n\n换掉：主图、详情图在 NocoDB「商品稿」里删除（封面删了，下一张主图当封面）；规格图换不了，不要这个规格就告诉 agent（x2 listing drop）\n放行（误报或无妨，这张要用）：告诉 agent 放行哪几条（x2 listing audit ${id} --accept 编号）`,
-			});
-			continue;
-		}
-		set("待批准");
+		if (!l.audit || l.audit.key !== auditKey(r.product)) { set("待 Gemini 文字检查"); toCheck.push(id); continue; }
+		// Gemini 文字检查只提示、不挡：查过了，别的都齐了就待批准，挑出的问题写在说明里，人审稿时看
+		set("待批准", notes());
 		ready.push({ op: "建商品", params: { listingId: id, shop: l.shop, shopId: s.shopId, parentSku: r.product.parentSku, productInfo: r.info!, hash: r.hash! } });
 		ready.push({ op: "上架", params: { listingId: id, shop: l.shop, shopId: s.shopId, parentSku: r.product.parentSku, title: r.product.title } });
 		readyIds.push(id);
@@ -85,10 +75,10 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 		todo.push({ kind: "做商品稿", why, ids: [...toMake, ...stale], command: `x2 listing make ${[...toMake, ...stale].join(" ")}` });
 	}
 	if (toWrite.length) todo.push({ kind: "写文案", why: `${toWrite.length} 份商品稿要写标题和描述：${toWrite.map((x) => `${x.id}（${x.why}）`).join("、")}`, ids: toWrite.map((x) => x.id), command: `x2 listing show <商品稿>，写好用 x2 listing text` });
-	if (toAudit.length) todo.push({ kind: "台湾审核", why: `${toAudit.length} 份商品稿的文案或图变了，要再审`, ids: toAudit, command: `x2 listing audit ${toAudit.join(" ")}` });
+	if (toCheck.length) todo.push({ kind: "Gemini 文字检查", why: `${toCheck.length} 份商品稿的文案或图还没查过`, ids: toCheck, command: `x2 listing audit ${toCheck.join(" ")}` });
 	if (ready.length) todo.push({
-		kind: "上架", why: `${readyIds.length} 份商品稿已过台湾审核，待批准上架`,
-		propose: { title: `上架 ${readyIds.length} 个商品稿（${readyIds.join("、")}）：先在 NocoDB「商品稿」里查看标题、图、价格`, writes: ready },
+		kind: "上架", why: `${readyIds.length} 份商品稿待批准上架`,
+		propose: { title: `上架 ${readyIds.length} 个商品稿（${readyIds.join("、")}）：先在 NocoDB「商品稿」的「审稿」里看标题、图、价格和说明`, writes: ready },
 	});
 	return { inbox, todo, steps };
 }

@@ -1,4 +1,4 @@
-// 文案的硬规矩（docs/listing.md「文案」）：标题 10–60 字、描述 3–3000 字、不写采购端和卖家话术。写得好不好由台湾成品审核和人审稿看
+// 文案的硬规矩（docs/listing.md「文案」）：标题 10–60 字、描述 3–3000 字、不写采购端和卖家话术。写得好不好由 Gemini 文字检查和人审稿看
 /** 标题、描述的硬规矩（docs/listing.md「文案」）；回问题 */
 export function textProblems(title: string, description: string): string[] {
 	const p: string[] = [];

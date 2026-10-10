@@ -6,6 +6,7 @@ import { IMAGE } from "../site/shopee/seller.ts";
 import { NeedsHuman } from "../errors.ts";
 import { read1688, type Read, type Reads } from "../read.ts";
 import { settingsOf, type Settings } from "../listing/make.ts";
+import { LABEL, usedPics } from "../listing/product.ts";
 import { isSingle, specsOf } from "../listing/variants.ts";
 import { checkListings } from "./listings.ts";
 import { checkOrders, type InboxItem, planned, type Result, type Snapshot, type Todo } from "./orders.ts";
@@ -84,24 +85,25 @@ async function loopItems(sql: Sql, reads: Reads): Promise<InboxItem[]> {
 export type Checked = { todo: Todo[]; opened: number; closed: number };
 
 /** 商品稿的图和 NocoDB 的附件对一下：x2 上次放上去的（images.shown）里人删掉的记进 removed_images；
- * 再把现在要用的（做好的、没删的；主图最多 9 张、详情图最多 12 张）写回附件。附件是 Shopee 的图片地址，NocoDB 直接显示。
- * 规格图（第一层每个选项一张，标题是选项名）只给人看：人删了不记，每次照规格写回去 */
+ * 再把现在要用的（usedPics：做好的、没去掉、没删的；主图最多 9 张、详情图最多 12 张）写回附件，标题是「主图 N」「详情图 N」（号不跟着删图变）。
+ * 附件是 Shopee 的图片地址，NocoDB 直接显示。规格图（第一层每个选项一张，标题是选项名）只给人看：人删了不记，每次照规格写回去 */
 export async function syncImages(sql: Sql, l: any): Promise<void> {
 	if (!l.images?.main) return;
 	const removed = new Set<string>((l.removed_images ?? []) as string[]);
 	const shown = (l.images.shown ?? {}) as Record<string, string[]>;
 	const idOf = (a: any) => String(a?.url ?? "").split("?")[0]!.split("/").pop()!;
 	const parse = (t: string | null) => { try { return t ? (JSON.parse(t) as any[]).map(idOf) : null; } catch { return null; } };
-	const cols = [["main_images", "main", 9], ["detail_images", "detail", 12]] as const;
+	const cols = [["main_images", "main"], ["detail_images", "detail"]] as const;
 	for (const [col, role] of cols) {
 		const present = parse(l[col]);
 		if (present) for (const id of shown[role] ?? []) if (!present.includes(id)) removed.add(id);
 	}
 	const next: Record<string, string[]> = {};
 	const att: Record<string, string> = {};
-	for (const [col, role, max] of cols) {
-		next[role] = ((l.images[role] ?? []) as any[]).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId)).slice(0, max).map((p) => p.imageId as string);
-		att[col] = JSON.stringify(next[role]!.map((id, i) => ({ url: `${IMAGE}${id}`, title: `${role === "main" ? "主图" : "详情图"} ${i + 1}`, mimetype: "image/jpeg" })));
+	for (const [col, role] of cols) {
+		const used = usedPics(l.images, role, removed);
+		next[role] = used.map(({ pic }) => pic.imageId!);
+		att[col] = JSON.stringify(used.map(({ pic, n }) => ({ url: `${IMAGE}${pic.imageId}`, title: `${LABEL[role]} ${n}`, mimetype: "image/jpeg" })));
 	}
 	const specs = specsOf(l.variants);
 	const optionIds = new Map(((l.images.options ?? []) as any[]).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId)).map((p) => [p.from as string, p.imageId as string]));

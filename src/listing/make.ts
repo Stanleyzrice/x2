@@ -107,7 +107,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		const out: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
 		const cover = pics.main.find((p) => p.imageId);
 		if (!cover) { problems.push("图：缺可用的主图"); return out; }
-		if (pics.waiting.length) problems.push(`图：${pics.waiting.length} 张译图结果未知，待人核对（在「写入」里改成已核对或被拒）`);
 		let path: number[] = l.category_path ?? [];
 		if (!path.length) {
 			log("推荐类目");

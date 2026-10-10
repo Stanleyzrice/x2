@@ -109,7 +109,7 @@ agent 自己定策略、做实验（explore / exploit）：选货源、上品、
 | 全部 | 订单 | 表格 | 下单时间，新的在前 | — |
 | 上报到货问题 | 到货问题 | 表单 | — | — |
 | 未处理 | 到货问题 | 表格 | 没勾「已处理」 | 没有未处理的到货问题 |
-| 审稿 | 商品稿 | 画廊（封面是主图） | 待批准、待补充、台湾审核未通过的 | 没有等你看的商品稿 |
+| 审稿 | 商品稿 | 画廊（封面是主图） | 待批准、待补充的 | 没有等你看的商品稿 |
 | 当前步骤 | 商品稿 | 看板 | 没勾「放弃」的 | — |
 | 添加货源 | 商品稿 | 表单 | — | — |
 | 待选货源 | 货源 | 表格 | 还没勾「选用」的，按商品分组 | 卖出的商品都有货源 |
@@ -127,7 +127,7 @@ x2 propose               agent 写一批待批准的写入（JSON 从 stdin 进�
 x2 approve <批次>         人在终端里说「批准」：agent 替人勾上
 x2 run [--try 操作,…]     执行批准了的写入；没在真站点跑过的写操作要加 --try
 x2 source …              给商品找货源、写规格例外
-x2 listing …             上品：add、make、show、text、audit、drop、list
+x2 listing …             上品：add、make、show、text、audit、keep、drop、list
 x2 <站点> <操作>          读站点（只读）
 x2 db migrate | import | import-shops
 x2 nocodb                建 NocoDB 的中文名和视图

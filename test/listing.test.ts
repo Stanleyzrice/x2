@@ -278,7 +278,7 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 });
 
 import { checkListings } from "../src/check/listings.ts";
-import { acceptIssues, auditDropped, auditIssues, auditKey, auditPassed, dispose, dropAudited, restoreAudited, roleOf } from "../src/listing/audit.ts";
+import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop } from "../src/listing/audit.ts";
 import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
 import { settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
@@ -294,7 +294,7 @@ const ready = (o: Record<string, unknown> = {}) => ({
 	id: "7", shop: "cheeroutdoor", offer_id: "952803717616", cancelled: false, listed_at: null, product_id: null, problems: null,
 	offer: { title: "雨衣" }, title: "輕便雨衣 成人連身 防水透氣 騎車通勤", description: "防水雨衣，騎車通勤用", category_path: [100637, 101324], days_to_ship: 10, attributes: [],
 	variants: colors(),
-	images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")], waiting: [] }, removed_images: [], audit: null, ...o,
+	images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")] }, removed_images: [], audit: null, ...o,
 });
 
 test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能做的进 todo", () => {
@@ -311,27 +311,18 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	assert.match(fix.inbox[0]!.title, /待补充：重量/);
 	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
 	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
-	assert.equal(run(ready()).steps.get("7")!.step, "待台湾审核");
-	// 审过了、内容没变：待批准，一批两个写入（建商品、上架）
+	assert.deepEqual([run(ready()).steps.get("7")!.step, run(ready()).todo[0]!.kind], ["待 Gemini 文字检查", "Gemini 文字检查"]);
+	// 查过了、内容没变：待批准，一批两个写入（建商品、上架）
 	const l = ready();
-	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!, "新新家居日用好物賣場");
+	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
 	const ok = run({ ...l, audit: { key, textIssues: [], images: [] } });
-	assert.equal(ok.steps.get("7")!.step, "待批准");
+	assert.deepEqual(ok.steps.get("7"), { step: "待批准", detail: null });
 	const t = ok.todo.find((x) => x.kind === "上架");
 	assert.ok(t && t.kind === "上架");
 	assert.deepEqual(t.propose.writes.map((w) => w.op), ["建商品", "上架"]);
 	assert.equal((t.propose.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
-	// 审过以后改了标题：要再审
-	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待台湾审核");
-	// 审核挑出的问题带编号：文案的给 agent 改，图的给人删除或放行；人放行了文案那条、保留了那张图，就待批准
-	const issues = { key, textIssues: ["規格名有簡體字"], images: [{ id: "m1", issues: ["「产品」是簡體"] }], at: "t0" };
-	const bad = run({ ...l, audit: issues });
-	assert.equal(bad.steps.get("7")!.step, "台湾审核未通过");
-	assert.match(bad.inbox[0]!.detail, /2\. 图 m1：「产品」是簡體/);
-	assert.match(bad.inbox[0]!.detail, /x2 listing audit 7 --accept/);
-	assert.match(bad.todo.find((x) => x.kind === "写文案")!.why, /1\. 規格名有簡體字/);
-	assert.equal(run({ ...l, audit: { ...issues, accepted: [{ n: 1, at: "t1" }] } }).inbox.length, 1);
-	assert.equal(run({ ...l, audit: { ...issues, accepted: [{ n: 1, at: "t1" }] }, kept_images: ["m1"] }).steps.get("7")!.step, "待批准");
+	// 查过以后改了标题：要再查
+	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待 Gemini 文字检查");
 	// 待批准、待上架、已上架、已放弃、已暂停
 	assert.equal(run(l, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "待批准");
 	const built = run({ ...l, product_id: "51567712845" });
@@ -345,7 +336,7 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 test("去掉规格以后：去掉的不上，规格图只挂还在的选项，审核键跟着变；规格名变了，审核键也跟着变", () => {
 	const s = settingsOf(shopRow);
 	const specs = grid([["顏色", ["黑貓", "定製"]], ["尺寸", ["40*60", "60*90cm（升級版）"]]]);
-	const images = { main: [pic("m1")], detail: [], options: [pic("o1", "黑貓.jpg"), pic("o2", "定製.jpg")], waiting: [] };
+	const images = { main: [pic("m1")], detail: [], options: [pic("o1", "黑貓.jpg"), pic("o2", "定製.jpg")] };
 	const all = productOf(ready({ variants: specs, images }), s).product!;
 	assert.deepEqual(all.optionImages, { "黑貓.jpg": "o1", "定製.jpg": "o2" });
 	const r = dropSpecs(specs, ["定製"]);
@@ -353,11 +344,11 @@ test("去掉规格以后：去掉的不上，规格图只挂还在的选项，�
 	const kept = productOf(ready({ variants: r.specs, images, removed_variants: r.skus }), s).product!;
 	assert.deepEqual(kept.variants.map((x) => x.sku), ["LT1-00", "LT1-01"]);
 	assert.deepEqual(kept.optionImages, { "黑貓.jpg": "o1" });
-	assert.notEqual(auditKey(kept, "水印"), auditKey(all, "水印"));
+	assert.notEqual(auditKey(kept), auditKey(all));
 	// 规格里还有已移除的货号（没跟着改）：要重做商品稿
 	assert.match(productOf(ready({ variants: specs, images, removed_variants: r.skus }), s).problems.join(), /已移除的规格还在/);
 	// 规格名改了：审核键跟着变，要再审；名字一样就不用
-	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), s).product!, "水印");
+	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), s).product!);
 	assert.notEqual(key(named(r.specs, [["顏色", ["黑貓"]], ["尺寸", ["40×60cm", "60×90cm"]]])), key(r.specs));
 	assert.equal(key(named(r.specs, [["顏色", ["黑貓"]], ["尺寸", ["40*60", "60*90cm（升級版）"]]])), key(r.specs));
 });
@@ -379,79 +370,92 @@ test("交规格名：个数、顺序照 show，按第几层第几个选项改；
 	assert.deepEqual(renameSpecs(single, []), { specs: single, problems: [] });
 	assert.deepEqual(renameSpecs(single, [{ name: "款式", options: ["一般"] }]).problems, ["规格名：单规格的商品不写规格名（tiers 交 []）"]);
 	// 交了新的规格名：审核键跟着变
-	const images = { main: [pic("m1")], detail: [], options: [], waiting: [] };
-	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), settingsOf(shopRow)).product!, "水印");
+	const images = { main: [pic("m1")], detail: [], options: [] };
+	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), settingsOf(shopRow)).product!);
 	assert.notEqual(key(r.specs!), key(s));
 });
 
-test("台湾审核放行：问题按编号（先文案、后图）；文案的放行记在这次审核里，图的记进保留的图；每条都放行了算通过", () => {
-	const a = { key: "k", textIssues: ["規格名有簡體字"], images: [{ id: "m2", issues: ["「产品」是簡體"] }, { id: "d1", issues: ["「干」", "「发」"] }], at: "t0" };
-	assert.deepEqual(auditIssues(a).map((x) => [x.n, x.kind, x.text, x.image ?? null, x.status]), [
-		[1, "文案", "規格名有簡體字", null, "待处理"], [2, "图", "「产品」是簡體", "m2", "待处理"], [3, "图", "「干」；「发」", "d1", "待处理"],
+test("Gemini 文字检查挑出的问题：编号先文案、后图，不算问题的、保留的图排在最后；说明里只写要人看的，图写附件上的名字", () => {
+	const a = { key: "k", at: "t0", textIssues: ["標題「质量」是簡體"], images: [
+		{ id: "o1", issues: ["地墊上的「浴水生财」"], where: "印在商品上" as const, role: "规格图" as const },
+		{ id: "d3", issues: ["「质量保证」"], where: "后加的文案" as const, role: "详情图" as const, dropped: true },
+		{ id: "m1", issues: ["「随心定制」"], where: "后加的文案" as const, role: "封面" as const },
+		{ id: "m2", issues: ["「产品」"], role: "主图" as const },
+	] };
+	const names = new Map([["o1", "规格图：黑貓・浴水生財"], ["d3", "详情图 3"], ["m1", "主图 1"], ["m2", "主图 2"]]);
+	const issues = auditIssues(a, ["m2"], names);
+	assert.deepEqual(issues.map((x) => [x.n, x.kind, x.name ?? null, x.status]), [
+		[1, "文案", null, "提示"], [2, "图", "详情图 3", "已去掉"], [3, "图", "主图 1", "提示"], [4, "图", "规格图：黑貓・浴水生財", "不算问题"], [5, "图", "主图 2", "保留的图"],
 	]);
-	assert.equal(auditPassed(a), false);
-	assert.equal(auditPassed({ key: "k", textIssues: [], images: [], at: "t0" }), true);
-	const x = acceptIssues(a, [], [1, 3, 9], "t1");
-	assert.deepEqual(x.unknown, [9]);
-	assert.deepEqual(x.audit.accepted, [{ n: 1, at: "t1" }]);
-	assert.deepEqual(x.kept, ["d1"]);
-	assert.deepEqual(auditIssues(x.audit, x.kept).map((i) => i.status), ["已放行", "待处理", "已放行"]);
-	// 放行过的不再记一次
-	const y = acceptIssues(x.audit, x.kept, [2, 1], "t2");
-	assert.deepEqual([y.audit.accepted, y.kept, auditPassed(y.audit, y.kept)], [[{ n: 1, at: "t1" }], ["d1", "m2"], true]);
-	// 重审出来的是新的结果：文案的放行不带过去（措辞会变），保留的图跟着商品稿，还是不挡
-	const again = { key: "k2", textIssues: ["規格名有简体字"], images: [{ id: "d1", issues: ["「乾」寫成「干」"] }], at: "t3" };
-	assert.deepEqual(auditIssues(again, y.kept).map((i) => i.status), ["待处理", "已放行"]);
+	assert.equal(auditNotes(issues), ["Gemini 文字检查挑出 3 条：", "1. 文案：標題「质量」是簡體", "2. 详情图 3：「质量保证」（x2 已去掉）", "3. 主图 1：「随心定制」", "x2 去掉的图要用，告诉 agent"].join("\n"));
+	assert.equal(issueLine(issues[3]!), "4. 规格图：黑貓・浴水生財：地墊上的「浴水生财」（印在商品上，不算问题）");
+	// 没有要人看的：说明是空的
+	assert.equal(auditNotes(auditIssues({ ...a, textIssues: [], images: [a.images[0]!] }, [], names)), null);
+	assert.equal(auditNotes(auditIssues({ key: "k", textIssues: [], images: [], at: "t0" })), null);
 });
 
-test("台湾审核挑出的图：印在商品上的、保留的图只记备注；后加的文案，详情图和不是封面的主图 x2 去掉，封面、规格图留给人", () => {
-	assert.equal(dispose("印在商品上", "封面", false, true), "备注");
-	assert.equal(dispose("后加的文案", "详情图", true, true), "备注");
-	assert.equal(dispose("后加的文案", "详情图", false, true), "已去掉");
-	assert.equal(dispose("后加的文案", "主图", false, true), "已去掉");
-	assert.equal(dispose("后加的文案", "封面", false, true), "待处理");
-	assert.equal(dispose("后加的文案", "规格图", false, true), "待处理");
-	// 已经再审了两轮、没问出字在哪：留给人
-	assert.equal(dispose("后加的文案", "详情图", false, false), "待处理");
-	assert.equal(dispose(null, "详情图", false, true), "待处理");
+test("Gemini 文字检查挑出的图：后加的文案，详情图和不是封面的主图 x2 去掉；封面、规格图、印在商品上的、保留的图、没问出字在哪的都不去掉", () => {
+	assert.equal(shouldDrop("后加的文案", "详情图", false, true), true);
+	assert.equal(shouldDrop("后加的文案", "主图", false, true), true);
+	assert.equal(shouldDrop("印在商品上", "详情图", false, true), false);
+	assert.equal(shouldDrop("后加的文案", "详情图", true, true), false);
+	assert.equal(shouldDrop("后加的文案", "封面", false, true), false);
+	assert.equal(shouldDrop("后加的文案", "规格图", false, true), false);
+	assert.equal(shouldDrop(null, "详情图", false, true), false);
+	// 已经再查了两轮：不再去掉
+	assert.equal(shouldDrop("后加的文案", "详情图", false, false), false);
 	// 图在商品里是什么：同一张图在几处的，封面 > 规格图 > 主图 > 详情图
-	const p = productOf(ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("o1", "o1b.jpg")], options: [pic("o1", "k.jpg")], waiting: [] } }), settingsOf(shopRow)).product!;
+	const p = productOf(ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("o1", "o1b.jpg")], options: [pic("o1", "k.jpg")] } }), settingsOf(shopRow)).product!;
 	assert.deepEqual(["m1", "m2", "d1", "o1"].map((id) => roleOf(p, id)), ["封面", "主图", "详情图", "规格图"]);
 	assert.equal(roleOf({ ...p, images: ["o1"] }, "o1"), "封面");
 });
 
-test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图），商品里不用它，记进审核结果；人放行了放回来", () => {
+test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图），商品里不用它，记进检查结果；人保留了放回来", () => {
 	const s = settingsOf(shopRow);
-	const pics: Pics = { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("m2", "m2b.jpg"), { ...pic("d9"), drop: "超过张数，不用" }], options: [pic("o1", "k.jpg")], waiting: [] };
+	const pics: Pics = { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("m2", "m2b.jpg"), { ...pic("d9"), drop: "超过张数，不用" }], options: [pic("o1", "k.jpg")] };
 	const dropped = dropAudited(pics, [{ id: "m2", issues: ["「产品」是簡體", "「质量」"] }, { id: "d9", issues: ["「干」"] }]);
-	assert.deepEqual([...dropped.main, ...dropped.detail].map((x) => x.drop ?? null), [null, "台湾审核：「产品」是簡體；「质量」", null, "台湾审核：「产品」是簡體；「质量」", "超过张数，不用"]);
+	assert.deepEqual([...dropped.main, ...dropped.detail].map((x) => x.drop ?? null), [null, "Gemini 文字检查：「产品」是簡體；「质量」", null, "Gemini 文字检查：「产品」是簡體；「质量」", "超过张数，不用"]);
 	assert.equal(pics.main[1]!.drop, undefined);
 	assert.deepEqual(productOf(ready({ images: dropped }), s).product!.images, ["m1"]);
-	assert.deepEqual(auditDropped(dropped), [{ id: "m2", issues: ["「产品」是簡體；「质量」"], where: "后加的文案", role: "主图", action: "已去掉" }]);
+	assert.deepEqual(auditDropped(dropped), [{ id: "m2", issues: ["「产品」是簡體；「质量」"], where: "后加的文案", role: "主图", dropped: true }]);
 	assert.deepEqual(restoreAudited(dropped, ["m2", "d9"]), pics);
-	// 审核结果里：去掉的、印在商品上的不挡；封面上后加的文案待处理，放行就是保留的图；放行去掉的图要放回来
-	const a = { key: "k", textIssues: [], at: "t0", images: [
-		...auditDropped(dropped),
-		{ id: "o1", issues: ["地墊上的「浴水生财」"], where: "印在商品上" as const, role: "规格图" as const, action: "备注" as const },
-		{ id: "m1", issues: ["「随心定制」"], where: "后加的文案" as const, role: "封面" as const, action: "待处理" as const },
-	] };
-	assert.deepEqual(auditIssues(a).map((x) => [x.n, x.role, x.where, x.status]), [[1, "主图", "后加的文案", "已去掉"], [2, "规格图", "印在商品上", "不算问题"], [3, "封面", "后加的文案", "待处理"]]);
-	assert.deepEqual([auditPassed(a), auditPassed(a, ["m1"])], [false, true]);
-	const x = acceptIssues(a, [], [1, 2], "t1");
-	assert.deepEqual([x.kept, x.restore, x.unknown], [["m2"], ["m2"], []]);
 });
 
-test("检查：x2 处理过的图不挡；封面、规格图上后加的文案进收件箱，写着换掉或放行", () => {
+import { imageNames, numbered, usedPics } from "../src/listing/product.ts";
+
+test("附件上的名字：传好的图排号，人删了的、x2 去掉的也占着号，别的图的名字不变；规格图写选项名；一张图在几处写几个名字", () => {
+	const d = (id: string, width = 800, height = 800) => ({ from: `${id}.jpg`, imageId: id, width, height });
+	const pics: Pics = {
+		main: [d("m1"), { from: "x.jpg", drop: "有供应商痕迹" }, { ...d("m2"), drop: "Gemini 文字检查：「质量」" }, d("m3")],
+		detail: [d("d1"), d("long", 790, 1714), d("m3"), d("d2")],
+		options: [pic("o1", "k.jpg")],
+	};
+	assert.deepEqual(numbered(pics, "main").map((x) => [x.pic.imageId, x.n]), [["m1", 1], ["m2", 2], ["m3", 3]]);
+	// 详情图尺寸不合 Shopee 要求的不排号（商品里也不用）
+	assert.deepEqual(numbered(pics, "detail").map((x) => [x.pic.imageId, x.n]), [["d1", 1], ["m3", 2], ["d2", 3]]);
+	// 人删了 m1：m3 还是「主图 3」
+	assert.deepEqual(usedPics(pics, "main", new Set(["m1"])).map((x) => [x.pic.imageId, x.n]), [["m3", 3]]);
+	const names = imageNames(pics, colors());
+	assert.deepEqual(Object.fromEntries(names), { m1: "主图 1", m2: "主图 2", m3: "主图 3、详情图 2", d1: "详情图 1", d2: "详情图 3", o1: "规格图：黑色" });
+	// 附件和组商品用的是同一套
+	assert.deepEqual(productOf(ready({ images: pics, removed_images: ["m1"] }), settingsOf(shopRow)).product!.images, ["m3"]);
+});
+
+test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明（图写附件上的名字）；不进收件箱，不给 agent 再派写文案", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
-	const l = ready();
-	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!, "新新家居日用好物賣場");
-	const done = [{ id: "d1", issues: ["「干」"], where: "后加的文案", role: "详情图", action: "已去掉" }, { id: "o1", issues: ["「浴水生财」"], where: "印在商品上", role: "规格图", action: "备注" }];
-	assert.equal(checkListings([{ ...l, audit: { key, textIssues: [], images: done } }], s, []).steps.get("7")!.step, "待批准");
-	const cover = checkListings([{ ...l, audit: { key, textIssues: [], images: [...done, { id: "m1", issues: ["「随心定制」"], where: "后加的文案", role: "封面", action: "待处理" }] } }], s, []);
-	assert.equal(cover.steps.get("7")!.step, "台湾审核未通过");
-	assert.equal(cover.inbox.length, 1);
-	assert.match(cover.inbox[0]!.detail, /^3\. 封面 m1：「随心定制」/);
-	assert.match(cover.inbox[0]!.detail, /换掉：.*\n放行.*--accept/);
+	const l = ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("d2")], options: [pic("o1", "k.jpg")] } });
+	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
+	const audit = { key, at: "t0", textIssues: ["規格名「綠色」寫成「绿色」"], images: [
+		{ id: "d2", issues: ["「质量保证」"], where: "后加的文案", role: "详情图", dropped: true },
+		{ id: "o1", issues: ["「浴水生财」"], where: "印在商品上", role: "规格图" },
+		{ id: "m1", issues: ["「随心定制」"], where: "后加的文案", role: "封面" },
+	] };
+	const r = checkListings([{ ...l, audit }], s, []);
+	assert.deepEqual(r.steps.get("7"), { step: "待批准", detail: ["Gemini 文字检查挑出 3 条：", "1. 文案：規格名「綠色」寫成「绿色」", "2. 详情图 2：「质量保证」（x2 已去掉）", "3. 主图 1：「随心定制」", "x2 去掉的图要用，告诉 agent"].join("\n") });
+	assert.deepEqual([r.inbox, r.todo.map((x) => x.kind)], [[], ["上架"]]);
+	// 提交了批准：说明里照样有挑出的问题
+	const waiting = checkListings([{ ...l, audit }], s, [{ id: "1", batch: "1", op: "建商品", status: "待批准", params: { listingId: "7" }, finishedAt: null }]);
+	assert.match(waiting.steps.get("7")!.detail!, /^收件箱里有「批准」\nGemini 文字检查挑出 3 条：/);
 });
 
 test("译图检查：象寄改了商品上的字、还有简体字、转错的字，这张不用；模型说的简体字、错字要在它抄的字里，还要过 OpenCC", () => {
@@ -470,7 +474,7 @@ test("译图检查：象寄改了商品上的字、还有简体字、转错的�
 
 test("组商品：太长的详情图（宽高比 < 0.5）不用，后面的补上", () => {
 	const d = (id: string, width: number, height: number) => ({ from: `${id}.jpg`, imageId: id, width, height });
-	const images = { main: [pic("m1")], detail: [d("d1", 790, 1122), d("d2", 790, 1714), d("d3", 800, 800)], options: [pic("o1", "k.jpg")], waiting: [] };
+	const images = { main: [pic("m1")], detail: [d("d1", 790, 1122), d("d2", 790, 1714), d("d3", 800, 800)], options: [pic("o1", "k.jpg")] };
 	const r = productOf(ready({ images }), settingsOf(shopRow));
 	assert.deepEqual(r.product!.detail.map((x) => x.id), ["d1", "d3"]);
 });

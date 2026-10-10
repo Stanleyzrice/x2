@@ -4,9 +4,10 @@
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description … [--tiers <JSON>]
 //                                                    agent 写的标题、描述和规格名（也可以从 stdin 读 [{ id, title, description, tiers: [{ name, options: [名字…] }] }]），
-//                                                    写完马上台湾成品审核
-// x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）；挑出的问题有编号，挑出的图 x2 先处理
-// x2 listing audit <商品稿> --accept <编号…>           放行审核挑出的问题（人看过说是误报或无妨，人说了才用）
+//                                                    写完马上 Gemini 文字检查
+// x2 listing audit [商品稿…]                          Gemini 文字检查（看文案和加水印之前的图，挑简体字、错字、误译）：只提示，挑出的问题带编号写进说明；
+//                                                    详情图、不是封面的主图上后加的文案 x2 去掉
+// x2 listing keep <商品稿> <主图 N、详情图 N…>          保留的图：x2 去掉的放回来，以后检查再挑它也不去掉（人说了才用）
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
 //                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
@@ -14,7 +15,9 @@ import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { make, settingsOf } from "../listing/make.ts";
-import { acceptIssues, type Audit, auditDropped, type AuditIssue, auditIssues, auditKey, auditPassed, auditTaiwan, dropAudited, restoreAudited } from "../listing/audit.ts";
+import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, auditKey, dropAudited, issueLine, restoreAudited, textCheck } from "../listing/audit.ts";
+import { type Pic, type Pics, unmarked } from "../listing/images.ts";
+import { imageNames, LABEL, numbered } from "../listing/product.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
@@ -123,27 +126,40 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			}
 			if (problems.length) { results.push({ id: it.id, saved: false, problems }); continue; }
 			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs), variants_text: specsText(specs, removedOf(l.offer, l.removed_variants)) } : {};
-			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, audit: null, updated_at: new Date() } as any)} where id = ${it.id}`;
+			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, updated_at: new Date() } as any)} where id = ${it.id}`;
 			results.push({ id: it.id, saved: true, problems: [] });
 		}
-		const audits = await audit(sql, results.filter((r) => r.saved).map((r) => r.id));
-		return out({ text: results, audit: audits }, [...results.map((r) => `商品稿 ${r.id}：${r.saved ? "记下了" : r.problems.join("；")}`), ...audits.map(auditLine)].join("\n"));
+		const checks = await textChecks(sql, results.filter((r) => r.saved).map((r) => r.id));
+		return out({ text: results, audit: checks }, [...results.map((r) => `商品稿 ${r.id}：${r.saved ? "记下了" : r.problems.join("；")}`), ...checks.map(checkLine)].join("\n"));
 	}
 
 	if (sub === "audit") {
-		const at = rest.indexOf("--accept");
-		if (at >= 0) {
-			const ids = rest.slice(0, at).filter((a) => !a.startsWith("--"));
-			const ns = rest.slice(at + 1).filter((a) => !a.startsWith("--")).flatMap((a) => a.split(/[,，、]/)).filter(Boolean);
-			if (ids.length !== 1 || !ns.length || ns.some((n) => !/^\d+$/.test(n))) throw new Usage("x2 listing audit <商品稿> --accept <编号…>（编号是审核结果里的；人说了才放行）");
-			await accept(sql, ids[0]!, ns.map(Number));
-			const audits = await audit(sql, ids);
-			return out(audits, audits.map(auditLine).join("\n"));
-		}
+		if (rest.some((a) => a.startsWith("--"))) throw new Usage("x2 listing audit [商品稿…]（Gemini 文字检查只提示；x2 去掉的图人要用：x2 listing keep <商品稿> <主图 N、详情图 N…>）");
 		let ids = plain(rest);
 		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and title is not null order by id`).map((r) => r.id as string);
-		const audits = await audit(sql, ids);
-		return out(audits, audits.map(auditLine).join("\n") || "没有要审的商品稿");
+		const checks = await textChecks(sql, ids);
+		return out(checks, checks.map(checkLine).join("\n") || "没有要查的商品稿");
+	}
+
+	if (sub === "keep") {
+		// 保留的图（人说了才用）：按附件上的名字（主图 N、详情图 N）找图；x2 去掉的放回来；都记进保留的图，以后检查再挑它也不去掉
+		const [id, ...words] = plain(rest);
+		const asked = [...new Set([...words.join(" ").matchAll(/(主图|详情图)\s*(\d+)/g)].map((m) => `${m[1]} ${m[2]}`))];
+		if (!id || !asked.length) throw new Usage("x2 listing keep <商品稿> <主图 N、详情图 N…>（附件上的名字，见商品稿的说明；人说了才用）");
+		const [l] = await sql`select * from listings where id = ${id}`;
+		if (!l) throw new Usage(`没有商品稿 ${id}`);
+		await syncImages(sql, l);
+		const named = new Map<string, Pic>();
+		for (const role of ["main", "detail"] as const) for (const { pic, n } of numbered(l.images ?? {}, role)) named.set(`${LABEL[role]} ${n}`, pic);
+		const unknown = asked.filter((x) => !named.has(x));
+		if (unknown.length) throw new Usage(`商品稿 ${id} 没有${unknown.join("、")}（有：${[...named.keys()].join("、") || "无"}）`);
+		const deleted = asked.filter((x) => (l.removed_images ?? []).includes(named.get(x)!.imageId));
+		if (deleted.length) throw new Usage(`商品稿 ${id} 的${deleted.join("、")}是人在 NocoDB 删的（已删除的图），不放回来`);
+		const ids = [...new Set(asked.map((x) => named.get(x)!.imageId!))];
+		const restored = asked.filter((x) => named.get(x)!.drop?.startsWith(AUDIT_DROP));
+		await sql`update listings set images = ${sql.json(restoreAudited(l.images, ids) as any)}, kept_images = ${sql.json([...new Set([...(l.kept_images ?? []), ...ids])])}, updated_at = now() where id = ${id}`;
+		const checks = await textChecks(sql, [id]);
+		return out({ id, kept: asked, restored, audit: checks }, [`商品稿 ${id}：${asked.join("、")}记进保留的图${restored.length ? `，${restored.join("、")}放回来了` : ""}`, ...checks.map(checkLine)].join("\n"));
 	}
 
 	if (sub === "drop") {
@@ -169,69 +185,60 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map((r) => `${r.id} ${r.shop} ${r.offer_id} ${r.step ?? "（还没检查）"}${r.title ? `「${r.title}」` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | make | show | text | audit | drop | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | make | show | text | audit | keep | drop | list（见 docs/listing.md）");
 }
 
-/** ok：通过；null 是审不了（problems 是原因） */
-type AuditResult = { id: string; ok: boolean | null; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
-const auditLine = (a: AuditResult) => {
-	if (a.ok === null) return `商品稿 ${a.id} 台湾审核：审不了：${(a.problems ?? []).join("；")}`;
-	const what = (x: AuditIssue) => (x.kind === "图" ? `${x.role ?? "图"} ${x.image}${x.where ? `（${x.where}）` : ""}` : "文案");
-	const lines = a.issues.map((x) => `  ${x.n}. ${what(x)}：${x.text}${x.status === "待处理" ? "" : `（${x.status}）`}`);
-	const hint = a.ok ? [] : [`  人看过说是误报或无妨的才放行：x2 listing audit ${a.id} --accept <编号…>`];
-	return [`商品稿 ${a.id} 台湾审核：${a.ok ? "通过" : "未通过"}${a.cached ? "（审过）" : ""}`, ...lines, ...hint].join("\n");
+/** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */
+type CheckResult = { id: string; checked: boolean; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
+const checkLine = (c: CheckResult) => {
+	if (!c.checked) return `商品稿 ${c.id} Gemini 文字检查：查不了：${(c.problems ?? []).join("；")}`;
+	const dropped = c.issues.filter((x) => x.status === "已去掉");
+	return [
+		`商品稿 ${c.id} Gemini 文字检查：${c.issues.length ? `挑出 ${c.issues.length} 条（只提示，写在说明里）` : "没挑出问题"}${c.cached ? "（查过）" : ""}`,
+		...c.issues.map((x) => `  ${issueLine(x)}`),
+		...(dropped.length ? [`  x2 去掉的图人说要用才放回来：x2 listing keep ${c.id} ${dropped.map((x) => x.name ?? x.image).join(" ")}`] : []),
+	].join("\n");
 };
 
-/** 现在这份商品稿：先把人在 NocoDB 删的图记下来（删了的不审），再组商品 */
+/** 现在这份商品稿：先把人在 NocoDB 删的图记下来（删了的不查），再组商品 */
 async function listingNow(sql: Sql, id: string) {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) return null;
 	await syncImages(sql, l);
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
-	const s = settingsOf(row);
-	return { l, mark: s.mark?.text ?? "", kept: (l.kept_images ?? []) as string[], r: productOf(l, s) };
+	return { l, kept: (l.kept_images ?? []) as string[], r: productOf(l, settingsOf(row)) };
 }
 
-/** 挑出后加文案的详情图、不是封面的主图：x2 去掉以后最多再审几轮 */
-const MAX_REAUDIT = 2;
+/** 挑出后加文案的详情图、不是封面的主图：x2 去掉以后最多再查几轮 */
+const MAX_RECHECK = 2;
 
-/** 台湾成品审核：内容没变的不重审（审核键记在商品稿的 audit 里）。挑出的图 x2 能去掉的去掉（不进已删除的图），重组商品再审，NocoDB 的附件跟着变 */
-async function audit(sql: Sql, ids: string[]): Promise<AuditResult[]> {
-	const out: AuditResult[] = [];
+/** Gemini 文字检查：内容没变的不重查（检查键记在商品稿的 audit 里）。看的是加水印之前的图（unmarked）。
+ * 挑出的图 x2 能去掉的去掉（不进已删除的图），重组商品再查，NocoDB 的附件跟着变 */
+async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
+	const out: CheckResult[] = [];
 	for (const id of ids) {
 		let c = await listingNow(sql, id);
-		if (!c) { out.push({ id, ok: null, problems: ["没有这份商品稿"], issues: [] }); continue; }
-		if (!c.r.product) { out.push({ id, ok: null, problems: c.r.problems, issues: [] }); continue; }
+		if (!c) { out.push({ id, checked: false, problems: ["没有这份商品稿"], issues: [] }); continue; }
+		if (!c.r.product) { out.push({ id, checked: false, problems: c.r.problems, issues: [] }); continue; }
 		let a = c.l.audit as Audit | null;
-		const cached = a?.key === auditKey(c.r.product, c.mark);
+		const cached = a?.key === auditKey(c.r.product);
 		if (!cached) {
 			for (let round = 0; c.r.product; round++) {
-				console.error(`台湾成品审核：商品稿 ${id}${round ? `（去掉挑出的图以后第 ${round} 次再审）` : ""}`);
-				a = await auditTaiwan(c.r.product, c.mark, { kept: c.kept, canDrop: round < MAX_REAUDIT });
-				const drops = a.images.filter((x) => x.action === "已去掉");
+				console.error(`Gemini 文字检查：商品稿 ${id}${round ? `（去掉挑出的图以后第 ${round} 次再查）` : ""}`);
+				const pics = (c.l.images ?? {}) as Pics;
+				a = await textCheck(c.r.product, { image: (x) => unmarked(sql, pics, x), kept: c.kept, canDrop: round < MAX_RECHECK });
+				const drops = a.images.filter((x) => x.dropped);
 				if (!drops.length) break;
 				await sql`update listings set images = ${sql.json(dropAudited(c.l.images, drops) as any)}, updated_at = now() where id = ${id}`;
 				c = (await listingNow(sql, id))!;
 			}
-			if (!c.r.product) { out.push({ id, ok: null, problems: c.r.problems, issues: [] }); continue; }
-			// x2 去掉的图（这一次的、以前的）也记进审核结果：人看得到，要用可以放行
+			if (!c.r.product) { out.push({ id, checked: false, problems: c.r.problems, issues: [] }); continue; }
+			// x2 去掉的图（这一次的、以前的）也记进检查结果：人看得到，要用可以保留
 			a = { ...a!, images: [...auditDropped(c.l.images), ...a!.images] };
 			await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;
 		}
-		out.push({ id, ok: auditPassed(a!, c.kept), ...(cached ? { cached } : {}), issues: auditIssues(a!, c.kept) });
+		const issues = auditIssues(a!, c.kept, imageNames(c.l.images ?? {}, specsOf(c.l.variants)));
+		out.push({ id, checked: true, ...(cached ? { cached } : {}), issues });
 	}
 	return out;
 }
-
-/** 放行（人说了才用）：编号是上次审核结果里的，内容变了就对不上，要先重审 */
-async function accept(sql: Sql, id: string, ns: number[]): Promise<void> {
-	const c = await listingNow(sql, id);
-	if (!c) throw new Usage(`没有商品稿 ${id}`);
-	if (!c.r.product || !c.l.audit || c.l.audit.key !== auditKey(c.r.product, c.mark)) throw new Usage(`商品稿 ${id} 的内容和上次审核时不一样，编号作废：先 x2 listing audit ${id}，照新的编号放行`);
-	const x = acceptIssues(c.l.audit, c.kept, ns, new Date().toISOString());
-	if (x.unknown.length) throw new Usage(`商品稿 ${id} 的审核结果里没有第 ${x.unknown.join("、")} 条（x2 listing audit ${id} 看编号）`);
-	// x2 去掉的图放行了：放回来（内容变了，接着会再审一次）
-	const images = x.restore.length ? restoreAudited(c.l.images, x.restore) : c.l.images;
-	await sql`update listings set audit = ${sql.json(x.audit as any)}, kept_images = ${sql.json(x.kept)}, images = ${sql.json(images)}, updated_at = now() where id = ${id}`;
-}
-

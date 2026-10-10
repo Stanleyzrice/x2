@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import type { Pics } from "./images.ts";
 import type { Settings } from "./make.ts";
-import { detailFits, type Product, productInfo } from "./product.ts";
+import { type Product, productInfo, usedPics } from "./product.ts";
 import { OLD_SPECS, specsOf, specsProblems } from "./variants.ts";
 
 /** 商品稿（库里的一行）→ 要建的商品；缺的写成问题。规格只读存着的那一份（先核一遍规格的规矩）；已删除的图不用 */
@@ -22,17 +22,16 @@ export function productOf(l: any, s: Settings): { product?: Product; info?: Reco
 	if (problems.length) return { problems: [...new Set(problems)] };
 	const pics = (l.images ?? {}) as Pics;
 	const removed = new Set<string>([...((l.removed_images ?? []) as string[])]);
-	const usable = (list: Pics["main"] = []) => list.filter((p) => !p.drop && p.imageId && !removed.has(p.imageId));
 	// 规格图：第一层的选项挂；图被筛掉、删掉的选项不挂图
 	const used = new Set(specs.tiers[0]!.options.map((o) => o.image));
-	const optionImages = Object.fromEntries(usable(pics.options).filter((p) => used.has(p.from)).map((p) => [p.from, p.imageId!]));
+	const optionImages = Object.fromEntries((pics.options ?? []).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId) && used.has(p.from)).map((p) => [p.from, p.imageId!]));
 	const tiers = specs.tiers.map((t, a) => (a > 0 ? t : { ...t, options: t.options.map((o) => (o.image && !optionImages[o.image] ? { ...o, image: null } : o)) }));
 	const product: Product = {
 		parentSku: `LT${l.offer_id}`, title: String(l.title), description: String(l.description), categoryPath: (l.category_path as unknown[]).map(Number),
 		attributes: l.attributes ?? [], preOrder: s.preOrder, daysToShip: Number(l.days_to_ship), minPurchase: s.minPurchase, channels: s.channels,
 		tiers, variants: specs.variants.map((v) => ({ ...v, priceTwd: v.priceTwd! })),
-		images: usable(pics.main).slice(0, 9).map((p) => p.imageId!),
-		detail: usable(pics.detail).filter((p) => detailFits(p.width!, p.height!)).slice(0, 12).map((p) => ({ id: p.imageId!, width: p.width!, height: p.height! })),
+		images: usedPics(pics, "main", removed).map(({ pic }) => pic.imageId!),
+		detail: usedPics(pics, "detail", removed).map(({ pic }) => ({ id: pic.imageId!, width: pic.width!, height: pic.height! })),
 		optionImages, sizeChart: null,
 	};
 	try {

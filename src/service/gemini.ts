@@ -1,4 +1,4 @@
-// Gemini：看图（筛图上的字、看成品、核尺码表、台湾成品审核）。一个请求是一段提示加几张图，temperature 0；要 JSON 时带 schema。
+// Gemini：看图（筛图上的字、看成品、核尺码表、Gemini 文字检查）。一个请求是一段提示加几张图，temperature 0；要 JSON 时带 schema。
 // 依据 lilto 的 legacy/lib/image_workflow.py（快照 1c8a7926）。key 在 GEMINI_API_KEY，放请求头，不进地址和日志；
 // GEMINI_BASE 换出口网关（地域被挡时）；GEMINI_MODEL 换模型。gemini-2.5-flash-lite 在这把 key 上回 404，用 3.1
 // 只对 429 和 5xx 重试（最多 3 次，隔 1、2 秒）；别的出错直接抛。回模型输出的文字

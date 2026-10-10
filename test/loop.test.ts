@@ -141,7 +141,7 @@ test("规格例外：x2 source --spec 写进选用的货源那一行；两边都
 test("商品稿的图和 NocoDB 附件：x2 放上去；人删了哪张记下来，以后不用；新做好的照样加进去", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const pic = (id: string) => ({ from: `${id}.jpg`, imageId: id, width: 800, height: 800 });
-	const images = { main: [pic("m1"), pic("m2"), { from: "m3.jpg", drop: "有供应商痕迹" }], detail: [pic("d1")], options: [], waiting: [] };
+	const images = { main: [pic("m1"), pic("m2"), { from: "m3.jpg", drop: "有供应商痕迹" }], detail: [pic("d1")], options: [] };
 	const [l] = await db`insert into listings (shop, offer_id, images) values ('cheeroutdoor', '1', ${db.json(images)}) returning *`;
 	await syncImages(db, l);
 	const ids = (col: string) => (JSON.parse(l![col]) as { url: string }[]).map((a) => a.url.split("/").pop());
@@ -169,7 +169,7 @@ test("商品稿的规格图：第一层每个选项一张附件，标题是选�
 		tiers: [{ source: "颜色", name: "款式", options: names.map(([source, name, image]) => ({ source, name, image })) }],
 		variants: names.map((_, k) => ({ sku: `LT2-${k}`, skuId: `${k}`, specId: `${k}`, options: [k], costRmb: 1, stock: 9, weightKg: 0.3, priceTwd: 133 })),
 	};
-	const images = { main: [pic("m1", "m1.jpg")], detail: [], options: [pic("o1", "a.jpg"), pic("o2", "b.jpg"), { from: "c.jpg", drop: "有供应商痕迹" }], waiting: [] };
+	const images = { main: [pic("m1", "m1.jpg")], detail: [], options: [pic("o1", "a.jpg"), pic("o2", "b.jpg"), { from: "c.jpg", drop: "有供应商痕迹" }] };
 	const [l] = await db`insert into listings (shop, offer_id, images, variants) values ('cheeroutdoor', '2', ${db.json(images)}, ${db.json(specs)}) returning *`;
 	await syncImages(db, l);
 	const att = (t: string) => (JSON.parse(t) as { url: string; title: string }[]).map((a) => [a.title, a.url.split("/").pop()]);
@@ -228,4 +228,21 @@ test("x2 listing text：规格名交得不对（重名、层数不对）什么�
 	assert.match((await text(tiers.slice(0, 1))).text[0].problems.join(), /要 2 层（照 x2 listing show），交了 1 层/);
 	const [row] = await db`select title, description, variants from listings where id = ${id}`;
 	assert.deepEqual([row!.title, row!.description, row!.variants], [null, null, specs]);
+});
+
+test("x2 listing keep：按附件上的名字找图，x2 去掉的放回来、记进保留的图；人删的不放回来", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const pic = (id: string, extra: object = {}) => ({ from: `${id}.jpg`, imageId: id, width: 800, height: 800, ...extra });
+	const images = { main: [pic("m1"), pic("m2", { drop: "Gemini 文字检查：「质量」" })], detail: [pic("d1"), pic("d2")], options: [] };
+	const [l] = await db`insert into listings (shop, offer_id, images, removed_images) values ('cheeroutdoor', '5', ${db.json(images)}, ${db.json(["d1"])}) returning id::text`;
+	const id = l!.id as string;
+	await assert.rejects(listing(["keep", id, "详情图 1"]), (e: Error) => e instanceof Usage && /详情图 1是人在 NocoDB 删的/.test(e.message));
+	await assert.rejects(listing(["keep", id, "主图 9"]), (e: Error) => e instanceof Usage && /没有主图 9（有：主图 1、主图 2、详情图 1、详情图 2）/.test(e.message));
+	const r = await listing(["keep", id, "主图", "2", "详情图2"]);
+	assert.deepEqual([r.kept, r.restored, r.audit[0].checked], [["主图 2", "详情图 2"], ["主图 2"], false]);
+	const [now] = await db`select images, kept_images, main_images, detail_images from listings where id = ${id}`;
+	assert.deepEqual([now!.images.main[1].drop, now!.kept_images], [undefined, ["m2", "d2"]]);
+	// 附件跟着变：放回来的「主图 2」又在了；人删的「详情图 1」不在，「详情图 2」的名字不变
+	const titles = (t: string) => (JSON.parse(t) as { title: string }[]).map((a) => a.title);
+	assert.deepEqual([titles(now!.main_images), titles(now!.detail_images)], [["主图 1", "主图 2"], ["详情图 2"]]);
 });

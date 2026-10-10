@@ -8,15 +8,14 @@ import { geminiJson, type Image, model } from "../service/gemini.ts";
 import { type Bytes, fetchImage, inspect } from "../service/image.ts";
 import { uploadImages } from "../site/shopee/products.ts";
 import { saveTranslation, translationState } from "../site/writes.ts";
-import { detailFits } from "./product.ts";
+import { detailFits, MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { SCREEN_VERSION, screen, type Verdict } from "./screen.ts";
 import { type Mark, markKey, watermark } from "./watermark.ts";
 
 /** 一张图走到哪了。drop 是不用它的原因（给人看） */
 export type Pic = { from: string; sha?: string; verdict?: Verdict; simplified?: boolean; translated?: string; final?: string; imageId?: string; width?: number; height?: number; drop?: string };
-export type Pics = { main: Pic[]; detail: Pic[]; options: Pic[]; waiting: string[] };
+export type Pics = { main: Pic[]; detail: Pic[]; options: Pic[] };
 
-export const MAX_MAIN = 9, MAX_DETAIL = 12;
 const CHECK_VERSION = 2;
 
 /** 原图：取字节，记一行（来源、宽高）；同一个进程里取过的不再取 */
@@ -153,12 +152,25 @@ async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes): 
 	Object.assign(p, { final: out.sha256, imageId: id, width: out.width, height: out.height });
 }
 
-/** 把要译的交象寄：一批 5 张记成写入「译图」（不用批准），马上执行 */
+/** 一张图加水印之前的那张（Gemini 文字检查看它：水印会挡住字）：译过的是译图（库里存着字节），没译的是原图 */
+export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promise<Bytes> {
+	const p = [...(pics.main ?? []), ...(pics.detail ?? []), ...(pics.options ?? [])].find((x) => x.imageId === id);
+	if (!p) throw new Error(`图 ${id} 不在商品稿的图里：重做商品稿（x2 listing make）`);
+	if (!p.translated) return original(sql, p.from);
+	const [row] = await sql`select bytes from images where sha256 = ${p.translated}`;
+	if (!row?.bytes) throw new Error(`库里没有译图 ${p.translated.slice(0, 12)} 的字节：重做商品稿（x2 listing make）`);
+	return inspect(new Uint8Array(row.bytes), "译图");
+}
+
+/** 把要译的交象寄：一批 5 张记成写入「译图」（不用批准），马上执行。同一批图交过、核清了还没有结果的（人核对成已核对，象寄的地址没拿到），
+ * 防重复的 key 后面加次数，重交 */
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
 	const [{ batch }] = await sql`select nextval('batch_seq')::text as batch` as any;
 	for (let i = 0; i < items.length; i += 5) {
 		const chunk = items.slice(i, i + 5);
-		const key = `xiangji:${chunk.map((x) => x.sha).sort().join(",")}`;
+		const base = `xiangji:${chunk.map((x) => x.sha).sort().join(",")}`;
+		const [{ n }] = await sql`select count(*)::int as n from writes where key = ${base} or key like ${`${base}#%`}` as any;
+		const key = n > 0 ? `${base}#${n + 1}` : base;
 		await sql`insert into writes (batch, op, target, params, display, key, status) values (${batch}, '译图', ${`xiangji:${chunk.map((x) => x.sha.slice(0, 12)).join(",")}`}, ${sql.json({ items: chunk })}, ${`译图 ${chunk.length} 张`}, ${key}, '已批准')`;
 	}
 	await run(sql, { batch });
@@ -166,7 +178,7 @@ async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Pr
 
 /** 做一份商品稿的图。log 写进度（stderr） */
 export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: string[]; detail: string[]; options: string[] }, log: (s: string) => void = console.error): Promise<Pics> {
-	const pics: Pics = { main: c.main.map((from) => ({ from })), detail: c.detail.map((from) => ({ from })), options: [...new Set(c.options)].map((from) => ({ from })), waiting: [] };
+	const pics: Pics = { main: c.main.map((from) => ({ from })), detail: c.detail.map((from) => ({ from })), options: [...new Set(c.options)].map((from) => ({ from })) };
 	const bytes = new Map<string, Bytes>();
 	const all = [...pics.main, ...pics.detail, ...pics.options];
 
@@ -185,7 +197,7 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 		if (s.verdict === "d") p.drop = "有供应商痕迹或写给 1688 买家的说明（工厂、批发、联系方式、人民币价、售后、定制……）";
 	}
 
-	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；没拿到答复的等人核对
+	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；结果未知的这张先不用（不挡商品稿），人核清以后再做商品稿就用上
 	const toTranslate = all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
 	const shas = [...new Set(toTranslate.map((p) => p.sha!))];
 	if (shas.length) {
@@ -202,14 +214,14 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 			if (t && !t.saved && t.url) await saveTranslation(sql, s, t.url).catch((e) => log(`取译图：${(e as Error).message}`));
 		}
 		state = await translationState(sql, shas);
-		const still = new Set((await sql`select params from writes where op = '译图' and status in ('已提交', '结果未知', '不一致')`).flatMap((w) => (w.params.items as { sha: string }[]).map((i) => i.sha)));
+		const still = new Map((await sql`select id::text, params from writes where op = '译图' and status in ('已提交', '结果未知', '不一致') order by id`).flatMap((w) => (w.params.items as { sha: string }[]).map((i) => [i.sha, w.id as string] as const)));
 		for (const p of toTranslate) {
 			const t = state.get(p.sha!);
 			if (t?.saved) {
 				const [row] = await sql`select sha256 from images where kind = '译图' and from_sha = ${p.sha!} limit 1`;
 				p.translated = row!.sha256;
 			} else if (t?.failed) p.drop = `象寄译不成：${t.failed}`;
-			else if (still.has(p.sha!)) { p.drop = "译图结果未知：等人核对"; pics.waiting.push(p.from); }
+			else if (still.has(p.sha!)) p.drop = `译图结果未知（写入 #${still.get(p.sha!)}）：先不用，在「写入」里核清以后再做商品稿就会用上`;
 			else p.drop = "还没译好";
 		}
 		// 译图检查：还有简体字、象寄改了商品上印的字，这张不用（主图、详情图的张数在下一步才截，后面的图补上来）

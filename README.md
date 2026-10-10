@@ -33,7 +33,7 @@ x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_N
 x2 listing add cheeroutdoor <1688 链接>   # 添加货源：一个货源 × 一家店一份商品稿
 x2 listing make                         # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 译图检查 → 水印 → 传图）、类目属性
 x2 listing show 3                       # 写文案要用的事实
-x2 listing text 3 --title … --description … --tiers …   # agent 写的标题、描述和规格名，写完马上台湾成品审核
+x2 listing text 3 --title … --description … --tiers …   # agent 写的标题、描述和规格名，写完马上 Gemini 文字检查
 x2 listing list                         # 每份商品稿的当前步骤
 x2 strategy list                        # 选品的策略：每个出了几份商品稿、上架了几个
 ```
@@ -102,7 +102,7 @@ x2/
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入
 │ ├ source.ts             x2 source：选货源，更新货源快照
-│ ├ listing/              上品：price.ts 核价、variants.ts 规格、screen.ts 筛字、watermark.ts 水印、images.ts 图、category.ts 类目属性、product.ts 建商品的 product_info 和读回来核对、audit.ts 台湾成品审核、make.ts 做商品稿
+│ ├ listing/              上品：price.ts 核价、variants.ts 规格、screen.ts 筛字、watermark.ts 水印、images.ts 图、category.ts 类目属性、product.ts 建商品的 product_info 和读回来核对、audit.ts Gemini 文字检查、make.ts 做商品稿
 │ ├ service/              外部服务：gemini.ts、xiangji.ts（象寄译图，收费）、image.ts（取图、认格式、宽高、sha256）
 │ ├ env.ts                启动时读仓库根目录的 .env
 │ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB
@@ -110,7 +110,7 @@ x2/
 │ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、listing.ts、db.ts、nocodb.ts
 ├ .claude/skills/
 │ ├ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 采购单分给订单 → 预报 → 人打包
-│ └ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → 台湾审核 → 人审稿批准 → 建商品 → 上架
+│ └ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → Gemini 文字检查 → 人审稿批准 → 建商品 → 上架
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
 ├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
