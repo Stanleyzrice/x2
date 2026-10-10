@@ -40,7 +40,10 @@ export type Todo =
 	| { kind: "找货源"; why: string; items: { itemId: string; name: string; why: string }[]; command: string }
 	| { kind: "加购" | "预报"; why: string; propose: { title: string; writes: { op: string; params: CartParams | ForecastParams }[] } }
 	| { kind: "取消预报"; why: string; orders: string[] }
-	| { kind: "核清"; why: string; writes: string[]; command: string };
+	| { kind: "核清"; why: string; writes: string[]; command: string }
+	// 上品（docs/listing.md）：做商品稿、写文案、台湾审核是 agent 跑命令；上架是一批写入（建商品、上架），交给 x2 propose
+	| { kind: "做商品稿" | "写文案" | "台湾审核"; why: string; ids: string[]; command: string }
+	| { kind: "上架"; why: string; propose: { title: string; writes: { op: string; params: Record<string, unknown> }[] } };
 
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
 export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };

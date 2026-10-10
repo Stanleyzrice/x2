@@ -4,6 +4,8 @@
 import type { Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
 import { read1688, type Read, type Reads } from "../read.ts";
+import { settingsOf, type Settings } from "../listing/make.ts";
+import { checkListings } from "./listings.ts";
 import { checkOrders, type InboxItem, planned, type Result, type Snapshot, type Todo } from "./orders.ts";
 
 /** 一行收件箱靠哪几样现读：订单（chanboss）、购物车、采购单（1688 账号 userId；null 是每个账号） */
@@ -79,9 +81,19 @@ async function loopItems(sql: Sql, reads: Reads): Promise<InboxItem[]> {
 
 export type Checked = { todo: Todo[]; opened: number; closed: number };
 
+/** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点 */
+async function listingsCheck(sql: Sql) {
+	const rows = await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
+	const settings = new Map<string, Settings>();
+	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「暂停上品」 */ } }
+	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('建商品', '上架') and include`;
+	return checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })));
+}
+
 export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 	const r = checkOrders(await snapshot(sql, reads));
-	const items = [...r.inbox, ...await loopItems(sql, reads)];
+	const lr = await listingsCheck(sql);
+	const items = [...r.inbox, ...lr.inbox, ...await loopItems(sql, reads)];
 	const ok = complete(reads.results);
 
 	let opened = 0, closed = 0;
@@ -93,6 +105,7 @@ export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 		for (const [sn, c] of r.orders) {
 			await tx`update orders set days_left = ${c.daysLeft}, destination = ${c.destination}, step = ${c.step}, step_detail = ${c.stepDetail}, checked_at = now() where sn = ${sn}`;
 		}
+		for (const [id, c] of lr.steps) await tx`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
 		// 人勾了「处理好了」的：关掉，不再开
 		const done = await tx`update inbox set open = false, closed_at = now(), updated_at = now() where open and done returning key`;
 		const doneKeys = new Set((await tx`select key from inbox where done`).map((x) => x.key as string));
@@ -116,5 +129,5 @@ export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 			returning key`;
 		closed = done.length + stale.length + approved.length;
 	});
-	return { todo: r.todo, opened, closed };
+	return { todo: [...r.todo, ...lr.todo], opened, closed };
 }

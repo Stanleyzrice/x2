@@ -138,3 +138,52 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 	assert.equal(daysToShip(101324, rules), 10);
 	assert.equal(daysToShip(1, rules), null);
 });
+
+import { checkListings } from "../src/check/listings.ts";
+import { auditKey } from "../src/listing/audit.ts";
+import { settingsOf } from "../src/listing/make.ts";
+import { productOf } from "../src/listing/ready.ts";
+
+const shopRow = { shop: "cheeroutdoor", shop_id: "1554182542", fx: "4.4", price_per_kg_rmb: "10.8", label_fee_rmb: "1.5", weight_rounding_kg: "0.01", return_loss_rate: "0.03", min_margin_rate: "0.25", min_margin_rmb: "8", commission_rate: "0.06", pre_order_rate: "0.03", payment_rate: "0.025", coin_rate: "0.015", free_shipping_rate: "0.06", free_shipping_min_twd: "0", shipping_net_twd: "0", pre_order: true, min_purchase: 1, stock_cap: 50, channels: "30005,30006", categories: null, watermark_text: "新新家居日用好物賣場", watermark_size: 64, watermark_opacity: "0.35", watermark_position: "center", paused: null };
+const pic = (id: string, from = `${id}.jpg`) => ({ from, imageId: id, width: 800, height: 800 });
+const ready = (o: Record<string, unknown> = {}) => ({
+	id: "7", shop: "cheeroutdoor", offer_id: "952803717616", cancelled: false, listed_at: null, product_id: null, problems: null,
+	offer: { title: "雨衣" }, title: "輕便雨衣 成人連身 防水透氣 騎車通勤", description: "防水雨衣，騎車通勤用", category_path: [100637, 101324], days_to_ship: 10, attributes: [],
+	variants: [{ ...v([["顏色", "黑色"]], "k.jpg"), sku: "LT952803717616-1", priceTwd: 295, weightKg: 1.6 }, { ...v([["顏色", "綠色"]]), sku: "LT952803717616-2", priceTwd: 295, weightKg: 1.6 }],
+	images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")], waiting: [] }, removed_images: [], audit: null, ...o,
+});
+
+test("商品稿的检查：卡在哪一步、要人补的进收件箱、agent 能做的进 todo", () => {
+	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
+	const run = (l: any, writes: any[] = []) => checkListings([l], s, writes);
+	assert.equal(run(ready({ offer: null })).steps.get("7")!.step, "要做商品稿");
+	const fix = run(ready({ problems: "重量：1688 没给 2 个规格的重量" }));
+	assert.equal(fix.steps.get("7")!.step, "要人补");
+	assert.match(fix.inbox[0]!.title, /要人补：重量/);
+	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
+	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
+	assert.equal(run(ready()).steps.get("7")!.step, "等台湾审核");
+	// 审过了、内容没变：等批准，一批两个写入（建商品、上架）
+	const l = ready();
+	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!, "新新家居日用好物賣場");
+	const ok = run({ ...l, audit: { key, ok: true, textIssues: [], images: [] } });
+	assert.equal(ok.steps.get("7")!.step, "等批准");
+	const t = ok.todo.find((x) => x.kind === "上架");
+	assert.ok(t && t.kind === "上架");
+	assert.deepEqual(t.propose.writes.map((w) => w.op), ["建商品", "上架"]);
+	assert.equal((t.propose.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
+	// 审过以后改了标题：要再审
+	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key, ok: true } }).steps.get("7")!.step, "等台湾审核");
+	// 审核挑出图的问题：给人删图
+	const bad = run({ ...l, audit: { key, ok: false, textIssues: [], images: [{ id: "m1", issues: ["「产品」是簡體"] }] } });
+	assert.equal(bad.steps.get("7")!.step, "台湾审核没过");
+	assert.match(bad.inbox[0]!.detail, /m1：「产品」是簡體/);
+	// 批准在等、建好了没上架、已上架、不上了、暂停上品
+	assert.equal(run(l, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "等批准");
+	const built = run({ ...l, product_id: "51567712845" });
+	assert.equal(built.steps.get("7")!.step, "建好了没上架");
+	assert.deepEqual((built.todo[0] as any).propose.writes.map((w: any) => w.op), ["上架"]);
+	assert.equal(run({ ...l, listed_at: new Date() }).steps.get("7")!.step, "已上架");
+	assert.equal(run({ ...l, cancelled: true }).steps.get("7")!.step, "不上了");
+	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "暂停上品");
+});

@@ -72,7 +72,9 @@ export async function write(path: string, req: Req): Promise<Write> {
 	if (r.kind === "unknown") return { kind: "unknown", why: r.why };
 	if (r.json === null) return r.status >= 500 ? { kind: "unknown", why: `HTTP ${r.status}` } : { kind: "refused", code: undefined, why: `HTTP ${r.status} ${r.text}` };
 	const code = codeOf(r.json);
-	return code === 0 ? { kind: "done", data: r.json.data } : { kind: "refused", code, why: messageOf(r.json) };
+	// 字段校验失败（1000100256）时 msg 里列着全部失败的规则（Rule Type），user_message 只有第一条：都带上
+	const rules = /Rule Type/.test(String(r.json?.msg ?? "")) ? ` | ${String(r.json.msg).slice(0, 800)}` : "";
+	return code === 0 ? { kind: "done", data: r.json.data } : { kind: "refused", code, why: messageOf(r.json) + rules };
 }
 
 /** 当前登录的店铺。shopId 是店铺 id（订单的 shop_id、聊聊消息的 from_shop_id）；userId 是卖家账号的 user_id（聊聊消息的 from_id、广告账户 id）。
