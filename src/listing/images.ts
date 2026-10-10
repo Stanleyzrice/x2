@@ -61,8 +61,12 @@ async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes): 
 		where f.kind = '成品' and f.from_sha = ${base.sha256} and f.source = ${key} order by s.uploaded_at desc limit 1`;
 	if (done) { Object.assign(p, { final: done.sha256, imageId: done.image_id, width: done.width, height: done.height }); return; }
 	const out = await watermark(base, mark);
-	const check = await finalCheck(out, mark.text);
-	await sql`insert into images ${sql({ sha256: out.sha256, kind: "成品", source: key, from_sha: base.sha256, mime: out.mime, width: out.width, height: out.height, checks: sql.json({ [`成品:${CHECK_VERSION}:${model()}`]: check }) })} on conflict (sha256) do nothing`;
+	// 同一张成品看过的不再看（同一个浏览器画出来的字节一样）
+	const checkKey = `成品:${CHECK_VERSION}:${model()}`;
+	const [seen] = await sql`select checks->${checkKey} as c from images where sha256 = ${out.sha256}`;
+	const check: Final = seen?.c ?? await finalCheck(out, mark.text);
+	await sql`insert into images ${sql({ sha256: out.sha256, kind: "成品", source: key, from_sha: base.sha256, mime: out.mime, width: out.width, height: out.height, checks: sql.json({ [checkKey]: check }) })}
+		on conflict (sha256) do update set checks = images.checks || excluded.checks`;
 	if (!check.supplierMarksAbsent || check.supplierMarks.length) { p.drop = `成品上有供应商痕迹：${check.supplierMarks.join("、") || "（没抄出原文）"}`; return; }
 	if (!check.watermarkVisible) { p.drop = "成品上看不见本店水印"; return; }
 	if (!check.readable) { p.drop = "成品看不清"; return; }

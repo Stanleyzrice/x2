@@ -103,8 +103,10 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 
 	// 3. 图、类目、属性、出货天数：在这家店的浏览器里
 	const done = await inShop(s.shopId, async () => {
-		const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark!, main: o.images ?? [o.image], detail, options: priced.variants.map((v) => v.image).filter((x): x is string => Boolean(x)) }, log);
-		const out: Record<string, unknown> = { images: pics };
+		// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
+		const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark!, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: priced.variants.map((v) => v.image).filter((x): x is string => Boolean(x)) }, log);
+		// 上次放进 NocoDB 附件的（images.shown）留着：人删了哪张靠它认
+		const out: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
 		const cover = pics.main.find((p) => p.imageId);
 		if (!cover) { problems.push("图：没有能用的主图"); return out; }
 		if (pics.waiting.length) problems.push(`图：${pics.waiting.length} 张译图结果未知，等人核对（「写入」里改成已核对或被拒）`);
