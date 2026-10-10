@@ -72,7 +72,7 @@ export async function approveCommand(args: string[], json: boolean): Promise<voi
 export async function runCommand(args: string[], json: boolean): Promise<void> {
 	const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 	const tryOp = flag("--try");
-	const r = await run(await db(), { batch: flag("--batch"), tryOps: tryOp ? [tryOp] : [] });
+	const r = await run(await db(), { batch: flag("--batch"), tryOps: tryOp ? tryOp.split(/[,，]/) : [] });
 	if (r.unknown) process.exitCode = EXIT.unknown;
 	if (json) console.log(JSON.stringify(r));
 	else {

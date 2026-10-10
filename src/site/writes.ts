@@ -5,13 +5,18 @@
 // 3. submit：提交一次，回三态：做了、被拒、结果未知（没拿到答复）
 // 4. check：读回来，和 before 比：做了、没做、看不出（看不出就是结果未知，不重发）
 import { z } from "zod";
-import { buyAccount, in1688 } from "../accounts.ts";
+import { buyAccount, in1688, inShop } from "../accounts.ts";
 import type { Sql } from "../db/index.ts";
 import { current } from "../check/index.ts";
 import { db } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
 import { fetchImage } from "../service/image.ts";
 import { translate } from "../service/xiangji.ts";
+import { settingsOf } from "../listing/make.ts";
+import { minPrice } from "../listing/price.ts";
+import { readbackProblems } from "../listing/product.ts";
+import { productOf } from "../listing/ready.ts";
+import { allProducts, channels, createProduct, productInfo, productPage, setUnlisted } from "./shopee/products.ts";
 import { addToCart, cart as readCart, type CartLine, Gone, offer as readOffer } from "./1688.ts";
 import { forecast, NO_TRACKING, orders as chanbossOrders } from "./chanboss.ts";
 
@@ -206,4 +211,122 @@ const translateOp: WriteOp<TranslateP> = {
 	},
 };
 
-export const WRITES: Record<string, WriteOp> = { 加购: cart, 预报: forecastOp, 译图: translateOp };
+// ── 上品：建商品、上架（docs/listing.md「建商品、上架」） ──
+
+/** 现在的商品稿：库里的一行、店铺设置、现组的 product_info */
+async function listingNow(sql: Sql, id: string) {
+	const [l] = await sql`select * from listings where id = ${id}`;
+	if (!l) return null;
+	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	const s = settingsOf(row);
+	return { l, s, r: productOf(l, s) };
+}
+
+/** 建商品结果未知时按货号找：新建的是下架，在售列表里没有，翻全部商品；名字一样的再读详情核对货号 */
+async function findBySku(parentSku: string, name: string): Promise<string | null> {
+	for (let page = 1; page <= 20; page++) {
+		const r = await allProducts(page);
+		for (const p of r.rows.filter((x) => x.name === name)) if ((await productInfo(p.productId)).parent_sku === parentSku) return p.productId;
+		if (page * 48 >= r.total || r.rows.length === 0) break;
+	}
+	return null;
+}
+
+const createParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), productInfo: z.record(z.string(), z.unknown()), hash: z.string() });
+type CreateP = z.infer<typeof createParams>;
+
+/** 建商品：在这家店的卖家中心页面里发 create_product_info，先建成下架，读回来逐项核对。
+ * 批准以后商品稿改过（现组的 product_info 和批准时的不一样）就不建；用现在的店铺设置再核一次价 */
+const createOp: WriteOp<CreateP> = {
+	describe: "在 Shopee 上建商品（先建成下架）",
+	params: createParams,
+	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
+	key: (p) => `create:${p.shop}:${p.parentSku}`,
+	display: (p) => `建商品 ${p.shop}「${String(p.productInfo.name ?? "").slice(0, 24)}」`,
+	untried: "建商品还没在 x2 里跑过：和人约好一个商品稿，一起跑 x2 run --try 建商品,上架，跑完在卖家中心看一眼",
+	where: (_sql, p, fn) => inShop(p.shopId, fn),
+	async prepare(sql, p) {
+		const now = await listingNow(sql, p.listingId);
+		if (!now || now.l.cancelled) return { skip: "商品稿不上了" };
+		if (now.l.product_id) return { skip: `已经建好了（商品 ${now.l.product_id}）` };
+		if (now.s.paused) return { skip: `暂停上品：${now.s.paused}` };
+		if (!now.r.info) return { skip: `商品稿还缺：${now.r.problems.join("；")}` };
+		if (now.r.hash !== p.hash) return { skip: "商品稿在批准以后改过了：重新批准" };
+		const freight = Number(now.l.pricing?.freightRmb ?? 0);
+		for (const v of now.r.product!.variants) {
+			const min = minPrice(v.costRmb, freight, v.weightKg!, now.s.params, now.s.preOrder);
+			if (min === null || min > v.priceTwd) return { skip: `按现在的店铺设置，规格 ${v.sku} 的售价 NT$${v.priceTwd} 不够（要 ${min ?? "—"}）：重新做商品稿` };
+		}
+		await productPage();
+		return { params: p, before: {} };
+	},
+	async submit(sql, p) {
+		const w = await createProduct(p.productInfo);
+		if (w.kind === "refused") return { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() };
+		if (w.kind !== "done") return w;
+		const id = String(w.data?.product_id ?? w.data?.id ?? "");
+		if (!/^\d+$/.test(id) || id === "0") return { kind: "unknown", why: "Shopee 说建好了，但没回商品 id" };
+		await sql`update listings set product_id = ${id}, updated_at = now() where id = ${p.listingId}`;
+		return { kind: "done", data: { productId: id } };
+	},
+	async check(p) {
+		const sql = await db();
+		let [{ product_id: id }] = await sql`select product_id from listings where id = ${p.listingId}` as any;
+		if (!id) {
+			id = await findBySku(p.parentSku, String(p.productInfo.name));
+			if (!id) return { done: null, readback: { found: false } };
+			await sql`update listings set product_id = ${id}, updated_at = now() where id = ${p.listingId}`;
+		}
+		// 刚建完读得到要几秒：对不上就隔 3 秒再读，最多 3 次
+		let problems: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			if (i) await sleep(3000);
+			const info = await productInfo(id);
+			const path = (p.productInfo.category_path as number[]) ?? [];
+			problems = readbackProblems(p.productInfo, info, await channels(id, path[path.length - 1]!));
+			if (!problems.length) break;
+		}
+		return { done: problems.length === 0, readback: { productId: id, problems } };
+	},
+};
+
+const liveParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), title: z.string().nullable().optional(), productId: z.string().optional() });
+type LiveP = z.infer<typeof liveParams>;
+
+/** 上架：建好的商品从下架翻成在售（update_product_info 的 unlisted: false），读回来确认在售 */
+const liveOp: WriteOp<LiveP> = {
+	describe: "把建好的商品上架（下架 → 在售）",
+	params: liveParams,
+	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
+	key: (p) => `live:${p.shop}:${p.parentSku}`,
+	display: (p) => `上架 ${p.shop}「${String(p.title ?? p.parentSku).slice(0, 24)}」`,
+	untried: "上架还没在 x2 里跑过：和人约好一个商品稿，一起跑 x2 run --try 建商品,上架，跑完在卖家中心看一眼",
+	where: (_sql, p, fn) => inShop(p.shopId, fn),
+	async prepare(sql, p) {
+		const [l] = await sql`select product_id, listed_at, cancelled from listings where id = ${p.listingId}`;
+		if (!l || l.cancelled) return { skip: "商品稿不上了" };
+		if (!l.product_id) return { skip: "还没建好（建商品没成功）" };
+		if (l.listed_at) return { skip: "已经上架了" };
+		return { params: { ...p, productId: String(l.product_id) }, before: {} };
+	},
+	async submit(_sql, p) {
+		const w = await setUnlisted(p.productId!, false);
+		return w.kind === "done" ? { kind: "done" } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
+	},
+	async check(p, _before, fresh) {
+		// 翻在售以后要十几秒才读得到：隔 3 秒读一次，最多 6 次
+		let info: any = null;
+		for (let i = 0; i < (fresh ? 6 : 1); i++) {
+			if (i) await sleep(3000);
+			info = await productInfo(p.productId!);
+			if (Number(info.status) === 1 && !info.is_unlisted) return { done: true, readback: { status: info.status } };
+			if (Number(info.status) === 3) return { done: false, readback: { status: info.status, why: "禁卖" } };
+		}
+		return { done: null, readback: { status: info?.status ?? null, unlisted: info?.is_unlisted ?? null } };
+	},
+	async after(sql, p) {
+		await sql`update listings set listed_at = now(), updated_at = now() where id = ${p.listingId}`;
+	},
+};
+
+export const WRITES: Record<string, WriteOp> = { 加购: cart, 预报: forecastOp, 译图: translateOp, 建商品: createOp, 上架: liveOp };
