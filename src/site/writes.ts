@@ -243,7 +243,6 @@ const createOp: WriteOp<CreateP> = {
 	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
 	key: (p) => `create:${p.shop}:${p.parentSku}`,
 	display: (p) => `建商品 ${p.shop}「${String(p.productInfo.name ?? "").slice(0, 24)}」`,
-	untried: "建商品还没在 x2 里跑过：和人约好一个商品稿，一起跑 x2 run --try 建商品,上架，跑完在卖家中心看一眼",
 	where: (_sql, p, fn) => inShop(p.shopId, fn),
 	async prepare(sql, p) {
 		const now = await listingNow(sql, p.listingId);
@@ -300,7 +299,6 @@ const liveOp: WriteOp<LiveP> = {
 	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
 	key: (p) => `live:${p.shop}:${p.parentSku}`,
 	display: (p) => `上架 ${p.shop}「${String(p.title ?? p.parentSku).slice(0, 24)}」`,
-	untried: "上架还没在 x2 里跑过：和人约好一个商品稿，一起跑 x2 run --try 建商品,上架，跑完在卖家中心看一眼",
 	where: (_sql, p, fn) => inShop(p.shopId, fn),
 	async prepare(sql, p) {
 		const [l] = await sql`select product_id, listed_at, cancelled from listings where id = ${p.listingId}`;

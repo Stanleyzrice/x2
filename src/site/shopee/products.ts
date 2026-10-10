@@ -110,7 +110,7 @@ export async function shippingDays(): Promise<{ inStock: number; rules: { catego
 	};
 }
 
-// ── 写（都没在 x2 里跑过：lilto 旧工作台跑通过的做法，第一次用时人确认后再跑） ──
+// ── 写（建商品、上下架在 x2 里跑过；改别的字段、删商品还没跑过：lilto 旧工作台跑通过的做法，第一次用时人确认后再跑） ──
 
 /** 写：建商品（create_product_info）。product_info 的样子照卖家中心新增商品页提交的（lilto 2026-09-01 的成功样本）；isDraft 为 true 存成草稿 */
 export function createProduct(productInfo: Record<string, unknown>, isDraft = false): Promise<Write> {
