@@ -57,7 +57,7 @@ async function liveOrders(sns: string[]): Promise<Map<string, any>> {
 const cartParams = z.object({
 	offerId: z.string(), skuId: z.string(), qty: z.number().int().positive(), title: z.string(), sku: z.string(), price: z.number().nullable(),
 	lines: z.array(z.object({ sn: z.string(), modelId: z.string(), qty: z.number().int().positive() })).min(1),
-	/** 随这次加购一起批准的新货源（店里的商品 id）：加上了才标成「用这个」 */
+	/** 随这次加购一起批准的新货源（店里的商品 id）：加上了才标成「选用」 */
 	newSources: z.array(z.string()).default([]),
 	/** 加在哪个 1688 账号（userId）：执行时填采购账号，记下 */
 	account: z.string().optional(),
@@ -82,7 +82,7 @@ const cart: WriteOp<CartP> = {
 	async prepare(sql, p) {
 		const account = (await buyAccount(sql))!.userId;
 		if (p.account && p.account !== account) return { skip: `只往采购账号加购，这一项写的是另一个账号 ${p.account}` };
-		// 现读 1688 的购物车和采购单再对一次：准备和执行之间有人在外面买了、或者已经加进购物车了，就不加（免得买重）。
+		// 现读 1688 的购物车和采购单再对一次：准备和执行之间有人外部采购了、或者已经加进购物车了，就不加（免得买重）。
 		// 同一次 x2 run 里 2 分钟内读过的复用（一批几项不用每项重读）；读不全就停
 		const covered = (await current(sql)).covered;
 		const dup = p.lines.filter((l) => covered.has(`${l.sn}:${l.modelId}`));
@@ -94,15 +94,15 @@ const cart: WriteOp<CartP> = {
 			if (o.platform_status !== "READY_TO_SHIP") return { skip: `订单 ${l.sn} 不是待出货了（${o.platform_status}）` };
 			if (o.status !== "paid") return { skip: `订单 ${l.sn} 在 chanboss 上已经不是待处理了（${o.status}）：在别处买过了？` };
 		}
-		// 现读 1688 商品：下架了、没这个规格了，把这个货源标成用不了（检查当成没货源，agent 重新找）
+		// 现读 1688 商品：下架了、没这个规格了，把这个货源标成不可用（检查当成缺货源，agent 重新找）
 		const broken = async (why: string) => {
 			await sql`update sources set broken = ${why}, read_at = now() where offer_id = ${p.offerId} and chosen`;
 			return { skip: why };
 		};
 		const offer = await readOffer(p.offerId).catch((e) => { if (e instanceof Gone) return null; throw e; });
-		if (!offer) return broken("货源在 1688 上下架了");
+		if (!offer) return broken("货源已在 1688 下架");
 		const sku = offer.skus.find((s) => s.skuId === p.skuId);
-		if (!sku) return broken("1688 上没有这个规格了");
+		if (!sku) return broken("1688 上已无这个规格");
 		if (sku.stock < p.qty) return { skip: `1688 库存 ${sku.stock}，要 ${p.qty}` };
 		if (p.price !== null && sku.price > p.price * 1.1) return { skip: `1688 价格从 ¥${p.price} 涨到 ¥${sku.price}（超过 10%）` };
 		await sleep(1500);
@@ -117,7 +117,7 @@ const cart: WriteOp<CartP> = {
 		const d = now - Number(before?.inCart ?? 0);
 		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
 	},
-	// 随这次加购一起批准的新货源（店里的商品 id）：那一行标成「用这个」（这个商品还没定货源时）
+	// 随这次加购一起批准的新货源（店里的商品 id）：那一行标成「选用」（这个商品还没定货源时）
 	async after(sql, p) {
 		for (const itemId of p.newSources) {
 			await sql`update sources set chosen = true, chosen_at = now() where item_id = ${itemId} and offer_id = ${p.offerId}
@@ -247,7 +247,7 @@ const createOp: WriteOp<CreateP> = {
 	where: (_sql, p, fn) => inShop(p.shopId, fn),
 	async prepare(sql, p) {
 		const now = await listingNow(sql, p.listingId);
-		if (!now || now.l.cancelled) return { skip: "商品稿不上了" };
+		if (!now || now.l.cancelled) return { skip: "商品稿已放弃" };
 		if (now.l.product_id) return { skip: `已经建好了（商品 ${now.l.product_id}）` };
 		if (now.s.paused) return { skip: `暂停上品：${now.s.paused}` };
 		if (!now.r.info) return { skip: `商品稿还缺：${now.r.problems.join("；")}` };
@@ -304,7 +304,7 @@ const liveOp: WriteOp<LiveP> = {
 	where: (_sql, p, fn) => inShop(p.shopId, fn),
 	async prepare(sql, p) {
 		const [l] = await sql`select product_id, listed_at, cancelled from listings where id = ${p.listingId}`;
-		if (!l || l.cancelled) return { skip: "商品稿不上了" };
+		if (!l || l.cancelled) return { skip: "商品稿已放弃" };
 		if (!l.product_id) return { skip: "还没建好（建商品没成功）" };
 		if (l.listed_at) return { skip: "已经上架了" };
 		return { params: { ...p, productId: String(l.product_id) }, before: {} };

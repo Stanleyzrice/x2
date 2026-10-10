@@ -47,7 +47,7 @@ export function productInfo(p: Product): Record<string, unknown> {
 		value_list: t.options.map((o) => {
 			if (a > 0 || !o.image) return { id: 0, custom_value: o.name };
 			const id = p.optionImages[o.image];
-			if (!id) throw new Error(`规格「${o.name}」的图还没传到 Shopee`);
+			if (!id) throw new Error(`规格「${o.name}」的图未传到 Shopee`);
 			return { id: 0, custom_value: o.name, image_id: id };
 		}),
 	}));
@@ -56,18 +56,18 @@ export function productInfo(p: Product): Record<string, unknown> {
 		price: String(Math.trunc(v.priceTwd)), stock_setting_list: [{ sellable_stock: Math.trunc(v.stock) }], sku_image: "",
 	}));
 	const weights = p.variants.map((v) => v.weightKg ?? 0);
-	if (weights.some((w) => !(w > 0))) throw new Error("有规格没有重量");
+	if (weights.some((w) => !(w > 0))) throw new Error("有规格缺重量");
 	const known = new Set(CHANNELS.map((c) => String(c.channelid)));
 	const unknown = p.channels.filter((c) => !known.has(c));
 	if (unknown.length) throw new Error(`不认得的物流渠道：${unknown.join("、")}`);
 	const logistics_channels = CHANNELS.map((c) => ({ ...c, enabled: p.channels.includes(String(c.channelid)) && c.channelid !== 30019 }));
-	if (!logistics_channels.some((c) => c.enabled)) throw new Error("一个物流渠道都没开");
+	if (!logistics_channels.some((c) => c.enabled)) throw new Error("未开任何物流渠道");
 	const fields: Record<string, unknown>[] = [{ type: 0, value: p.description.replace(/<[^>]*>/g, "").trim().slice(0, 3000) }];
 	for (const d of p.detail) {
 		if (!(d.width >= 700 && d.height >= 32)) throw new Error(`详情图 ${d.id} 尺寸不够（${d.width}×${d.height}，宽要 ≥ 700、高 ≥ 32）`);
 		fields.push({ type: 1, value: d.id, width: d.width, height: d.height });
 	}
-	if (p.images.length === 0) throw new Error("没有主图");
+	if (p.images.length === 0) throw new Error("缺主图");
 	return {
 		name: p.title.slice(0, 60),
 		enable_model_level_dts: false,

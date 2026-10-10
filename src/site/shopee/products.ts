@@ -136,7 +136,7 @@ export async function productPage() {
 	const p = await page(ORIGIN);
 	if (!/\/portal\/product\/(new|\d+)/.test(await p.run(() => location.pathname))) await p.goto(`${ORIGIN}/portal/product/new`);
 	const blocked = await p.run(() => /no-permission/.test(location.href) || /您的權限不足|卖场迁移中|賣場遷移中/.test(String(document.body?.innerText ?? "")));
-	if (blocked) throw new NeedsHuman("Shopee 这家店现在不能新增商品（權限不足 / 賣場遷移中）：到卖家中心看一眼；要暂停上品就在「店铺设置」里写原因");
+	if (blocked) throw new NeedsHuman("Shopee 这家店现在不能新增商品（權限不足 / 賣場遷移中）：到卖家中心看一眼；要暂停上品就在「店铺设置」的「暂停上品原因」里写原因");
 	return p;
 }
 

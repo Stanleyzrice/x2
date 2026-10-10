@@ -100,7 +100,7 @@ test("product_info：照 9-01 的成功样本；规格图挂第一层；详情�
 	assert.deepEqual(p.logistics_channels.filter((c: any) => c.enabled).map((c: any) => c.channelid), [30006, 30005]);
 	assert.equal(p.logistics_channels.find((c: any) => c.channelid === 30020).sizeid, 1);
 	// 缺图、详情图太窄：不缺着交
-	assert.throws(() => productInfo({ ...draft(), optionImages: {} }), /还没传/);
+	assert.throws(() => productInfo({ ...draft(), optionImages: {} }), /未传/);
 	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 1, height: 1 }] }), /尺寸不够/);
 });
 
@@ -153,42 +153,42 @@ const ready = (o: Record<string, unknown> = {}) => ({
 	images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")], waiting: [] }, removed_images: [], audit: null, ...o,
 });
 
-test("商品稿的检查：卡在哪一步、要人补的进收件箱、agent 能做的进 todo", () => {
+test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能做的进 todo", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const run = (l: any, writes: any[] = []) => checkListings([l], s, writes);
-	assert.equal(run(ready({ offer: null })).steps.get("7")!.step, "要做商品稿");
-	const fix = run(ready({ problems: "重量：1688 没给 2 个规格的重量" }));
-	assert.equal(fix.steps.get("7")!.step, "要人补");
-	assert.match(fix.inbox[0]!.title, /要人补：重量/);
+	assert.equal(run(ready({ offer: null })).steps.get("7")!.step, "待做商品稿");
+	const fix = run(ready({ problems: "重量：1688 缺 2 个规格的重量" }));
+	assert.equal(fix.steps.get("7")!.step, "待补充");
+	assert.match(fix.inbox[0]!.title, /待补充：重量/);
 	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
 	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
-	assert.equal(run(ready()).steps.get("7")!.step, "等台湾审核");
-	// 审过了、内容没变：等批准，一批两个写入（建商品、上架）
+	assert.equal(run(ready()).steps.get("7")!.step, "待台湾审核");
+	// 审过了、内容没变：待批准，一批两个写入（建商品、上架）
 	const l = ready();
 	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!, "新新家居日用好物賣場");
 	const ok = run({ ...l, audit: { key, ok: true, textIssues: [], images: [] } });
-	assert.equal(ok.steps.get("7")!.step, "等批准");
+	assert.equal(ok.steps.get("7")!.step, "待批准");
 	const t = ok.todo.find((x) => x.kind === "上架");
 	assert.ok(t && t.kind === "上架");
 	assert.deepEqual(t.propose.writes.map((w) => w.op), ["建商品", "上架"]);
 	assert.equal((t.propose.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
 	// 审过以后改了标题：要再审
-	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key, ok: true } }).steps.get("7")!.step, "等台湾审核");
+	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key, ok: true } }).steps.get("7")!.step, "待台湾审核");
 	// 审核挑出图的问题：给人删图
 	const bad = run({ ...l, audit: { key, ok: false, textIssues: [], images: [{ id: "m1", issues: ["「产品」是簡體"] }] } });
-	assert.equal(bad.steps.get("7")!.step, "台湾审核没过");
+	assert.equal(bad.steps.get("7")!.step, "台湾审核未通过");
 	assert.match(bad.inbox[0]!.detail, /m1：「产品」是簡體/);
-	// 批准在等、建好了没上架、已上架、不上了、暂停上品
-	assert.equal(run(l, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "等批准");
+	// 待批准、待上架、已上架、已放弃、已暂停
+	assert.equal(run(l, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "待批准");
 	const built = run({ ...l, product_id: "51567712845" });
-	assert.equal(built.steps.get("7")!.step, "建好了没上架");
+	assert.equal(built.steps.get("7")!.step, "待上架");
 	assert.deepEqual((built.todo[0] as any).propose.writes.map((w: any) => w.op), ["上架"]);
 	assert.equal(run({ ...l, listed_at: new Date() }).steps.get("7")!.step, "已上架");
-	assert.equal(run({ ...l, cancelled: true }).steps.get("7")!.step, "不上了");
-	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "暂停上品");
+	assert.equal(run({ ...l, cancelled: true }).steps.get("7")!.step, "已放弃");
+	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "已暂停");
 });
 
-test("去掉的规格：按选项名（括号里的说明可以不写）或货号配；去掉以后不上、规格图不审、要再审", () => {
+test("已移除的规格：按选项名（括号里的说明可以不写）或货号配；去掉以后不上、规格图不审、要再审", () => {
 	const s = settingsOf(shopRow);
 	const sizes = ["40*60", "60*90cm（升級版）"];
 	const variants = ["黑貓", "定製"].flatMap((c, i) => sizes.map((z, j) => ({ ...v([["顏色", c], ["尺寸", z]], `${c}.jpg`), sku: `LT1-${i}${j}`, priceTwd: 133 })));

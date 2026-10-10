@@ -27,8 +27,8 @@ export async function propose(sql: Sql, input: unknown, ops: Record<string, Writ
 			if (params.account && params.account !== buy) throw new Usage(`第 ${i + 1} 项：只往采购账号（${buy}）加购，不往 ${params.account} 加`);
 			params.account = buy;
 		}
-		if (w.op === "加购") for (const l of (params as CartParams).lines) if (!ok.cart.has(`${l.sn}:${l.modelId}`)) throw new Usage(`第 ${i + 1} 项：订单 ${l.sn} 的规格 ${l.modelId} 现在不该加购（加过了、在等批准，或者货源不齐）。看 x2 status`);
-		if (w.op === "预报" && !ok.forecast.has((params as ForecastParams).sn)) throw new Usage(`第 ${i + 1} 项：订单 ${(params as ForecastParams).sn} 现在不该预报（没付完款、报过了，或者在等批准）。看 x2 status`);
+		if (w.op === "加购") for (const l of (params as CartParams).lines) if (!ok.cart.has(`${l.sn}:${l.modelId}`)) throw new Usage(`第 ${i + 1} 项：订单 ${l.sn} 的规格 ${l.modelId} 现在不该加购（加过了、待批准，或者货源不齐）。看 x2 status`);
+		if (w.op === "预报" && !ok.forecast.has((params as ForecastParams).sn)) throw new Usage(`第 ${i + 1} 项：订单 ${(params as ForecastParams).sn} 现在不该预报（没付完款、报过了，或者待批准）。看 x2 status`);
 		return { op: w.op, params, target: op.target(params), key: op.key(params), display: op.display(params) };
 	});
 
@@ -48,7 +48,7 @@ export async function propose(sql: Sql, input: unknown, ops: Record<string, Writ
 		if (out.some((w) => w.status === "待批准")) {
 			await tx`
 				insert into inbox (key, kind, title, detail) values (${`approve:${batch}`}, '批准', ${`批准：${p.title}`},
-					${`${out.map((w) => `· ${w.display}`).join("\n")}\n\n勾「批准」就批准整批；要去掉几项，在「写入」里把那几行的「做」取消勾`})`;
+					${`${out.map((w) => `· ${w.display}`).join("\n")}\n\n勾「批准」即批准整批；要去掉几项，在「写入」里取消那几行的「执行」`})`;
 		}
 		return { batch, writes: out };
 	});
@@ -57,7 +57,7 @@ export async function propose(sql: Sql, input: unknown, ops: Record<string, Writ
 /** 人在终端里说「批准」：agent 替人在收件箱里勾上 */
 export async function approve(sql: Sql, batch: string): Promise<number> {
 	const r = await sql`update inbox set approve = true, updated_at = now() where key = ${`approve:${batch}`} and open returning key`;
-	if (r.length === 0) throw new Usage(`收件箱里没有开着的「批准」第 ${batch} 批`);
+	if (r.length === 0) throw new Usage(`收件箱里没有未关闭的「批准」第 ${batch} 批`);
 	const [{ n }] = await sql`select count(*)::int as n from writes where batch = ${batch} and status = '待批准' and include` as any;
 	return n;
 }

@@ -1,6 +1,6 @@
 // 检查：拿这一轮现读的站点数据（read.ts）和库里人定的东西拼成一份快照，跑 orders.ts 的检查，把结果写回库：
 // 收件箱（只更新不重复，条件不成立就关）、订单上算出来的列、规格定了货源以后删掉它剩下的候选。
-// 只有这一行靠的那几样这一轮都读成功了，才关它：漏读不算做完。人勾了「处理好了」的（x2 看不到结果的事），关掉以后不再开
+// 只有这一行靠的那几样这一轮都读成功了，才关它：漏读不算做完。人勾了「已处理」的（x2 看不到结果的事），关掉以后不再开
 import type { Sql } from "../db/index.ts";
 import { IMAGE } from "../site/shopee/seller.ts";
 import { NeedsHuman } from "../errors.ts";
@@ -16,8 +16,8 @@ function depends(kind: string, key: string): [string, string | null][] {
 		case "付款": return [["订单", null], ["购物车", target!], ["采购单", target!]];
 		case "打包": return [["订单", null], ["采购单", null]];
 		case "取消": return key.startsWith("cancel-goods:") ? [["订单", null], ["采购单", null]] : [["订单", null], ["购物车", null]];
-		case "没发货": return [["采购单", null]];
-		case "快到期": case "问题单": case "选货源": case "规格对不上": return [["订单", null]];
+		case "未发货": return [["采购单", null]];
+		case "快到期": case "问题单": case "选货源": case "规格不匹配": return [["订单", null]];
 		default: return [];
 	}
 }
@@ -69,13 +69,13 @@ async function loopItems(sql: Sql, reads: Reads): Promise<InboxItem[]> {
 	return [
 		...reads.results.filter((r) => !r.ok && r.blocked).map((r): InboxItem => ({
 			key: `login:${r.what}:${r.who}`, kind: "登录", shop: null, due: null, link: null,
-			title: `登录：${r.what === "订单" ? "chanboss" : "1688"} ${reads.accounts.get(r.who) ?? (r.who === "chanboss" || r.who === "1688" ? "" : r.who)} 读不了`.replace(/\s+读/, " 读"),
+			title: `登录：${r.what === "订单" ? "chanboss" : "1688"} ${reads.accounts.get(r.who) ?? (r.who === "chanboss" || r.who === "1688" ? "" : r.who)} 无法读取`.replace(/\s+无法读取/, " 无法读取"),
 			detail: r.error ?? "",
 		})),
 		...writes.map((w): InboxItem => ({
 			key: `unknown:${w.id}`, kind: "结果未知", shop: null, due: null, link: w.op === "加购" ? "https://cart.1688.com/cart.htm" : null,
 			title: `${w.status}：${w.op} ${w.display ?? ""}`,
-			detail: `${w.error ?? ""}\n到站点上看一眼做了没有，在「写入」里把这一行的状态改成「已核对」（做了）或「被拒」（没做）。不要重做`,
+			detail: `${w.error ?? ""}\n到站点上核实是否做成，在「写入」里把这一行的状态改成「已核对」（已做成）或「被拒」（未做成）。不要重做`,
 		})),
 	];
 }
@@ -112,7 +112,7 @@ async function listingsCheck(sql: Sql) {
 	const rows = await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
 	for (const l of rows) if (!l.cancelled && !l.product_id) await syncImages(sql, l);
 	const settings = new Map<string, Settings>();
-	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「暂停上品」 */ } }
+	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「已暂停」 */ } }
 	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('建商品', '上架') and include`;
 	return checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })));
 }
@@ -125,7 +125,7 @@ export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 
 	let opened = 0, closed = 0;
 	await sql.begin(async (tx) => {
-		// 商品定了货源（人勾了「用这个」、随加购批准了）：它剩下的候选用完了，删掉（「选货源」空了就是选完了）
+		// 商品定了货源（人勾了「选用」、随加购批准了）：它剩下的候选用完了，删掉（「待选货源」空了就是选完了）
 		await tx`delete from sources o where not o.chosen and exists (select 1 from sources c where c.item_id = o.item_id and c.chosen)`;
 		await tx`update sources set chosen_at = now() where chosen and chosen_at is null`;
 		await tx`update arrival_issues set done_at = now() where done and done_at is null`;
@@ -133,7 +133,7 @@ export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 			await tx`update orders set days_left = ${c.daysLeft}, destination = ${c.destination}, step = ${c.step}, step_detail = ${c.stepDetail}, checked_at = now() where sn = ${sn}`;
 		}
 		for (const [id, c] of lr.steps) await tx`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
-		// 人勾了「处理好了」的：关掉，不再开
+		// 人勾了「已处理」的：关掉，不再开
 		const done = await tx`update inbox set open = false, closed_at = now(), updated_at = now() where open and done returning key`;
 		const doneKeys = new Set((await tx`select key from inbox where done`).map((x) => x.key as string));
 		for (const i of items) {

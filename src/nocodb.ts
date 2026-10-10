@@ -35,28 +35,28 @@ export function tables(): Table[] {
 		{
 			name: "inbox", title: "收件箱", links: ["link"],
 			columns: {
-				kind: "类别", title: "事情", detail: "详情", approve: "批准", done: "处理好了", due: "期限", role: "谁做", shop: "店铺", link: "去哪做", snooze_until: "推迟到", note: "备注",
-				key: "key", open: "开着", opened_at: "开始于", closed_at: "关掉于", updated_at: "更新于",
+				kind: "类别", title: "事项", detail: "详情", approve: "批准", done: "已处理", due: "期限", role: "负责人", shop: "店铺", link: "链接", snooze_until: "推迟至", note: "备注",
+				key: "key", open: "未关闭", opened_at: "创建时间", closed_at: "关闭时间", updated_at: "更新时间",
 			},
 			views: [
 				{
-					title: "要我做的", filters: [{ col: "open", op: "checked" }, { or: [{ col: "snooze_until", op: "blank" }, { col: "snooze_until", op: "lt", sub: "today" }] }],
+					title: "待处理", filters: [{ col: "open", op: "checked" }, { or: [{ col: "snooze_until", op: "blank" }, { col: "snooze_until", op: "lt", sub: "today" }] }],
 					sorts: [["due", "asc"]], group: [["kind", "asc"]], hide: ["key", "open", "opened_at", "closed_at", "updated_at"],
 				},
-				{ title: "最近关掉的", filters: [{ col: "open", op: "notchecked" }, { col: "closed_at", op: "isWithin", sub: "pastWeek" }], sorts: [["closed_at", "desc"]], hide: ["key", "open", "approve", "done", "snooze_until"] },
+				{ title: "近 7 天已关闭", filters: [{ col: "open", op: "notchecked" }, { col: "closed_at", op: "isWithin", sub: "pastWeek" }], sorts: [["closed_at", "desc"]], hide: ["key", "open", "approve", "done", "snooze_until"] },
 			],
 		},
 		{
 			name: "orders", title: "订单",
 			selects: { step: STEPS, chanboss_status: Object.values(CHANBOSS_STATUS) },
 			columns: {
-				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩几天", step: "卡在哪一步", step_detail: "细节", items_text: "商品", platform_status: "平台状态", chanboss_status: "chanboss 状态",
-				problem: "问题单", destination: "寄到哪", created_at: "下单时间", cancelled_at: "取消时间", checked_at: "检查于",
+				sn: "订单号", shop: "店铺", ship_by: "出货期限", days_left: "剩余天数", step: "当前步骤", step_detail: "说明", items_text: "商品", platform_status: "平台状态", chanboss_status: "chanboss 状态",
+				problem: "问题单", destination: "收货地址", created_at: "下单时间", cancelled_at: "取消时间", checked_at: "检查时间",
 				items: "商品（JSON）", shop_id: "店铺 id", chanboss_id: "chanboss id", chanboss_time: "chanboss 下单时间",
 			},
 			views: [
 				{ title: "全部", sorts: [["created_at", "desc"]], hide: ["items", "shop_id", "chanboss_id", "chanboss_time"] },
-				// 看板：一列一步，卡片上是订单号、店铺、出货期限、剩几天、细节、商品
+				// 看板：一列一步，卡片上是订单号、店铺、出货期限、剩余天数、说明、商品
 				{
 					title: "待出货", kanban: "step", filters: OPEN_ORDER, sorts: [["ship_by", "asc"]],
 					hide: ["platform_status", "chanboss_status", "problem", "destination", "created_at", "cancelled_at", "checked_at", "items", "shop_id", "chanboss_id", "chanboss_time"],
@@ -65,15 +65,15 @@ export function tables(): Table[] {
 		},
 		{
 			name: "arrival_issues", title: "到货问题",
-			selects: { kind: ["错货", "少件", "坏了", "其他"], resolution: ["退换", "重新买", "不用管"] },
-			columns: { sn: "订单号", item: "哪件", kind: "问题", qty: "几件", note: "备注", resolution: "怎么处理", done: "处理好了", reported_at: "报的时间", done_at: "处理好的时间", id: "编号" },
+			selects: { kind: ["错货", "少件", "损坏", "其他"], resolution: ["退换", "重新采购", "无需处理"] },
+			columns: { sn: "订单号", item: "商品和规格", kind: "问题类型", qty: "件数", note: "备注", resolution: "处理方式", done: "已处理", reported_at: "上报时间", done_at: "处理时间", id: "编号" },
 			views: [
-				{ title: "没处理好的", filters: [{ col: "done", op: "notchecked" }], sorts: [["reported_at", "asc"]], hide: ["id", "done_at"] },
+				{ title: "未处理", filters: [{ col: "done", op: "notchecked" }], sorts: [["reported_at", "asc"]], hide: ["id", "done_at"] },
 				{
-					title: "报到货问题",
+					title: "上报到货问题",
 					form: {
-						heading: "打包时发现错货、少件、坏了，填一行",
-						fields: { sn: "订单号（拣货单上的）", item: "哪件：商品和规格，例 红T L", kind: "", qty: "", note: "看到了什么；拍了照片写在哪", resolution: "知道怎么处理就选，不知道空着" },
+						heading: "打包时发现错货、少件、损坏：每个问题填一行",
+						fields: { sn: "订单号（拣货单上的）", item: "例：红T L", kind: "", qty: "", note: "看到的情况；照片存放位置", resolution: "已确定就选，未确定留空" },
 						required: ["sn", "kind"],
 					},
 				},
@@ -83,54 +83,54 @@ export function tables(): Table[] {
 			name: "listings", title: "商品稿", attachments: ["main_images", "detail_images"],
 			selects: { step: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
 			columns: {
-				title: "标题", shop: "店铺", step: "卡在哪一步", step_detail: "细节", main_images: "主图", variants_text: "规格和价格", category_name: "类目",
-				problems: "要人补的", weight_kg: "重量（kg，人填）", freight_rmb: "国内运费（元/件，人填）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
-				strategy: "策略", cancelled: "不上了", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架于", id: "编号", created_at: "加入于", updated_at: "更新于",
-				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "台湾审核", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "删掉的图", removed_variants: "去掉的规格", offer_read_at: "读货源于",
+				title: "标题", shop: "店铺", step: "当前步骤", step_detail: "说明", main_images: "主图", variants_text: "规格和价格", category_name: "类目",
+				problems: "待补充", weight_kg: "重量（kg，人工填写）", freight_rmb: "国内运费（元/件，人工填写）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
+				strategy: "策略", cancelled: "放弃", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
+				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "台湾审核", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "已删除的图", removed_variants: "已移除的规格", offer_read_at: "货源读取时间",
 			},
 			views: [
 				{ title: "全部", sorts: [["id", "desc"]], hide: [...LISTING_JSON] },
-				// 审稿：等批准的、要人补的、审核挑出图的，封面是主图；删掉不要的图就是在「主图」「详情图」里删附件
+				// 审稿：待批准的、待补充的、台湾审核未通过的，封面是主图；删掉不要的图就是在「主图」「详情图」里删附件
 				{
-					title: "审稿", gallery: "main_images", filters: [{ or: [{ col: "step", op: "eq", value: "等批准" }, { col: "step", op: "eq", value: "要人补" }, { col: "step", op: "eq", value: "台湾审核没过" }] }],
+					title: "审稿", gallery: "main_images", filters: [{ or: [{ col: "step", op: "eq", value: "待批准" }, { col: "step", op: "eq", value: "待补充" }, { col: "step", op: "eq", value: "台湾审核未通过" }] }],
 					sorts: [["id", "asc"]], hide: [...LISTING_JSON, "detail_images", "description", "created_at", "updated_at", "listed_at", "product_id", "offer_id", "id"],
 				},
-				{ title: "卡在哪一步", kanban: "step", filters: [{ col: "cancelled", op: "notchecked" }], sorts: [["id", "asc"]], hide: [...LISTING_JSON, "description", "detail_images", "created_at", "updated_at"] },
+				{ title: "当前步骤", kanban: "step", filters: [{ col: "cancelled", op: "notchecked" }], sorts: [["id", "asc"]], hide: [...LISTING_JSON, "description", "detail_images", "created_at", "updated_at"] },
 				{
-					title: "要上的货源",
-					form: { heading: "贴一个要上的 1688 货源", fields: { shop: "上到哪家店", offer_id: "1688 商品链接，整个贴进来", note: "想说的（例 为什么选它）" }, required: ["shop", "offer_id"] },
+					title: "添加货源",
+					form: { heading: "添加 1688 货源", fields: { shop: "上品的店铺", offer_id: "1688 商品链接（完整粘贴）", note: "补充说明（例：选它的理由）" }, required: ["shop", "offer_id"] },
 				},
 			],
 		},
 		{
-			name: "strategies", title: "策略", selects: { status: ["试验中", "在用", "停了"] },
-			columns: { name: "策略", status: "状态", bet: "押什么", how: "怎么选", note: "备注", created_at: "加入于", updated_at: "更新于" },
+			name: "strategies", title: "策略", selects: { status: ["试验中", "使用中", "已停用"] },
+			columns: { name: "策略", status: "状态", bet: "假设", how: "选品方法", note: "备注", created_at: "创建时间", updated_at: "更新时间" },
 			views: [{ title: "全部", sorts: [["created_at", "desc"]] }],
 		},
 		{
 			name: "sources", title: "货源", links: ["url", "image", "item_image"],
 			columns: {
-				item_name: "店里的商品", chosen: "用这个", title: "货源", url: "链接", sku_exceptions: "规格例外", score: "像不像", missing: "对不上的规格", sure: "明显对得上", origin: "从哪来", broken: "用不了",
-				image: "货源的图", item_image: "店里的图", site: "站点", read_at: "读到于", skus: "货源的规格（快照）", offer_id: "货源 id", item_id: "商品 id", found_at: "找到于", chosen_at: "定下于",
+				item_name: "店里的商品", chosen: "选用", title: "货源", url: "链接", sku_exceptions: "规格例外", score: "相似度", missing: "未匹配的规格", sure: "明显匹配", origin: "来源", broken: "不可用",
+				image: "货源的图", item_image: "店里的图", site: "站点", read_at: "读取时间", skus: "货源的规格（快照）", offer_id: "货源 id", item_id: "商品 id", found_at: "发现时间", chosen_at: "选定时间",
 			},
 			views: [
-				// 选货源：还没定的货源，按店里的商品分组；定了以后剩下的删掉，空了就是选完了
-				{ title: "选货源", filters: [{ col: "chosen", op: "notchecked" }], sorts: [["score", "desc"]], group: [["item_name", "asc"]], hide: ["skus", "offer_id", "item_id", "found_at", "chosen_at", "broken", "read_at", "site", "sku_exceptions"] },
-				{ title: "定了的", filters: [{ col: "chosen", op: "checked" }], sorts: [["item_name", "asc"]], hide: ["chosen", "score", "missing", "sure", "skus", "item_id", "found_at"] },
+				// 待选货源：还没定的货源，按店里的商品分组；定了以后剩下的删掉，空了就是选完了
+				{ title: "待选货源", filters: [{ col: "chosen", op: "notchecked" }], sorts: [["score", "desc"]], group: [["item_name", "asc"]], hide: ["skus", "offer_id", "item_id", "found_at", "chosen_at", "broken", "read_at", "site", "sku_exceptions"] },
+				{ title: "已选定", filters: [{ col: "chosen", op: "checked" }], sorts: [["item_name", "asc"]], hide: ["chosen", "score", "missing", "sure", "skus", "item_id", "found_at"] },
 			],
 		},
 		{
 			name: "writes", title: "写入",
 			columns: {
-				id: "编号", batch: "批次", op: "操作", display: "内容", include: "做", status: "状态", error: "原因", target: "对象", key: "防重复", params: "参数", response: "站点的回应",
-				readback: "回读", host: "电脑", created_at: "准备于", started_at: "开始于", finished_at: "结束于", cost: "费用",
+				id: "编号", batch: "批次", op: "操作", display: "内容", include: "执行", status: "状态", error: "原因", target: "对象", key: "防重复", params: "参数", response: "站点响应",
+				readback: "回读", host: "执行电脑", created_at: "准备时间", started_at: "开始时间", finished_at: "结束时间", cost: "费用",
 			},
 			views: [{ title: "全部", sorts: [["id", "desc"]], hide: ["target", "key", "params", "response", "readback"] }],
 		},
 		{
 			name: "order_settings", title: "订单设置",
 			columns: {
-				buy_account: "采购账号（1688 会员名）", late_days: "快到期提前几天", ship_wait_hours: "付款后几小时没发货算异常", forecast_needs_approval: "预报要批准",
+				buy_account: "采购账号（1688 会员名）", late_days: "快到期提醒（天）", ship_wait_hours: "未发货提醒（付款后小时数）", forecast_needs_approval: "预报要批准",
 				channel: "发货线路", sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id", id: "id",
 			},
 			views: [{ title: "设置", hide: ["id"] }],
@@ -139,17 +139,17 @@ export function tables(): Table[] {
 			name: "shop_settings", title: "店铺设置",
 			selects: { watermark_position: ["bottom-right", "bottom-left", "top-right", "top-left", "center"] },
 			columns: {
-				shop: "店铺", paused: "暂停上品（写原因）", watermark_text: "水印文字", watermark_size: "水印字号", watermark_opacity: "水印不透明度", watermark_position: "水印位置",
+				shop: "店铺", paused: "暂停上品原因", watermark_text: "水印文字", watermark_size: "水印字号", watermark_opacity: "水印不透明度", watermark_position: "水印位置",
 				min_margin_rate: "最低毛利率（按进账）", min_margin_rmb: "最低毛利（元）", fx: "汇率（台币/元）", price_per_kg_rmb: "每公斤运费（元）", label_fee_rmb: "贴单费（元/单）", weight_rounding_kg: "重量取整（kg）",
 				return_loss_rate: "退货损耗（按售价）", commission_rate: "成交手续费", pre_order_rate: "预售服务费", payment_rate: "金流费", coin_rate: "虾币回馈", free_shipping_rate: "免运方案费",
 				free_shipping_min_twd: "免运方案费每单最低（台币）", shipping_net_twd: "运费净额（台币）", pre_order: "预售", min_purchase: "起购量", stock_cap: "库存上限", channels: "物流渠道（id，逗号分隔）",
-				categories: "允许的类目（JSON）", shop_id: "Shopee 店铺 id", updated_at: "更新于",
+				categories: "允许的类目（JSON）", shop_id: "Shopee 店铺 id", updated_at: "更新时间",
 			},
 			views: [{ title: "设置", hide: ["categories"] }],
 		},
 		{
 			name: "images", title: "图（x2 用的）",
-			columns: { sha256: "sha256", kind: "哪种", source: "来源", from_sha: "从哪张来", width: "宽", height: "高", verdict: "筛字", checks: "检查结果", created_at: "加入于", mime: "格式", bytes: "字节" },
+			columns: { sha256: "sha256", kind: "类型", source: "来源", from_sha: "原图", width: "宽", height: "高", verdict: "筛字", checks: "检查结果", created_at: "创建时间", mime: "格式", bytes: "字节" },
 			views: [{ title: "全部", sorts: [["created_at", "desc"]], hide: ["bytes", "checks"] }],
 		},
 	];

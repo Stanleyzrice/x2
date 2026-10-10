@@ -1,5 +1,5 @@
 // x2 listing：上品（docs/listing.md）。
-// x2 listing add <店> <1688 链接…> [--strategy 名字]   要上的货源：一个货源 × 一家店一份商品稿
+// x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
 // x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
@@ -34,7 +34,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const strategy = flag(rest, "--strategy") ?? "人选";
 		if (!shop || !links.length) throw new Usage("x2 listing add <店> <1688 链接…> [--strategy 名字]");
 		const [st] = await sql`select name from strategies where name = ${strategy}`;
-		if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "押什么" --how "怎么选"`);
+		if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "假设" --how "选品方法"`);
 		const [s] = await sql`select shop from shop_settings where shop = ${shop}`;
 		if (!s) throw new Usage(`没有「${shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
 		const added: { id: string; offerId: string; isNew: boolean }[] = [];
@@ -60,7 +60,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			const [l] = await sql`select * from listings where id = ${id}`;
 			if (l) await syncImages(sql, l);
 		}
-		return out(results, results.map((r) => `商品稿 ${r.id}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}` : "做好了，等文案（x2 listing show " + r.id + "）"}`).join("\n"));
+		return out(results, results.map((r) => `商品稿 ${r.id}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
 	}
 
 	if (sub === "show") {
@@ -112,7 +112,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const live = keptVariants(l.variants ?? [], l.removed_variants);
 		const { skus, unknown } = matchVariants(live, names);
 		if (unknown.length) throw new Usage(`商品稿 ${id} 的规格里没有：${unknown.join("、")}（x2 listing show ${id} 看规格）`);
-		if (skus.length === live.length) throw new Usage("规格都去掉了：不上这个货源就在「商品稿」里勾「不上了」");
+		if (skus.length === live.length) throw new Usage("规格都去掉了：不上这个货源就在「商品稿」里勾「放弃」");
 		const removed = [...new Set([...(l.removed_variants ?? []), ...skus])];
 		await sql`update listings set removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
 		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再审）`;
@@ -128,7 +128,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 }
 
 type AuditResult = { id: string; ok: boolean | null; cached?: boolean; issues: string[] };
-const auditLine = (a: AuditResult) => `商品稿 ${a.id} 台湾审核：${a.ok === null ? `审不了：${a.issues.join("；")}` : a.ok ? `过了${a.cached ? "（审过）" : ""}` : `没过\n  ${a.issues.join("\n  ")}`}`;
+const auditLine = (a: AuditResult) => `商品稿 ${a.id} 台湾审核：${a.ok === null ? `审不了：${a.issues.join("；")}` : a.ok ? `通过${a.cached ? "（审过）" : ""}` : `未通过\n  ${a.issues.join("\n  ")}`}`;
 
 /** 台湾成品审核：内容没变的不重审（审核键记在商品稿的 audit 里） */
 async function audit(sql: Awaited<ReturnType<typeof db>>, ids: string[]): Promise<AuditResult[]> {

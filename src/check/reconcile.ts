@@ -1,8 +1,8 @@
 // 采购单分给订单（docs/orders.md）：付完款，按货源的规格把采购单里的件数分回加购（加购的写入记着每次为哪张订单的哪个规格加了几件），得出每一行：
-// 付了没、寄到哪、快递单号、签收了没。每轮现算，不记账。见 docs/orders.md「采购单分给订单」
+// 付了没、收货地址、快递单号、签收了没。每轮现算，不记账。见 docs/orders.md「采购单分给订单」
 // 1. 经 x2 加购的：同一个货源的规格，采购单的件数按加购的先后分给订单（先加的先分）；分不到的再看购物车里还有没有；都没有是「不见了」（人从购物车删了，或在别处买了）
-// 2. 不是经 x2 加购的（人在 x2 外面买的，或者 x2 加了购、人另外又买了一份）：剩下没分出去的采购单，按货源的规格分给还没付款的订单行（先下单的先分），
-//    够数的算「已付款」，标成在外面买的。只有一个采购账号时，这个账号买的每一件都看得到，所以能这样推断
+// 2. 不是经 x2 加购的（外部采购，或者 x2 加了购、人另外又买了一份）：剩下没分出去的采购单，按货源的规格分给还没付款的订单行（先下单的先分），
+//    够数的算「已付款」，标成外部采购。只有一个采购账号时，这个账号买的每一件都看得到，所以能这样推断
 
 export type CartWrite = { id: string; account: string; offerId: string; skuId: string; at: Date; lines: { sn: string; modelId: string; qty: number }[] };
 export type Purchase = {
@@ -22,7 +22,7 @@ export type Line = {
 	sn: string; modelId: string; qty: number; writeId: string; account: string; offerId: string; skuId: string;
 	/** 已付款：件数都在采购单里；在购物车：还没付完，差的购物车里有；不见了：采购单、购物车里都没有 */
 	state: "已付款" | "在购物车" | "不见了";
-	/** 在 x2 外面买的（没有加购的写入对得上） */
+	/** 外部采购（没有加购的写入对得上） */
 	outside: boolean;
 	paidQty: number; cartQty: number;
 	purchases: Bought[];

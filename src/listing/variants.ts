@@ -91,7 +91,7 @@ export type Tier = { name: string; options: { name: string; image: string | null
 
 /** Shopee 的规格层和每个规格在各层的下标。只有一个规格：单层、空名字（9-01 的成功样本） */
 export function tiersOf(variants: Variant[]): { tiers: Tier[]; index: number[][] } {
-	if (variants.length === 0) throw new Error("没有有货的规格");
+	if (variants.length === 0) throw new Error("无有货的规格");
 	if (variants.length === 1) return { tiers: [{ name: "", options: [{ name: "", image: null }] }], index: [[0]] };
 	const specs = axesOf(variants);
 	if (specs.some((s) => s.length === 0)) throw new Error("多规格商品缺规格名称");

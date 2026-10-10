@@ -1,5 +1,5 @@
 // x2 run：执行批准了的写入。写只有一条路：agent 准备写入 → 人在收件箱批准 → 先记意图 → 提交一次 → 读回来核对。
-// 1. 收件箱里勾了「批准」的批次：勾着「做」的写入改成已批准，取消勾的改成没做
+// 1. 收件箱里勾了「批准」的批次：勾着「执行」的写入改成已批准，取消勾的改成未执行
 // 2. 先核清：已提交（记了意图、进程挂了）、结果未知的写入，读回来；还核不清的，它所在的批次这次不做，同一个对象上的也不做
 // 3. 一批一批、一个一个执行：现读（还该不该做）→ 记意图（已提交）→ 提交一次 → 读回来。结果未知就停下这一批，不重发
 import { type Sql, host } from "./db/index.ts";
@@ -22,7 +22,7 @@ export async function run(sql: Sql, opts: { batch?: string; tryOps?: string[] } 
 	const approved = await sql`select split_part(key, ':', 2) as batch from inbox where kind = '批准' and open and approve`;
 	for (const { batch } of approved) {
 		await sql`update writes set status = '已批准' where batch = ${batch} and status = '待批准' and include`;
-		await sql`update writes set status = '没做', error = '批准前取消了勾', finished_at = now() where batch = ${batch} and status = '待批准' and not include`;
+		await sql`update writes set status = '未执行', error = '批准前取消了勾', finished_at = now() where batch = ${batch} and status = '待批准' and not include`;
 	}
 
 	const ran: Ran[] = [];
@@ -60,7 +60,7 @@ export async function run(sql: Sql, opts: { batch?: string; tryOps?: string[] } 
 	let last = 0;
 	for (const w of todo) {
 		const op = ops[w.op];
-		const skip = async (why: string, status = "没做") => {
+		const skip = async (why: string, status = "未执行") => {
 			await set(sql, w.id, { status, error: why, finished_at: new Date() });
 			ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status, why });
 		};

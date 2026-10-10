@@ -37,8 +37,8 @@ export type Priced = Variant & { priceTwd: number | null };
 export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): { variants: Priced[]; problems: string[] } {
 	const problems: string[] = [];
 	const noWeight = variants.filter((v) => !(v.weightKg && v.weightKg > 0)) ;
-	if (noWeight.length && !opts.weightKg) problems.push(`重量：1688 没给 ${noWeight.length} 个规格的重量，要人在「重量」里填（kg）`);
-	if (opts.freightRmb === null) problems.push("国内运费：货源不包邮，要人在「国内运费」里填（元 / 件；包邮填 0）");
+	if (noWeight.length && !opts.weightKg) problems.push(`重量：1688 缺 ${noWeight.length} 个规格的重量，请在「重量」里填写（kg）`);
+	if (opts.freightRmb === null) problems.push("国内运费：货源不包邮，请在「国内运费」里填写（元 / 件；包邮填 0）");
 	const out = variants.map((v): Priced => {
 		const weightKg = v.weightKg && v.weightKg > 0 ? v.weightKg : opts.weightKg;
 		const stock = Math.min(v.stock, s.stockCap);
@@ -72,10 +72,10 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
-	if (!row) return save(sql, id, {}, [`店铺：店铺设置里没有「${l.shop}」`]);
+	if (!row) return save(sql, id, {}, [`店铺：店铺设置里缺「${l.shop}」`]);
 	// 人在 NocoDB 表单里贴的是整个链接：改成货源 id
 	const offerId = offerIdOf(String(l.offer_id));
-	if (!offerId) return save(sql, id, {}, [`货源：认不出「${l.offer_id}」（贴 1688 的商品链接）`]);
+	if (!offerId) return save(sql, id, {}, [`货源：无法识别「${l.offer_id}」（贴 1688 的商品链接）`]);
 	if (offerId !== l.offer_id) {
 		const [dup] = await sql`select id from listings where shop = ${l.shop} and offer_id = ${offerId} and id <> ${id}`;
 		if (dup) return save(sql, id, { cancelled: true, note: `和商品稿 ${dup.id} 重复` }, []);
@@ -83,18 +83,18 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		l.offer_id = offerId;
 	}
 	const s = settingsOf(row);
-	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里还没写这家店的水印（两家店的封面要不一样）"]);
+	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
 	// 1. 货源
 	log(`读货源 ${l.offer_id}`);
 	let o: Offer;
 	try { o = await read1688(() => readOffer(l.offer_id)); } catch (e) {
-		if (e instanceof Gone) return save(sql, id, {}, ["货源：1688 上下架了"]);
+		if (e instanceof Gone) return save(sql, id, {}, ["货源：已在 1688 下架"]);
 		throw e;
 	}
 	const detail = o.detailUrl ? await detailImages(o.detailUrl).catch((e) => { log(`详情图取不到：${(e as Error).message}`); return [] as string[]; }) : [];
 	const problems: string[] = [];
-	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，一件一件买不了`);
+	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，无法单件购买`);
 
 	// 2. 规格、核价
 	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填。人去掉的规格不要
@@ -109,13 +109,13 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		// 上次放进 NocoDB 附件的（images.shown）留着：人删了哪张靠它认
 		const out: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
 		const cover = pics.main.find((p) => p.imageId);
-		if (!cover) { problems.push("图：没有能用的主图"); return out; }
-		if (pics.waiting.length) problems.push(`图：${pics.waiting.length} 张译图结果未知，等人核对（「写入」里改成已核对或被拒）`);
+		if (!cover) { problems.push("图：缺可用的主图"); return out; }
+		if (pics.waiting.length) problems.push(`图：${pics.waiting.length} 张译图结果未知，待人核对（在「写入」里改成已核对或被拒）`);
 		let path: number[] = l.category_path ?? [];
 		if (!path.length) {
 			log("推荐类目");
 			const rec = recommendedPath(await recommendedCategory(o.title, cover.imageId!));
-			if (!rec) { problems.push("类目：Shopee 没推荐出类目，要人定"); return out; }
+			if (!rec) { problems.push("类目：Shopee 未推荐类目，待人定"); return out; }
 			path = rec.path;
 		}
 		const leaf = path[path.length - 1]!;
@@ -124,9 +124,9 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		if (s.categories && !s.categories.has(String(leaf))) problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
 		const attrs = pickAttributes(await attributeTree(leaf));
 		Object.assign(out, { attributes: attrs.attributes, attributes_text: attrs.text.join("\n") || null });
-		if (attrs.missing.length) problems.push(`属性：必填的「${attrs.missing.join("、")}」要人填字`);
+		if (attrs.missing.length) problems.push(`属性：必填的「${attrs.missing.join("、")}」待人工填写`);
 		const days = daysToShip(leaf, (await shippingDays()).rules);
-		if (days === null) problems.push("备货天数：这个类目读不到备货天数的规则");
+		if (days === null) problems.push("备货天数：无法读取这个类目的备货天数规则");
 		out.days_to_ship = days;
 		return out;
 	});

@@ -135,7 +135,7 @@ export async function readAll(sql: Sql, log: (s: string) => void = console.error
 	const results: Read[] = [];
 	log(`读 chanboss 订单${again("订单")}`);
 	await attempt(results, "订单", "chanboss", () => reuse("订单", () => writeOrders(sql)), (n) => n);
-	// 要买的商品（chanboss 上待处理的订单里的）：现读它用这个的货源，更新快照，规格才配得准、下架了才知道
+	// 要买的商品（chanboss 上待处理的订单里的）：现读它选用的货源，更新快照，规格才配得准、下架了才知道
 	const toBuy = (await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.platform_status = '待出货' and o.chanboss_status = '待处理'`).map((r) => r.id as string);
 	if (toBuy.length) {
 		const key = `货源:${[...toBuy].sort().join(",")}`;

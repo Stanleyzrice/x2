@@ -14,7 +14,7 @@ create table if not exists order_settings (
 	buy_account text,
 	-- 离出货期限不到几天、还没打包，就进收件箱给人
 	late_days int not null default 6,
-	-- 1688 付了款多久（小时）还没发货算异常
+	-- 未发货提醒：1688 付款后多少小时还没发货，就进收件箱给人
 	ship_wait_hours int not null default 48,
 	forecast_needs_approval boolean not null default true,
 	-- 发货线路：海快（chanboss 的 sendway_id 752）。line_id、warehouse_id 是 chanboss 上这条线路的线路和仓库（2026-10-09 读已预报的订单：1111、5176）
@@ -27,7 +27,7 @@ insert into order_settings (id) values (1) on conflict do nothing;
 
 -- ── 人的决定 ──
 
--- 货源：一行是「店里一个商品 × 一个货源」。一个商品只用一个货源（chosen：用这个，一个商品最多一行）；没 chosen 的是还在挑的。
+-- 货源：一行是「店里一个商品 × 一个货源」。一个商品只用一个货源（chosen：选用，一个商品最多一行）；没 chosen 的是还在挑的。
 -- 规格不存对应：加购时按店里的规格名，在货源的规格里配。
 -- 货源的样子（标题、图、规格和价格）存一份快照：下架了还知道原来买的是什么，好比价、好在 NocoDB 里看图挑。x2 每次现读这个货源就更新快照；买之前一律现读，不信快照
 create table if not exists sources (
@@ -44,15 +44,15 @@ create table if not exists sources (
 	image text,
 	skus jsonb not null default '[]',
 	read_at timestamptz,
-	-- 像不像：店里卖过的规格有几成在这个货源里对得上；missing 是对不上的规格
+	-- 相似度：店里卖过的规格有几成在这个货源里对得上；missing 是未匹配的规格
 	score numeric,
 	missing text,
-	-- 从哪来：以图搜图、人贴的链接、以前定的
+	-- 来源：以图搜图、人工添加、原有
 	origin text,
-	-- x2 认为明显对得上（卖过的规格都对得上，而且只有它对得上）：随加购一起批准，不进收件箱
+	-- 明显匹配：x2 认为明显对得上（卖过的规格都对得上，而且只有它对得上），随加购一起批准，不进收件箱
 	sure boolean not null default false,
 	chosen boolean not null default false,
-	-- 用这个的货源用不了了（下架了）：x2 现读发现时写原因，检查当成没货源
+	-- 不可用：选用的货源下架时 x2 现读发现，写原因；检查当成缺货源
 	broken text,
 	found_at timestamptz not null default now(),
 	chosen_at timestamptz,
@@ -60,16 +60,16 @@ create table if not exists sources (
 );
 create unique index if not exists sources_chosen on sources (item_id) where chosen;
 
--- 到货问题：错货、少件、坏了。x2 看不到，人在 NocoDB 的表单里报（订单号、哪件、什么问题、几件），处理完勾「处理好了」。
--- 没处理好的：订单卡在「到货有问题」，不提醒打包；收件箱一行一个问题
+-- 到货问题：错货、少件、损坏。x2 看不到，人在 NocoDB 的表单里上报（订单号、商品和规格、问题类型、件数），处理完勾「已处理」。
+-- 未处理的：订单停在「有到货问题」，不提醒打包；收件箱一行一个问题
 create table if not exists arrival_issues (
 	id bigserial primary key,
 	sn text not null,
 	item text,
-	kind text not null default '坏了',
+	kind text not null default '损坏',
 	qty int,
 	note text,
-	-- 怎么处理：退换、重新买、不用管
+	-- 处理方式：退换、重新采购、无需处理
 	resolution text,
 	done boolean not null default false,
 	reported_at timestamptz not null default now(),
@@ -79,7 +79,7 @@ create table if not exists arrival_issues (
 -- ── 收件箱和写入 ──
 
 -- 收件箱：一件要人做的事。key 是「类别:对象」，每轮重算，只更新不重复；条件不成立就关。
--- 人只改 approve（批准）、done（处理好了：x2 看不到结果的事，勾了就关、不再开）、snooze_until、note。role 是谁做（现在都是运营）
+-- 人只改 approve（批准）、done（已处理：x2 看不到结果的事，勾了就关、不再开）、snooze_until（推迟至）、note。role 是负责人（现在都是运营）
 create table if not exists inbox (
 	key text primary key,
 	kind text not null,
@@ -102,7 +102,7 @@ create table if not exists inbox (
 create sequence if not exists batch_seq;
 
 -- 写入：做了一次写操作。先记意图（已提交），再提交一次，再读回来
--- status：待批准、已批准、已提交、成功、被拒、结果未知、已核对、不一致、没做
+-- status：待批准、已批准、已提交、成功、被拒、结果未知、已核对、不一致、未执行
 create table if not exists writes (
 	id bigserial primary key,
 	batch bigint not null,
@@ -112,7 +112,7 @@ create table if not exists writes (
 	display text,
 	-- 防重复：同一个 key 已有成功、结果未知……的写入，不再提交
 	key text not null,
-	-- 人在批准前取消勾：这一项不做
+	-- 执行（include）：人在批准前取消勾，这一项不做
 	include boolean not null default true,
 	status text not null default '待批准',
 	response jsonb,
@@ -190,7 +190,7 @@ create table if not exists shop_settings (
 	watermark_size int not null default 32 check (watermark_size between 8 and 200),
 	watermark_opacity numeric not null default 0.35 check (watermark_opacity between 0 and 1),
 	watermark_position text not null default 'bottom-right' check (watermark_position in ('top-left', 'top-right', 'center', 'bottom-left', 'bottom-right')),
-	-- 暂停上品：写原因（例 店铺被限制）；空是不暂停
+	-- 暂停上品原因（例 店铺被限制）：空是不暂停
 	paused text,
 	updated_at timestamptz not null default now()
 );
@@ -198,7 +198,7 @@ create table if not exists shop_settings (
 insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd) values ('ni1206', '348425', 0, 60), ('cheeroutdoor', '1554182542', 0.015, 0) on conflict do nothing;
 
 -- 商品稿：一个货源 × 一家店。x2 做（读货源、类目属性、规格和价格、图），agent 写标题和描述，人在 NocoDB 里审稿。
--- 人改：标题、描述、重量、国内运费、不上了、备注、策略；主图、详情图（删掉的那张就不要了）
+-- 人改：标题、描述、重量、国内运费、放弃（cancelled）、备注、策略；主图、详情图（删掉的那张就不要了）
 create table if not exists listings (
 	id bigserial primary key,
 	shop text not null,
@@ -207,7 +207,7 @@ create table if not exists listings (
 	-- 从哪个策略来（现在都是人选的）：以后按策略看效果
 	strategy text not null default '人选',
 	cancelled boolean not null default false,
-	-- 人填：1688 没给重量时，每个规格都用它（kg）；国内运费（元 / 件）：货源包邮自动是 0，不知道就空着
+	-- 人工填写：1688 没给重量时，每个规格都用它（kg）；国内运费（元 / 件）：货源包邮自动是 0，不知道就空着
 	weight_kg numeric check (weight_kg > 0),
 	freight_rmb numeric check (freight_rmb >= 0),
 	title text,
@@ -277,16 +277,20 @@ create table if not exists shop_images (
 -- 策略：选品的一个做法（docs/listing.md「策略」）。agent 定、做实验（explore / exploit）；商品稿的 strategy 写它的名字
 create table if not exists strategies (
 	name text primary key,
-	-- 押的是什么（假设）
+	-- 假设：押的是什么
 	bet text,
-	-- 怎么选：看什么数据、什么条件、去哪找货源
+	-- 选品方法：看什么数据、什么条件、去哪找货源
 	how text,
-	status text not null default '试验中' check (status in ('试验中', '在用', '停了')),
+	status text not null default '试验中' check (status in ('试验中', '使用中', '已停用')),
 	note text,
 	created_at timestamptz not null default now(),
 	updated_at timestamptz not null default now()
 );
-insert into strategies (name, bet, how, status) values ('人选', '人挑的货源', '运营贴链接', '在用') on conflict do nothing;
+-- 状态的约束：先去掉，把旧取值（在用、停了）换成现在的，再加回来
+alter table strategies drop constraint if exists strategies_status_check;
+update strategies set status = case status when '在用' then '使用中' else '已停用' end where status in ('在用', '停了');
+alter table strategies add constraint strategies_status_check check (status in ('试验中', '使用中', '已停用'));
+insert into strategies (name, bet, how, status) values ('人选', '人挑的货源', '运营贴链接', '使用中') on conflict do nothing;
 
 -- ── 加列（表建好以后加的列写在这里） ──
 
@@ -294,12 +298,14 @@ insert into strategies (name, bet, how, status) values ('人选', '人挑的货�
 -- 只记例外，配得上的不记。人在 NocoDB 里写，或者人在终端里说了、agent 用 x2 source <商品 id> --spec 写。换了货源就跟着那一行删掉
 alter table sources add column if not exists sku_exceptions text;
 
--- 商品稿里人删掉的图（Shopee 的图片 id）：人在 NocoDB 的「主图」「详情图」里删了附件，x2 记在这里，再做商品稿也不用它
+-- 已删除的图（Shopee 的图片 id）：人在 NocoDB 的「主图」「详情图」里删了附件，x2 记在这里，再做商品稿也不用它
 alter table listings add column if not exists removed_images jsonb not null default '[]';
--- 商品稿里人去掉的规格（货号，例 店里接不了的「定製」）：人说了，agent 用 x2 listing drop 写；再做商品稿也不要它
+-- 已移除的规格（货号，例 店里接不了的「定製」）：人说了，agent 用 x2 listing drop 写；再做商品稿也不要它
 alter table listings add column if not exists removed_variants jsonb not null default '[]';
 -- 商品稿的店铺不用外键（NocoDB 会把外键变成关联列，表单里就不能直接选店）；x2 做商品稿时核对店铺设置里有没有这家店
 alter table listings drop constraint if exists listings_shop_fkey;
 -- NocoDB 的附件是 JSON 文本（它写回来的也是文本）
 alter table listings alter column main_images type text using main_images::text;
 alter table listings alter column detail_images type text using detail_images::text;
+-- 到货问题的类型默认「损坏」
+alter table arrival_issues alter column kind set default '损坏';

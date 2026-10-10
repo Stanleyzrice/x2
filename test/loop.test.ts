@@ -86,7 +86,7 @@ test("写入：取消勾的不做；被拒的记下原因", { skip: !sql && "没
 	const r = await run(db, {}, ops);
 	assert.deepEqual(r.ran.map((x) => [x.display, x.status, x.why]), [["第 4 项", "被拒", "库存不够"]]);
 	const rows = await db`select params->>'n' as n, status from writes where batch = ${p.batch} order by id`;
-	assert.deepEqual(rows.map((x) => [x.n, x.status]), [["3", "没做"], ["4", "被拒"]]);
+	assert.deepEqual(rows.map((x) => [x.n, x.status]), [["3", "未执行"], ["4", "被拒"]]);
 });
 
 test("收件箱：每轮重算，只更新不重复；这一轮读成功了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
@@ -108,7 +108,7 @@ test("收件箱：每轮重算，只更新不重复；这一轮读成功了才�
 	assert.equal((await db`select open from inbox where key = 'late:S1'`)[0]!.open, false);
 });
 
-test("收件箱：人勾「处理好了」就关，以后不再开", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("收件箱：人勾「已处理」就关，以后不再开", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const soon = new Date(Date.now() + 86400_000);
 	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
@@ -121,7 +121,7 @@ test("收件箱：人勾「处理好了」就关，以后不再开", { skip: !sq
 	assert.equal((await db`select open from inbox where key = 'late:S2'`)[0]!.open, false);
 });
 
-test("规格例外：x2 source --spec 写进用这个的货源那一行；两边都要对得上，同一个规格写过的换掉", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("规格例外：x2 source --spec 写进选用的货源那一行；两边都要对得上，同一个规格写过的换掉", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	await db`insert into orders (sn, shop, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
 		values ('S3', 'ni1206', '待出货', '待处理', 'c3', 1, ${db.json([{ itemId: "RACK", modelId: "M3", chanbossModelId: "cM3", name: "衣帽架", spec: "特粗26管雙層側三網150金+輪", qty: 1, image: "" }])}, now())`;
