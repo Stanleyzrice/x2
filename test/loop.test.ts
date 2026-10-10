@@ -5,7 +5,8 @@ import postgres from "postgres";
 import { z } from "zod";
 import { check, syncImages } from "../src/check/index.ts";
 import type { Reads } from "../src/read.ts";
-import { migrate } from "../src/db/index.ts";
+import { listingCommand } from "../src/commands/listing.ts";
+import { close, migrate } from "../src/db/index.ts";
 import { Usage } from "../src/errors.ts";
 import { approve, propose } from "../src/propose.ts";
 import { run } from "../src/run.ts";
@@ -36,7 +37,7 @@ before(async () => {
 	await sql.unsafe("drop schema public cascade; create schema public");
 	await migrate(sql);
 });
-after(async () => { await sql?.end(); });
+after(async () => { await sql?.end(); await close(); });
 
 test("写入：批准了才做；结果未知停下这一批，不重发；人核清以后接着做", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
@@ -160,3 +161,58 @@ test("商品稿的图和 NocoDB 附件：x2 放上去；人删了哪张记下来
 	assert.deepEqual((JSON.parse(last!.main_images) as { url: string }[]).map((a) => a.url.split("/").pop()), ["m2", "m4"]);
 });
 
+test("商品稿的规格图：第一层每个选项一张附件，标题是选项名；只给人看，人删了不记、下一轮写回去", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const pic = (id: string, from: string) => ({ from, imageId: id, width: 800, height: 800 });
+	const names = [["黑猫", "水生財黑貓咪", "a.jpg"], ["黄狗", "遇水生財黃蘋狗", "b.jpg"], ["白猫", "白貓", "c.jpg"]];
+	const specs = {
+		tiers: [{ source: "颜色", name: "款式", options: names.map(([source, name, image]) => ({ source, name, image })) }],
+		variants: names.map((_, k) => ({ sku: `LT2-${k}`, skuId: `${k}`, specId: `${k}`, options: [k], costRmb: 1, stock: 9, weightKg: 0.3, priceTwd: 133 })),
+	};
+	const images = { main: [pic("m1", "m1.jpg")], detail: [], options: [pic("o1", "a.jpg"), pic("o2", "b.jpg"), { from: "c.jpg", drop: "有供应商痕迹" }], waiting: [] };
+	const [l] = await db`insert into listings (shop, offer_id, images, variants) values ('cheeroutdoor', '2', ${db.json(images)}, ${db.json(specs)}) returning *`;
+	await syncImages(db, l);
+	const att = (t: string) => (JSON.parse(t) as { url: string; title: string }[]).map((a) => [a.title, a.url.split("/").pop()]);
+	assert.deepEqual(att(l!.option_images), [["水生財黑貓咪", "o1"], ["遇水生財黃蘋狗", "o2"]]);
+	// 人在 NocoDB 删了一张规格图：不记成已删除的图，下一轮写回去
+	await db`update listings set option_images = ${JSON.stringify([{ url: "https://down-tw.img.susercontent.com/file/o2", title: "遇水生財黃蘋狗" }])} where id = ${l!.id}`;
+	const [edited] = await db`select * from listings where id = ${l!.id}`;
+	await syncImages(db, edited);
+	const [now] = await db`select removed_images, option_images from listings where id = ${l!.id}`;
+	assert.deepEqual([now!.removed_images, att(now!.option_images)], [[], [["水生財黑貓咪", "o1"], ["遇水生財黃蘋狗", "o2"]]]);
+});
+
+/** x2 listing 的一条命令（--json），回它的输出 */
+async function listing(args: string[]): Promise<any> {
+	process.env.X2_DATABASE_URL = url!;
+	const printed: string[] = [];
+	const log = console.log;
+	console.log = (s: string) => { printed.push(s); };
+	try { await listingCommand(args, true); } finally { console.log = log; }
+	return JSON.parse(printed.join("\n"));
+}
+
+/** 一份做好了的商品稿：顏色（黑貓、黃狗、定製）× 尺寸（40*60、60*90），货号 LT<货源>-<各层下标> */
+async function madeListing(db: postgres.Sql, offerId: string) {
+	const specs = {
+		tiers: [
+			{ source: "颜色", name: "顏色", options: [["黑猫", "黑貓"], ["黄狗", "黃狗"], ["定制", "定製"]].map(([source, name]) => ({ source, name, image: null })) },
+			{ source: "尺寸", name: "尺寸", options: [{ source: "40*60", name: "40*60" }, { source: "60*90", name: "60*90" }] },
+		],
+		variants: [0, 1, 2].flatMap((a) => [0, 1].map((b) => [a, b])).map((c) => ({ sku: `LT${offerId}-${c.join("")}`, skuId: c.join(""), specId: c.join(""), options: c, costRmb: 1, stock: 9, weightKg: 0.3, priceTwd: 133 })),
+	};
+	const [l] = await db`insert into listings (shop, offer_id, offer, variants) values ('cheeroutdoor', ${offerId}, ${db.json({ offerId, props: [], skus: [] })}, ${db.json(specs)}) returning id::text`;
+	return { id: l!.id as string, specs };
+}
+
+test("x2 listing drop：按结构去掉整个选项，货号记进已移除的规格；去掉单个规格会让组合不齐时不做", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const { id } = await madeListing(db, "3");
+	assert.deepEqual(await listing(["drop", id, "定製"]), { id, dropped: ["LT3-20", "LT3-21"], left: 4, merged: false });
+	const [dropped] = await db`select variants, removed_variants from listings where id = ${id}`;
+	assert.deepEqual([dropped!.removed_variants, dropped!.variants.tiers[0].options.map((o: any) => o.name)], [["LT3-20", "LT3-21"], ["黑貓", "黃狗"]]);
+	// 去掉单个规格会让两层的组合不齐：不做，库里不变
+	await assert.rejects(listing(["drop", id, "LT3-00"]), (e: Error) => e instanceof Usage && /组合不齐/.test(e.message));
+	const [same] = await db`select removed_variants from listings where id = ${id}`;
+	assert.deepEqual(same!.removed_variants, ["LT3-20", "LT3-21"]);
+});

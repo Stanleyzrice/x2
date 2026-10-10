@@ -6,6 +6,7 @@ import { IMAGE } from "../site/shopee/seller.ts";
 import { NeedsHuman } from "../errors.ts";
 import { read1688, type Read, type Reads } from "../read.ts";
 import { settingsOf, type Settings } from "../listing/make.ts";
+import { isSingle, specsOf } from "../listing/variants.ts";
 import { checkListings } from "./listings.ts";
 import { checkOrders, type InboxItem, planned, type Result, type Snapshot, type Todo } from "./orders.ts";
 
@@ -83,7 +84,8 @@ async function loopItems(sql: Sql, reads: Reads): Promise<InboxItem[]> {
 export type Checked = { todo: Todo[]; opened: number; closed: number };
 
 /** 商品稿的图和 NocoDB 的附件对一下：x2 上次放上去的（images.shown）里人删掉的记进 removed_images；
- * 再把现在要用的（做好的、没删的；主图最多 9 张、详情图最多 12 张）写回附件。附件是 Shopee 的图片地址，NocoDB 直接显示 */
+ * 再把现在要用的（做好的、没删的；主图最多 9 张、详情图最多 12 张）写回附件。附件是 Shopee 的图片地址，NocoDB 直接显示。
+ * 规格图（第一层每个选项一张，标题是选项名）只给人看：人删了不记，每次照规格写回去 */
 export async function syncImages(sql: Sql, l: any): Promise<void> {
 	if (!l.images?.main) return;
 	const removed = new Set<string>((l.removed_images ?? []) as string[]);
@@ -101,10 +103,17 @@ export async function syncImages(sql: Sql, l: any): Promise<void> {
 		next[role] = ((l.images[role] ?? []) as any[]).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId)).slice(0, max).map((p) => p.imageId as string);
 		att[col] = JSON.stringify(next[role]!.map((id, i) => ({ url: `${IMAGE}${id}`, title: `${role === "main" ? "主图" : "详情图"} ${i + 1}`, mimetype: "image/jpeg" })));
 	}
+	const specs = specsOf(l.variants);
+	const optionIds = new Map(((l.images.options ?? []) as any[]).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId)).map((p) => [p.from as string, p.imageId as string]));
+	const options = specs && !isSingle(specs) ? specs.tiers[0]!.options.flatMap((o) => {
+		const id = o.image ? optionIds.get(o.image) : undefined;
+		return id ? [{ url: `${IMAGE}${id}`, title: o.name, mimetype: "image/jpeg" }] : [];
+	}) : [];
+	att.option_images = JSON.stringify(options);
 	const images = { ...l.images, shown: next };
-	if (JSON.stringify(shown) === JSON.stringify(next) && l.main_images === att.main_images && l.detail_images === att.detail_images && removed.size === (l.removed_images ?? []).length) return;
-	await sql`update listings set images = ${sql.json(images)}, removed_images = ${sql.json([...removed])}, main_images = ${att.main_images!}, detail_images = ${att.detail_images!} where id = ${l.id}`;
-	Object.assign(l, { images, removed_images: [...removed], main_images: att.main_images, detail_images: att.detail_images });
+	if (JSON.stringify(shown) === JSON.stringify(next) && l.main_images === att.main_images && l.detail_images === att.detail_images && l.option_images === att.option_images && removed.size === (l.removed_images ?? []).length) return;
+	await sql`update listings set images = ${sql.json(images)}, removed_images = ${sql.json([...removed])}, main_images = ${att.main_images!}, detail_images = ${att.detail_images!}, option_images = ${att.option_images} where id = ${l.id}`;
+	Object.assign(l, { images, removed_images: [...removed], main_images: att.main_images, detail_images: att.detail_images, option_images: att.option_images });
 }
 
 /** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点 */

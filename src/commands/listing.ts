@@ -1,11 +1,12 @@
 // x2 listing：上品（docs/listing.md）。
 // x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
 // x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
-// x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格、类目、属性、服务）
+// x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
 // x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）；挑出的问题有编号，挑出的图 x2 先处理
 // x2 listing audit <商品稿> --accept <编号…>           放行审核挑出的问题（人看过说是误报或无妨，人说了才用）
-// x2 listing drop <商品稿> <选项名或货号…>             去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
+// x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
+//                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
 import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
@@ -14,7 +15,7 @@ import { make, settingsOf } from "../listing/make.ts";
 import { acceptIssues, type Audit, auditDropped, type AuditIssue, auditIssues, auditKey, auditPassed, auditTaiwan, dropAudited, restoreAudited } from "../listing/audit.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
-import { keptVariants, matchVariants } from "../listing/variants.ts";
+import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, specsOf, specsText } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
 
 const readStdin = async () => {
@@ -51,7 +52,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 
 	if (sub === "make") {
 		let ids = plain(rest);
-		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null) order by id`).map((r) => r.id as string);
+		// 不给就做：还没做的、待补充的、规格是旧格式的
+		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object') order by id`).map((r) => r.id as string);
 		if (!ids.length) return out([], "没有要做的商品稿");
 		const results = [];
 		for (const id of ids) {
@@ -69,11 +71,16 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		if (!id) throw new Usage("x2 listing show <商品稿>");
 		const [l] = await sql`select * from listings where id = ${id}`;
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
+		// 规格：每层（第几层、1688 的层名、现在的名字）、每个选项（第几个、1688 的原值、现在的名字、这个选项的售价范围）。单规格的不写规格名，tiers 是空的
+		const specs = specsOf(l.variants);
+		const tiers = specs && !isSingle(specs) ? specs.tiers.map((t, a) => ({
+			n: a + 1, source: t.source, name: t.name,
+			options: t.options.map((o, k) => ({ n: k + 1, source: o.source, name: o.name, price: priceRange(specs.variants.filter((v) => v.options[a] === k)) })),
+		})) : [];
 		const facts = {
 			id: String(l.id), shop: l.shop, offerTitle: l.offer?.title ?? null, category: l.category_name, attributes: l.attributes_text,
-			specs: keptVariants((l.variants ?? []) as any[], l.removed_variants).map((v) => v.specs.map((x: any) => `${x.label}：${x.value}`).join("，") || "（单规格）"),
-			weights: [...new Set(keptVariants((l.variants ?? []) as any[], l.removed_variants).map((v) => v.weightKg))], tags: l.offer?.tags ?? null,
-			title: l.title, description: l.description, problems: l.problems,
+			variants: specs?.variants.length ?? 0, tiers, weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))], tags: l.offer?.tags ?? null,
+			title: l.title, description: l.description, problems: l.offer && !specs ? OLD_SPECS : l.problems,
 		};
 		return out(facts, JSON.stringify(facts, null, 1));
 	}
@@ -115,18 +122,21 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "drop") {
+		// 按存着的规格去掉：整个选项（选项名，两层有同名的写「层名:选项名」）或一个规格（货号）。去掉的货号记进已移除的规格，规格跟着改
+		const merge = rest.includes("--merge");
 		const [id, ...names] = plain(rest);
-		if (!id || !names.length) throw new Usage("x2 listing drop <商品稿> <选项名或货号…>");
-		const [l] = await sql`select variants, removed_variants, problems from listings where id = ${id}`;
+		if (!id || !names.length) throw new Usage("x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]（人说了才用；--merge 也是人说了才加）");
+		const [l] = await sql`select variants, offer, removed_variants, problems from listings where id = ${id}`;
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
-		const live = keptVariants(l.variants ?? [], l.removed_variants);
-		const { skus, unknown } = matchVariants(live, names);
-		if (unknown.length) throw new Usage(`商品稿 ${id} 的规格里没有：${unknown.join("、")}（x2 listing show ${id} 看规格）`);
-		if (skus.length === live.length) throw new Usage("规格都去掉了：不上这个货源就在「商品稿」里勾「放弃」");
-		const removed = [...new Set([...(l.removed_variants ?? []), ...skus])];
-		await sql`update listings set removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
+		const specs = specsOf(l.variants);
+		if (!specs) throw new Usage(`商品稿 ${id} 的规格是旧格式：先重做商品稿（x2 listing make ${id}），再去掉`);
+		const r = dropSpecs(specs, names, merge);
+		if ("error" in r) throw new Usage(`商品稿 ${id}：${r.error}`);
+		const removed = [...new Set([...(l.removed_variants ?? []), ...r.skus])];
+		await sql`update listings set variants = ${sql.json(r.specs)}, variants_text = ${specsText(r.specs, removedOf(l.offer, removed))}, removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
 		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再审）`;
-		return out({ id, dropped: skus, left: live.length - skus.length }, `商品稿 ${id}：去掉 ${skus.length} 个规格，还剩 ${live.length - skus.length} 个\n下一步：${next}`);
+		const left = r.specs.variants.length;
+		return out({ id, dropped: r.skus, left, merged: r.merged }, `商品稿 ${id}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);
 	}
 
 	if (sub === "list") {

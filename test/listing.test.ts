@@ -30,76 +30,212 @@ test("核价：两道门都过的最小整数售价（和 lilto 的验算、真�
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
-import { matchVariants, tiersOf, uniqueNames, type Variant, variantsOf } from "../src/listing/variants.ts";
+import { dropSpecs, limitProblems, OLD_SPECS, priceRange, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems } from "../src/listing/variants.ts";
+import type { Offer } from "../src/site/1688.ts";
 
-const v = (specs: [string, string][], image: string | null = null): Variant => ({ sku: "", skuId: "", specId: "", specs: specs.map(([label, value]) => ({ label, value })), costRmb: 1, stock: 9, weightKg: 0.3, image });
-
-test("规格：尺寸层只留字母码；两层组合齐全才留两层，规格图挂在第一层", () => {
-	const all = [["卡其色", "a.jpg"], ["黑色", "b.jpg"]].flatMap(([c, img]) => ["【M碼】身高【150-158cm】", "【L碼】身高【158-165cm】"].map((s) => v([["顏色", c!], ["尺碼", s]], img!)));
-	const { tiers, index } = tiersOf(all);
-	assert.deepEqual(tiers.map((t) => t.name), ["顏色", "尺碼"]);
-	assert.deepEqual(tiers[1]!.options.map((o) => o.name), ["M", "L"]);
-	assert.deepEqual(tiers[0]!.options, [{ name: "卡其色", image: "a.jpg" }, { name: "黑色", image: "b.jpg" }]);
-	assert.deepEqual(index, [[0, 0], [0, 1], [1, 0], [1, 1]]);
-	// 缺一个组合：合成一层「款式」
-	const merged = tiersOf(all.slice(0, 3));
-	assert.deepEqual(merged.tiers.map((t) => [t.name, t.options.map((o) => o.name)]), [["款式", ["卡其色 M", "卡其色 L", "黑色 M"]]]);
-	// 同一个选项下规格图不一样：定不了
-	assert.throws(() => tiersOf([v([["顏色", "紅"]], "a.jpg"), v([["顏色", "紅"]], "b.jpg"), v([["顏色", "藍"]])]), /規格圖|规格图/);
-	// 只有一个规格：单层、空名字
-	assert.deepEqual(tiersOf([v([])]).tiers, [{ name: "", options: [{ name: "", image: null }] }]);
+/** 一个货源：props 是 [层名, 取值…]（第一层的取值带图「<取值>.jpg」），skus 是 [各层的取值, 库存]，规格 id 是 s<第几个> */
+const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offer => ({
+	offerId: "1", url: "", title: "", image: "", unit: "", minQty: 1,
+	props: props.map(([name, values], i) => ({ name, values: values.map((v) => ({ name: v, image: i === 0 ? `${v}.jpg` : "" })) })),
+	skus: skus.map(([attrs, stock = 9], k) => ({ skuId: `k${k}`, specId: `s${k}`, name: attrs.join(" / "), attrs, price: 10, stock, image: attrs[0] ? `${attrs[0]}.jpg` : "", weightKg: 0.3 })),
 });
-
-test("规格：选项名去掉括号里的短说明、重名的加 -2；最多 20 字", () => {
-	assert.deepEqual([...uniqueNames(["紅色【爆款】", "紅色(新品)", "藍色"], 20).values()], ["紅色", "紅色-2", "藍色"]);
-	assert.equal(uniqueNames(["一二三四五六七八九十一二三四五六七八九十多"], 20).get("一二三四五六七八九十一二三四五六七八九十多")!.length, 20);
-});
-
-test("规格：只要有货的，只留取值不一样的层，转台湾繁体，货号是 LT<货源>-<规格 id>", () => {
-	const offer = {
-		offerId: "952803717616", url: "", title: "", image: "", unit: "", minQty: 1,
-		props: [{ name: "颜色", values: [] }, { name: "规格", values: [] }],
-		skus: [
-			{ skuId: "1", specId: "s1", name: "", attrs: ["红色", "标准款"], price: 19.9, stock: 10, image: "r.jpg", weightKg: 1.6 },
-			{ skuId: "2", specId: "s2", name: "", attrs: ["蓝色", "标准款"], price: 19.9, stock: 5, image: "b.jpg", weightKg: 1.6 },
-			{ skuId: "3", specId: "s3", name: "", attrs: ["黑色", "标准款"], price: 19.9, stock: 0, image: "k.jpg", weightKg: 1.6 },
-		],
+/** 每层的层名和选项名 */
+const names = (s: Specs) => s.tiers.map((t) => [t.name, t.options.map((o) => o.name)]);
+/** 换上名字（每层 [层名, 选项名…]，不核规矩） */
+const named = (s: Specs, tiers: [string, string[]][]): Specs => ({ ...s, tiers: s.tiers.map((t, a) => ({ ...t, name: tiers[a]![0], options: t.options.map((o, k) => ({ ...o, name: tiers[a]![1][k]! })) })) });
+/** 规格：每层 [层名, 选项名…]（原值和名字一样，第一层的选项带图「<名字>.jpg」），每个组合一个规格（货号 LT1-<各层下标>），售价、重量照给的 */
+const grid = (tiers: [string, string[]][], price: (c: number[]) => number | null = () => 295, weight: (c: number[]) => number | null = () => 1.6): Specs => {
+	const cells = tiers.reduce<number[][]>((all, [, opts]) => all.flatMap((c) => opts.map((_, k) => [...c, k])), [[]]);
+	return {
+		tiers: tiers.map(([name, opts], a) => ({ source: name, name, options: opts.map((o) => ({ source: o, name: o, ...(a === 0 ? { image: `${o}.jpg` } : {}) })) })),
+		variants: cells.map((c) => ({ sku: `LT1-${c.join("")}`, skuId: c.join(""), specId: c.join(""), options: c, costRmb: 1, stock: 9, weightKg: weight(c), priceTwd: price(c) })),
 	};
-	const vs = variantsOf(offer);
-	assert.deepEqual(vs.map((x) => [x.sku, x.specs]), [
-		["LT952803717616-s1", [{ label: "顏色", value: "紅色" }]],
-		["LT952803717616-s2", [{ label: "顏色", value: "藍色" }]],
+};
+
+test("规格：只要有货的、没移除的，只留取值不一样的层；两层组合齐全才留两层，不齐合成一层「款式」；选项照 1688 的顺序，规格图挂第一层", () => {
+	const sizes = ["【M码】身高【150-158cm】", "【L码】身高【158-165cm】"];
+	const o = offerOf([["颜色", ["卡其色", "黑色", "白色"]], ["尺码", sizes], ["款式", ["标准款"]]], [
+		[["黑色", sizes[1]!, "标准款"]], [["卡其色", sizes[0]!, "标准款"]], [["黑色", sizes[0]!, "标准款"]], [["卡其色", sizes[1]!, "标准款"]], [["白色", sizes[0]!, "标准款"], 0],
 	]);
-	assert.equal(vs[0]!.weightKg, 1.6);
+	const { specs, problems } = specsFrom(o);
+	assert.deepEqual(problems, []);
+	assert.deepEqual(specs.tiers, [
+		{ source: "颜色", name: "顏色", options: [{ source: "卡其色", name: "卡其色", image: "卡其色.jpg" }, { source: "黑色", name: "黑色", image: "黑色.jpg" }] },
+		{ source: "尺码", name: "尺碼", options: [{ source: sizes[0], name: "M" }, { source: sizes[1], name: "L" }] },
+	]);
+	assert.deepEqual(specs.variants.map((v) => [v.sku, v.options]), [["LT1-s1", [0, 0]], ["LT1-s3", [0, 1]], ["LT1-s2", [1, 0]], ["LT1-s0", [1, 1]]]);
+	assert.deepEqual(structureProblems(specs), []);
+	// 缺一个组合（移除了，或没货了）：合成一层「款式」，一个组合一个选项，原值是各层的原值连起来
+	const merged = specsFrom(o, ["LT1-s0"]).specs;
+	assert.deepEqual(names(merged), [["款式", ["卡其色 M", "卡其色 L", "黑色 M"]]]);
+	assert.equal(merged.tiers[0]!.source, "颜色 / 尺码");
+	assert.deepEqual(merged.tiers[0]!.options.map((x) => [x.source, x.image]), [[`卡其色 / ${sizes[0]}`, "卡其色.jpg"], [`卡其色 / ${sizes[1]}`, "卡其色.jpg"], [`黑色 / ${sizes[0]}`, "黑色.jpg"]]);
+	assert.deepEqual(merged.variants.map((v) => v.options), [[0], [1], [2]]);
+	assert.deepEqual(structureProblems(merged), []);
+	// 同一个选项下 1688 的图不一样：定不了，要人处理
+	const twoImages = offerOf([["颜色", ["红", "蓝"]], ["尺寸", ["S", "L"]]], [[["红", "S"]], [["红", "L"]], [["蓝", "S"]], [["蓝", "L"]]]);
+	twoImages.skus[1]!.image = "b.jpg";
+	const t = specsFrom(twoImages);
+	assert.deepEqual([t.problems, t.specs.tiers[0]!.options[0]!.image], [["规格：「紅」下的规格图不一样，定不了这个选项用哪张图"], null]);
+	// 只有一个规格：单层、空名字
+	assert.deepEqual(specsFrom(offerOf([], [[[]]])).specs, { tiers: [{ source: "", name: "", options: [{ source: "", name: "", image: null }] }], variants: [{ sku: "LT1-s0", skuId: "k0", specId: "s0", options: [0], costRmb: 10, stock: 9, weightKg: 0.3, priceTwd: null }] });
 });
 
-import { productInfo, readbackProblems } from "../src/listing/product.ts";
+test("规格：自动的名字转台湾繁体、去掉 emoji 和括号里的短说明、最多 20 字；1688 的值前 20 字一样也是两个选项（名字加 -2），不会指到同一格", () => {
+	const long = "一二三四五六七八九十一二三四五六七八九十";
+	const values = ["红色【爆款】", "红色(新品)", "蓝色🌟", `${long}甲`, `${long}乙`];
+	const { specs } = specsFrom(offerOf([["颜色", values]], values.map((v): [string[]] => [[v]])));
+	assert.deepEqual(names(specs), [["顏色", ["紅色", "紅色-2", "藍色", long, `${long.slice(0, 18)}-2`]]]);
+	assert.deepEqual(specs.tiers[0]!.options.map((o) => o.source), values);
+	assert.deepEqual(specs.variants.map((v) => v.options), [[0], [1], [2], [3], [4]]);
+	assert.deepEqual(structureProblems(specs), []);
+});
 
-const draft = () => ({
+test("规格：重做商品稿时按 1688 层名、原值把名字对回去；新的选项自动起名字，不和留下的名字撞；没货了的不要", () => {
+	const sizes = ["40*60cm（升级版硅藻泥）", "60*90cm（升级版硅藻泥）"];
+	const o = offerOf([["颜色", ["卡其色", "黑色（加厚款）"]], ["尺寸", sizes]], ["卡其色", "黑色（加厚款）"].flatMap((c) => sizes.map((z): [string[]] => [[c, z]])));
+	const first = specsFrom(o).specs;
+	assert.deepEqual(names(first), [["顏色", ["卡其色", "黑色"]], ["尺寸", ["40*60cm升級版矽藻泥", "60*90cm升級版矽藻泥"]]]);
+	const before = named(first, [["款式", ["奶茶卡其", "黑色"]], ["尺寸", ["40×60cm", "60×90cm"]]]);
+	// 1688 上卡其色没货了，多了「黑色」
+	const again = offerOf([["颜色", ["卡其色", "黑色（加厚款）", "黑色"]], ["尺寸", sizes]], ["卡其色", "黑色（加厚款）", "黑色"].flatMap((c) => sizes.map((z): [string[], number] => [[c, z], c === "卡其色" ? 0 : 9])));
+	const next = specsFrom(again, [], before).specs;
+	assert.deepEqual(names(next), [["款式", ["黑色", "黑色-2"]], ["尺寸", ["40×60cm", "60×90cm"]]]);
+	assert.deepEqual(next.tiers[0]!.options.map((x) => x.source), ["黑色（加厚款）", "黑色"]);
+	// 上一版是旧格式的：名字都自动起
+	assert.deepEqual(names(specsFrom(o, [], specsOf([{ sku: "x", specs: [] }])).specs), names(first));
+});
+
+test("规格的规矩：错在哪层哪个选项写清楚；上限在核价以后算；旧格式认不出", () => {
+	const ok = grid([["款式", ["黑貓", "黃狗"]], ["尺寸", ["40×60cm", "60×90cm"]]]);
+	assert.deepEqual(structureProblems(ok), []);
+	const bad = (f: (s: Specs) => unknown) => {
+		const s: Specs = structuredClone(ok);
+		f(s);
+		return structureProblems(s).join("\n");
+	};
+	assert.match(bad((s) => s.tiers.push({ source: "", name: "材質", options: [] })), /3 层，要 1–2 层/);
+	assert.match(bad((s) => { s.tiers[0]!.name = ""; }), /第 1 层缺层名/);
+	assert.match(bad((s) => { s.tiers[1]!.name = "一二三四五六七八九十一二三四五"; }), /第 2 层「一二三四五六七八九十一二三四五」的层名 15 字，最多 14 字/);
+	assert.match(bad((s) => { s.tiers[0]!.options[1]!.name = " "; }), /第 1 层「款式」第 2 个选项缺名字/);
+	assert.match(bad((s) => { s.tiers[1]!.options[0]!.name = "一二三四五六七八九十一二三四五六七八九十多"; }), /第 2 层「尺寸」第 1 个选项「一二三四五六七八九十一二三四五六七八九十多」 21 字，最多 20 字/);
+	assert.match(bad((s) => { s.tiers[0]!.options[1]!.name = "黑貓"; }), /第 1 层「款式」的第 1、2 个选项都叫「黑貓」，同一层不能重名/);
+	assert.match(bad((s) => { s.tiers[1]!.name = "款式"; }), /两层都叫「款式」/);
+	assert.match(bad((s) => { s.variants[0]!.options = [0]; }), /规格 LT1-00 有 1 个选项下标，要每层一个（2 个）/);
+	assert.match(bad((s) => { s.variants[0]!.options = [0, 5]; }), /规格 LT1-00 在第 2 层「尺寸」的选项下标 5 不存在（这一层有 2 个选项）/);
+	assert.match(bad((s) => { s.variants[1]!.options = [0, 0]; }), /规格 LT1-00 和 LT1-01 是同一格（黑貓 × 40×60cm）/);
+	assert.match(bad((s) => { s.variants.pop(); }), /两层的组合不齐，缺「黃狗 × 60×90cm」（两层要每个组合都有，不然合成一层「款式」）/);
+	assert.match(bad((s) => s.tiers[1]!.options.push({ source: "80*120", name: "80×120cm" })), /第 2 层「尺寸」第 3 个选项「80×120cm」没有规格/);
+	assert.match(bad((s) => { s.tiers[1]!.options[0]!.image = "x.jpg"; }), /第 2 层「尺寸」第 1 个选项「40×60cm」有规格图，规格图只挂第一层/);
+	assert.match(bad((s) => { s.variants[1]!.sku = "LT1-00"; }), /货号 LT1-00 重复/);
+	assert.match(bad((s) => { s.variants = []; }), /无有货的规格/);
+	// 只有一个规格：单层、空名字是对的；多个规格的不能空着名字
+	assert.deepEqual(structureProblems(specsFrom(offerOf([], [[[]]])).specs), []);
+	// 上限：最多 50 个、最高价不超过最低价 5 倍
+	assert.deepEqual(limitProblems(grid([["款式", [...Array(51).keys()].map(String)]])), ["规格：有货的规格 51 个，最多 50 个"]);
+	assert.match(limitProblems(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 600 : 100))).join(), /最高价超过最低价的 5 倍/);
+	assert.deepEqual(limitProblems(ok), []);
+	// 旧格式（规格的数组，选项名每次现算）：认不出，要重做商品稿
+	assert.equal(specsOf([{ sku: "LT1-1", specs: [{ label: "顏色", value: "黑" }] }]), null);
+	assert.deepEqual(specsOf(ok), ok);
+});
+
+test("去掉规格：整个选项；两层都有的写层名；单个规格让组合不齐时不做，--merge 才合成一层；重做商品稿照样认得", () => {
+	const colors = ["斑点狗", "定制", "标准"], sizes = ["40*60*0.25", "标准"];
+	// 规格 id：s0 斑点狗 40*60、s1 斑点狗 标准、s2 定制 40*60、s3 定制 标准、s4 标准 40*60、s5 标准 标准
+	const o = offerOf([["颜色", colors], ["尺寸", sizes]], colors.flatMap((c) => sizes.map((z): [string[]] => [[c, z]])));
+	const s = named(specsFrom(o).specs, [["顏色", ["斑點狗", "定製", "標準"]], ["尺寸", ["40×60cm", "標準"]]]);
+	const ok = <T extends object>(r: T | { error: string }): T => {
+		assert.ok(!("error" in r), "error" in r ? r.error : "");
+		return r as T;
+	};
+	const option = ok(dropSpecs(s, ["定製"]));
+	assert.deepEqual([option.skus, option.merged], [["LT1-s2", "LT1-s3"], false]);
+	assert.deepEqual(names(option.specs), [["顏色", ["斑點狗", "標準"]], ["尺寸", ["40×60cm", "標準"]]]);
+	assert.deepEqual(option.specs.variants.map((v) => [v.sku, v.options]), [["LT1-s0", [0, 0]], ["LT1-s1", [0, 1]], ["LT1-s4", [1, 0]], ["LT1-s5", [1, 1]]]);
+	// 两层都有「標準」：要写层名
+	assert.deepEqual(dropSpecs(s, ["標準"]), { error: "两层都有「標準」：写成「层名:选项名」（顏色:標準 或 尺寸:標準）" });
+	const size = ok(dropSpecs(s, ["尺寸:標準"]));
+	assert.deepEqual([size.skus, names(size.specs)], [["LT1-s1", "LT1-s3", "LT1-s5"], [["顏色", ["斑點狗", "定製", "標準"]], ["尺寸", ["40×60cm"]]]]);
+	// 单个规格（货号）：组合会不齐，不做；一个选项的规格都写了，就是去掉这个选项
+	assert.match((dropSpecs(s, ["LT1-s0"]) as { error: string }).error, /^去掉以后两层的组合不齐（缺「斑點狗 × 40×60cm」）：要么去掉整个选项（例 顏色:斑點狗、尺寸:40×60cm），要么人说了加 --merge 合成一层「款式」$/);
+	assert.deepEqual(names(ok(dropSpecs(s, ["LT1-s2", "LT1-s3"])).specs), names(option.specs));
+	const merged = ok(dropSpecs(s, ["LT1-s0"], true));
+	assert.deepEqual([merged.skus, merged.merged, names(merged.specs)], [["LT1-s0"], true, [["款式", ["斑點狗 標準", "定製 40×60cm", "定製 標準", "標準 40×60cm", "標準 標準"]]]]);
+	assert.deepEqual(merged.specs.tiers[0]!.options[1], { source: "定制 / 40*60*0.25", name: "定製 40×60cm", image: "定制.jpg" });
+	assert.deepEqual(structureProblems(merged.specs), []);
+	// 重做商品稿：去掉的不要，合成的「款式」和名字照旧
+	assert.deepEqual(specsFrom(o, merged.skus, merged.specs).specs, merged.specs);
+	assert.deepEqual(specsFrom(o, option.skus, option.specs).specs, option.specs);
+	// 没有的、全去掉的
+	assert.match((dropSpecs(s, ["藍色", "定製"]) as { error: string }).error, /^规格里没有：藍色/);
+	assert.match((dropSpecs(s, ["斑點狗", "定製", "顏色:標準"]) as { error: string }).error, /规格都去掉了/);
+});
+
+test("规格和价格：按层写，价格、重量跟着哪层变就写在哪层；两层都影响的第一层每个选项一行；都一样的写「各」；最后写已移除的", () => {
+	const price = (c: number[]) => [133, 155][c[1]!]!, weight = (c: number[]) => [0.216, 0.36][c[1]!]!;
+	// 价格、重量都跟着尺寸变（商品稿 2 的样子）
+	assert.equal(specsText(grid([["款式", ["水生財黑貓咪", "洗洗睡吧梅棕狗"]], ["尺寸", ["40×60cm", "50×80cm"]]], price, weight)), [
+		"款式（2）：水生財黑貓咪、洗洗睡吧梅棕狗", "尺寸（2）：40×60cm NT$133 0.216 kg · 50×80cm NT$155 0.36 kg", "共 4 个规格，库存各 9",
+	].join("\n"));
+	// 重量都一样，有移除的（商品稿 3 的样子）
+	assert.equal(specsText(grid([["款式", ["斑點狗", "香蕉狗"]], ["尺寸", ["40×60cm", "50×80cm"]]], price), [{ name: "定製", count: 3 }]), [
+		"款式（2）：斑點狗、香蕉狗", "尺寸（2）：40×60cm NT$133 · 50×80cm NT$155", "共 4 个规格，库存各 9，重量各 1.6 kg", "已移除：定製（3 个规格）",
+	].join("\n"));
+	// 两层都影响价格：第一层每个选项一行
+	assert.equal(specsText(grid([["顏色", ["卡其色", "黑色"]], ["尺碼", ["M", "L"]]], (c) => 295 + c[0]! * 4 + c[1]! * 10)), [
+		"顏色（2）× 尺碼（2）：", "卡其色：M NT$295 · L NT$305", "黑色：M NT$299 · L NT$309", "共 4 个规格，库存各 9，重量各 1.6 kg",
+	].join("\n"));
+	// 一层：每个选项后面写价格；库存不一样写范围；价格都一样写「售价各」
+	const one = grid([["規格", ["L20", "L25"]]], (c) => [70, 74][c[0]!]!);
+	one.variants[1]!.stock = 50;
+	assert.equal(specsText(one), "規格（2）：L20 NT$70 · L25 NT$74\n共 2 个规格，库存 9–50，重量各 1.6 kg");
+	assert.equal(specsText(grid([["規格", ["L20", "L25"]]], () => null)), "規格（2）：L20、L25\n共 2 个规格，售价各 未定价，库存各 9，重量各 1.6 kg");
+	assert.equal(specsText({ ...specsFrom(offerOf([], [[[]]])).specs }), "单规格：未定价，库存 9，0.3 kg");
+	// 已移除的：整个取值都移除了的写这个取值（照 1688 转繁体），别的写各层的取值
+	const sizes = ["40*60*0.25", "50*80*0.25", "60*90*0.25"];
+	const o = offerOf([["颜色", ["斑点狗", "定制"]], ["尺寸", sizes]], ["斑点狗", "定制"].flatMap((c) => sizes.map((z): [string[]] => [[c, z]])));
+	assert.deepEqual(removedOf(o, ["LT1-s3", "LT1-s4", "LT1-s5"]), [{ name: "定製", count: 3 }]);
+	assert.deepEqual(removedOf(o, ["LT1-s0", "LT1-x"]), [{ name: "斑點狗 40*60*0.25", count: 1 }]);
+	assert.equal(priceRange(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 155 : 133)).variants), "NT$133–155");
+});
+
+import { type Product, productInfo, readbackProblems } from "../src/listing/product.ts";
+
+const draft = (): Product => ({
 	parentSku: "LT952803717616", title: "輕便雨衣 成人連身 防水透氣", description: "<p>防水雨衣</p>", categoryPath: [100001, 101324],
 	attributes: [{ attribute_id: 100824, attribute_values: [{ value_id: 4259 }] }], preOrder: true, daysToShip: 10, minPurchase: 1,
 	channels: ["30005", "30006", "30019"],
-	variants: [
-		{ ...v([["顏色", "卡其色"], ["尺碼", "M"]], "k.jpg"), sku: "LT952803717616-1", priceTwd: 295, weightKg: 1.6 },
-		{ ...v([["顏色", "卡其色"], ["尺碼", "L"]], "k.jpg"), sku: "LT952803717616-2", priceTwd: 295, weightKg: 1.7 },
-		{ ...v([["顏色", "黑色"], ["尺碼", "M"]]), sku: "LT952803717616-3", priceTwd: 299, weightKg: 1.6 },
-		{ ...v([["顏色", "黑色"], ["尺碼", "L"]]), sku: "LT952803717616-4", priceTwd: 299, weightKg: 1.6 },
+	tiers: [
+		{ source: "颜色", name: "顏色", options: [{ source: "卡其色", name: "卡其色", image: "k.jpg" }, { source: "黑色", name: "黑色", image: null }] },
+		{ source: "尺码", name: "尺碼", options: [{ source: "M码", name: "M" }, { source: "L码", name: "L" }] },
 	],
+	variants: [[0, 0, 295, 1.6], [0, 1, 295, 1.7], [1, 0, 299, 1.6], [1, 1, 299, 1.6]].map(([a, b, priceTwd, weightKg], i) => ({
+		sku: `LT952803717616-${i + 1}`, skuId: String(i + 1), specId: String(i + 1), options: [a!, b!], costRmb: 1, stock: 9, weightKg: weightKg!, priceTwd: priceTwd!,
+	})),
 	images: ["tw-11134207-a", "tw-11134207-b"], detail: [{ id: "tw-11134207-d", width: 800, height: 1200 }],
 	optionImages: { "k.jpg": "tw-11134207-k" }, sizeChart: "tw-11134207-s",
 });
 
-test("product_info：照 9-01 的成功样本；规格图挂第一层；详情图进描述；建成下架；30019 开不了", () => {
+test("product_info：照 9-01 的成功样本；规格（层、tier_index）照存着的结构；规格图挂第一层；详情图进描述；建成下架；30019 开不了", () => {
 	const p = productInfo(draft()) as any;
 	assert.equal(p.unlisted, true);
 	assert.deepEqual(p.weight, { value: "1.7", unit: 1 });
 	assert.deepEqual(p.std_tier_variation_list.map((t: any) => t.custom_value), ["顏色", "尺碼"]);
 	assert.deepEqual(p.std_tier_variation_list[0].value_list, [{ id: 0, custom_value: "卡其色", image_id: "tw-11134207-k" }, { id: 0, custom_value: "黑色" }]);
+	assert.deepEqual(p.std_tier_variation_list[1].value_list, [{ id: 0, custom_value: "M" }, { id: 0, custom_value: "L" }]);
 	assert.deepEqual(p.model_list.map((m: any) => [m.sku, m.tier_index, m.price, m.is_default]), [["LT952803717616-1", [0, 0], "295", true], ["LT952803717616-2", [0, 1], "295", false], ["LT952803717616-3", [1, 0], "299", false], ["LT952803717616-4", [1, 1], "299", false]]);
+	// tier_index 就是规格存着的下标，跟规格的先后无关
+	const reversed = productInfo({ ...draft(), variants: draft().variants.reverse() }) as any;
+	assert.deepEqual(reversed.model_list.map((m: any) => [m.sku, m.tier_index]), [["LT952803717616-4", [1, 1]], ["LT952803717616-3", [1, 0]], ["LT952803717616-2", [0, 1]], ["LT952803717616-1", [0, 0]]]);
 	assert.deepEqual(JSON.parse(p.description_info.description).field_list, [{ type: 0, value: "防水雨衣" }, { type: 1, value: "tw-11134207-d", width: 800, height: 1200 }]);
 	assert.deepEqual(p.logistics_channels.filter((c: any) => c.enabled).map((c: any) => c.channelid), [30006, 30005]);
 	assert.equal(p.logistics_channels.find((c: any) => c.channelid === 30020).sizeid, 1);
-	// 缺图、详情图太窄：不缺着交
+	// 只有一个规格：单层、空名字
+	const single = productInfo({ ...draft(), tiers: [{ source: "", name: "", options: [{ source: "", name: "", image: null }] }], variants: [{ ...draft().variants[0]!, options: [0] }] }) as any;
+	assert.deepEqual([single.std_tier_variation_list, single.model_list[0].tier_index], [[{ id: 0, custom_value: "", value_list: [{ id: 0, custom_value: "" }] }], [0]]);
+	// 规格不对、缺图、详情图太窄：不缺着交
+	assert.throws(() => productInfo({ ...draft(), variants: draft().variants.map((v) => ({ ...v, options: [0, 0] })) }), /同一格/);
 	assert.throws(() => productInfo({ ...draft(), optionImages: {} }), /未传/);
 	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 1, height: 1 }] }), /尺寸不够/);
 });
@@ -147,10 +283,15 @@ import { productOf } from "../src/listing/ready.ts";
 
 const shopRow = { shop: "cheeroutdoor", shop_id: "1554182542", fx: "4.4", price_per_kg_rmb: "10.8", label_fee_rmb: "1.5", weight_rounding_kg: "0.01", return_loss_rate: "0.03", min_margin_rate: "0.25", min_margin_rmb: "8", commission_rate: "0.06", pre_order_rate: "0.03", payment_rate: "0.025", coin_rate: "0.015", free_shipping_rate: "0.06", free_shipping_min_twd: "0", shipping_net_twd: "0", pre_order: true, min_purchase: 1, stock_cap: 50, channels: "30005,30006", categories: null, watermark_text: "新新家居日用好物賣場", watermark_size: 64, watermark_opacity: "0.35", watermark_position: "center", paused: null };
 const pic = (id: string, from = `${id}.jpg`) => ({ from, imageId: id, width: 800, height: 800 });
+/** 一层「顏色」两个选项：黑色带规格图 k.jpg，綠色没有 */
+const colors = (): Specs => ({
+	tiers: [{ source: "颜色", name: "顏色", options: [{ source: "黑色", name: "黑色", image: "k.jpg" }, { source: "绿色", name: "綠色", image: null }] }],
+	variants: [1, 2].map((n, i) => ({ sku: `LT952803717616-${n}`, skuId: String(n), specId: String(n), options: [i], costRmb: 1, stock: 9, weightKg: 1.6, priceTwd: 295 })),
+});
 const ready = (o: Record<string, unknown> = {}) => ({
 	id: "7", shop: "cheeroutdoor", offer_id: "952803717616", cancelled: false, listed_at: null, product_id: null, problems: null,
 	offer: { title: "雨衣" }, title: "輕便雨衣 成人連身 防水透氣 騎車通勤", description: "防水雨衣，騎車通勤用", category_path: [100637, 101324], days_to_ship: 10, attributes: [],
-	variants: [{ ...v([["顏色", "黑色"]], "k.jpg"), sku: "LT952803717616-1", priceTwd: 295, weightKg: 1.6 }, { ...v([["顏色", "綠色"]]), sku: "LT952803717616-2", priceTwd: 295, weightKg: 1.6 }],
+	variants: colors(),
 	images: { main: [pic("m1")], detail: [], options: [pic("o1", "k.jpg")], waiting: [] }, removed_images: [], audit: null, ...o,
 });
 
@@ -158,6 +299,11 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const run = (l: any, writes: any[] = []) => checkListings([l], s, writes);
 	assert.equal(run(ready({ offer: null })).steps.get("7")!.step, "待做商品稿");
+	// 规格是旧格式（选项名每次现算的那种）：重做商品稿
+	const old = run(ready({ variants: [{ sku: "LT952803717616-1", specs: [{ label: "顏色", value: "黑色" }] }] }));
+	assert.deepEqual(old.steps.get("7"), { step: "待做商品稿", detail: "规格为旧格式，待重做商品稿" });
+	assert.deepEqual([old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).command], ["做商品稿", "1 份商品稿的规格是旧格式，要重做", "x2 listing make 7"]);
+	assert.deepEqual(productOf(ready({ variants: [] }), s.get("cheeroutdoor")!).problems, [OLD_SPECS]);
 	const fix = run(ready({ problems: "重量：1688 缺 2 个规格的重量" }));
 	assert.equal(fix.steps.get("7")!.step, "待补充");
 	assert.match(fix.inbox[0]!.title, /待补充：重量/);
@@ -194,17 +340,24 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "已暂停");
 });
 
-test("已移除的规格：按选项名（括号里的说明可以不写）或货号配；去掉以后不上、规格图不审、要再审", () => {
+test("去掉规格以后：去掉的不上，规格图只挂还在的选项，审核键跟着变；规格名变了，审核键也跟着变", () => {
 	const s = settingsOf(shopRow);
-	const sizes = ["40*60", "60*90cm（升級版）"];
-	const variants = ["黑貓", "定製"].flatMap((c, i) => sizes.map((z, j) => ({ ...v([["顏色", c], ["尺寸", z]], `${c}.jpg`), sku: `LT1-${i}${j}`, priceTwd: 133 })));
-	assert.deepEqual(matchVariants(variants, ["定製", "60*90cm", "LT1-00", "藍色"]), { skus: ["LT1-10", "LT1-11", "LT1-01", "LT1-00"], unknown: ["藍色"] });
+	const specs = grid([["顏色", ["黑貓", "定製"]], ["尺寸", ["40*60", "60*90cm（升級版）"]]]);
 	const images = { main: [pic("m1")], detail: [], options: [pic("o1", "黑貓.jpg"), pic("o2", "定製.jpg")], waiting: [] };
-	const all = productOf(ready({ variants, images }), s).product!;
-	const kept = productOf(ready({ variants, images, removed_variants: ["LT1-10", "LT1-11"] }), s).product!;
+	const all = productOf(ready({ variants: specs, images }), s).product!;
+	assert.deepEqual(all.optionImages, { "黑貓.jpg": "o1", "定製.jpg": "o2" });
+	const r = dropSpecs(specs, ["定製"]);
+	assert.ok(!("error" in r));
+	const kept = productOf(ready({ variants: r.specs, images, removed_variants: r.skus }), s).product!;
 	assert.deepEqual(kept.variants.map((x) => x.sku), ["LT1-00", "LT1-01"]);
 	assert.deepEqual(kept.optionImages, { "黑貓.jpg": "o1" });
 	assert.notEqual(auditKey(kept, "水印"), auditKey(all, "水印"));
+	// 规格里还有已移除的货号（没跟着改）：要重做商品稿
+	assert.match(productOf(ready({ variants: specs, images, removed_variants: r.skus }), s).problems.join(), /已移除的规格还在/);
+	// 规格名改了：审核键跟着变，要再审；名字一样就不用
+	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), s).product!, "水印");
+	assert.notEqual(key(named(r.specs, [["顏色", ["黑貓"]], ["尺寸", ["40×60cm", "60×90cm"]]])), key(r.specs));
+	assert.equal(key(named(r.specs, [["顏色", ["黑貓"]], ["尺寸", ["40*60", "60*90cm（升級版）"]]])), key(r.specs));
 });
 
 test("台湾审核放行：问题按编号（先文案、后图）；文案的放行记在这次审核里，图的记进保留的图；每条都放行了算通过", () => {

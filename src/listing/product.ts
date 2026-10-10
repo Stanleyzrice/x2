@@ -1,6 +1,6 @@
 // 建商品的 product_info，和建完以后读回来逐项核对。照 lilto 的 build_product_info、submitted_content_problems（快照 1c8a7926）：
 // 9-01 卖家中心新增商品页提交的成功样本逐字段照抄。docs/listing.md「建商品、上架」
-import { tiersOf, type Variant } from "./variants.ts";
+import { structureProblems, type Tier, type Variant } from "./variants.ts";
 
 /** 物流渠道：9-01 成功样本原样（顺序也照抄）。有尺寸的渠道 sizeid 是 1，填成 0 回 1000100256。只按店铺设置开关 enabled */
 export const CHANNELS: { size: number; price: string; cover_shipping_fee: boolean; enabled: boolean; channelid: number; sizeid: number }[] = [
@@ -27,7 +27,9 @@ export type Product = {
 	minPurchase: number;
 	/** 开的物流渠道 id */
 	channels: string[];
-	/** 每个规格都有售价（台币整数）、库存、重量 */
+	/** 规格的层：第一层的选项带规格图（1688 原图地址，没传上去的是 null） */
+	tiers: Tier[];
+	/** 每个规格：每层一个选项的下标，都有售价（台币整数）、库存、重量 */
 	variants: (Variant & { priceTwd: number })[];
 	/** 主图的图片 id（第一张是封面，最多 9 张） */
 	images: string[];
@@ -39,10 +41,11 @@ export type Product = {
 	sizeChart: string | null;
 };
 
-/** 商品稿 → product_info。缺图、详情图尺寸不够、渠道不认得都抛错，不缺着交 */
+/** 商品稿 → product_info。规格（std_tier_variation_list、model_list 的 tier_index）照存着的结构；规格不对、缺图、详情图尺寸不够、渠道不认得都抛错，不缺着交 */
 export function productInfo(p: Product): Record<string, unknown> {
-	const { tiers, index } = tiersOf(p.variants);
-	const std = tiers.map((t, a) => ({
+	const bad = structureProblems({ tiers: p.tiers, variants: p.variants });
+	if (bad.length) throw new Error(bad.join("；"));
+	const std = p.tiers.map((t, a) => ({
 		id: 0, custom_value: t.name,
 		value_list: t.options.map((o) => {
 			if (a > 0 || !o.image) return { id: 0, custom_value: o.name };
@@ -52,7 +55,7 @@ export function productInfo(p: Product): Record<string, unknown> {
 		}),
 	}));
 	const model_list = p.variants.map((v, i) => ({
-		id: 0, tier_index: index[i], is_default: i === 0, sku: v.sku, gtin_code: "", confirm_empty_gtin: false,
+		id: 0, tier_index: v.options, is_default: i === 0, sku: v.sku, gtin_code: "", confirm_empty_gtin: false,
 		price: String(Math.trunc(v.priceTwd)), stock_setting_list: [{ sellable_stock: Math.trunc(v.stock) }], sku_image: "",
 	}));
 	const weights = p.variants.map((v) => v.weightKg ?? 0);

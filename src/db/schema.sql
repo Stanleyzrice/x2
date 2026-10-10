@@ -223,8 +223,10 @@ create table if not exists listings (
 	attributes jsonb,
 	attributes_text text,
 	days_to_ship int,
-	-- 规格：[{ sku, skuId, specId, specs, costRmb, weightKg, stock, image, priceTwd }]
-	variants jsonb not null default '[]',
+	-- 规格（docs/listing.md「规格」）：层和规格一起存，{ tiers: [{ source（1688 的层名）, name, options: [{ source（1688 的原值）, name, image }] }],
+	-- variants: [{ sku, skuId, specId, options（每层一个选项的下标）, costRmb, stock, weightKg, priceTwd }] }。做商品稿时从货源生成，以后都改它；空是还没做
+	variants jsonb,
+	-- 给人看的「规格和价格」
 	variants_text text,
 	-- 图：{ main: [...], detail: [...], options: {...}, sizeChart }，每张 { from（原图地址）, sha（原图）, final（成品）, imageId, width, height, verdict }
 	images jsonb not null default '{}',
@@ -302,6 +304,11 @@ alter table sources add column if not exists sku_exceptions text;
 alter table listings add column if not exists removed_images jsonb not null default '[]';
 -- 已移除的规格（货号，例 店里接不了的「定製」）：人说了，agent 用 x2 listing drop 写；再做商品稿也不要它
 alter table listings add column if not exists removed_variants jsonb not null default '[]';
+-- 规格存成层和规格（{ tiers, variants }），空是还没做商品稿；旧格式（规格的数组）的要重做商品稿
+alter table listings alter column variants drop not null;
+alter table listings alter column variants drop default;
+-- 规格图：第一层每个选项一张（标题是选项名），NocoDB 的附件（JSON 文本）。只给人看：x2 照规格写回去，人删了不记
+alter table listings add column if not exists option_images text;
 -- 保留的图（Shopee 的图片 id）：台湾成品审核挑出、人看过说要用的图（人说了，agent 用 x2 listing audit --accept 写）；以后审核再挑它也不挡
 alter table listings add column if not exists kept_images jsonb not null default '[]';
 -- 商品稿的店铺不用外键（NocoDB 会把外键变成关联列，表单里就不能直接选店）；x2 做商品稿时核对店铺设置里有没有这家店

@@ -11,7 +11,6 @@ import { fetchImage } from "../service/image.ts";
 import { IMAGE } from "../site/shopee/seller.ts";
 import type { Pic, Pics } from "./images.ts";
 import type { Product } from "./product.ts";
-import { tiersOf } from "./variants.ts";
 
 export const AUDIT_VERSION = 2;
 /** 挑出的字在哪：印在商品本体上（不算问题，图保留原貌）、后加的文案 */
@@ -62,9 +61,12 @@ export async function textWhere(img: Image, issues: string[]): Promise<Where | n
 /** 要审的图：主图、详情图、规格图（去重） */
 export const auditImages = (p: Product) => [...new Set([...p.images, ...p.detail.map((d) => d.id), ...Object.values(p.optionImages)])];
 
+/** 规格名（层名、选项名）：审核看的、审核键里的 */
+const specNames = (p: Product) => p.tiers.map((t) => ({ name: t.name, options: t.options.map((o) => o.name) }));
+
 /** 这份内容的审核键：标题、描述、规格名、图、水印一样，就不用再审 */
 export function auditKey(p: Product, mark: string): string {
-	const specs = tiersOf(p.variants).tiers.map((t) => [t.name, t.options.map((o) => o.name)]);
+	const specs = specNames(p).map((t) => [t.name, t.options]);
 	return createHash("sha256").update(JSON.stringify({ v: AUDIT_VERSION, title: p.title, description: p.description, specs, images: auditImages(p), mark })).digest("hex");
 }
 
@@ -86,7 +88,7 @@ export function dispose(where: Where | null, role: Role, kept: boolean, canDrop:
 export async function auditTaiwan(p: Product, mark: string, opts: { kept?: Iterable<string>; canDrop?: boolean } = {}): Promise<Audit> {
 	const kept = new Set(opts.kept ?? []);
 	const ids = auditImages(p);
-	const content = { title: p.title, description: p.description, specs: tiersOf(p.variants).tiers.map((t) => ({ name: t.name, options: t.options.map((o) => o.name) })) };
+	const content = { title: p.title, description: p.description, specs: specNames(p) };
 	const textIssues = new Set<string>();
 	const images: AuditImage[] = [];
 	for (let i = 0; i < Math.max(ids.length, 1); i += 4) {

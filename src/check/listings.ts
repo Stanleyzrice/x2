@@ -3,6 +3,7 @@ import { auditIssues, auditKey } from "../listing/audit.ts";
 import type { Settings } from "../listing/make.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
+import { specsOf } from "../listing/variants.ts";
 import type { InboxItem, Todo, Write } from "./orders.ts";
 
 /** 当前步骤：按流程排（NocoDB 看板的列也是这个顺序） */
@@ -14,7 +15,7 @@ const short = (s: string, n = 20) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 export function checkListings(listings: any[], settings: Map<string, Settings>, writes: Write[]): { inbox: InboxItem[]; todo: Todo[]; steps: Map<string, { step: ListingStep; detail: string | null }> } {
 	const inbox: InboxItem[] = [], steps = new Map<string, { step: ListingStep; detail: string | null }>();
-	const toMake: string[] = [], toWrite: { id: string; why: string }[] = [], toAudit: string[] = [];
+	const toMake: string[] = [], stale: string[] = [], toWrite: { id: string; why: string }[] = [], toAudit: string[] = [];
 	const ready: { op: string; params: Record<string, unknown> }[] = [], readyIds: string[] = [];
 	for (const l of listings) {
 		const id = String(l.id);
@@ -34,7 +35,12 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			continue;
 		}
 		if (s.paused) { set("已暂停", s.paused); continue; }
-		if (!l.offer) { set("待做商品稿"); toMake.push(id); continue; }
+		// 规格是旧格式（选项名每次现算的那种）：重做商品稿
+		if (!l.offer || !specsOf(l.variants)) {
+			set("待做商品稿", l.offer ? "规格为旧格式，待重做商品稿" : null);
+			(l.offer ? stale : toMake).push(id);
+			continue;
+		}
 		if (l.problems) {
 			set("待补充", String(l.problems).split("\n")[0]!);
 			inbox.push({
@@ -74,7 +80,10 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 		readyIds.push(id);
 	}
 	const todo: Todo[] = [];
-	if (toMake.length) todo.push({ kind: "做商品稿", why: `${toMake.length} 份商品稿还没做`, ids: toMake, command: `x2 listing make ${toMake.join(" ")}` });
+	if (toMake.length || stale.length) {
+		const why = [toMake.length ? `${toMake.length} 份商品稿还没做` : "", stale.length ? `${stale.length} 份商品稿的规格是旧格式，要重做` : ""].filter(Boolean).join("；");
+		todo.push({ kind: "做商品稿", why, ids: [...toMake, ...stale], command: `x2 listing make ${[...toMake, ...stale].join(" ")}` });
+	}
 	if (toWrite.length) todo.push({ kind: "写文案", why: `${toWrite.length} 份商品稿要写标题和描述：${toWrite.map((x) => `${x.id}（${x.why}）`).join("、")}`, ids: toWrite.map((x) => x.id), command: `x2 listing show <商品稿>，写好用 x2 listing text` });
 	if (toAudit.length) todo.push({ kind: "台湾审核", why: `${toAudit.length} 份商品稿的文案或图变了，要再审`, ids: toAudit, command: `x2 listing audit ${toAudit.join(" ")}` });
 	if (ready.length) todo.push({

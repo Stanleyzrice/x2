@@ -8,7 +8,7 @@ import { attributes as attributeTree, type Category, categoryTree, recommendedCa
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
-import { keptVariants, type Variant, variantsOf } from "./variants.ts";
+import { removedOf, type Specs, specsFrom, specsOf, specsProblems, specsText, type Variant } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
 
 /** 店铺设置（库里的一行）→ 核价参数、水印、上品的默认值 */
@@ -30,25 +30,20 @@ export function settingsOf(row: any) {
 }
 export type Settings = ReturnType<typeof settingsOf>;
 
-/** 商品稿的一个规格：加上售价（核价）、库存（1688 现在的库存和库存上限的小的） */
-export type Priced = Variant & { priceTwd: number | null };
-
-/** 每个规格核价。缺重量、缺国内运费的不算（售价是 null），问题写出来 */
-export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): { variants: Priced[]; problems: string[] } {
+/** 每个规格核价：售价、重量（1688 没给的用人填的）、库存（1688 现在的库存和库存上限的小的）。缺重量、缺国内运费的不算（售价是 null），问题写出来。
+ * 最多 50 个、最高价不超过最低价 5 倍在 limitProblems */
+export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): { variants: Variant[]; problems: string[] } {
 	const problems: string[] = [];
-	const noWeight = variants.filter((v) => !(v.weightKg && v.weightKg > 0)) ;
+	const noWeight = variants.filter((v) => !(v.weightKg && v.weightKg > 0));
 	if (noWeight.length && !opts.weightKg) problems.push(`重量：1688 缺 ${noWeight.length} 个规格的重量，请在「重量」里填写（kg）`);
 	if (opts.freightRmb === null) problems.push("国内运费：货源不包邮，请在「国内运费」里填写（元 / 件；包邮填 0）");
-	const out = variants.map((v): Priced => {
+	const out = variants.map((v): Variant => {
 		const weightKg = v.weightKg && v.weightKg > 0 ? v.weightKg : opts.weightKg;
 		const stock = Math.min(v.stock, s.stockCap);
 		if (!weightKg || opts.freightRmb === null) return { ...v, weightKg, stock, priceTwd: null };
 		return { ...v, weightKg, stock, priceTwd: minPrice(v.costRmb, opts.freightRmb, weightKg, s.params, s.preOrder) };
 	});
 	if (out.some((v) => v.priceTwd === null) && !problems.length) problems.push("核价：有规格怎么定价都过不了毛利的两道门");
-	const prices = out.map((v) => v.priceTwd).filter((p): p is number => p !== null);
-	if (prices.length && Math.max(...prices) > Math.min(...prices) * 5) problems.push("规格：最高价超过最低价的 5 倍，Shopee 不收（去掉太贵或太便宜的规格，或分成两个商品）");
-	if (variants.length > 50) problems.push(`规格：有货的规格 ${variants.length} 个，最多 50 个`);
 	return { variants: out, problems };
 }
 
@@ -96,16 +91,18 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	const problems: string[] = [];
 	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，无法单件购买`);
 
-	// 2. 规格、核价
-	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填。人去掉的规格不要
+	// 2. 规格、核价：有货的、没移除的规格排成 Shopee 的规格（上一版的名字按 1688 层名、原值对回去），每个规格核价，再核一遍规格的规矩。
+	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填
 	const freight = l.freight_rmb !== null ? Number(l.freight_rmb) : o.freight?.costRmb ?? (o.tags?.freeShipping ? 0 : null);
-	const priced = priceVariants(keptVariants(variantsOf(o), l.removed_variants), s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
-	problems.push(...priced.problems);
+	const built = specsFrom(o, l.removed_variants ?? [], specsOf(l.variants));
+	const priced = priceVariants(built.specs.variants, s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
+	const specs: Specs = { tiers: built.specs.tiers, variants: priced.variants };
+	problems.push(...built.problems, ...priced.problems, ...specsProblems(specs));
 
 	// 3. 图、类目、属性、备货天数：在这家店的浏览器里
 	const done = await inShop(s.shopId, async () => {
 		// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
-		const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark!, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: priced.variants.map((v) => v.image).filter((x): x is string => Boolean(x)) }, log);
+		const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark!, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)) }, log);
 		// 上次放进 NocoDB 附件的（images.shown）留着：人删了哪张靠它认
 		const out: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
 		const cover = pics.main.find((p) => p.imageId);
@@ -135,8 +132,8 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		...done,
 		offer: { offerId: o.offerId, url: o.url, title: o.title, images: o.images, detail, tags: o.tags, freight: o.freight, minQty: o.minQty, props: o.props, skus: o.skus },
 		offer_read_at: new Date(),
-		variants: priced.variants,
-		variants_text: priced.variants.map((v) => `${v.specs.map((x) => x.value).join(" / ") || "（单规格）"}：${v.priceTwd ? `NT$${v.priceTwd}` : "未定价"}，库存 ${v.stock}，${v.weightKg ?? "?"} kg`).join("\n"),
+		variants: specs,
+		variants_text: specsText(specs, removedOf(o, l.removed_variants)),
 		pricing: { params: s.params, preOrder: s.preOrder, freightRmb: freight, at: new Date().toISOString() },
 	}, problems);
 }
