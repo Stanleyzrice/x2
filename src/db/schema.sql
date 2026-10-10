@@ -321,3 +321,36 @@ alter table arrival_issues alter column kind set default '损坏';
 -- 简称：人和 agent 认商品稿用的简体中文短名（最多 12 字，例 浴水生财猫狗地垫），不上 Shopee。x2 做商品稿时先填 1688 标题的前 12 个字，
 -- 写文案的 agent 写标题时一起写（只在空着、还是自动填的那个值时写）；人在 NocoDB 改过的 agent 不再改
 alter table listings add column if not exists nickname text;
+
+-- ── 选品可追溯（docs/listing.md「策略」）：每份商品稿为什么选、按的是哪一版策略和选品规矩 ──
+
+-- 策略的版本号：x2 strategy add 是第 1 版，每次 x2 strategy set 加 1（加版本号之前记的策略都算第 1 版）
+alter table strategies add column if not exists version int not null default 1;
+
+-- 策略的变更记录：一行是一个策略的一版。改之前、改之后只写改了的列（{ status, bet, how, note }），第 1 版没有改之前
+create table if not exists strategy_changes (
+	id bigserial primary key,
+	strategy text not null,
+	version int not null,
+	before jsonb,
+	after jsonb not null,
+	why text,
+	changed_at timestamptz not null default now(),
+	unique (strategy, version)
+);
+
+-- 选品规矩：所有策略共用的（例 1688 一件代发、48 小时发货、起订量 1）。旧的不删，停用时写结束时间和停用原因
+create table if not exists selection_rules (
+	id bigserial primary key,
+	rule text not null,
+	why text not null,
+	started_at timestamptz not null default now(),
+	ended_at timestamptz,
+	retire_why text
+);
+
+-- 商品稿的选品理由（为什么选它，一两句）、依据（热搜词和搜索量、竞品价格和销量、1688 月销、报价……）；
+-- 选品快照：加进来那一刻的策略（名字、版本号、假设、选法）和在用的选品规矩，{ at, backfilled, strategy, rules }。补记的 backfilled 是 true，at 是补记的时间
+alter table listings add column if not exists pick_why text;
+alter table listings add column if not exists pick_evidence text;
+alter table listings add column if not exists pick_snapshot jsonb;

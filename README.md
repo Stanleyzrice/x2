@@ -37,7 +37,10 @@ x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不�
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description … --tiers … --nickname …   # agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查
 x2 listing list                         # 每份商品稿的简称、当前步骤
-x2 strategy list                        # 选品的策略：每个出了几份商品稿、上架了几个
+x2 strategy list                        # 选品的策略：第几版、每个出了几份商品稿、上架了几个
+x2 strategy set 搜索缺口 --how … --why …   # 改策略要写为什么：版本号加 1，记进变更记录（x2 strategy log 搜索缺口）
+x2 rule add "<规矩>" --why …              # 选品规矩（所有策略共用）；x2 rule retire <编号> --why … 停用，不删
+x2 listing add cheeroutdoor <1688 链接> --strategy 搜索缺口 --why … --evidence …   # 按策略选的：记下选品理由、依据、当时的策略和规矩
 ```
 
 建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。

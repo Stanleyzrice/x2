@@ -66,7 +66,8 @@ agent 自己定策略、做实验（explore / exploit）：选货源、上品、
 | 事 | 怎样算做完 | 代码 | 人 |
 |---|---|---|---|
 | 每份商品稿知道从哪个策略来 | 商品稿的「策略」有值 | 有（`x2 listing add --strategy`） | — |
-| 按策略看效果 | 每个策略上出来的商品的曝光、点击、加购、订单、毛利 | 有 `shopee performance`、知虾的读；缺：策略表、按策略汇总 | 看实验结果 |
+| 回头查为什么选 | 按策略选的商品稿有选品理由、依据、选品快照（当时的策略版本、在用的选品规矩）；策略每一版有变更记录 | 有（`x2 listing add --why`、`x2 listing why`、`x2 strategy set --why`、`x2 rule`） | — |
+| 按策略看效果 | 每个策略上出来的商品的曝光、点击、加购、订单、毛利 | 有 `shopee performance`、知虾的读、策略表；缺：按策略汇总 | 看实验结果 |
 
 ### 经营分析
 
@@ -90,7 +91,9 @@ agent 自己定策略、做实验（explore / exploit）：选货源、上品、
 | 订单设置 `order_settings` | 一行：采购账号、快到期提醒（天）、未发货提醒（付款后小时数）、预报要批准、发货线路 | 设置 |
 | 订单 `orders` | 一张订单，加上检查算出来的剩余天数、当前步骤 | 给团队看进度；每轮现读后重写 |
 | 店铺设置 `shop_settings` | 一家店：核价参数、上品的默认值、允许的类目、水印、暂停上品 | 设置 |
-| 商品稿 `listings` | 一个货源 × 一家店 | 人的决定和审稿；建商品要的内容 |
+| 商品稿 `listings` | 一个货源 × 一家店；选品理由、依据、选品快照 | 人的决定和审稿；建商品要的内容；回头查为什么选 |
+| 策略 `strategies`、策略变更记录 `strategy_changes` | 一个选品策略（版本号）；它的一版（改之前、改之后、理由） | agent 的决定；回头查按的是哪一版 |
+| 选品规矩 `selection_rules` | 一条所有策略共用的选品规矩（开始时间、结束时间、停用原因） | agent 的决定；停用的不删 |
 | 图 `images`、`shop_images` | 一张图（字节的 sha256）：筛字结果、译图的字节；传到哪家店、图片 id | 不重复付钱、不重复传 |
 
 收件箱的 key 是「类别:对象」，例 `pay:<1688 账号>`、`approve:<批次>`、`pack:<订单号>`、`source:<商品 id>`、`sku:<规格 id>`、`late:<订单号>`、`unshipped:<采购单号>`、`cancel:<订单号>`、`cancel-goods:<订单号>`、`issue:<编号>`、`listing-fix:<商品稿>`、`login:<读什么>:<谁>`。写入的防重复 key 同理，例 `cart:<订单号>:<规格 id>,…`、`forecast:<订单号>`、`xiangji:<图的 sha256…>`、`create:<店>:<货号>`：同一个 key 已有成功或结果未知的写入，不再提交。
@@ -112,6 +115,7 @@ agent 自己定策略、做实验（explore / exploit）：选货源、上品、
 | 审稿 | 商品稿 | 画廊（封面是主图） | 待批准、待补充的 | 没有等你看的商品稿 |
 | 当前步骤 | 商品稿 | 看板 | 没勾「放弃」的 | — |
 | 添加货源 | 商品稿 | 表单 | — | — |
+| 全部 | 策略、策略变更记录、选品规矩 | 表格 | 策略：创建时间，新的在前；变更记录：变更时间，新的在前；规矩：编号 | — |
 | 待选货源 | 货源 | 表格 | 还没勾「选用」的，按商品分组 | 卖出的商品都有货源 |
 | 已选定 | 货源 | 表格 | 勾了「选用」的 | — |
 | 全部 | 写入 | 表格 | 编号，新的在前 | — |
@@ -127,7 +131,9 @@ x2 propose               agent 写一批待批准的写入（JSON 从 stdin 进�
 x2 approve <批次>         人在终端里说「批准」：agent 替人勾上
 x2 run [--try 操作,…]     执行批准了的写入；没在真站点跑过的写操作要加 --try
 x2 source …              给商品找货源、写规格例外
-x2 listing …             上品：quote、add、make、estimate、show、text、audit、keep、drop、list
+x2 listing …             上品：quote、add、why、make、estimate、show、text、audit、keep、drop、list
+x2 strategy …            选品的策略：add、set、list、log
+x2 rule …                选品规矩：add、retire、list
 x2 <站点> <操作>          读站点（只读）
 x2 db migrate | import | import-shops
 x2 nocodb                建 NocoDB 的中文名和视图

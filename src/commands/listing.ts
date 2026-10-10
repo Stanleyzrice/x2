@@ -1,5 +1,9 @@
 // x2 listing：上品（docs/listing.md）。
-// x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
+// x2 listing add <店> <1688 链接…> [--strategy 名字 --why "选品理由"] [--evidence "依据"]
+//                                                    添加货源：一个货源 × 一家店一份商品稿；记下选品理由、依据和选品快照（当时的策略、在用的选品规矩）。
+//                                                    按策略选的（带 --strategy）--why 必填；几个链接一起加的理由是同一份
+// x2 listing why <商品稿> --why "选品理由" [--evidence "依据"] [--force]
+//                                                    补记选品理由、依据：没有选品快照的照现在补一份（标明补记）；已有理由的要 --force 才覆盖
 // x2 listing make [商品稿…] [--jobs N]                做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）；几份同时做（默认 3）
 // x2 listing quote <1688 链接或货源 id> [--shop 店] [--weight kg] [--freight 元/件]
 //                                                    报价（选品用）：读货源、排规格、按店铺设置核价，和做商品稿同一套代码，不做图、不存库
@@ -26,6 +30,7 @@ import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
 import { each } from "../listing/queue.ts";
 import { productOf } from "../listing/ready.ts";
+import { type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
@@ -52,23 +57,61 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	const out = (value: unknown, text: string) => console.log(json ? JSON.stringify(value) : text);
 
 	if (sub === "add") {
-		const [shop, ...links] = plain(rest, "--strategy");
-		const strategy = flag(rest, "--strategy") ?? "人选";
-		if (!shop || !links.length) throw new Usage("x2 listing add <店> <1688 链接…> [--strategy 名字]");
+		const usage = `x2 listing add <店> <1688 链接…> [--strategy 名字 --why "选品理由"] [--evidence "依据"]（带 --strategy 时 --why 必填）`;
+		const [shop, ...links] = plain(rest, "--strategy", "--why", "--evidence");
+		const text = z.string().trim().min(1);
+		const a = z.object({ strategy: text.optional(), why: text.optional(), evidence: text.optional() }).refine((x) => !x.strategy || x.why)
+			.safeParse({ strategy: flag(rest, "--strategy"), why: flag(rest, "--why"), evidence: flag(rest, "--evidence") });
+		if (!shop || !links.length || !a.success) throw new Usage(usage);
+		const strategy = a.data.strategy ?? "人选";
 		const [st] = await sql`select name from strategies where name = ${strategy}`;
 		if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "假设" --how "选品方法"`);
 		const [s] = await sql`select shop from shop_settings where shop = ${shop}`;
 		if (!s) throw new Usage(`没有「${shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
-		const added: { id: string; offerId: string; isNew: boolean }[] = [];
-		for (const link of links) {
-			const offerId = offerIdOf(link);
-			if (!offerId) throw new Usage(`认不出 1688 链接：${link}`);
-			const [r] = await sql`insert into listings (shop, offer_id, strategy) values (${shop}, ${offerId}, ${strategy})
-				on conflict (shop, offer_id) do update set updated_at = listings.updated_at returning id::text, (xmax = 0) as is_new`;
-			added.push({ id: r!.id, offerId, isNew: Boolean(r!.is_new) });
+		const offerIds = links.map((link) => {
+			const id = offerIdOf(link);
+			if (!id) throw new Usage(`认不出 1688 链接：${link}`);
+			return id;
+		});
+		// 选品快照：这一刻的策略和在用的选品规矩，几个链接一起加的是同一份
+		const snapshot = await pickSnapshot(sql, strategy);
+		// 回库里存着的理由、依据、快照：已经有的商品稿是它原来的
+		const added: { id: string; offerId: string; isNew: boolean; why: string | null; evidence: string | null; snapshot: PickSnapshot | null }[] = [];
+		for (const offerId of offerIds) {
+			// 已经有的不改（理由、快照照旧）：补理由用 x2 listing why
+			const [r] = await sql`insert into listings (shop, offer_id, strategy, pick_why, pick_evidence, pick_snapshot)
+				values (${shop}, ${offerId}, ${strategy}, ${a.data.why ?? null}, ${a.data.evidence ?? null}, ${sql.json(snapshot as any)})
+				on conflict (shop, offer_id) do update set updated_at = listings.updated_at returning id::text, (xmax = 0) as is_new, pick_why, pick_evidence, pick_snapshot`;
+			added.push({ id: r!.id, offerId, isNew: Boolean(r!.is_new), why: r!.pick_why, evidence: r!.pick_evidence, snapshot: r!.pick_snapshot });
 		}
 		const name = await namesOf(sql, added.map((a) => a.id));
-		return out(added.map((a) => ({ ...a, name: name(a.id) })), added.map((a) => `${name(a.id)}${a.isNew ? "" : "：已经有了"}`).join("\n") + "\n下一步：x2 listing make");
+		const old = added.some((x) => !x.isNew) && a.data.why ? "\n已经有了的不改理由、快照：补记用 x2 listing why <商品稿> --why …" : "";
+		return out(added.map((a) => ({ ...a, name: name(a.id) })),
+			added.map((a) => `${name(a.id)}${a.isNew ? "" : "：已经有了"}`).join("\n") + (added.some((x) => x.isNew) ? `\n选品快照：${snapshotLine(snapshot)}` : "") + `${old}\n下一步：x2 listing make`);
+	}
+
+	if (sub === "why") {
+		// 补记：给已经加进来的商品稿写选品理由、依据。快照只补没有的（照现在的策略和规矩，标明补记）；加进来时记的快照不动
+		const usage = `x2 listing why <商品稿> --why "选品理由" [--evidence "依据"] [--force]（已有理由的要 --force 才覆盖）`;
+		const id = plain(rest, "--why", "--evidence")[0];
+		const text = z.string().trim().min(1);
+		const a = z.object({ id: z.string().regex(/^\d+$/), why: text, evidence: text.optional() })
+			.safeParse({ id, why: flag(rest, "--why"), evidence: flag(rest, "--evidence") });
+		if (!a.success) throw new Usage(usage);
+		const [l] = await sql`select id::text, shop, nickname, offer_id, offer->>'title' as title, strategy, pick_why, pick_evidence, pick_snapshot from listings where id = ${a.data.id}`;
+		if (!l) throw new Usage(`没有商品稿 ${a.data.id}`);
+		const name = listingName({ ...l, offer: { title: l.title } });
+		if (l.pick_why && !rest.includes("--force")) throw new Usage(`${name}已经有选品理由：${l.pick_why}\n要覆盖加 --force`);
+		const snapshot: PickSnapshot = l.pick_snapshot ?? await pickSnapshot(sql, l.strategy, true);
+		const evidence = a.data.evidence ?? l.pick_evidence ?? null;
+		await sql`update listings set pick_why = ${a.data.why}, pick_evidence = ${evidence}, pick_snapshot = ${sql.json(snapshot as any)}, updated_at = now() where id = ${a.data.id}`;
+		const notes = [
+			l.pick_why ? `覆盖了原来的理由：${l.pick_why}` : "",
+			l.pick_evidence && a.data.evidence ? `覆盖了原来的依据：${l.pick_evidence}` : "",
+			l.pick_snapshot ? "选品快照是加进来时记的，不改" : "补记了选品快照（照现在的）",
+		].filter(Boolean);
+		return out({ id: a.data.id, name, why: a.data.why, evidence, snapshot, replaced: Boolean(l.pick_why), backfilled: !l.pick_snapshot },
+			[`${name}：记下选品理由`, ...notes.map((x) => `  ${x}`), `  选品快照：${snapshotLine(snapshot)}`].join("\n"));
 	}
 
 	if (sub === "make") {
@@ -284,7 +327,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | quote | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */

@@ -6,6 +6,8 @@ import { z } from "zod";
 import { check, syncImages } from "../src/check/index.ts";
 import type { Reads } from "../src/read.ts";
 import { listingCommand } from "../src/commands/listing.ts";
+import { ruleCommand } from "../src/commands/rule.ts";
+import { strategyCommand } from "../src/commands/strategy.ts";
 import { close, migrate } from "../src/db/index.ts";
 import { Usage } from "../src/errors.ts";
 import { approve, propose } from "../src/propose.ts";
@@ -182,15 +184,18 @@ test("商品稿的规格图：第一层每个选项一张附件，标题是选�
 	assert.deepEqual([now!.removed_images, att(now!.option_images)], [[], [["水生財黑貓咪", "o1"], ["遇水生財黃蘋狗", "o2"]]]);
 });
 
-/** x2 listing 的一条命令（--json），回它的输出 */
-async function listing(args: string[]): Promise<any> {
+/** x2 的一条命令（--json），回它的输出 */
+async function command(fn: (args: string[], json: boolean) => Promise<void>, args: string[]): Promise<any> {
 	process.env.X2_DATABASE_URL = url!;
 	const printed: string[] = [];
 	const log = console.log;
 	console.log = (s: string) => { printed.push(s); };
-	try { await listingCommand(args, true); } finally { console.log = log; }
+	try { await fn(args, true); } finally { console.log = log; }
 	return JSON.parse(printed.join("\n"));
 }
+const listing = (args: string[]) => command(listingCommand, args);
+const strategy = (args: string[]) => command(strategyCommand, args);
+const rule = (args: string[]) => command(ruleCommand, args);
 
 /** 一份做好了的商品稿：顏色（黑貓、黃狗、定製）× 尺寸（40*60、60*90），货号 LT<货源>-<各层下标> */
 async function madeListing(db: postgres.Sql, offerId: string) {
@@ -292,4 +297,77 @@ test("x2 listing text 交简称：简体、最多 12 字，不对就什么都不
 	assert.deepEqual([again.text[0].saved, again.text[0].notes], [true, ["简称：已有「猫咪地垫」，不改（只在空着、还是自动填的时候写）"]]);
 	const [row] = await db`select nickname, title from listings where id = ${id}`;
 	assert.deepEqual([row!.nickname, row!.title], ["猫咪地垫", "矽藻土地墊 可愛貓咪造型 防滑吸水 浴室門口"]);
+});
+
+test("x2 strategy：add 是第 1 版；set 要 --why，每次改版本号加 1、变更记录记改之前和改之后；没变的不加", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	assert.deepEqual(await strategy(["add", "搜索缺口", "--bet", "搜得多、卖的少", "--how", "知虾热搜词", "--why", "先试"]), { name: "搜索缺口", version: 1, bet: "搜得多、卖的少", how: "知虾热搜词", status: "试验中" });
+	await assert.rejects(strategy(["set", "搜索缺口", "--how", "换个选法"]), (e: Error) => e instanceof Usage && /--why 必填/.test(e.message));
+	await assert.rejects(strategy(["set", "搜索缺口", "--why", "没说改什么"]), Usage);
+	const set = await strategy(["set", "搜索缺口", "--how", "热搜词，剔掉 NT$1 的", "--status", "使用中", "--why", "NT$1 的是客製化链接"]);
+	assert.deepEqual([set.version, set.before, set.after], [2, { status: "试验中", how: "知虾热搜词" }, { status: "使用中", how: "热搜词，剔掉 NT$1 的" }]);
+	// 和现在一样：不加版本号、不记
+	assert.deepEqual(await strategy(["set", "搜索缺口", "--status", "使用中", "--why", "再说一遍"]), { name: "搜索缺口", version: 2, changed: false });
+	const log = await strategy(["log", "搜索缺口"]);
+	assert.deepEqual(log.changes.map((c: any) => [c.version, c.before, c.after, c.why]), [
+		[1, null, { status: "试验中", bet: "搜得多、卖的少", how: "知虾热搜词" }, "先试"],
+		[2, { status: "试验中", how: "知虾热搜词" }, { status: "使用中", how: "热搜词，剔掉 NT$1 的" }, "NT$1 的是客製化链接"],
+	]);
+	const list = await strategy(["list"]);
+	assert.equal(list.find((r: any) => r.name === "搜索缺口").version, 2);
+	const [row] = await db`select version, how, status from strategies where name = '搜索缺口'`;
+	assert.deepEqual({ ...row }, { version: 2, how: "热搜词，剔掉 NT$1 的", status: "使用中" });
+});
+
+test("x2 rule：add、retire 要 --why；停用的不删，写结束时间和停用原因；list 默认只列在用的", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	await assert.rejects(rule(["add", "起订量 1"]), Usage);
+	const a = await rule(["add", "1688 一件代发、48 小时发货、起订量 1", "--why", "不压货"]);
+	const b = await rule(["add", "售价不超过 NT$500", "--why", "先做低价"]);
+	await assert.rejects(rule(["retire", b.id]), Usage);
+	const retired = await rule(["retire", b.id, "--why", "限制太死"]);
+	assert.deepEqual([retired.retire_why, Boolean(retired.ended_at)], ["限制太死", true]);
+	await assert.rejects(rule(["retire", b.id, "--why", "再停一次"]), (e: Error) => e instanceof Usage && /已经停用/.test(e.message));
+	assert.deepEqual((await rule(["list"])).map((r: any) => r.id), [a.id]);
+	assert.deepEqual((await rule(["list", "--all"])).map((r: any) => [r.id, r.ended_at === null]), [[a.id, true], [b.id, false]]);
+	const [kept] = await db`select rule, why, retire_why from selection_rules where id = ${b.id}`;
+	assert.deepEqual({ ...kept }, { rule: "售价不超过 NT$500", why: "先做低价", retire_why: "限制太死" });
+});
+
+test("x2 listing add：按策略选的要 --why；记下选品理由、依据和当时的策略、在用的选品规矩；x2 listing why 补记", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	await strategy(["add", "季节", "--bet", "换季", "--how", "看月份"]);
+	await strategy(["set", "季节", "--bet", "换季前一个月", "--why", "要提前"]);
+	await db`update selection_rules set ended_at = now() where ended_at is null`;
+	const [r1] = await db`insert into selection_rules (rule, why) values ('起订量 1', '不压货') returning id::text`;
+	await db`insert into selection_rules (rule, why, ended_at) values ('停了的', '试试', now())`;
+	await assert.rejects(listing(["add", "cheeroutdoor", "901", "--strategy", "季节"]), (e: Error) => e instanceof Usage && /--why 必填/.test(e.message));
+	const added = await listing(["add", "cheeroutdoor", "901", "902", "--strategy", "季节", "--why", "冬天到了", "--evidence", "暖桌搜索量 2 万"]);
+	assert.deepEqual(added.map((a: any) => [a.offerId, a.isNew, a.why, a.evidence]), [["901", true, "冬天到了", "暖桌搜索量 2 万"], ["902", true, "冬天到了", "暖桌搜索量 2 万"]]);
+	const [l] = await db`select strategy, pick_why, pick_evidence, pick_snapshot from listings where id = ${added[0].id}`;
+	const { at, ...snap } = l!.pick_snapshot;
+	assert.ok(Math.abs(Date.parse(at) - Date.now()) < 60_000);
+	assert.deepEqual(snap, { backfilled: false, strategy: { name: "季节", version: 2, bet: "换季前一个月", how: "看月份", status: "试验中" }, rules: [{ id: r1!.id, rule: "起订量 1" }] });
+	// 以后策略改了：加进来时的快照不变
+	await strategy(["set", "季节", "--how", "看节气", "--why", "更准"]);
+	const [same] = await db`select pick_snapshot from listings where id = ${added[0].id}`;
+	assert.equal(same!.pick_snapshot.strategy.version, 2);
+	// 已经有的再加：理由、快照不改
+	const again = await listing(["add", "cheeroutdoor", "901", "--strategy", "季节", "--why", "另一个理由"]);
+	assert.deepEqual([again[0].isNew, again[0].why], [false, "冬天到了"]);
+	// 人选的不用 --why
+	const human = await listing(["add", "cheeroutdoor", "903"]);
+	assert.deepEqual([human[0].why, human[0].snapshot.strategy.name], [null, "人选"]);
+
+	// 补记：没有快照的照现在补一份，标明补记；已有理由的要 --force
+	const [old] = await db`insert into listings (shop, offer_id, strategy) values ('cheeroutdoor', '904', '季节') returning id::text`;
+	await assert.rejects(listing(["why", old!.id]), Usage);
+	const w = await listing(["why", old!.id, "--why", "补的理由", "--evidence", "当时的数据"]);
+	assert.deepEqual([w.why, w.evidence, w.backfilled, w.replaced, w.snapshot.backfilled, w.snapshot.strategy.version], ["补的理由", "当时的数据", true, false, true, 3]);
+	await assert.rejects(listing(["why", old!.id, "--why", "改一下"]), (e: Error) => e instanceof Usage && /--force/.test(e.message));
+	const forced = await listing(["why", old!.id, "--why", "改一下", "--force"]);
+	assert.deepEqual([forced.why, forced.evidence, forced.replaced, forced.backfilled, forced.snapshot.at], ["改一下", "当时的数据", true, false, w.snapshot.at]);
+	// 人选的、加进来时有快照的：补理由，快照不动
+	const h = await listing(["why", human[0].id, "--why", "运营贴的"]);
+	assert.deepEqual([h.backfilled, h.snapshot.backfilled, h.snapshot.at], [false, false, human[0].snapshot.at]);
 });

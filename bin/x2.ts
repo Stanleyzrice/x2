@@ -5,6 +5,7 @@
 import "../src/env.ts";
 import { dbCommand } from "../src/commands/db.ts";
 import { listingCommand } from "../src/commands/listing.ts";
+import { ruleCommand } from "../src/commands/rule.ts";
 import { strategyCommand } from "../src/commands/strategy.ts";
 import { approveCommand, proposeCommand, runCommand, status } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
@@ -25,6 +26,7 @@ const commands: Record<string, () => Promise<void>> = {
 	source: () => sourceCommand(args, json),
 	listing: () => listingCommand(args, json),
 	strategy: () => strategyCommand(args, json),
+	rule: () => ruleCommand(args, json),
 	db: () => dbCommand(args, json),
 	nocodb: () => nocodbCommand(args, json),
 	schema: async () => schema(),
@@ -41,13 +43,15 @@ const help = [
 	"  x2 source <商品> --spec \"店里的规格名 = 货源的规格名\"   记下人定的规格例外（按名字配不上时）",
 	"上品（见 docs/listing.md）：",
 	"  x2 listing quote <1688 链接> [--shop 店] [--weight kg] [--freight 元/件]   报价（选品用）：售价区间、每个规格的价格和重量；不做图、不存库",
-	"  x2 listing add <店> <1688 链接…>  添加货源（--strategy 名字：从哪个策略来）",
+	"  x2 listing add <店> <1688 链接…> [--strategy 名字 --why \"选品理由\"] [--evidence \"依据\"]   添加货源；按策略选的要写理由，记下当时的策略和选品规矩",
+	"  x2 listing why <商品稿> --why \"选品理由\" [--evidence \"依据\"] [--force]   给加进来的商品稿补记理由（已有理由的要 --force 才覆盖）",
 	"  x2 listing make [商品稿…] [--jobs N]   做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；几份同时做（默认 3）",
 	"  x2 listing estimate <商品稿> [--weight kg] [--freight 元/件]   估 1688 没给的重量、读不到的国内运费（只填空着的），马上重新核价",
 	"  x2 listing show <商品稿>          写文案要用的事实",
 	"  x2 listing text <商品稿> --title … --description … [--tiers JSON] [--nickname 简称]   agent 写的标题、描述、规格名和简称",
 	"  x2 listing list                  所有商品稿走到哪了",
-	"  x2 strategy add | set | list     选品的策略（假设、选品方法）；每个策略出了几份商品稿、上架了几个",
+	"  x2 strategy add | set | list | log   选品的策略（假设、选品方法、版本号）；set 要 --why，版本号加 1；log 看变更记录",
+	"  x2 rule add | retire | list       选品规矩（所有策略共用）：add、retire 要 --why；停用的不删",
 	"  x2 db migrate | import | import-shops   建表；把 ~/x2 的 JSON、lilto 的店铺设置迁进库（只用一次）",
 	"  x2 nocodb                       按 docs/loop.md「视图」建 NocoDB：连库、中文名、视图（可以重复跑）",
 	"读站点（只读）：",

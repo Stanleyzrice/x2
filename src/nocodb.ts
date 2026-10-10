@@ -85,7 +85,7 @@ export function tables(): Table[] {
 			columns: {
 				nickname: "简称", title: "标题", shop: "店铺", step: "当前步骤", step_detail: "说明", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", category_name: "类目",
 				problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
-				strategy: "策略", cancelled: "放弃", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
+				strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", pick_snapshot: "选品快照", cancelled: "放弃", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
 				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "Gemini 文字检查", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间",
 			},
 			views: [
@@ -93,9 +93,9 @@ export function tables(): Table[] {
 				// 审稿：待批准的、待补充的，封面是主图；说明里有 Gemini 文字检查挑出的问题；删掉不要的图就是在「主图」「详情图」里删附件（「规格图」只看，删了下一轮写回去）
 				{
 					title: "审稿", gallery: "main_images", filters: [{ or: [{ col: "step", op: "eq", value: "待批准" }, { col: "step", op: "eq", value: "待补充" }] }],
-					sorts: [["id", "asc"]], hide: [...LISTING_JSON, "detail_images", "description", "created_at", "updated_at", "listed_at", "product_id", "offer_id", "id"],
+					sorts: [["id", "asc"]], hide: [...LISTING_JSON, "detail_images", "description", "created_at", "updated_at", "listed_at", "product_id", "offer_id", "id", "pick_snapshot"],
 				},
-				{ title: "当前步骤", kanban: "step", filters: [{ col: "cancelled", op: "notchecked" }], sorts: [["id", "asc"]], hide: [...LISTING_JSON, "description", "detail_images", "option_images", "created_at", "updated_at"] },
+				{ title: "当前步骤", kanban: "step", filters: [{ col: "cancelled", op: "notchecked" }], sorts: [["id", "asc"]], hide: [...LISTING_JSON, "description", "detail_images", "option_images", "created_at", "updated_at", "pick_snapshot"] },
 				{
 					title: "添加货源",
 					form: { heading: "添加 1688 货源", fields: { shop: "上品的店铺", offer_id: "1688 商品链接（完整粘贴）", note: "补充说明（例：选它的理由）" }, required: ["shop", "offer_id"] },
@@ -104,8 +104,19 @@ export function tables(): Table[] {
 		},
 		{
 			name: "strategies", title: "策略", selects: { status: ["试验中", "使用中", "已停用"] },
-			columns: { name: "策略", status: "状态", bet: "假设", how: "选品方法", note: "备注", created_at: "创建时间", updated_at: "更新时间" },
+			columns: { name: "策略", status: "状态", version: "版本号", bet: "假设", how: "选品方法", note: "备注", created_at: "创建时间", updated_at: "更新时间" },
 			views: [{ title: "全部", sorts: [["created_at", "desc"]] }],
+		},
+		{
+			// 改之前、改之后只有改了的列（JSON：status 状态、bet 假设、how 选品方法、note 备注）
+			name: "strategy_changes", title: "策略变更记录",
+			columns: { strategy: "策略", version: "版本号", before: "改之前", after: "改之后", why: "理由", changed_at: "变更时间", id: "编号" },
+			views: [{ title: "全部", sorts: [["changed_at", "desc"]], hide: ["id"] }],
+		},
+		{
+			name: "selection_rules", title: "选品规矩",
+			columns: { id: "编号", rule: "规矩", why: "理由", started_at: "开始时间", ended_at: "结束时间", retire_why: "停用原因" },
+			views: [{ title: "全部", sorts: [["id", "asc"]] }],
 		},
 		{
 			name: "sources", title: "货源", links: ["url", "image", "item_image"],
