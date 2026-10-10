@@ -216,3 +216,16 @@ test("x2 listing drop：按结构去掉整个选项，货号记进已移除的�
 	const [same] = await db`select removed_variants from listings where id = ${id}`;
 	assert.deepEqual(same!.removed_variants, ["LT3-20", "LT3-21"]);
 });
+
+test("x2 listing text：规格名交得不对（重名、层数不对）什么都不存，标题、描述也不存", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const { id, specs } = await madeListing(db, "4");
+	const text = (tiers: unknown) => listing(["text", id, "--title", "矽藻土地墊 可愛貓咪造型 防滑吸水 浴室門口", "--description", "商品介紹", "--tiers", JSON.stringify(tiers)]);
+	const tiers = [{ name: "款式", options: ["黑貓", "黑貓", "定製"] }, { name: "尺寸", options: ["40×60cm", "60×90cm"] }];
+	const dup = await text(tiers);
+	assert.deepEqual([dup.text[0].saved, dup.audit], [false, []]);
+	assert.match(dup.text[0].problems.join(), /第 1 层「款式」的第 1、2 个选项都叫「黑貓」/);
+	assert.match((await text(tiers.slice(0, 1))).text[0].problems.join(), /要 2 层（照 x2 listing show），交了 1 层/);
+	const [row] = await db`select title, description, variants from listings where id = ${id}`;
+	assert.deepEqual([row!.title, row!.description, row!.variants], [null, null, specs]);
+});

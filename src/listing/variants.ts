@@ -1,5 +1,5 @@
 // 规格（docs/listing.md「规格」）：商品稿存着 Shopee 要的规格——层（最多两层，例 款式、尺寸）和规格（每层一个选项的下标），一起存在商品稿的 variants 里。
-// 做商品稿时从货源生成一次（specsFrom），以后都改它：人说了 x2 listing drop 去掉规格（dropSpecs）。
+// 做商品稿时从货源生成一次（specsFrom），以后都改它：写文案的 agent 改名字（renameSpecs），人说了 x2 listing drop 去掉规格（dropSpecs）。
 // 核价、组 product_info、台湾审核、NocoDB「规格和价格」都只读这一份。认东西靠 1688 的规格 id 和原值（层记着 1688 的层名，选项记着 1688 的原值），
 // 名字只是给人看的：重做商品稿时按（1688 层名，原值）把上一版的名字对回去。
 // 自动的名字照 lilto 的 shopee_listing.py（快照 1c8a7926）：转台湾繁体（OpenCC s2twp）、去 emoji 和括号里的短说明，
@@ -212,6 +212,22 @@ export function limitProblems(s: Specs): string[] {
 
 /** 规格的全部问题：结构和上限 */
 export const specsProblems = (s: Specs) => [...structureProblems(s), ...limitProblems(s)];
+
+/** agent 交的规格名：每层的层名和选项名，个数、顺序照 x2 listing show */
+export const tierNames = z.array(z.object({ name: z.string(), options: z.array(z.string()) }));
+export type TierNames = z.infer<typeof tierNames>;
+
+/** 改规格名（第几层第几个选项，不按字配）：回改好名字的规格；交得不对回问题，规格不变 */
+export function renameSpecs(s: Specs, names: TierNames): { specs?: Specs; problems: string[] } {
+	if (isSingle(s)) return names.length ? { problems: ["规格名：单规格的商品不写规格名（tiers 交 []）"] } : { specs: s, problems: [] };
+	if (names.length !== s.tiers.length) return { problems: [`规格名：要 ${s.tiers.length} 层（照 x2 listing show），交了 ${names.length} 层`] };
+	const counts = s.tiers.flatMap((t, a) => (names[a]!.options.length === t.options.length ? [] : [`规格名：第 ${a + 1} 层「${t.name}」要 ${t.options.length} 个选项名，交了 ${names[a]!.options.length} 个`]));
+	if (counts.length) return { problems: counts };
+	const tidy = (x: string) => x.replace(/\s+/g, " ").trim();
+	const specs: Specs = { ...s, tiers: s.tiers.map((t, a) => ({ ...t, name: tidy(names[a]!.name), options: t.options.map((o, k) => ({ ...o, name: tidy(names[a]!.options[k]!) })) })) };
+	const problems = structureProblems(specs);
+	return problems.length ? { problems } : { specs, problems };
+}
 
 /** 两层合成一层「款式」：一个组合一个选项，名字是两层的名字连起来（最多 20 字，撞名加「-2」），原值是两层的原值连起来，规格图照第一层的 */
 export function mergeTiers(s: Specs): Specs {

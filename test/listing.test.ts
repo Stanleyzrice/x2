@@ -30,7 +30,7 @@ test("核价：两道门都过的最小整数售价（和 lilto 的验算、真�
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
-import { dropSpecs, limitProblems, OLD_SPECS, priceRange, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems } from "../src/listing/variants.ts";
+import { dropSpecs, limitProblems, OLD_SPECS, priceRange, removedOf, renameSpecs, type Specs, specsFrom, specsOf, specsText, structureProblems } from "../src/listing/variants.ts";
 import type { Offer } from "../src/site/1688.ts";
 
 /** 一个货源：props 是 [层名, 取值…]（第一层的取值带图「<取值>.jpg」），skus 是 [各层的取值, 库存]，规格 id 是 s<第几个> */
@@ -358,6 +358,28 @@ test("去掉规格以后：去掉的不上，规格图只挂还在的选项，�
 	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), s).product!, "水印");
 	assert.notEqual(key(named(r.specs, [["顏色", ["黑貓"]], ["尺寸", ["40×60cm", "60×90cm"]]])), key(r.specs));
 	assert.equal(key(named(r.specs, [["顏色", ["黑貓"]], ["尺寸", ["40*60", "60*90cm（升級版）"]]])), key(r.specs));
+});
+
+test("交规格名：个数、顺序照 show，按第几层第几个选项改；个数不对、超长、重名的不收；改了名字要再审", () => {
+	const s = grid([["顏色", ["黑貓", "黃狗"]], ["尺寸", ["40*60cm（升級版矽藻泥）", "60*90cm（升級版矽藻泥）"]]]);
+	const sizes = { name: "尺寸", options: ["40×60cm", "60×90cm"] };
+	assert.deepEqual(renameSpecs(s, [{ name: "款式", options: ["黑貓", "黃狗"] }]), { problems: ["规格名：要 2 层（照 x2 listing show），交了 1 层"] });
+	assert.deepEqual(renameSpecs(s, [{ name: "款式", options: ["黑貓"] }, sizes]), { problems: ["规格名：第 1 层「顏色」要 2 个选项名，交了 1 个"] });
+	assert.match(renameSpecs(s, [{ name: "款式", options: ["黑貓", "一二三四五六七八九十一二三四五六七八九十多"] }, sizes]).problems.join(), /第 1 层「款式」第 2 个选项「一二三四五六七八九十一二三四五六七八九十多」 21 字，最多 20 字/);
+	assert.match(renameSpecs(s, [{ name: "款式", options: ["黑貓", "黑貓"] }, sizes]).problems.join(), /第 1 层「款式」的第 1、2 个选项都叫「黑貓」，同一层不能重名/);
+	assert.match(renameSpecs(s, [{ name: "一二三四五六七八九十一二三四五", options: ["黑貓", "黃狗"] }, sizes]).problems.join(), /层名 15 字，最多 14 字/);
+	const r = renameSpecs(s, [{ name: "款式", options: [" 招財黑貓 ", "黃狗"] }, sizes]);
+	assert.deepEqual([r.problems, names(r.specs!)], [[], [["款式", ["招財黑貓", "黃狗"]], ["尺寸", ["40×60cm", "60×90cm"]]]]);
+	assert.deepEqual(r.specs!.variants, s.variants);
+	assert.deepEqual(r.specs!.tiers.map((t) => t.options.map((o) => o.source)), s.tiers.map((t) => t.options.map((o) => o.source)));
+	// 单规格不写规格名
+	const single = specsFrom(offerOf([], [[[]]])).specs;
+	assert.deepEqual(renameSpecs(single, []), { specs: single, problems: [] });
+	assert.deepEqual(renameSpecs(single, [{ name: "款式", options: ["一般"] }]).problems, ["规格名：单规格的商品不写规格名（tiers 交 []）"]);
+	// 交了新的规格名：审核键跟着变
+	const images = { main: [pic("m1")], detail: [], options: [], waiting: [] };
+	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), settingsOf(shopRow)).product!, "水印");
+	assert.notEqual(key(r.specs!), key(s));
 });
 
 test("台湾审核放行：问题按编号（先文案、后图）；文案的放行记在这次审核里，图的记进保留的图；每条都放行了算通过", () => {

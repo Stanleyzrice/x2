@@ -2,7 +2,9 @@
 // x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
 // x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
-// x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
+// x2 listing text <商品稿> --title … --description … [--tiers <JSON>]
+//                                                    agent 写的标题、描述和规格名（也可以从 stdin 读 [{ id, title, description, tiers: [{ name, options: [名字…] }] }]），
+//                                                    写完马上台湾成品审核
 // x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）；挑出的问题有编号，挑出的图 x2 先处理
 // x2 listing audit <商品稿> --accept <编号…>           放行审核挑出的问题（人看过说是误报或无妨，人说了才用）
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
@@ -15,7 +17,7 @@ import { make, settingsOf } from "../listing/make.ts";
 import { acceptIssues, type Audit, auditDropped, type AuditIssue, auditIssues, auditKey, auditPassed, auditTaiwan, dropAudited, restoreAudited } from "../listing/audit.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
-import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, specsOf, specsText } from "../listing/variants.ts";
+import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
 
 const readStdin = async () => {
@@ -86,20 +88,43 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "text") {
-		const items: { id: string; title: string; description: string }[] = [];
-		const id = plain(rest, "--title", "--description")[0];
-		if (id) items.push({ id, title: flag(rest, "--title") ?? "", description: flag(rest, "--description") ?? "" });
-		else {
+		const usage = "x2 listing text <商品稿> --title … --description … [--tiers '[{ \"name\": \"款式\", \"options\": [\"…\"] }]']，或从 stdin 读 [{ id, title, description, tiers }]";
+		const items: { id: string; title: string; description: string; tiers?: unknown }[] = [];
+		const id = plain(rest, "--title", "--description", "--tiers")[0];
+		if (id) {
+			const t = flag(rest, "--tiers");
+			let tiers: unknown;
+			if (t !== undefined) {
+				try { tiers = JSON.parse(t); } catch { throw new Usage(`--tiers 要是 JSON：${usage}`); }
+			}
+			items.push({ id, title: flag(rest, "--title") ?? "", description: flag(rest, "--description") ?? "", tiers });
+		} else {
 			let input: unknown;
-			try { input = JSON.parse(await readStdin()); } catch { throw new Usage("x2 listing text <商品稿> --title … --description …，或从 stdin 读 [{ id, title, description }]"); }
-			items.push(...(input as any[]).map((x) => ({ id: String(x.id), title: String(x.title ?? ""), description: String(x.description ?? "") })));
+			try { input = JSON.parse(await readStdin()); } catch { throw new Usage(usage); }
+			if (!Array.isArray(input)) throw new Usage(usage);
+			items.push(...input.map((x) => ({ id: String(x.id), title: String(x.title ?? ""), description: String(x.description ?? ""), tiers: x.tiers })));
 		}
 		const results = [];
 		for (const it of items) {
+			// 标题、描述的硬规矩；规格名（交了的话）照 show 的层和选项一个一个改，过一遍规格的规矩。有一样不对就什么都不存
 			const problems = textProblems(it.title.trim(), it.description.trim());
+			const [l] = await sql`select variants, offer, removed_variants from listings where id = ${it.id}`;
+			if (!l) { results.push({ id: it.id, saved: false, problems: ["没有这份商品稿"] }); continue; }
+			let specs = specsOf(l.variants);
+			if (it.tiers !== undefined) {
+				const names = tierNames.safeParse(it.tiers);
+				if (!names.success) problems.push("规格名：tiers 要是 [{ name: 层名, options: [选项名…] }]，个数、顺序照 x2 listing show");
+				else if (!specs) problems.push(OLD_SPECS);
+				else {
+					const r = renameSpecs(specs, names.data);
+					problems.push(...r.problems);
+					specs = r.specs ?? specs;
+				}
+			}
 			if (problems.length) { results.push({ id: it.id, saved: false, problems }); continue; }
-			const r = await sql`update listings set title = ${it.title.trim()}, description = ${it.description.trim()}, audit = null, updated_at = now() where id = ${it.id} returning id`;
-			results.push({ id: it.id, saved: r.length > 0, problems: r.length ? [] : ["没有这份商品稿"] });
+			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs), variants_text: specsText(specs, removedOf(l.offer, l.removed_variants)) } : {};
+			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, audit: null, updated_at: new Date() } as any)} where id = ${it.id}`;
+			results.push({ id: it.id, saved: true, problems: [] });
 		}
 		const audits = await audit(sql, results.filter((r) => r.saved).map((r) => r.id));
 		return out({ text: results, audit: audits }, [...results.map((r) => `商品稿 ${r.id}：${r.saved ? "记下了" : r.problems.join("；")}`), ...audits.map(auditLine)].join("\n"));
