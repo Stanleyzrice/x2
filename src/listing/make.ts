@@ -3,7 +3,7 @@
 import { alibabaAccounts, in1688, inShop } from "../accounts.ts";
 import { type Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
-import { detailImages, Gone, offer as readOffer, type Offer } from "../site/1688.ts";
+import { detailImages, Gone, offerIdOf, offer as readOffer, type Offer } from "../site/1688.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../site/shopee/products.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
@@ -69,9 +69,19 @@ async function read1688<T>(fn: () => Promise<T>): Promise<T> {
 
 /** 做一份商品稿。回这一轮的问题（给人看的） */
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
-	const [l] = await sql`select l.*, s.shop_id from listings l join shop_settings s on s.shop = l.shop where l.id = ${id}`;
+	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	if (!row) return save(sql, id, {}, [`店铺：店铺设置里没有「${l.shop}」`]);
+	// 人在 NocoDB 表单里贴的是整个链接：改成货源 id
+	const offerId = offerIdOf(String(l.offer_id));
+	if (!offerId) return save(sql, id, {}, [`货源：认不出「${l.offer_id}」（贴 1688 的商品链接）`]);
+	if (offerId !== l.offer_id) {
+		const [dup] = await sql`select id from listings where shop = ${l.shop} and offer_id = ${offerId} and id <> ${id}`;
+		if (dup) return save(sql, id, { cancelled: true, note: `和商品稿 ${dup.id} 重复` }, []);
+		await sql`update listings set offer_id = ${offerId} where id = ${id}`;
+		l.offer_id = offerId;
+	}
 	const s = settingsOf(row);
 	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里还没写这家店的水印（两家店的封面要不一样）"]);
 

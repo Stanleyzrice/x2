@@ -27,6 +27,18 @@ x2 run                         # 执行批准了的写入
 x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_NOCODB_URL、X2_NOCODB_EMAIL、X2_NOCODB_PASSWORD、X2_NOCODB_META_URL）
 ```
 
+上品（[docs/listing.md](docs/listing.md)）：
+
+```sh
+x2 listing add cheeroutdoor <1688 链接>   # 要上的货源：一个货源 × 一家店一份商品稿
+x2 listing make                         # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 水印 → 传图）、类目属性
+x2 listing show 3                       # 写文案要用的事实
+x2 listing text 3 --title … --description …   # agent 写的标题和描述，写完马上台湾成品审核
+x2 listing list                         # 每份商品稿卡在哪一步
+```
+
+建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`。
+
 两家店各开一个浏览器（Chrome 的不同用户）：x2 每个连着的浏览器读一次登录着的店和 1688 账号，按店、按账号选。只连着一个浏览器、或要手动选时，用 `X2_BROWSER`。
 
 ## 读站点：x2 <站点> <操作>
@@ -87,17 +99,21 @@ x2/
 │ │ └ chanboss.ts         chanboss：订单、预报、库存、退件、扣款流水（chanboss.md）
 │ ├ db/                   库：连接、schema.sql（建表、加列）、import.ts（把 ~/x2 的 JSON 迁进来，只用一次）
 │ ├ read.ts               现读：chanboss 订单（写回订单看板）、1688 的购物车和采购单（带物流、退款）、要买的商品的货源；哪样没读成记下来；同一个进程 2 分钟内读过的复用
-│ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单），index.ts 拼快照（现读的 + 库里人定的）、写回收件箱
+│ ├ check/                检查：纯函数（orders.ts、reconcile.ts 对采购单、listings.ts 商品稿），index.ts 拼快照（现读的 + 库里人定的）、写回收件箱
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入
 │ ├ source.ts             x2 source：选货源，更新货源快照
+│ ├ listing/              上品：price.ts 核价、variants.ts 规格、screen.ts 筛字、watermark.ts 水印、images.ts 图、category.ts 类目属性、product.ts 建商品的 product_info 和读回来核对、audit.ts 台湾成品审核、make.ts 做商品稿
+│ ├ service/              外部服务：gemini.ts、xiangji.ts（象寄译图，收费）、image.ts（取图、认格式、宽高、sha256）
+│ ├ env.ts                启动时读仓库根目录的 .env
 │ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB
 │ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色；matchSku 加购时按店里的规格名在货源的规格里配，配不上的看规格例外
 │ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、db.ts、nocodb.ts
 ├ .claude/skills/
-│ └ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 对采购单 → 预报 → 人打包
+│ ├ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 对采购单 → 预报 → 人打包
+│ └ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → 台湾审核 → 人审稿批准 → 建商品 → 上架
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
-├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod
+├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
 ```
 

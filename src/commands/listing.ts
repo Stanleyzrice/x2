@@ -5,6 +5,7 @@
 // x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
 // x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）
 // x2 listing list                                    所有商品稿走到哪了
+import { syncImages } from "../check/index.ts";
 import { db } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { make, settingsOf } from "../listing/make.ts";
@@ -51,6 +52,9 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		for (const id of ids) {
 			console.error(`── 商品稿 ${id}`);
 			results.push(await make(sql, id));
+			// 做好的图马上放进 NocoDB 的附件（不等下一次 x2 status）
+			const [l] = await sql`select * from listings where id = ${id}`;
+			if (l) await syncImages(sql, l);
 		}
 		return out(results, results.map((r) => `商品稿 ${r.id}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}` : "做好了，等文案（x2 listing show " + r.id + "）"}`).join("\n"));
 	}

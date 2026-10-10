@@ -201,7 +201,8 @@ insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd) valu
 -- 人改：标题、描述、重量、国内运费、不上了、备注、策略；主图、详情图（删掉的那张就不要了）
 create table if not exists listings (
 	id bigserial primary key,
-	shop text not null references shop_settings (shop),
+	shop text not null,
+	-- 1688 的货源 id（人在 NocoDB 表单里贴整个链接也行，x2 做商品稿时改成 id）
 	offer_id text not null,
 	-- 从哪个策略来（现在都是人选的）：以后按策略看效果
 	strategy text not null default '人选',
@@ -227,9 +228,9 @@ create table if not exists listings (
 	variants_text text,
 	-- 图：{ main: [...], detail: [...], options: {...}, sizeChart }，每张 { from（原图地址）, sha（原图）, final（成品）, imageId, width, height, verdict }
 	images jsonb not null default '{}',
-	-- 给人在 NocoDB 里看、删的图（NocoDB 的附件：Shopee 的图片地址）
-	main_images jsonb,
-	detail_images jsonb,
+	-- 给人在 NocoDB 里看、删的图：NocoDB 的附件（JSON 文本，[{ url: Shopee 的图片地址, title, mimetype }]）；人删了哪张，x2 记进 removed_images
+	main_images text,
+	detail_images text,
 	-- 核价用的参数快照
 	pricing jsonb,
 	-- 台湾成品审核（Gemini）
@@ -281,3 +282,8 @@ alter table sources add column if not exists sku_exceptions text;
 
 -- 商品稿里人删掉的图（Shopee 的图片 id）：人在 NocoDB 的「主图」「详情图」里删了附件，x2 记在这里，再做商品稿也不用它
 alter table listings add column if not exists removed_images jsonb not null default '[]';
+-- 商品稿的店铺不用外键（NocoDB 会把外键变成关联列，表单里就不能直接选店）；x2 做商品稿时核对店铺设置里有没有这家店
+alter table listings drop constraint if exists listings_shop_fkey;
+-- NocoDB 的附件是 JSON 文本（它写回来的也是文本）
+alter table listings alter column main_images type text using main_images::text;
+alter table listings alter column detail_images type text using detail_images::text;

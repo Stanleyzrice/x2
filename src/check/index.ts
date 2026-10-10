@@ -2,6 +2,7 @@
 // 收件箱（只更新不重复，条件不成立就关）、订单上算出来的列、规格定了货源以后删掉它剩下的候选。
 // 只有这一行靠的那几样这一轮都读成功了，才关它：漏读不算做完。人勾了「处理好了」的（x2 看不到结果的事），关掉以后不再开
 import type { Sql } from "../db/index.ts";
+import { IMAGE } from "../site/shopee/seller.ts";
 import { NeedsHuman } from "../errors.ts";
 import { read1688, type Read, type Reads } from "../read.ts";
 import { settingsOf, type Settings } from "../listing/make.ts";
@@ -81,9 +82,35 @@ async function loopItems(sql: Sql, reads: Reads): Promise<InboxItem[]> {
 
 export type Checked = { todo: Todo[]; opened: number; closed: number };
 
+/** 商品稿的图和 NocoDB 的附件对一下：x2 上次放上去的（images.shown）里人删掉的记进 removed_images；
+ * 再把现在要用的（做好的、没删的；主图最多 9 张、详情图最多 12 张）写回附件。附件是 Shopee 的图片地址，NocoDB 直接显示 */
+export async function syncImages(sql: Sql, l: any): Promise<void> {
+	if (!l.images?.main) return;
+	const removed = new Set<string>((l.removed_images ?? []) as string[]);
+	const shown = (l.images.shown ?? {}) as Record<string, string[]>;
+	const idOf = (a: any) => String(a?.url ?? "").split("?")[0]!.split("/").pop()!;
+	const parse = (t: string | null) => { try { return t ? (JSON.parse(t) as any[]).map(idOf) : null; } catch { return null; } };
+	const cols = [["main_images", "main", 9], ["detail_images", "detail", 12]] as const;
+	for (const [col, role] of cols) {
+		const present = parse(l[col]);
+		if (present) for (const id of shown[role] ?? []) if (!present.includes(id)) removed.add(id);
+	}
+	const next: Record<string, string[]> = {};
+	const att: Record<string, string> = {};
+	for (const [col, role, max] of cols) {
+		next[role] = ((l.images[role] ?? []) as any[]).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId)).slice(0, max).map((p) => p.imageId as string);
+		att[col] = JSON.stringify(next[role]!.map((id, i) => ({ url: `${IMAGE}${id}`, title: `${role === "main" ? "主图" : "详情图"} ${i + 1}`, mimetype: "image/jpeg" })));
+	}
+	const images = { ...l.images, shown: next };
+	if (JSON.stringify(shown) === JSON.stringify(next) && l.main_images === att.main_images && l.detail_images === att.detail_images && removed.size === (l.removed_images ?? []).length) return;
+	await sql`update listings set images = ${sql.json(images)}, removed_images = ${sql.json([...removed])}, main_images = ${att.main_images!}, detail_images = ${att.detail_images!} where id = ${l.id}`;
+	Object.assign(l, { images, removed_images: [...removed], main_images: att.main_images, detail_images: att.detail_images });
+}
+
 /** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点 */
 async function listingsCheck(sql: Sql) {
 	const rows = await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
+	for (const l of rows) if (!l.cancelled && !l.product_id) await syncImages(sql, l);
 	const settings = new Map<string, Settings>();
 	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「暂停上品」 */ } }
 	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('建商品', '上架') and include`;

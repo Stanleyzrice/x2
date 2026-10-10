@@ -1,12 +1,12 @@
 # x2：给 agent 的说明
 
-读者是在 x2 里推进两家店（ni1206、cheeroutdoor）日常工作的 agent（Claude Code、Codex）。命令在仓库根目录运行：`node bin/x2.ts <命令>`（下面简写成 `x2`），加 `--json` 读结果。循环怎么转在 [docs/loop.md](docs/loop.md)，订单在 [docs/orders.md](docs/orders.md)，用词照 [docs/glossary.md](docs/glossary.md)。
+读者是在 x2 里推进两家店（ni1206、cheeroutdoor）日常工作的 agent（Claude Code、Codex）。命令在仓库根目录运行：`node bin/x2.ts <命令>`（下面简写成 `x2`），加 `--json` 读结果。循环怎么转在 [docs/loop.md](docs/loop.md)，订单在 [docs/orders.md](docs/orders.md)，上品在 [docs/listing.md](docs/listing.md)，用词照 [docs/glossary.md](docs/glossary.md)。
 
 ## 开起来做什么
 
 1. **`x2 status`**：现读站点，跑检查，更新收件箱。跟人说三件事：读到了什么（哪样没读成）、收件箱里有什么、你能做什么。状态在站点和库里，不在你的记忆里：哪台电脑开你，第一件事都是它。
 2. **有结果未知的写入，先核清**：`x2 run` 会先把它们读回来。还核不清的，请人到站点上看一眼，在「写入」里改成已核对或被拒。
-3. **你能做的，按 skill 准备好**（订单：`.claude/skills/orders`），写成一批待批准的写入：`x2 status --json` 的 `todo` 里有现成的一批，看过、交给 `x2 propose`。收件箱会多一行「批准：……」。
+3. **你能做的，按 skill 准备好**（订单：`.claude/skills/orders`；上品：`.claude/skills/listing`），写成一批待批准的写入：`x2 status --json` 的 `todo` 里有现成的一批，看过、交给 `x2 propose`。收件箱会多一行「批准：……」。
 4. **告诉人去收件箱**（NocoDB）。人在那一行勾「批准」就批准整批；人在终端里说「批准」，你用 `x2 approve <批次>` 替人勾上。
 5. **`x2 run`**：执行批准了的写入。把每一行的结果原样告诉人。
 6. **再 `x2 status`**：收件箱关掉的就是做完了；没关的说为什么。
@@ -16,7 +16,7 @@
 - 不绕过 `x2 run` 改站点上的东西（不自己发加购、预报的请求，不用 raw 接口写）。结果未知的写入不重发，先读回来。
 - 不替人付款、打包、打拣货单，不替人在收件箱里选货源。人说了「批准」才 `x2 approve`。
 - 不在真订单上试新的写操作：没跑过的（`x2 run` 说要 `--try` 的）先和人约好一张单，一起跑，跑完在站点上看一眼。
-- 不改库里人定的东西（货源的「用这个」「规格例外」、订单设置、收件箱的「批准」「推迟到」「备注」），除非人让你改。
+- 不改库里人定的东西（货源的「用这个」「规格例外」、订单设置、店铺设置、商品稿里人填的和删掉的图、收件箱的「批准」「推迟到」「备注」），除非人让你改。
 - 数字由代码算（`x2 status`、检查、核价），你写文字；不自己算钱、件数报给人。
 
 ## 命令出错
