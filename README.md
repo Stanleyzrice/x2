@@ -35,6 +35,7 @@ x2 listing make                         # 做商品稿：读货源、规格和�
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description …   # agent 写的标题和描述，写完马上台湾成品审核
 x2 listing list                         # 每份商品稿卡在哪一步
+x2 strategy list                        # 选品的策略：每个出了几份商品稿、上架了几个
 ```
 
 建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`。

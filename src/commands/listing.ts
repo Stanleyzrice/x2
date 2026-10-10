@@ -31,6 +31,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const [shop, ...links] = plain(rest, "--strategy");
 		const strategy = flag(rest, "--strategy") ?? "人选";
 		if (!shop || !links.length) throw new Usage("x2 listing add <店> <1688 链接…> [--strategy 名字]");
+		const [st] = await sql`select name from strategies where name = ${strategy}`;
+		if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "押什么" --how "怎么选"`);
 		const [s] = await sql`select shop from shop_settings where shop = ${shop}`;
 		if (!s) throw new Usage(`没有「${shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
 		const added: { id: string; offerId: string; isNew: boolean }[] = [];

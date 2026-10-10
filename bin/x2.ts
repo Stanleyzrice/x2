@@ -5,6 +5,7 @@
 import "../src/env.ts";
 import { dbCommand } from "../src/commands/db.ts";
 import { listingCommand } from "../src/commands/listing.ts";
+import { strategyCommand } from "../src/commands/strategy.ts";
 import { approveCommand, proposeCommand, runCommand, status } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
 import { nocodbCommand } from "../src/commands/nocodb.ts";
@@ -23,6 +24,7 @@ const commands: Record<string, () => Promise<void>> = {
 	run: () => runCommand(args, json),
 	source: () => sourceCommand(args, json),
 	listing: () => listingCommand(args, json),
+	strategy: () => strategyCommand(args, json),
 	db: () => dbCommand(args, json),
 	nocodb: () => nocodbCommand(args, json),
 	schema: async () => schema(),
@@ -43,6 +45,7 @@ const help = [
 	"  x2 listing show <商品稿>          写文案要用的事实",
 	"  x2 listing text <商品稿> --title … --description …   agent 写的标题和描述",
 	"  x2 listing list                  所有商品稿走到哪了",
+	"  x2 strategy add | set | list     选品的策略：押什么、怎么选；每个策略出了几份商品稿、上架了几个",
 	"  x2 db migrate | import | import-shops   建表；把 ~/x2 的 JSON、lilto 的店铺设置迁进库（只用一次）",
 	"  x2 nocodb                       按 docs/loop.md「视图」建 NocoDB：连库、中文名、视图（可以重复跑）",
 	"读站点（只读）：",

@@ -274,6 +274,20 @@ create table if not exists shop_images (
 	primary key (shop, sha256)
 );
 
+-- 策略：选品的一个做法（docs/listing.md「策略」）。agent 定、做实验（explore / exploit）；商品稿的 strategy 写它的名字
+create table if not exists strategies (
+	name text primary key,
+	-- 押的是什么（假设）
+	bet text,
+	-- 怎么选：看什么数据、什么条件、去哪找货源
+	how text,
+	status text not null default '试验中' check (status in ('试验中', '在用', '停了')),
+	note text,
+	created_at timestamptz not null default now(),
+	updated_at timestamptz not null default now()
+);
+insert into strategies (name, bet, how, status) values ('人选', '人挑的货源', '运营贴链接', '在用') on conflict do nothing;
+
 -- ── 加列（表建好以后加的列写在这里） ──
 
 -- 规格例外：店里的规格按名字在货源的规格里配不上时，人定的。一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）；

@@ -103,6 +103,11 @@ export function tables(): Table[] {
 			],
 		},
 		{
+			name: "strategies", title: "策略", selects: { status: ["试验中", "在用", "停了"] },
+			columns: { name: "策略", status: "状态", bet: "押什么", how: "怎么选", note: "备注", created_at: "加入于", updated_at: "更新于" },
+			views: [{ title: "全部", sorts: [["created_at", "desc"]] }],
+		},
+		{
 			name: "sources", title: "货源", links: ["url", "image", "item_image"],
 			columns: {
 				item_name: "店里的商品", chosen: "用这个", title: "货源", url: "链接", sku_exceptions: "规格例外", score: "像不像", missing: "对不上的规格", sure: "明显对得上", origin: "从哪来", broken: "用不了",
