@@ -157,7 +157,7 @@ export function tables(): Table[] {
 
 const env = (name: string) => {
 	const v = process.env[name];
-	if (!v) throw new NeedsHuman(`没有设 ${name}（见 src/nocodb.ts 开头）`);
+	if (!v) throw new NeedsHuman(`没有设 ${name}：写进仓库根目录的 .env（一行 ${name}=…），或者在环境变量里设（见 src/nocodb.ts 开头）`);
 	return v;
 };
 
