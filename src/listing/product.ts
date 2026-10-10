@@ -1,0 +1,138 @@
+// 建商品的 product_info，和建完以后读回来逐项核对。照 lilto 的 build_product_info、submitted_content_problems（快照 1c8a7926）：
+// 9-01 卖家中心新增商品页提交的成功样本逐字段照抄。docs/listing.md「建商品、上架」
+import { tiersOf, type Variant } from "./variants.ts";
+
+/** 物流渠道：9-01 成功样本原样（顺序也照抄）。有尺寸的渠道 sizeid 是 1，填成 0 回 1000100256。只按店铺设置开关 enabled */
+export const CHANNELS: { size: number; price: string; cover_shipping_fee: boolean; enabled: boolean; channelid: number; sizeid: number }[] = [
+	{ size: 0, price: "0", cover_shipping_fee: false, enabled: true, channelid: 30006, sizeid: 0 }, // 全家
+	{ size: 0, price: "65", cover_shipping_fee: false, enabled: true, channelid: 30020, sizeid: 1 }, // 新竹物流
+	{ size: 0, price: "0", cover_shipping_fee: false, enabled: true, channelid: 30005, sizeid: 0 }, // 7-ELEVEN
+	{ size: 0, price: "0", cover_shipping_fee: false, enabled: false, channelid: 30019, sizeid: 0 }, // 蝦皮店到店-隔日到貨：不支持较长备货
+	{ size: 0, price: "65", cover_shipping_fee: false, enabled: true, channelid: 30018, sizeid: 1 }, // 嘉里快遞
+	{ size: 0, price: "0", cover_shipping_fee: false, enabled: true, channelid: 30015, sizeid: 0 }, // 蝦皮店到店
+	{ size: 0, price: "70", cover_shipping_fee: false, enabled: true, channelid: 30012, sizeid: 1 }, // 宅配通
+	{ size: 0, price: "65", cover_shipping_fee: false, enabled: true, channelid: 30017, sizeid: 1 }, // 店到家宅配
+];
+export const CHANNEL_NAMES: Record<string, string> = { "30005": "7-ELEVEN", "30006": "全家", "30012": "宅配通", "30015": "蝦皮店到店", "30017": "店到家宅配", "30018": "嘉里快遞", "30019": "蝦皮店到店-隔日到貨", "30020": "新竹物流" };
+
+/** 要建的一个商品：商品稿的内容，图都已经传好（Shopee 的图片 id） */
+export type Product = {
+	parentSku: string;
+	title: string;
+	description: string;
+	categoryPath: number[];
+	attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[];
+	preOrder: boolean;
+	daysToShip: number;
+	minPurchase: number;
+	/** 开的物流渠道 id */
+	channels: string[];
+	/** 每个规格都有售价（台币整数）、库存、重量 */
+	variants: (Variant & { priceTwd: number })[];
+	/** 主图的图片 id（第一张是封面，最多 9 张） */
+	images: string[];
+	/** 详情图：图片 id 和真实宽高（宽 ≥ 700、高 ≥ 32） */
+	detail: { id: string; width: number; height: number }[];
+	/** 规格图：1688 原图地址 → 成品的图片 id */
+	optionImages: Record<string, string>;
+	/** 尺码表的图片 id（不要就是空） */
+	sizeChart: string | null;
+};
+
+/** 商品稿 → product_info。缺图、详情图尺寸不够、渠道不认得都抛错，不缺着交 */
+export function productInfo(p: Product): Record<string, unknown> {
+	const { tiers, index } = tiersOf(p.variants);
+	const std = tiers.map((t, a) => ({
+		id: 0, custom_value: t.name,
+		value_list: t.options.map((o) => {
+			if (a > 0 || !o.image) return { id: 0, custom_value: o.name };
+			const id = p.optionImages[o.image];
+			if (!id) throw new Error(`规格「${o.name}」的图还没传到 Shopee`);
+			return { id: 0, custom_value: o.name, image_id: id };
+		}),
+	}));
+	const model_list = p.variants.map((v, i) => ({
+		id: 0, tier_index: index[i], is_default: i === 0, sku: v.sku, gtin_code: "", confirm_empty_gtin: false,
+		price: String(Math.trunc(v.priceTwd)), stock_setting_list: [{ sellable_stock: Math.trunc(v.stock) }], sku_image: "",
+	}));
+	const weights = p.variants.map((v) => v.weightKg ?? 0);
+	if (weights.some((w) => !(w > 0))) throw new Error("有规格没有重量");
+	const known = new Set(CHANNELS.map((c) => String(c.channelid)));
+	const unknown = p.channels.filter((c) => !known.has(c));
+	if (unknown.length) throw new Error(`不认得的物流渠道：${unknown.join("、")}`);
+	const logistics_channels = CHANNELS.map((c) => ({ ...c, enabled: p.channels.includes(String(c.channelid)) && c.channelid !== 30019 }));
+	if (!logistics_channels.some((c) => c.enabled)) throw new Error("一个物流渠道都没开");
+	const fields: Record<string, unknown>[] = [{ type: 0, value: p.description.replace(/<[^>]*>/g, "").trim().slice(0, 3000) }];
+	for (const d of p.detail) {
+		if (!(d.width >= 700 && d.height >= 32)) throw new Error(`详情图 ${d.id} 尺寸不够（${d.width}×${d.height}，宽要 ≥ 700、高 ≥ 32）`);
+		fields.push({ type: 1, value: d.id, width: d.width, height: d.height });
+	}
+	if (p.images.length === 0) throw new Error("没有主图");
+	return {
+		name: p.title.slice(0, 60),
+		enable_model_level_dts: false,
+		category_path: p.categoryPath,
+		weight: { value: String(Math.max(...weights)), unit: 1 },
+		condition: 1,
+		parent_sku: p.parentSku,
+		brand_id: 0,
+		authorised_brand_id: 0,
+		attributes: p.attributes,
+		images: p.images.slice(0, 9),
+		long_images: [],
+		gallery_image_list: [],
+		std_tier_variation_list: std,
+		size_chart_info: { size_chart: p.sizeChart ?? "" },
+		video_list: [],
+		description_info: { description: JSON.stringify({ field_list: fields }), description_type: "json" },
+		dimension: { length: "", width: "", height: "" },
+		pre_order_info: { pre_order: p.preOrder, days_to_ship: p.daysToShip },
+		wholesale_list: [],
+		unlisted: true,
+		tax_setting: { tw_tax_setting: { tax_type: 0 } },
+		min_purchase_limit: p.minPurchase,
+		dangerous_goods: 0,
+		model_list,
+		scheduled_publish_time: 0,
+		logistics_channels,
+	};
+}
+
+/** 图片 id：平台可能回地址，取最后一段、去掉查询串 */
+const imageId = (v: unknown) => String(v ?? "").split("?")[0]!.replace(/\/+$/, "").split("/").pop()!;
+const num = (v: unknown) => Number(v);
+
+/** 读回来的（get_product_info 的 product_info 和物流渠道列表）和提交的逐项比，回不一致的项。不比属性、品牌、尺寸、起购量 */
+export function readbackProblems(sent: any, got: any, channels: any[]): string[] {
+	const problems: string[] = [];
+	const check = (name: string, ok: boolean) => { if (!ok) problems.push(`${name}和提交的不一致`); };
+	check("标题", got?.name === sent.name);
+	check("货号", got?.parent_sku === sent.parent_sku);
+	check("类目", JSON.stringify((got?.category_path ?? []).map(Number)) === JSON.stringify(sent.category_path));
+	check("重量", num(got?.weight?.value) === num(sent.weight.value));
+	check("主图", JSON.stringify((got?.images ?? []).map(imageId)) === JSON.stringify(sent.images));
+	check("尺码表", imageId(got?.size_chart_info?.size_chart) === imageId(sent.size_chart_info.size_chart));
+	check("出货天数", Object.entries(sent.pre_order_info).every(([k, v]) => got?.pre_order_info?.[k] === v));
+	const enabled = new Set(channels.filter((c) => c.enabled).map((c) => String(c.channel_id ?? c.channelid ?? "")));
+	const wanted = new Set((sent.logistics_channels as any[]).filter((c) => c.enabled).map((c) => String(c.channelid)));
+	check("物流渠道", enabled.size === wanted.size && [...wanted].every((c) => enabled.has(c)));
+	const fieldsOf = (info: any) => (JSON.parse(String(info?.description ?? "{}")).field_list ?? []).map((x: any) => [Number(x.type), Number(x.type) === 1 ? imageId(x.value) : x.value]);
+	let desc = false;
+	try { desc = JSON.stringify(fieldsOf(got?.description_info)) === JSON.stringify(fieldsOf(sent.description_info)); } catch { /* 读回来的描述不是 JSON */ }
+	check("描述（字和详情图）", desc);
+	const models = (got?.model_list ?? []) as any[];
+	const bySku = new Map(models.map((m) => [String(m.sku ?? ""), m]));
+	check("规格货号", models.length === bySku.size && bySku.size === sent.model_list.length && (sent.model_list as any[]).every((m) => bySku.has(m.sku)));
+	for (const m of sent.model_list as any[]) {
+		const g = bySku.get(m.sku);
+		const stock = g?.stock_detail?.total_seller_stock ?? ((g?.stock_detail?.seller_stock_info ?? []) as any[]).reduce((n, s) => n + Number(s.sellable_stock ?? 0), 0);
+		const price = g?.price_info?.input_normal_price ?? g?.price_info?.normal_price;
+		if (!g || JSON.stringify((g.tier_index ?? []).map(Number)) !== JSON.stringify(m.tier_index) || num(price) !== num(m.price) || num(stock) !== m.stock_setting_list[0].sellable_stock) {
+			problems.push(`规格 ${m.sku} 的选项、售价或库存和提交的不一致`);
+		}
+	}
+	const tiers = (got?.std_tier_variation_list ?? []) as any[];
+	const opts = (list: any[]) => JSON.stringify((list ?? []).map((o) => [o.custom_value ?? "", o.image_id ? imageId(o.image_id) : ""]));
+	check("规格名称和规格图", tiers.length === sent.std_tier_variation_list.length && (sent.std_tier_variation_list as any[]).every((t, i) => tiers[i]?.custom_value === t.custom_value && opts(tiers[i]?.value_list) === opts(t.value_list)));
+	return problems;
+}

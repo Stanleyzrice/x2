@@ -72,3 +72,47 @@ test("规格：只要有货的，只留取值不一样的层，转台湾繁体�
 	]);
 	assert.equal(vs[0]!.weightKg, 1.6);
 });
+
+import { productInfo, readbackProblems } from "../src/listing/product.ts";
+
+const draft = () => ({
+	parentSku: "LT952803717616", title: "輕便雨衣 成人連身 防水透氣", description: "<p>防水雨衣</p>", categoryPath: [100001, 101324],
+	attributes: [{ attribute_id: 100824, attribute_values: [{ value_id: 4259 }] }], preOrder: true, daysToShip: 10, minPurchase: 1,
+	channels: ["30005", "30006", "30019"],
+	variants: [
+		{ ...v([["顏色", "卡其色"], ["尺碼", "M"]], "k.jpg"), sku: "LT952803717616-1", priceTwd: 295, weightKg: 1.6 },
+		{ ...v([["顏色", "卡其色"], ["尺碼", "L"]], "k.jpg"), sku: "LT952803717616-2", priceTwd: 295, weightKg: 1.7 },
+		{ ...v([["顏色", "黑色"], ["尺碼", "M"]]), sku: "LT952803717616-3", priceTwd: 299, weightKg: 1.6 },
+		{ ...v([["顏色", "黑色"], ["尺碼", "L"]]), sku: "LT952803717616-4", priceTwd: 299, weightKg: 1.6 },
+	],
+	images: ["tw-11134207-a", "tw-11134207-b"], detail: [{ id: "tw-11134207-d", width: 800, height: 1200 }],
+	optionImages: { "k.jpg": "tw-11134207-k" }, sizeChart: "tw-11134207-s",
+});
+
+test("product_info：照 9-01 的成功样本；规格图挂第一层；详情图进描述；建成下架；30019 开不了", () => {
+	const p = productInfo(draft()) as any;
+	assert.equal(p.unlisted, true);
+	assert.deepEqual(p.weight, { value: "1.7", unit: 1 });
+	assert.deepEqual(p.std_tier_variation_list.map((t: any) => t.custom_value), ["顏色", "尺碼"]);
+	assert.deepEqual(p.std_tier_variation_list[0].value_list, [{ id: 0, custom_value: "卡其色", image_id: "tw-11134207-k" }, { id: 0, custom_value: "黑色" }]);
+	assert.deepEqual(p.model_list.map((m: any) => [m.sku, m.tier_index, m.price, m.is_default]), [["LT952803717616-1", [0, 0], "295", true], ["LT952803717616-2", [0, 1], "295", false], ["LT952803717616-3", [1, 0], "299", false], ["LT952803717616-4", [1, 1], "299", false]]);
+	assert.deepEqual(JSON.parse(p.description_info.description).field_list, [{ type: 0, value: "防水雨衣" }, { type: 1, value: "tw-11134207-d", width: 800, height: 1200 }]);
+	assert.deepEqual(p.logistics_channels.filter((c: any) => c.enabled).map((c: any) => c.channelid), [30006, 30005]);
+	assert.equal(p.logistics_channels.find((c: any) => c.channelid === 30020).sizeid, 1);
+	// 缺图、详情图太窄：不缺着交
+	assert.throws(() => productInfo({ ...draft(), optionImages: {} }), /还没传/);
+	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 1, height: 1 }] }), /尺寸不够/);
+});
+
+test("读回来核对：图片可以是地址；价格、库存、规格对不上要写出来", () => {
+	const sent = productInfo(draft()) as any;
+	const got = {
+		...sent, images: sent.images.map((id: string) => `https://cf.shopee.tw/file/${id}`),
+		model_list: sent.model_list.map((m: any) => ({ sku: m.sku, tier_index: m.tier_index, price_info: { input_normal_price: Number(m.price) }, stock_detail: { total_seller_stock: m.stock_setting_list[0].sellable_stock } })),
+	};
+	const channels = sent.logistics_channels.map((c: any) => ({ channel_id: c.channelid, enabled: c.enabled }));
+	assert.deepEqual(readbackProblems(sent, got, channels), []);
+	got.model_list[2].price_info.input_normal_price = 199;
+	got.name = "別的標題";
+	assert.deepEqual(readbackProblems(sent, got, channels), ["标题和提交的不一致", "规格 LT952803717616-3 的选项、售价或库存和提交的不一致"]);
+});
