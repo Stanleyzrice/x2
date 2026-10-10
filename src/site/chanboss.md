@@ -27,6 +27,21 @@
 | `sendway_id`、`sendway_name`、`line_id`、`warehouse_id` | 预报过的：752 海快、线路 1111、仓库 5176（台湾仓 CH） |
 | `pack_sub_detail[]` | 预报的明细：每个规格一行，`track_num` 是快递单号，无单号是 `reserved` 开头的一串 |
 
+## 同步订单（从 Shopee 拉进 chanboss）
+
+新订单不会马上自己进 chanboss：要在订单页「同步订单」。2026-10-10 读页面的 JS 找到的（组件 PullOrderModal，标题「同步订单」；接口模块 51083）：
+
+- **批量同步**（按时间段）：`POST /api/v2/common/shopee/order/sync_order`（前缀是 `/api/v2/common`，后面直接 `/shopee/…`，没有 `/cangboss`）
+  ```json
+  { "time_range_field": "create_time", "shop_detail": [{ "id": <chanboss 的店铺 id>, "platform": "shopee" }], "from": <秒>, "to": <秒> }
+  ```
+  `time_range_field` 可选 `create_time`（创建时间，页面默认）、`update_time`（更新时间）。日期是秒：页面的日期组件 XpDatePicked 默认 `value-format: "X"`，开始那天 00:00:00 到结束那天 23:59:59；页面不让选一年以前的。是异步的：回来以后页面提示「系统正在同步中，请稍后刷新浏览器」。Shopee 开放接口拉订单一次最多 15 天，chanboss 会不会自己切段没核实。
+- **单个同步**（按订单号）：`POST /api/v2/common/shopee/order/pull_single_order`，`{ sn, shop_id: <chanboss 的店铺 id> }`，回来提示「同步订单成功」。
+- 列表上每一行的同步按钮：`POST /api/v2/common/shopee/order/sync_single_orders`，`{ sns: [订单号…] }`（只给平台状态正常的）。
+- chanboss 的店铺 id：`GET /api/v2/common/cangboss/shop/list_shop?seller_id=…&page_index=1&page_size=50&is_paging=true`（分页参数必填，不带回 90306）。一行一家店：`id`（同步要带的）、`platform_shop_id`（= Shopee 的店铺 id）、`name`、`status`（NORMAL）、`shop_expire`（授权到期）。
+
+订单列表的 `check_miss`：按订单号搜时页面带 `true`，回 `miss`（搜的订单号里 chanboss 查无的），页面弹「查无以下订单号」。跟同步无关。
+
 ## 预报（写，还没在真订单上跑过）
 
 2026-10-09 读页面的 JS 找到的（`/assets/chunk-*.js`，webpack 模块 15342 是接口，38262、91182 是预报用的帮手）：
