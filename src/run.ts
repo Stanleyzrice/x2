@@ -2,6 +2,8 @@
 // 1. 收件箱里勾了「批准」的批次：勾着「执行」的写入改成已批准，取消勾的改成未执行
 // 2. 先核清：已提交（记了意图、进程挂了）、结果未知的写入，读回来；还核不清的，它所在的批次这次不做，同一个对象上的也不做
 // 3. 一批一批、一个一个执行：现读（还该不该做）→ 记意图（已提交）→ 提交一次 → 读回来。结果未知就停下这一批，不重发
+// 4. 执行完（成功、被拒、不一致、结果未知都算）：涉及的商品稿按检查的规则重算当前步骤、说明，写回库（不读站点；收件箱等 x2 status 重算）
+import { listingsCheck } from "./check/index.ts";
 import { type Sql, host } from "./db/index.ts";
 import { NeedsHuman } from "./errors.ts";
 import { type WriteOp, WRITES } from "./site/writes.ts";
@@ -16,8 +18,29 @@ async function set(sql: Sql, id: string, fields: Record<string, unknown>) {
 	await sql`update writes set ${sql(fields as any)} where id = ${id}`;
 }
 
+type Opts = { batch?: string; tryOps?: string[] };
+type Outcome = { ran: Ran[]; unknown: boolean; blocked: string | null };
+
 /** ops：写操作的声明（测试换成假的） */
-export async function run(sql: Sql, opts: { batch?: string; tryOps?: string[] } = {}, ops: Record<string, WriteOp> = WRITES): Promise<{ ran: Ran[]; unknown: boolean; blocked: string | null }> {
+export async function run(sql: Sql, opts: Opts = {}, ops: Record<string, WriteOp> = WRITES): Promise<Outcome> {
+	const r = await execute(sql, opts, ops);
+	await refreshListings(sql, r.ran);
+	return r;
+}
+
+/** 4. 这一次碰过的商品稿（建商品、上架的写入）：马上重算当前步骤，NocoDB 里不用等下一次 x2 status。出错只记在 stderr：写入的结果照样要报给人 */
+async function refreshListings(sql: Sql, ran: Ran[]): Promise<void> {
+	const ids = [...new Set(ran.map((x) => x.id))];
+	if (!ids.length) return;
+	try {
+		const rows = await sql`select distinct params->>'listingId' as id from writes where id in ${sql(ids)} and op in ('建商品', '上架') and params ? 'listingId'`;
+		if (rows.length) await listingsCheck(sql, rows.map((x) => x.id as string));
+	} catch (e) {
+		console.error(`更新商品稿的当前步骤没成功（下一次 x2 status 会再算）：${(e as Error).message}`);
+	}
+}
+
+async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Promise<Outcome> {
 	// 1. 批准
 	const approved = await sql`select split_part(key, ':', 2) as batch from inbox where kind = '批准' and open and approve`;
 	for (const { batch } of approved) {

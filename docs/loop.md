@@ -129,7 +129,7 @@ agent 自己定策略、做实验（explore / exploit）：选货源、上品、
 x2 status                现读站点 → 检查 → 更新收件箱 → 说要做什么（--json：todo 里有现成的一批写入）
 x2 propose               agent 写一批待批准的写入（JSON 从 stdin 进）；收件箱加一行「批准」
 x2 approve <批次>         人在终端里说「批准」：agent 替人勾上
-x2 run [--try 操作,…]     执行批准了的写入；没在真站点跑过的写操作要加 --try
+x2 run [--try 操作,…]     执行批准了的写入；没在真站点跑过的写操作要加 --try；执行完马上重算涉及的商品稿的当前步骤（收件箱等 x2 status）
 x2 source …              给商品找货源、写规格例外
 x2 listing …             上品：quote、add、why、make、estimate、show、text、audit、keep、drop、list
 x2 strategy …            选品的策略：add、set、list、log

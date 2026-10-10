@@ -92,6 +92,37 @@ test("写入：取消勾的不做；被拒的记下原因", { skip: !sql && "没
 	assert.deepEqual(rows.map((x) => [x.n, x.status]), [["3", "未执行"], ["4", "被拒"]]);
 });
 
+test("x2 run 执行完马上重算涉及的商品稿的当前步骤（结果未知、成功都算），不等 x2 status", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const [l] = await db`insert into listings (shop, offer_id, step) values ('cheeroutdoor', '80', '待批准') returning id::text`;
+	const id = l!.id as string;
+	const result = new Map<string, { sent: Submitted; done: boolean | null }>();
+	// 假的建商品、上架：做成了在库里记商品 id、上架时间（和真的一样）
+	const op = (name: string, after: (db: postgres.Sql, p: { listingId: string }) => Promise<unknown>): WriteOp<{ listingId: string }> => ({
+		describe: name, params: z.object({ listingId: z.string() }), target: (p) => `listing:${p.listingId}`, key: (p) => `${name}:${p.listingId}`, display: (p) => `${name} ${p.listingId}`,
+		where: (_sql, _p, fn) => fn(), prepare: async (_sql, p) => ({ params: p, before: {} }),
+		submit: async () => result.get(name)?.sent ?? { kind: "done" }, check: async () => ({ done: result.has(name) ? result.get(name)!.done : true, readback: {} }),
+		after: async (db, p) => { await after(db, p); },
+	});
+	const ops = {
+		建商品: op("建商品", (db, p) => db`update listings set product_id = '9001' where id = ${p.listingId}`),
+		上架: op("上架", (db, p) => db`update listings set listed_at = now() where id = ${p.listingId}`),
+	};
+	const p = await propose(db, { title: "上架", writes: [{ op: "建商品", params: { listingId: id } }, { op: "上架", params: { listingId: id } }] }, ops);
+	await approve(db, p.batch);
+	const now = async () => ({ ...(await db`select step, step_detail from listings where id = ${id}`)[0] });
+	// 建商品结果未知：马上是建商品中
+	result.set("建商品", { sent: { kind: "unknown", why: "超时" }, done: null });
+	await run(db, {}, ops);
+	const unknown = await now();
+	assert.equal(unknown.step, "建商品中");
+	assert.match(unknown.step_detail, /建商品：结果未知/);
+	// 读回来做成了，接着上架：马上是已上架
+	result.delete("建商品");
+	await run(db, {}, ops);
+	assert.deepEqual(await now(), { step: "已上架", step_detail: "商品 9001" });
+});
+
 test("收件箱：每轮重算，只更新不重复；这一轮读成功了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const soon = new Date(Date.now() + 86400_000);

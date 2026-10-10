@@ -119,9 +119,13 @@ export async function syncImages(sql: Sql, l: any): Promise<void> {
 }
 
 /** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点。
- * 还没建的先对一下附件（人删的图），「重量」「国内运费」改过的重新核价（不读 1688） */
-async function listingsCheck(sql: Sql) {
-	const rows = await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
+ * 还没建的先对一下附件（人删的图），「重量」「国内运费」改过的重新核价（不读 1688）；当前步骤、说明写回库。
+ * ids：只看这几份（x2 run 执行完马上更新涉及的商品稿）；不给是全部（x2 status） */
+export async function listingsCheck(sql: Sql, ids?: string[]) {
+	if (ids && !ids.length) return checkListings([], new Map(), []);
+	const rows = ids
+		? await sql`select * from listings where id in ${sql(ids)} order by id`
+		: await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
 	const settings = new Map<string, Settings>();
 	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「已暂停」 */ } }
 	for (const l of rows) {
@@ -131,7 +135,9 @@ async function listingsCheck(sql: Sql) {
 		if (s) await savePrices(sql, l, s);
 	}
 	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('建商品', '上架') and include`;
-	return checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })));
+	const r = checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })));
+	for (const [id, c] of r.steps) await sql`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
+	return r;
 }
 
 export async function check(sql: Sql, reads: Reads): Promise<Checked> {
@@ -149,7 +155,6 @@ export async function check(sql: Sql, reads: Reads): Promise<Checked> {
 		for (const [sn, c] of r.orders) {
 			await tx`update orders set days_left = ${c.daysLeft}, destination = ${c.destination}, step = ${c.step}, step_detail = ${c.stepDetail}, checked_at = now() where sn = ${sn}`;
 		}
-		for (const [id, c] of lr.steps) await tx`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
 		// 人勾了「已处理」的：关掉，不再开
 		const done = await tx`update inbox set open = false, closed_at = now(), updated_at = now() where open and done returning key`;
 		const doneKeys = new Set((await tx`select key from inbox where done`).map((x) => x.key as string));
