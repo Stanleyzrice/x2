@@ -1,7 +1,9 @@
 // 做商品稿（x2 listing make）：读货源 → 排规格、核价 → 做图 → 类目、属性、备货天数 → 记进商品稿。docs/listing.md「每一步怎样算做完」。
 // 缺的（类目不在本店范围、要填字的属性……）记成问题，检查把它们放进收件箱给人；人处理了以后再跑一次，做过的不重做。
-// 1688 没给的重量、读不到的国内运费不算问题：agent 估（x2 listing estimate，只填空着的），写完照货源快照重新核价（reprice），不用再读 1688
-import { alibabaAccounts, in1688, inShop } from "../accounts.ts";
+// 1688 没给的重量、读不到的国内运费不算问题：agent 估（x2 listing estimate，只填空着的），写完照货源快照重新核价（reprice），不用再读 1688。
+// 几份同时做（x2 listing make --jobs）：碰浏览器的（读 1688 货源、加水印、传图、类目、属性、备货天数）按浏览器排队，读 1688 隔几秒（queue.ts）；
+// 问 Gemini、交象寄、取图不排队
+import { alibabaAccounts } from "../accounts.ts";
 import { type Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
 import { detailImages, Gone, offerIdOf, offer as readOffer, type Offer } from "../site/1688.ts";
@@ -9,6 +11,7 @@ import { attributes as attributeTree, type Category, categoryTree, recommendedCa
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
+import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import { nicknameFor } from "./text.ts";
 import { limitProblems, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
@@ -100,12 +103,21 @@ async function categoryNames(): Promise<Map<string, string>> {
 	return (tree = walk(await categoryTree(), new Map()));
 }
 
-/** 在一个登录着 1688 的浏览器里读货源（读货源不用采购账号） */
-async function read1688<T>(fn: () => Promise<T>): Promise<T> {
+/** 读 1688 货源：在一个登录着 1688 的浏览器里（读货源不用采购账号），排在这个浏览器的队里，和上一次读 1688 隔几秒 */
+export async function readOffer1688(offerId: string): Promise<Offer> {
 	const a = (await alibabaAccounts())[0];
 	if (!a) throw new NeedsHuman("没有登录着 1688 的浏览器：读不了货源");
-	return in1688(a.userId, fn);
+	return on1688(a.userId, () => readOffer(offerId));
 }
+
+/** 货源 → 排好、核好价的规格（做商品稿的第 2 步，报价也用它）：有货的、没移除的规格排成 Shopee 的规格（prev：上一版，名字按 1688 层名、原值对回去），
+ * 每个规格核价（weightKg、freightRmb 是 1688 没给重量时、国内运费用的），再核一遍规格的结构。problems 是要人处理的（起订量、规格图、结构） */
+export function specsAndPrices(o: Offer, s: Settings, opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null }): { specs: Specs; problems: string[] } {
+	const built = specsFrom(o, opts.removed ?? [], opts.prev ?? null);
+	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, { weightKg: opts.weightKg, freightRmb: opts.freightRmb }) };
+	return { specs, problems: [...(o.minQty > 1 ? [`货源：起订量 ${o.minQty}，无法单件购买`] : []), ...built.problems, ...structureProblems(specs)] };
+}
+
 
 /** 做一份商品稿。回这一轮的问题（给人看的） */
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
@@ -125,32 +137,30 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	const s = settingsOf(row);
 	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
-	// 1. 货源
+	// 1. 货源（1688 的页面、详情图的地址：排队，和上一次读 1688 隔几秒）
 	log(`读货源 ${l.offer_id}`);
 	let o: Offer;
-	try { o = await read1688(() => readOffer(l.offer_id)); } catch (e) {
+	try { o = await readOffer1688(l.offer_id); } catch (e) {
 		if (e instanceof Gone) return save(sql, id, {}, ["货源：已在 1688 下架"]);
 		throw e;
 	}
-	const detail = o.detailUrl ? await detailImages(o.detailUrl).catch((e) => { log(`详情图取不到：${(e as Error).message}`); return [] as string[]; }) : [];
-	const problems: string[] = [];
-	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，无法单件购买`);
+	const detail = o.detailUrl ? await from1688(() => detailImages(o.detailUrl!)).catch((e) => { log(`详情图取不到：${(e as Error).message}`); return [] as string[]; }) : [];
 
-	// 2. 规格、核价：有货的、没移除的规格排成 Shopee 的规格（上一版的名字按 1688 层名、原值对回去），每个规格核价，再核一遍规格的结构。
-	// 缺重量、缺国内运费的售价先空着（agent 估）；定不了价的、超过上限的现算（pricingProblems），不存
+	// 2. 规格、核价。缺重量、缺国内运费的售价先空着（agent 估）；定不了价的、超过上限的现算（pricingProblems），不存
 	const freight = freightOf(o, l.freight_rmb);
-	const built = specsFrom(o, l.removed_variants ?? [], specsOf(l.variants));
-	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, { weightKg: num(l.weight_kg), freightRmb: freight }) };
-	problems.push(...built.problems, ...structureProblems(specs));
+	const { specs, problems } = specsAndPrices(o, s, { removed: l.removed_variants ?? [], prev: specsOf(l.variants), weightKg: num(l.weight_kg), freightRmb: freight });
 
-	// 3. 图、类目、属性、备货天数：在这家店的浏览器里
-	const done = await inShop(s.shopId, async () => {
-		// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
-		const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark!, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)) }, log);
-		// 上次放进 NocoDB 附件的（images.shown）留着：人删了哪张靠它认
-		const out: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
-		const cover = pics.main.find((p) => p.imageId);
-		if (!cover) { problems.push("图：缺可用的主图"); return out; }
+	// 3. 图：问 Gemini、交象寄、取图不排队；加水印、传图在这家店的浏览器里排队。
+	// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
+	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
+	const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark, browser, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)) }, log);
+	// 上次放进 NocoDB 附件的（images.shown）留着：人删了哪张靠它认
+	const done: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
+	const cover = pics.main.find((p) => p.imageId);
+	if (!cover) problems.push("图：缺可用的主图");
+	// 4. 类目、属性、备货天数：卖家中心的接口，在这家店的浏览器里排队
+	else Object.assign(done, await browser(async () => {
+		const out: Record<string, unknown> = {};
 		let path: number[] = l.category_path ?? [];
 		if (!path.length) {
 			log("推荐类目");
@@ -169,7 +179,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		if (days === null) problems.push("备货天数：无法读取这个类目的备货天数规则");
 		out.days_to_ship = days;
 		return out;
-	});
+	}));
 
 	return save(sql, id, {
 		...done,

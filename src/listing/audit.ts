@@ -1,13 +1,14 @@
 // Gemini 文字检查：建商品前 Gemini 看商品稿的文案（标题、描述、规格名）和加水印之前的图（一次 4 张；译过的看译图，没译的看原图：水印会挡住字），
 // 挑简体字、错字、误译（台湾买家不喜欢简体字）。只提示、不挡：挑出的问题带编号写进商品稿的「说明」，人审稿时看。
 // 提示照 lilto 的 listing_content.audit_taiwan（快照 1c8a7926，第 2 版）：逐字抄问题原文，不把繁体先转简体再指控它是简体；实物上印的字保留原貌。
-// 每张图都要按 index 回结果，漏了就报错。按内容的哈希缓存（记在商品稿的 audit 里）。
+// 每张图都要按 index 回结果，漏了就报错。几批同时问，挑出的图再问字在哪也同时问（同时问几个由 queue.ts 的上限管）。按内容的哈希缓存（记在商品稿的 audit 里）。
 // 挑出的图再问一次挑出的字在哪（docs/listing.md「Gemini 文字检查」）：印在商品上的不算问题；后加的文案，详情图和不是封面的主图 x2 去掉、重组商品再查，
 // 封面、规格图少了会影响商品，只提示；保留的图（人说要用的）不问、不去掉
 import { createHash } from "node:crypto";
-import { gemini, geminiJson, type Image } from "../service/gemini.ts";
+import type { Image } from "../service/gemini.ts";
 import type { Pic, Pics } from "./images.ts";
 import type { Product } from "./product.ts";
+import { gemini, geminiJson } from "./queue.ts";
 
 export const AUDIT_VERSION = 3;
 /** 挑出的字在哪：印在商品本体上（不算问题，图保留原貌）、后加的文案 */
@@ -83,25 +84,23 @@ export async function textCheck(p: Product, opts: { image: (id: string) => Promi
 	const kept = new Set(opts.kept ?? []);
 	const ids = auditImages(p);
 	const content = { title: p.title, description: p.description, specs: specNames(p) };
-	const textIssues = new Set<string>();
-	const images: AuditImage[] = [];
-	for (let i = 0; i < Math.max(ids.length, 1); i += 4) {
-		const batch = ids.slice(i, i + 4);
+	// 一批 4 张（没图也问一次文案）
+	const batches = Array.from({ length: Math.max(1, Math.ceil(ids.length / 4)) }, (_, i) => ids.slice(i * 4, i * 4 + 4));
+	const results = await Promise.all(batches.map(async (batch) => {
 		const bytes = await Promise.all(batch.map((id) => opts.image(id)));
 		const prompt = `${batch.length ? `本批恰有 ${batch.length} 张图片，必须逐一返回 index=[0..${batch.length - 1}]，即使相似也不能合并。\n` : ""}${PROMPT(content)}`;
 		const r = await geminiJson<{ textIssues: string[]; images: { index: number; issues: string[] }[] }>(prompt, bytes, schema(batch.length));
 		const got = new Set(r.images.map((x) => x.index));
 		if (batch.some((_, j) => !got.has(j))) throw new Error("Gemini 文字检查漏了图：这一批要重查");
-		for (const t of r.textIssues) textIssues.add(t);
-		for (const x of r.images) {
-			const id = batch[x.index];
-			if (!x.issues.length || !id) continue;
+		const images = await Promise.all(r.images.filter((x) => x.issues.length && batch[x.index]).map(async (x): Promise<AuditImage> => {
+			const id = batch[x.index]!;
 			const role = roleOf(p, id), keep = kept.has(id);
 			const where = keep ? null : await textWhere(bytes[x.index]!, x.issues);
-			images.push({ id, issues: x.issues, ...(where ? { where } : {}), role, ...(shouldDrop(where, role, keep, opts.canDrop ?? false) ? { dropped: true } : {}) });
-		}
-	}
-	return { key: auditKey(p), textIssues: [...textIssues], images, at: new Date().toISOString() };
+			return { id, issues: x.issues, ...(where ? { where } : {}), role, ...(shouldDrop(where, role, keep, opts.canDrop ?? false) ? { dropped: true } : {}) };
+		}));
+		return { textIssues: r.textIssues, images };
+	}));
+	return { key: auditKey(p), textIssues: [...new Set(results.flatMap((r) => r.textIssues))], images: results.flatMap((r) => r.images), at: new Date().toISOString() };
 }
 
 /** x2 去掉挑出的图：主图、详情图里这几张（图片 id）的 Pic 写上 drop */

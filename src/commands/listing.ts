@@ -1,6 +1,6 @@
 // x2 listing：上品（docs/listing.md）。
 // x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
-// x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
+// x2 listing make [商品稿…] [--jobs N]                做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）；几份同时做（默认 3）
 // x2 listing estimate <商品稿> [--weight <kg>] [--freight <元/件>]
 //                                                    agent 估 1688 没给的重量、读不到的国内运费：只填空着的（人填过的不动），写完马上重新核价（不读 1688）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
@@ -17,11 +17,12 @@
 import { z } from "zod";
 import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
-import { Usage } from "../errors.ts";
+import { NeedsHuman, Usage } from "../errors.ts";
 import { estimateNeeds, freightOf, make, pricingProblems, savePrices, settingsOf } from "../listing/make.ts";
 import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, auditKey, dropAudited, issueLine, restoreAudited, textCheck } from "../listing/audit.ts";
 import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
+import { each } from "../listing/queue.ts";
 import { productOf } from "../listing/ready.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
@@ -69,21 +70,34 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "make") {
-		let ids = plain(rest);
+		// 几份同时做（--jobs，默认 3）：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（src/listing/queue.ts）
+		const usage = "x2 listing make [商品稿…] [--jobs N]（N：几份同时做，1–10，默认 3）";
+		const jobs = Number(flag(rest, "--jobs") ?? 3);
+		if (!Number.isInteger(jobs) || jobs < 1 || jobs > 10) throw new Usage(usage);
+		let ids = plain(rest, "--jobs");
 		// 不给就做：还没做的、待补充的、规格是旧格式的
 		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object') order by id`).map((r) => r.id as string);
 		if (!ids.length) return out([], "没有要做的商品稿");
 		const before = await namesOf(sql, ids);
-		const results = [];
-		for (const id of ids) {
-			console.error(`── ${before(id)}`);
-			const r = await make(sql, id);
+		const settled = await each(ids, jobs, async (id) => {
+			const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`));
 			// 做好的图马上放进 NocoDB 的附件（不等下一次 x2 status）；缺重量、国内运费的告诉 agent 估，定不了价的、超过上限的现算
 			const [l] = await sql`select * from listings where id = ${id}`;
 			if (l) await syncImages(sql, l);
 			const specs = l ? specsOf(l.variants) : null;
 			const needs = l ? estimateNeeds(l) : [];
-			results.push({ ...r, name: l ? listingName(l) : `商品稿 ${id}`, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] });
+			return { ...r, name: l ? listingName(l) : `商品稿 ${id}`, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] };
+		});
+		const results = settled.flatMap((x) => (x.ok ? [x.value] : []));
+		// 有出错的：做完的照样记在库里；要人处理的（登录、滑块）在前面，没开始的等处理好了再跑
+		const rank = (f: { error: Error; started: boolean }) => (!f.started ? 2 : f.error instanceof NeedsHuman ? 0 : 1);
+		const failed = settled.flatMap((x, i) => (x.ok ? [] : [{ id: ids[i]!, error: x.error as Error, started: x.started }])).sort((a, b) => rank(a) - rank(b));
+		if (failed.length) {
+			const lines = [
+				...failed.map((f) => `${before(f.id)}：${f.started ? f.error.message : "没开始（先处理上面要人处理的，再跑 x2 listing make）"}`),
+				...(results.length ? [`做完了：${results.map((r) => `${r.name}${r.problems.length ? `（${r.problems[0]}）` : ""}`).join("；")}`] : []),
+			];
+			throw failed.some((f) => f.error instanceof NeedsHuman) ? new NeedsHuman(lines.join("\n")) : new Error(lines.join("\n"));
 		}
 		const hint = (r: { id: string; needs: string[] }) => (r.needs.length ? `\n  估：x2 listing estimate ${r.id}${r.needs.includes("重量") ? " --weight <kg>" : ""}${r.needs.includes("国内运费") ? " --freight <元/件>" : ""}` : "");
 		return out(results, results.map((r) => `${r.name}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));

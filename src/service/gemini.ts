@@ -1,7 +1,8 @@
-// Gemini：看图（筛图上的字、看成品、核尺码表、Gemini 文字检查）。一个请求是一段提示加几张图，temperature 0；要 JSON 时带 schema。
+// Gemini：看图（筛图上的字、译图检查、Gemini 文字检查）。一个请求是一段提示加几张图，temperature 0；要 JSON 时带 schema。
+// 上品的代码同时问几个，上限在 src/listing/queue.ts（X2_GEMINI_CONCURRENCY）。
 // 依据 lilto 的 legacy/lib/image_workflow.py（快照 1c8a7926）。key 在 GEMINI_API_KEY，放请求头，不进地址和日志；
 // GEMINI_BASE 换出口网关（地域被挡时）；GEMINI_MODEL 换模型。gemini-2.5-flash-lite 在这把 key 上回 404，用 3.1
-// 只对 429 和 5xx 重试（最多 3 次，隔 1、2 秒）；别的出错直接抛。回模型输出的文字
+// 只对 429 和 5xx 重试（最多 4 次，隔 1、2、4 秒：同时问的多了，偶尔会碰上限流）；别的出错直接抛。回模型输出的文字
 
 export const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -26,7 +27,7 @@ export async function gemini(prompt: string, images: Image[], schema?: object): 
 			const j = (await r.json()) as any;
 			return ((j?.candidates?.[0]?.content?.parts ?? []) as { text?: string }[]).map((p) => p.text ?? "").join("");
 		}
-		if ((r.status === 429 || r.status >= 500) && attempt < 3) { await new Promise((res) => setTimeout(res, attempt * 1000)); continue; }
+		if ((r.status === 429 || r.status >= 500) && attempt < 4) { await new Promise((res) => setTimeout(res, 2 ** (attempt - 1) * 1000)); continue; }
 		throw new Error(`Gemini 回 HTTP ${r.status}：${(await r.text()).slice(0, 300)}`);
 	}
 }

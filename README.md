@@ -31,7 +31,7 @@ x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_N
 
 ```sh
 x2 listing add cheeroutdoor <1688 链接>   # 添加货源：一个货源 × 一家店一份商品稿
-x2 listing make                         # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 译图检查 → 水印 → 传图）、类目属性
+x2 listing make --jobs 3                # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 译图检查 → 水印 → 传图）、类目属性；几份同时做
 x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不到的国内运费由 agent 估（只填空着的），马上重新核价
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description … --tiers … --nickname …   # agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查
@@ -39,7 +39,7 @@ x2 listing list                         # 每份商品稿的简称、当前步�
 x2 strategy list                        # 选品的策略：每个出了几份商品稿、上架了几个
 ```
 
-建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`。
+建商品、上架是写入：`x2 status --json` 的 todo 里有现成的一批，`x2 propose` → 人在收件箱批准 → `x2 run`。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
 
 两家店各开一个浏览器（Chrome 的不同用户）：x2 每个连着的浏览器读一次登录着的店和 1688 账号，按店、按账号选。只连着一个浏览器、或要手动选时，用 `X2_BROWSER`。
 
@@ -103,7 +103,7 @@ x2/
 │ ├ propose.ts            x2 propose、x2 approve：待批准的写入、收件箱的「批准」
 │ ├ run.ts                x2 run：执行批准了的写入
 │ ├ source.ts             x2 source：选货源，更新货源快照
-│ ├ listing/              上品：price.ts 核价、variants.ts 规格、screen.ts 筛字、watermark.ts 水印、images.ts 图、category.ts 类目属性、product.ts 建商品的 product_info 和读回来核对、audit.ts Gemini 文字检查、make.ts 做商品稿
+│ ├ listing/              上品：price.ts 核价、variants.ts 规格、screen.ts 筛字、watermark.ts 水印、images.ts 图、category.ts 类目属性、product.ts 建商品的 product_info 和读回来核对、audit.ts Gemini 文字检查、make.ts 做商品稿、queue.ts 同时做的上限和按浏览器排队
 │ ├ service/              外部服务：gemini.ts、xiangji.ts（象寄译图，收费）、image.ts（取图、认格式、宽高、sha256）
 │ ├ env.ts                启动时读仓库根目录的 .env
 │ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB

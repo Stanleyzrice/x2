@@ -3,7 +3,8 @@
 // 译得再好也不该出现在我们的商品里）；r 拿不准（品牌、IP、看不清）；m 营销字（后加的文案，送象寄译成繁体）；
 // p 产品本体上的字（拍到的，象寄会涂坏，不送）；n 没字。长提示偶尔回空，换短提示兜底；两次都答不出就报错，不当成「不用译」。
 // 和 lilto 不一样的一处：r 在 lilto 里直接放行（真数据里占 18%），带简体营销字的图就这样漏过去了。这里 r 再问一次有没有后加的简体字：有就当 m 送去译
-import { gemini, type Image } from "../service/gemini.ts";
+import type { Image } from "../service/gemini.ts";
+import { gemini } from "./queue.ts";
 
 export const SCREEN_VERSION = 5;
 export type Verdict = "d" | "r" | "m" | "p" | "n";

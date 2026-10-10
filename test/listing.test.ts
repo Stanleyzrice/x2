@@ -575,3 +575,64 @@ test("组商品：太长的详情图（宽高比 < 0.5）不用，后面的补�
 	const r = productOf(ready({ images }), settingsOf(shopRow));
 	assert.deepEqual(r.product!.detail.map((x) => x.id), ["d1", "d3"]);
 });
+
+import { browserKey, each, lanes, limiter, once } from "../src/listing/queue.ts";
+import { NeedsHuman } from "../src/errors.ts";
+
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+test("同时做的上限：最多 n 件一起跑，多的排队、先来先做，都做完；出错的不占着位子", async () => {
+	const gate = limiter(3);
+	let now = 0, most = 0;
+	const started: number[] = [];
+	const results = await Promise.all([...Array(10).keys()].map((i) => gate(async () => {
+		started.push(i);
+		now++; most = Math.max(most, now);
+		await tick(i % 3 ? 5 : 1);
+		now--;
+		return i * 2;
+	})));
+	assert.deepEqual([most, results, started], [3, [...Array(10).keys()].map((i) => i * 2), [...Array(10).keys()]]);
+	// 出错的照样放出位子
+	const one = limiter(1);
+	await assert.rejects(one(async () => { throw new Error("坏了"); }), /坏了/);
+	assert.equal(await one(async () => "还能用"), "还能用");
+});
+
+test("按浏览器排队：同一个浏览器一次只做一件、先来先做，别的浏览器照做；读 1688 两次之间隔开", async () => {
+	const lane = lanes();
+	const log: string[] = [];
+	const job = (key: string, name: string, ms: number) => lane(key, async () => { log.push(`${name}开始`); await tick(ms); log.push(`${name}结束`); return name; });
+	const r = await Promise.all([job("浏览器 A", "a1", 20), job("浏览器 A", "a2", 1), job("浏览器 B", "b1", 1)]);
+	assert.deepEqual(r, ["a1", "a2", "b1"]);
+	// a2 等 a1 做完才开始；b1 不用等 a1
+	assert.ok(log.indexOf("a2开始") > log.indexOf("a1结束"));
+	assert.ok(log.indexOf("b1结束") < log.indexOf("a1结束"));
+	// 出错了也放下一件
+	await assert.rejects(lane("浏览器 A", async () => { throw new Error("页面没开"); }), /页面没开/);
+	assert.equal(await lane("浏览器 A", async () => "接着做"), "接着做");
+	// 隔开：上一件做完到下一件开始至少 gap
+	const at: number[] = [];
+	await Promise.all([0, 1, 2].map(() => lane("1688", async () => { at.push(Date.now()); }, 40)));
+	assert.ok(at[1]! - at[0]! >= 38 && at[2]! - at[1]! >= 38, `隔了 ${at[1]! - at[0]!}、${at[2]! - at[1]!} ms`);
+	// 哪个队：登录着店和 1688 的是同一个浏览器就是同一个队；找不到浏览器的按店、按账号各一个
+	const seen = [{ browser: "b1", shop: { shopId: "1554182542" }, alibaba: "2221" }, { browser: "b2", shop: { shopId: "348425" }, alibaba: null }];
+	assert.equal(browserKey(seen, { shopId: "1554182542" }), browserKey(seen, { account: "2221" }));
+	assert.notEqual(browserKey(seen, { shopId: "348425" }), browserKey(seen, { account: "2221" }));
+	assert.deepEqual([browserKey(seen, { shopId: "9" }), browserKey(seen, { account: "x" })], ["店铺 9", "1688 x"]);
+});
+
+test("同一件事同时要的只做一次；几份一起做：结果照顺序，要人处理以后没开始的不再开始", async () => {
+	let calls = 0;
+	const work = () => once("筛字:abc", async () => { calls++; await tick(); return "m"; });
+	assert.deepEqual([await Promise.all([work(), work(), work()]), calls], [["m", "m", "m"], 1]);
+	await work();
+	assert.equal(calls, 2);
+	// 一次两份：第 2 份要人处理（滑块），第 3、4 份就不开始
+	const r = await each(["1", "2", "3", "4"], 2, async (id) => {
+		await tick(id === "1" ? 20 : 1);
+		if (id === "2") throw new NeedsHuman("1688 要过滑块");
+		return `做完 ${id}`;
+	});
+	assert.deepEqual(r.map((x) => (x.ok ? x.value : `${x.started ? "出错" : "没开始"}：${(x.error as Error).message}`)), ["做完 1", "出错：1688 要过滑块", "没开始：1688 要过滑块", "没开始：1688 要过滑块"]);
+});
