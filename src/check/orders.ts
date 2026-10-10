@@ -48,7 +48,7 @@ export type Todo =
 
 /** agent 估重量、国内运费的一份商品稿：缺什么（needs），和估要用的事实（1688 的标题、每个规格、运费） */
 export type EstimateItem = {
-	id: string; shop: string; needs: ("重量" | "国内运费")[]; title: string;
+	id: string; name: string; shop: string; needs: ("重量" | "国内运费")[]; title: string;
 	specs: { spec: string; priceRmb: number; weightKg: number | null }[]; freight: unknown; freeShipping: boolean;
 };
 

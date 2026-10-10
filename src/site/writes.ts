@@ -232,7 +232,8 @@ async function findBySku(parentSku: string, name: string): Promise<string | null
 	return null;
 }
 
-const createParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), productInfo: z.record(z.string(), z.unknown()), hash: z.string() });
+// name：商品稿的叫法「简称（店铺）」，只给人看（收件箱、x2 run 的输出）
+const createParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), productInfo: z.record(z.string(), z.unknown()), hash: z.string(), name: z.string().optional() });
 type CreateP = z.infer<typeof createParams>;
 
 /** 建商品：在这家店的卖家中心页面里发 create_product_info，先建成下架，读回来逐项核对。
@@ -242,7 +243,7 @@ const createOp: WriteOp<CreateP> = {
 	params: createParams,
 	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
 	key: (p) => `create:${p.shop}:${p.parentSku}`,
-	display: (p) => `建商品 ${p.shop}「${String(p.productInfo.name ?? "").slice(0, 24)}」`,
+	display: (p) => `建商品 ${p.name ?? `${p.shop}「${String(p.productInfo.name ?? "").slice(0, 24)}」`}`,
 	where: (_sql, p, fn) => inShop(p.shopId, fn),
 	async prepare(sql, p) {
 		const now = await listingNow(sql, p.listingId);
@@ -289,7 +290,7 @@ const createOp: WriteOp<CreateP> = {
 	},
 };
 
-const liveParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), title: z.string().nullable().optional(), productId: z.string().optional() });
+const liveParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), title: z.string().nullable().optional(), name: z.string().optional(), productId: z.string().optional() });
 type LiveP = z.infer<typeof liveParams>;
 
 /** 上架：建好的商品从下架翻成在售（update_product_info 的 unlisted: false），读回来确认在售 */
@@ -298,7 +299,7 @@ const liveOp: WriteOp<LiveP> = {
 	params: liveParams,
 	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
 	key: (p) => `live:${p.shop}:${p.parentSku}`,
-	display: (p) => `上架 ${p.shop}「${String(p.title ?? p.parentSku).slice(0, 24)}」`,
+	display: (p) => `上架 ${p.name ?? `${p.shop}「${String(p.title ?? p.parentSku).slice(0, 24)}」`}`,
 	where: (_sql, p, fn) => inShop(p.shopId, fn),
 	async prepare(sql, p) {
 		const [l] = await sql`select product_id, listed_at, cancelled from listings where id = ${p.listingId}`;

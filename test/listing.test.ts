@@ -309,7 +309,7 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	// 规格是旧格式（选项名每次现算的那种）：重做商品稿
 	const old = run(ready({ variants: [{ sku: "LT952803717616-1", specs: [{ label: "顏色", value: "黑色" }] }] }));
 	assert.deepEqual(old.steps.get("7"), { step: "待做商品稿", detail: "规格为旧格式，待重做商品稿" });
-	assert.deepEqual([old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).command], ["做商品稿", "1 份商品稿的规格是旧格式，要重做", "x2 listing make 7"]);
+	assert.deepEqual([old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).command], ["做商品稿", "规格是旧格式，要重做：雨衣（cheeroutdoor，#7）", "x2 listing make 7"]);
 	assert.deepEqual(productOf(ready({ variants: [] }), s.get("cheeroutdoor")!).problems, [OLD_SPECS]);
 	const fix = run(ready({ problems: "类目：推荐的「雨衣」不在本店允许的类目里" }));
 	assert.equal(fix.steps.get("7")!.step, "待补充");
@@ -504,8 +504,8 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 	assert.deepEqual(r.inbox, []);
 	const t = r.todo.find((x) => x.kind === "估重量、国内运费");
 	assert.ok(t && t.kind === "估重量、国内运费");
-	assert.match(t.why, /^商品稿 7 缺重量、国内运费：.*重量往重了估（轻的写 1 kg），国内运费往高了估/);
-	assert.deepEqual(t.items, [{ id: "7", shop: "cheeroutdoor", needs: ["重量", "国内运费"], title: "可爱猫咪地垫", specs: [{ spec: "黑猫 / 40*60", priceRmb: 1, weightKg: 0.3 }, { spec: "白猫 / 40*60", priceRmb: 1, weightKg: null }], freight: null, freeShipping: false }]);
+	assert.match(t.why, /^可爱猫咪地垫（cheeroutdoor，#7）缺重量、国内运费：.*重量往重了估（轻的写 1 kg），国内运费往高了估/);
+	assert.deepEqual(t.items, [{ id: "7", name: "可爱猫咪地垫（cheeroutdoor，#7）", shop: "cheeroutdoor", needs: ["重量", "国内运费"], title: "可爱猫咪地垫", specs: [{ spec: "黑猫 / 40*60", priceRmb: 1, weightKg: 0.3 }, { spec: "白猫 / 40*60", priceRmb: 1, weightKg: null }], freight: null, freeShipping: false }]);
 	assert.match(productOf(l, s.get("cheeroutdoor")!).problems.join(), /缺重量、国内运费：agent 估/);
 	// 人的问题还没处理：待补充、进收件箱（不再叫人填重量、国内运费），agent 照样可以先估
 	const both = checkListings([{ ...l, problems: "类目：推荐的「地垫」不在本店允许的类目里" }], s, []);
@@ -513,6 +513,46 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 	assert.doesNotMatch(both.inbox[0]!.detail, /重量|国内运费/);
 	// 估了：往下走
 	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待 Gemini 文字检查");
+});
+
+import { autoNickname, listingName, nicknameFor, nicknameOpen, nicknameProblems } from "../src/listing/text.ts";
+import { WRITES } from "../src/site/writes.ts";
+
+test("简称：x2 先填 1688 标题的前 12 个字；空着的、还是自动填的才换，人改过的不动；简体中文、最多 12 字", () => {
+	const title = "浴水生财猫咪浴室地垫硅藻泥卫生间门口防滑脚垫";
+	assert.equal(autoNickname(title), "浴水生财猫咪浴室地垫硅藻");
+	assert.equal(autoNickname(" 外贸 爆款 "), "外贸爆款");
+	assert.equal(autoNickname(null), null);
+	// 做商品稿：空着的填上；1688 标题变了，还是上一版自动填的就跟着换；人改过的不动
+	assert.equal(nicknameFor(null, null, title), "浴水生财猫咪浴室地垫硅藻");
+	assert.equal(nicknameFor("浴水生财猫咪浴室地垫硅藻", title, "新款猫咪地垫"), "新款猫咪地垫");
+	assert.equal(nicknameFor("浴水生财猫狗地垫", title, "新款猫咪地垫"), "浴水生财猫狗地垫");
+	// agent 写：空着的、还是自动填的才写
+	assert.equal(nicknameOpen({ nickname: null, offer: { title } }), true);
+	assert.equal(nicknameOpen({ nickname: "浴水生财猫咪浴室地垫硅藻", offer: { title } }), true);
+	assert.equal(nicknameOpen({ nickname: "浴水生财猫狗地垫", offer: { title } }), false);
+	assert.deepEqual(nicknameProblems("浴水生财猫狗地垫"), []);
+	assert.deepEqual(nicknameProblems("不规则动物地垫"), []);
+	assert.deepEqual(nicknameProblems("浴水生財貓狗地墊"), ["简称「浴水生財貓狗地墊」有繁体字，要用简体中文（浴水生财猫狗地垫）"]);
+	assert.deepEqual(nicknameProblems("一二三四五六七八九十一二三"), ["简称「一二三四五六七八九十一二三」 13 字，最多 12 字"]);
+	assert.deepEqual(nicknameProblems(" "), ["简称是空的"]);
+	// 叫法：简称（店铺），命令要用的编号跟在后面；还没有简称的用 1688 标题的前 12 个字、货源 id
+	assert.equal(listingName({ id: "2", shop: "cheeroutdoor", nickname: "浴水生财猫狗地垫" }), "浴水生财猫狗地垫（cheeroutdoor，#2）");
+	assert.equal(listingName({ id: "2", shop: "cheeroutdoor", nickname: "浴水生财猫狗地垫" }, false), "浴水生财猫狗地垫（cheeroutdoor）");
+	assert.equal(listingName({ id: "5", shop: "ni1206", offer: { title } }), "浴水生财猫咪浴室地垫硅藻（ni1206，#5）");
+	assert.equal(listingName({ id: "6", shop: "ni1206", offer_id: "123" }), "货源 123（ni1206，#6）");
+});
+
+test("检查：收件箱、todo、批准的标题、写入的显示都写「简称（店铺）」，agent 要跑命令的带编号", () => {
+	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
+	const l = ready({ nickname: "轻便雨衣" });
+	assert.equal(checkListings([{ ...l, problems: "类目：推荐的「雨衣」不在本店允许的类目里" }], s, []).inbox[0]!.title, "商品稿：轻便雨衣（cheeroutdoor）待补充：类目：推荐的「雨衣」不在本店允许的类目里");
+	assert.equal(checkListings([{ ...l, title: null }], s, []).todo[0]!.why, "轻便雨衣（cheeroutdoor，#7）：还没写");
+	const t = checkListings([{ ...l, audit: { key: auditKey(productOf(l, s.get("cheeroutdoor")!).product!), textIssues: [], images: [] } }], s, []).todo.find((x) => x.kind === "上架");
+	assert.ok(t && t.kind === "上架");
+	assert.equal(t.why, "待批准上架：轻便雨衣（cheeroutdoor，#7）");
+	assert.match(t.propose.title, /^上架 轻便雨衣（cheeroutdoor）：/);
+	assert.deepEqual(t.propose.writes.map((w) => WRITES[w.op]!.display(w.params)), ["建商品 轻便雨衣（cheeroutdoor）", "上架 轻便雨衣（cheeroutdoor）"]);
 });
 
 test("译图检查：象寄改了商品上的字、还有简体字、转错的字，这张不用；模型说的简体字、错字要在它抄的字里，还要过 OpenCC", () => {

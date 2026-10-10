@@ -34,8 +34,8 @@ x2 listing add cheeroutdoor <1688 链接>   # 添加货源：一个货源 × 一
 x2 listing make                         # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 译图检查 → 水印 → 传图）、类目属性
 x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不到的国内运费由 agent 估（只填空着的），马上重新核价
 x2 listing show 3                       # 写文案要用的事实
-x2 listing text 3 --title … --description … --tiers …   # agent 写的标题、描述和规格名，写完马上 Gemini 文字检查
-x2 listing list                         # 每份商品稿的当前步骤
+x2 listing text 3 --title … --description … --tiers … --nickname …   # agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查
+x2 listing list                         # 每份商品稿的简称、当前步骤
 x2 strategy list                        # 选品的策略：每个出了几份商品稿、上架了几个
 ```
 

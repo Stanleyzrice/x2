@@ -9,6 +9,7 @@ import { attributes as attributeTree, type Category, categoryTree, recommendedCa
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
+import { nicknameFor } from "./text.ts";
 import { limitProblems, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
 
@@ -172,6 +173,8 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 
 	return save(sql, id, {
 		...done,
+		// 简称：空着的、还是上一版自动填的，先填 1688 标题的前 12 个字；人改过、agent 写过的不动
+		nickname: nicknameFor(l.nickname, l.offer?.title, o.title),
 		offer: { offerId: o.offerId, url: o.url, title: o.title, images: o.images, detail, tags: o.tags, freight: o.freight, minQty: o.minQty, props: o.props, skus: o.skus },
 		offer_read_at: new Date(),
 		variants: specs,

@@ -208,7 +208,7 @@ async function madeListing(db: postgres.Sql, offerId: string) {
 test("x2 listing drop：按结构去掉整个选项，货号记进已移除的规格；去掉单个规格会让组合不齐时不做", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const { id } = await madeListing(db, "3");
-	assert.deepEqual(await listing(["drop", id, "定製"]), { id, dropped: ["LT3-20", "LT3-21"], left: 4, merged: false });
+	assert.deepEqual(await listing(["drop", id, "定製"]), { id, name: `货源 3（cheeroutdoor，#${id}）`, dropped: ["LT3-20", "LT3-21"], left: 4, merged: false });
 	const [dropped] = await db`select variants, removed_variants from listings where id = ${id}`;
 	assert.deepEqual([dropped!.removed_variants, dropped!.variants.tiers[0].options.map((o: any) => o.name)], [["LT3-20", "LT3-21"], ["黑貓", "黃狗"]]);
 	// 去掉单个规格会让两层的组合不齐：不做，库里不变
@@ -275,4 +275,21 @@ test("x2 listing estimate：只填空着的「重量」「国内运费」，人�
 	await check(db, reads());
 	const [checked] = await db`select variants, step, step_detail from listings where id = ${id}`;
 	assert.deepEqual(checked!.variants.variants.map((v: any) => v.weightKg), [0.3, 0.9]);
+});
+
+test("x2 listing text 交简称：简体、最多 12 字，不对就什么都不存；只在空着、还是自动填的时候写，人改过的不改", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const { id } = await madeListing(db, "7");
+	await db`update listings set offer = offer || ${db.json({ title: "浴水生财猫咪浴室地垫硅藻泥卫生间门口防滑脚垫" })}, nickname = '浴水生财猫咪浴室地垫硅藻' where id = ${id}`;
+	const text = (nickname: string) => listing(["text", id, "--title", "矽藻土地墊 可愛貓咪造型 防滑吸水 浴室門口", "--description", "商品介紹", "--nickname", nickname]);
+	const bad = await text("浴水生財貓狗地墊");
+	assert.deepEqual([bad.text[0].saved, bad.text[0].problems], [false, ["简称「浴水生財貓狗地墊」有繁体字，要用简体中文（浴水生财猫狗地垫）"]]);
+	const ok = await text("浴水生财猫狗地垫");
+	assert.deepEqual([ok.text[0].saved, ok.text[0].name], [true, `浴水生财猫狗地垫（cheeroutdoor，#${id}）`]);
+	// 人在 NocoDB 改了：agent 再交也不改，说一声
+	await db`update listings set nickname = '猫咪地垫' where id = ${id}`;
+	const again = await text("可爱猫狗地垫");
+	assert.deepEqual([again.text[0].saved, again.text[0].notes], [true, ["简称：已有「猫咪地垫」，不改（只在空着、还是自动填的时候写）"]]);
+	const [row] = await db`select nickname, title from listings where id = ${id}`;
+	assert.deepEqual([row!.nickname, row!.title], ["猫咪地垫", "矽藻土地墊 可愛貓咪造型 防滑吸水 浴室門口"]);
 });

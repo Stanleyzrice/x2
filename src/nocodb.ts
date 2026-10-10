@@ -2,7 +2,7 @@
 // 可以重复跑：同名的视图删了重建。NocoDB 只读写库，不碰站点。
 // NocoDB 对外部的库「改名」就是改表名，改列会按它的理解重写列定义（2026-10-09 试过：改一个列的标题，去掉了 NOT NULL）。所以：
 // - 库在 NocoDB 里设成「表结构只读」：表的结构只由 schema.sql 改
-// - 中文名、侧栏顺序、显示成链接直接写 NocoDB 自己的元数据库（nc_models_v2、nc_columns_v2），再清它的缓存
+// - 中文名、侧栏顺序、显示成链接、显示值直接写 NocoDB 自己的元数据库（nc_models_v2、nc_columns_v2），再清它的缓存
 // 环境变量：X2_NOCODB_URL（例 http://localhost:8080）、X2_NOCODB_EMAIL、X2_NOCODB_PASSWORD（管理员）、X2_NOCODB_META_URL（NocoDB 自己的元数据库）、
 // X2_NOCODB_DB_URL（NocoDB 那台机器怎么连 x2 的库；不给就用 X2_DATABASE_URL）
 import postgres from "postgres";
@@ -19,8 +19,8 @@ type Filter = Cond | { or: Cond[] };
 /** kanban：看板，按这一列分列（这一列要在 selects 里）；form：表单（人填一行新的），fields 是表单上的列和它的说明，required 是必填的。看板、表单不能是第一个（默认视图是表格） */
 type View = { title: string; kanban?: string; gallery?: string; form?: { heading: string; fields: Record<string, string>; required?: string[] }; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[] };
 /** columns：列名 → 中文名，也是视图里列的顺序；links：显示成链接的列；attachments：显示成附件的列（库里是 JSON 文本）；
- * selects：显示成单选的列和它的取值（按这个顺序，看板的列也是这个顺序）。gallery：画廊视图，封面是这个附件列 */
-type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; attachments?: string[]; selects?: Record<string, readonly string[]>; views: View[] };
+ * selects：显示成单选的列和它的取值（按这个顺序，看板的列也是这个顺序）；primary：显示值（主列），卡片、关联里看到的是它。gallery：画廊视图，封面是这个附件列 */
+type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; attachments?: string[]; selects?: Record<string, readonly string[]>; primary?: string; views: View[] };
 
 /** 商品稿里给 x2 用的 JSON 列：视图里都藏起来 */
 const LISTING_JSON = ["offer", "images", "variants", "pricing", "audit", "attributes", "category_path", "category_id", "removed_images", "removed_variants", "kept_images", "offer_read_at"];
@@ -80,10 +80,10 @@ export function tables(): Table[] {
 			],
 		},
 		{
-			name: "listings", title: "商品稿", attachments: ["main_images", "detail_images", "option_images"],
+			name: "listings", title: "商品稿", attachments: ["main_images", "detail_images", "option_images"], primary: "nickname",
 			selects: { step: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
 			columns: {
-				title: "标题", shop: "店铺", step: "当前步骤", step_detail: "说明", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", category_name: "类目",
+				nickname: "简称", title: "标题", shop: "店铺", step: "当前步骤", step_detail: "说明", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", category_name: "类目",
 				problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
 				strategy: "策略", cancelled: "放弃", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
 				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "Gemini 文字检查", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间",
@@ -227,6 +227,8 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 				if (t.links?.includes(col)) await meta`update nc_columns_v2 set uidt = 'URL' where fk_model_id = ${model.id} and column_name = ${col}`;
 				if (t.attachments?.includes(col)) await meta`update nc_columns_v2 set uidt = 'Attachment' where fk_model_id = ${model.id} and column_name = ${col}`;
 			}
+			// 显示值（主列）：卡片、关联里看到的是它
+			if (t.primary) await meta`update nc_columns_v2 set pv = (column_name = ${t.primary}) where fk_model_id = ${model.id}`;
 			// 单选：库里还是 text，只在 NocoDB 的元数据里标成单选，取值按顺序（看板的列也是这个顺序）
 			for (const [col, values] of Object.entries(t.selects ?? {})) {
 				const [c] = await meta`select id from nc_columns_v2 where fk_model_id = ${model.id} and column_name = ${col}`;

@@ -4,8 +4,8 @@
 // x2 listing estimate <商品稿> [--weight <kg>] [--freight <元/件>]
 //                                                    agent 估 1688 没给的重量、读不到的国内运费：只填空着的（人填过的不动），写完马上重新核价（不读 1688）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
-// x2 listing text <商品稿> --title … --description … [--tiers <JSON>]
-//                                                    agent 写的标题、描述和规格名（也可以从 stdin 读 [{ id, title, description, tiers: [{ name, options: [名字…] }] }]），
+// x2 listing text <商品稿> --title … --description … [--tiers <JSON>] [--nickname 简称]
+//                                                    agent 写的标题、描述、规格名和简称（也可以从 stdin 读 [{ id, title, description, tiers: [{ name, options: [名字…] }], nickname }]），
 //                                                    写完马上 Gemini 文字检查
 // x2 listing audit [商品稿…]                          Gemini 文字检查（看文案和加水印之前的图，挑简体字、错字、误译）：只提示，挑出的问题带编号写进说明；
 //                                                    详情图、不是封面的主图上后加的文案 x2 去掉
@@ -13,6 +13,7 @@
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
 //                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
+// 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
 import { z } from "zod";
 import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
@@ -22,7 +23,7 @@ import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, aud
 import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
 import { productOf } from "../listing/ready.ts";
-import { textProblems } from "../listing/text.ts";
+import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
 
@@ -33,6 +34,14 @@ const readStdin = async () => {
 };
 const flag = (args: string[], name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const plain = (args: string[], ...flags: string[]) => args.filter((a, j) => !a.startsWith("--") && !flags.includes(args[j - 1] ?? ""));
+
+/** 命令输出里商品稿的叫法：简称（店铺，#编号）；没有的编号照原样写 */
+async function namesOf(sql: Sql, ids: string[]): Promise<(id: string) => string> {
+	const valid = [...new Set(ids.filter((id) => /^\d+$/.test(id)))];
+	const rows = valid.length ? await sql`select id::text, shop, nickname, offer_id, offer->>'title' as title from listings where id in ${sql(valid)}` : [];
+	const names = new Map(rows.map((r) => [r.id as string, listingName({ id: r.id, shop: r.shop, nickname: r.nickname, offer_id: r.offer_id, offer: { title: r.title } })]));
+	return (id) => names.get(id) ?? `商品稿 ${id}`;
+}
 
 export async function listingCommand(args: string[], json: boolean): Promise<void> {
 	const [sub, ...rest] = args;
@@ -55,7 +64,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 				on conflict (shop, offer_id) do update set updated_at = listings.updated_at returning id::text, (xmax = 0) as is_new`;
 			added.push({ id: r!.id, offerId, isNew: Boolean(r!.is_new) });
 		}
-		return out(added, added.map((a) => `商品稿 ${a.id}：${shop} × ${a.offerId}${a.isNew ? "" : "（已经有了）"}`).join("\n") + "\n下一步：x2 listing make");
+		const name = await namesOf(sql, added.map((a) => a.id));
+		return out(added.map((a) => ({ ...a, name: name(a.id) })), added.map((a) => `${name(a.id)}${a.isNew ? "" : "：已经有了"}`).join("\n") + "\n下一步：x2 listing make");
 	}
 
 	if (sub === "make") {
@@ -63,19 +73,20 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		// 不给就做：还没做的、待补充的、规格是旧格式的
 		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object') order by id`).map((r) => r.id as string);
 		if (!ids.length) return out([], "没有要做的商品稿");
+		const before = await namesOf(sql, ids);
 		const results = [];
 		for (const id of ids) {
-			console.error(`── 商品稿 ${id}`);
+			console.error(`── ${before(id)}`);
 			const r = await make(sql, id);
 			// 做好的图马上放进 NocoDB 的附件（不等下一次 x2 status）；缺重量、国内运费的告诉 agent 估，定不了价的、超过上限的现算
 			const [l] = await sql`select * from listings where id = ${id}`;
 			if (l) await syncImages(sql, l);
 			const specs = l ? specsOf(l.variants) : null;
 			const needs = l ? estimateNeeds(l) : [];
-			results.push({ ...r, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] });
+			results.push({ ...r, name: l ? listingName(l) : `商品稿 ${id}`, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] });
 		}
 		const hint = (r: { id: string; needs: string[] }) => (r.needs.length ? `\n  估：x2 listing estimate ${r.id}${r.needs.includes("重量") ? " --weight <kg>" : ""}${r.needs.includes("国内运费") ? " --freight <元/件>" : ""}` : "");
-		return out(results, results.map((r) => `商品稿 ${r.id}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
+		return out(results, results.map((r) => `${r.name}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
 	}
 
 	if (sub === "estimate") {
@@ -87,7 +98,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		if (!id || !given.success || (given.data.weight === undefined && given.data.freight === undefined)) throw new Usage(usage);
 		const [l] = await sql`select * from listings where id = ${id}`;
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
-		if (!l.offer || !specsOf(l.variants)) throw new Usage(`商品稿 ${id} 还没做好：先 x2 listing make ${id}`);
+		if (!l.offer || !specsOf(l.variants)) throw new Usage(`${listingName(l)}还没做好：先 x2 listing make ${id}`);
 		const needs = estimateNeeds(l);
 		const notes: string[] = [], set: Record<string, number> = {};
 		const { weight, freight } = given.data;
@@ -110,8 +121,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		await savePrices(sql, now, settingsOf(row));
 		const left = estimateNeeds(now);
 		const problems = [...String(now!.problems ?? "").split("\n").filter(Boolean), ...pricingProblems(specsOf(now!.variants)!, left)];
-		return out({ id, notes, needs: left, problems, prices: now!.variants_text }, [
-			`商品稿 ${id}：${notes.join("；")}`, `规格和价格：\n  ${String(now!.variants_text ?? "").split("\n").join("\n  ")}`,
+		return out({ id, name: listingName(now!), notes, needs: left, problems, prices: now!.variants_text }, [
+			`${listingName(now!)}：${notes.join("；")}`, `规格和价格：\n  ${String(now!.variants_text ?? "").split("\n").join("\n  ")}`,
 			problems.length ? `还有：${problems.join("；")}` : "核价好了（下一步看 x2 status）",
 		].join("\n"));
 	}
@@ -128,7 +139,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			options: t.options.map((o, k) => ({ n: k + 1, source: o.source, name: o.name, price: priceRange(specs.variants.filter((v) => v.options[a] === k)) })),
 		})) : [];
 		const facts = {
-			id: String(l.id), shop: l.shop, offerTitle: l.offer?.title ?? null, category: l.category_name, attributes: l.attributes_text,
+			id: String(l.id), shop: l.shop, nickname: l.nickname ?? null, offerTitle: l.offer?.title ?? null, category: l.category_name, attributes: l.attributes_text,
 			variants: specs?.variants.length ?? 0, tiers, weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))], needs: estimateNeeds(l), tags: l.offer?.tags ?? null,
 			title: l.title, description: l.description, problems: l.offer && !specs ? OLD_SPECS : l.problems,
 		};
@@ -136,27 +147,27 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "text") {
-		const usage = "x2 listing text <商品稿> --title … --description … [--tiers '[{ \"name\": \"款式\", \"options\": [\"…\"] }]']，或从 stdin 读 [{ id, title, description, tiers }]";
-		const items: { id: string; title: string; description: string; tiers?: unknown }[] = [];
-		const id = plain(rest, "--title", "--description", "--tiers")[0];
+		const usage = "x2 listing text <商品稿> --title … --description … [--tiers '[{ \"name\": \"款式\", \"options\": [\"…\"] }]'] [--nickname 简称]，或从 stdin 读 [{ id, title, description, tiers, nickname }]";
+		const items: { id: string; title: string; description: string; tiers?: unknown; nickname?: string }[] = [];
+		const id = plain(rest, "--title", "--description", "--tiers", "--nickname")[0];
 		if (id) {
 			const t = flag(rest, "--tiers");
 			let tiers: unknown;
 			if (t !== undefined) {
 				try { tiers = JSON.parse(t); } catch { throw new Usage(`--tiers 要是 JSON：${usage}`); }
 			}
-			items.push({ id, title: flag(rest, "--title") ?? "", description: flag(rest, "--description") ?? "", tiers });
+			items.push({ id, title: flag(rest, "--title") ?? "", description: flag(rest, "--description") ?? "", tiers, nickname: flag(rest, "--nickname") });
 		} else {
 			let input: unknown;
 			try { input = JSON.parse(await readStdin()); } catch { throw new Usage(usage); }
 			if (!Array.isArray(input)) throw new Usage(usage);
-			items.push(...input.map((x) => ({ id: String(x.id), title: String(x.title ?? ""), description: String(x.description ?? ""), tiers: x.tiers })));
+			items.push(...input.map((x) => ({ id: String(x.id), title: String(x.title ?? ""), description: String(x.description ?? ""), tiers: x.tiers, nickname: x.nickname === undefined || x.nickname === null ? undefined : String(x.nickname) })));
 		}
-		const results = [];
+		const results: { id: string; saved: boolean; problems: string[]; notes?: string[] }[] = [];
 		for (const it of items) {
-			// 标题、描述的硬规矩；规格名（交了的话）照 show 的层和选项一个一个改，过一遍规格的规矩。有一样不对就什么都不存
-			const problems = textProblems(it.title.trim(), it.description.trim());
-			const [l] = await sql`select variants, offer, removed_variants from listings where id = ${it.id}`;
+			// 标题、描述的硬规矩；规格名（交了的话）照 show 的层和选项一个一个改，过一遍规格的规矩；简称（交了的话）简体中文、最多 12 字。有一样不对就什么都不存
+			const problems = [...textProblems(it.title.trim(), it.description.trim()), ...(it.nickname === undefined ? [] : nicknameProblems(it.nickname))];
+			const [l] = await sql`select variants, offer, removed_variants, nickname from listings where id = ${it.id}`;
 			if (!l) { results.push({ id: it.id, saved: false, problems: ["没有这份商品稿"] }); continue; }
 			let specs = specsOf(l.variants);
 			if (it.tiers !== undefined) {
@@ -171,11 +182,16 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			}
 			if (problems.length) { results.push({ id: it.id, saved: false, problems }); continue; }
 			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs), variants_text: specsText(specs, removedOf(l.offer, l.removed_variants)) } : {};
-			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, updated_at: new Date() } as any)} where id = ${it.id}`;
-			results.push({ id: it.id, saved: true, problems: [] });
+			// 简称只在空着、还是自动填的那个值时写：人在 NocoDB 改过的不改
+			const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
+			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() } as any)} where id = ${it.id}`;
+			results.push({ id: it.id, saved: true, problems: [], ...(nick ? {} : { notes: [`简称：已有「${l.nickname}」，不改（只在空着、还是自动填的时候写）`] }) });
 		}
+		const name = await namesOf(sql, results.map((r) => r.id));
 		const checks = await textChecks(sql, results.filter((r) => r.saved).map((r) => r.id));
-		return out({ text: results, audit: checks }, [...results.map((r) => `商品稿 ${r.id}：${r.saved ? "记下了" : r.problems.join("；")}`), ...checks.map(checkLine)].join("\n"));
+		return out({ text: results.map((r) => ({ ...r, name: name(r.id) })), audit: checks }, [
+			...results.map((r) => `${name(r.id)}：${r.saved ? ["记下了", ...(r.notes ?? [])].join("；") : r.problems.join("；")}`), ...checks.map(checkLine),
+		].join("\n"));
 	}
 
 	if (sub === "audit") {
@@ -197,14 +213,14 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const named = new Map<string, Pic>();
 		for (const role of ["main", "detail"] as const) for (const { pic, n } of numbered(l.images ?? {}, role)) named.set(`${LABEL[role]} ${n}`, pic);
 		const unknown = asked.filter((x) => !named.has(x));
-		if (unknown.length) throw new Usage(`商品稿 ${id} 没有${unknown.join("、")}（有：${[...named.keys()].join("、") || "无"}）`);
+		if (unknown.length) throw new Usage(`${listingName(l)}没有${unknown.join("、")}（有：${[...named.keys()].join("、") || "无"}）`);
 		const deleted = asked.filter((x) => (l.removed_images ?? []).includes(named.get(x)!.imageId));
-		if (deleted.length) throw new Usage(`商品稿 ${id} 的${deleted.join("、")}是人在 NocoDB 删的（已删除的图），不放回来`);
+		if (deleted.length) throw new Usage(`${listingName(l)}的${deleted.join("、")}是人在 NocoDB 删的（已删除的图），不放回来`);
 		const ids = [...new Set(asked.map((x) => named.get(x)!.imageId!))];
 		const restored = asked.filter((x) => named.get(x)!.drop?.startsWith(AUDIT_DROP));
 		await sql`update listings set images = ${sql.json(restoreAudited(l.images, ids) as any)}, kept_images = ${sql.json([...new Set([...(l.kept_images ?? []), ...ids])])}, updated_at = now() where id = ${id}`;
 		const checks = await textChecks(sql, [id]);
-		return out({ id, kept: asked, restored, audit: checks }, [`商品稿 ${id}：${asked.join("、")}记进保留的图${restored.length ? `，${restored.join("、")}放回来了` : ""}`, ...checks.map(checkLine)].join("\n"));
+		return out({ id, name: listingName(l), kept: asked, restored, audit: checks }, [`${listingName(l)}：${asked.join("、")}记进保留的图${restored.length ? `，${restored.join("、")}放回来了` : ""}`, ...checks.map(checkLine)].join("\n"));
 	}
 
 	if (sub === "drop") {
@@ -212,34 +228,36 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const merge = rest.includes("--merge");
 		const [id, ...names] = plain(rest);
 		if (!id || !names.length) throw new Usage("x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]（人说了才用；--merge 也是人说了才加）");
-		const [l] = await sql`select variants, offer, removed_variants, problems from listings where id = ${id}`;
+		const [l] = await sql`select id::text, shop, nickname, offer_id, variants, offer, removed_variants, problems from listings where id = ${id}`;
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
 		const specs = specsOf(l.variants);
-		if (!specs) throw new Usage(`商品稿 ${id} 的规格是旧格式：先重做商品稿（x2 listing make ${id}），再去掉`);
+		if (!specs) throw new Usage(`${listingName(l)}的规格是旧格式：先重做商品稿（x2 listing make ${id}），再去掉`);
 		const r = dropSpecs(specs, names, merge);
-		if ("error" in r) throw new Usage(`商品稿 ${id}：${r.error}`);
+		if ("error" in r) throw new Usage(`${listingName(l)}：${r.error}`);
 		const removed = [...new Set([...(l.removed_variants ?? []), ...r.skus])];
 		await sql`update listings set variants = ${sql.json(r.specs)}, variants_text = ${specsText(r.specs, removedOf(l.offer, removed))}, removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
-		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再审）`;
+		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再查）`;
 		const left = r.specs.variants.length;
-		return out({ id, dropped: r.skus, left, merged: r.merged }, `商品稿 ${id}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);
+		return out({ id, name: listingName(l), dropped: r.skus, left, merged: r.merged }, `${listingName(l)}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);
 	}
 
 	if (sub === "list") {
-		const rows = await sql`select id::text, shop, offer_id, strategy, title, step, step_detail, problems, product_id from listings where not cancelled order by id`;
-		return out(rows, rows.length ? rows.map((r) => `${r.id} ${r.shop} ${r.offer_id} ${r.step ?? "（还没检查）"}${r.title ? `「${r.title}」` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
+		const rows = (await sql`select id::text, shop, nickname, offer_id, offer->>'title' as offer_title, strategy, title, step, step_detail, problems, product_id from listings where not cancelled order by id`)
+			.map((r) => ({ ...r, name: listingName({ ...r, offer: { title: r.offer_title } }) }));
+		const line = (r: any) => `${r.name} ${r.step ?? "（还没检查）"}${r.step_detail ? `：${String(r.step_detail).split("\n")[0]}` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`;
+		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
 	throw new Usage("x2 listing add | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */
-type CheckResult = { id: string; checked: boolean; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
+type CheckResult = { id: string; name: string; checked: boolean; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
 const checkLine = (c: CheckResult) => {
-	if (!c.checked) return `商品稿 ${c.id} Gemini 文字检查：查不了：${(c.problems ?? []).join("；")}`;
+	if (!c.checked) return `${c.name} Gemini 文字检查：查不了：${(c.problems ?? []).join("；")}`;
 	const dropped = c.issues.filter((x) => x.status === "已去掉");
 	return [
-		`商品稿 ${c.id} Gemini 文字检查：${c.issues.length ? `挑出 ${c.issues.length} 条（只提示，写在说明里）` : "没挑出问题"}${c.cached ? "（查过）" : ""}`,
+		`${c.name} Gemini 文字检查：${c.issues.length ? `挑出 ${c.issues.length} 条（只提示，写在说明里）` : "没挑出问题"}${c.cached ? "（查过）" : ""}`,
 		...c.issues.map((x) => `  ${issueLine(x)}`),
 		...(dropped.length ? [`  x2 去掉的图人说要用才放回来：x2 listing keep ${c.id} ${dropped.map((x) => x.name ?? x.image).join(" ")}`] : []),
 	].join("\n");
@@ -263,13 +281,14 @@ async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 	const out: CheckResult[] = [];
 	for (const id of ids) {
 		let c = await listingNow(sql, id);
-		if (!c) { out.push({ id, checked: false, problems: ["没有这份商品稿"], issues: [] }); continue; }
-		if (!c.r.product) { out.push({ id, checked: false, problems: c.r.problems, issues: [] }); continue; }
+		if (!c) { out.push({ id, name: `商品稿 ${id}`, checked: false, problems: ["没有这份商品稿"], issues: [] }); continue; }
+		const name = listingName(c.l);
+		if (!c.r.product) { out.push({ id, name, checked: false, problems: c.r.problems, issues: [] }); continue; }
 		let a = c.l.audit as Audit | null;
 		const cached = a?.key === auditKey(c.r.product);
 		if (!cached) {
 			for (let round = 0; c.r.product; round++) {
-				console.error(`Gemini 文字检查：商品稿 ${id}${round ? `（去掉挑出的图以后第 ${round} 次再查）` : ""}`);
+				console.error(`Gemini 文字检查：${name}${round ? `（去掉挑出的图以后第 ${round} 次再查）` : ""}`);
 				const pics = (c.l.images ?? {}) as Pics;
 				a = await textCheck(c.r.product, { image: (x) => unmarked(sql, pics, x), kept: c.kept, canDrop: round < MAX_RECHECK });
 				const drops = a.images.filter((x) => x.dropped);
@@ -277,13 +296,13 @@ async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 				await sql`update listings set images = ${sql.json(dropAudited(c.l.images, drops) as any)}, updated_at = now() where id = ${id}`;
 				c = (await listingNow(sql, id))!;
 			}
-			if (!c.r.product) { out.push({ id, checked: false, problems: c.r.problems, issues: [] }); continue; }
+			if (!c.r.product) { out.push({ id, name, checked: false, problems: c.r.problems, issues: [] }); continue; }
 			// x2 去掉的图（这一次的、以前的）也记进检查结果：人看得到，要用可以保留
 			a = { ...a!, images: [...auditDropped(c.l.images), ...a!.images] };
 			await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;
 		}
 		const issues = auditIssues(a!, c.kept, imageNames(c.l.images ?? {}, specsOf(c.l.variants)));
-		out.push({ id, checked: true, ...(cached ? { cached } : {}), issues });
+		out.push({ id, name, checked: true, ...(cached ? { cached } : {}), issues });
 	}
 	return out;
 }

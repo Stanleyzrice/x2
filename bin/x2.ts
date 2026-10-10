@@ -44,7 +44,7 @@ const help = [
 	"  x2 listing make [商品稿…]         做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性",
 	"  x2 listing estimate <商品稿> [--weight kg] [--freight 元/件]   估 1688 没给的重量、读不到的国内运费（只填空着的），马上重新核价",
 	"  x2 listing show <商品稿>          写文案要用的事实",
-	"  x2 listing text <商品稿> --title … --description … [--tiers JSON]   agent 写的标题、描述和规格名",
+	"  x2 listing text <商品稿> --title … --description … [--tiers JSON] [--nickname 简称]   agent 写的标题、描述、规格名和简称",
 	"  x2 listing list                  所有商品稿走到哪了",
 	"  x2 strategy add | set | list     选品的策略（假设、选品方法）；每个策略出了几份商品稿、上架了几个",
 	"  x2 db migrate | import | import-shops   建表；把 ~/x2 的 JSON、lilto 的店铺设置迁进库（只用一次）",

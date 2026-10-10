@@ -318,3 +318,6 @@ alter table listings alter column main_images type text using main_images::text;
 alter table listings alter column detail_images type text using detail_images::text;
 -- 到货问题的类型默认「损坏」
 alter table arrival_issues alter column kind set default '损坏';
+-- 简称：人和 agent 认商品稿用的简体中文短名（最多 12 字，例 浴水生财猫狗地垫），不上 Shopee。x2 做商品稿时先填 1688 标题的前 12 个字，
+-- 写文案的 agent 写标题时一起写（只在空着、还是自动填的那个值时写）；人在 NocoDB 改过的 agent 不再改
+alter table listings add column if not exists nickname text;
