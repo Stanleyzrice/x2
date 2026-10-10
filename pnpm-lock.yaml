@@ -11,6 +11,9 @@ importers:
       '@wuwe1/cdp-relay':
         specifier: github:wuwe1/cdp-relay#v1.0.0
         version: https://codeload.github.com/wuwe1/cdp-relay/tar.gz/40bb97833c8a92e7d15a48f04e0d847b678e8481
+      opencc-js:
+        specifier: ^1.4.2
+        version: 1.4.2
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -35,6 +38,9 @@ packages:
     version: 1.0.0
     engines: {node: '>=22.18'}
     hasBin: true
+
+  opencc-js@1.4.2:
+    resolution: {integrity: sha512-EdcspgdROiCCZDM+jZR6Pa670xW+EW2QhctPBQ8gRjg6lrx4IHEl+2s+kt5izk/TkxVRgdWuFgaGkaEdIUfdaw==}
 
   postgres@3.4.9:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
@@ -75,6 +81,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  opencc-js@1.4.2: {}
 
   postgres@3.4.9: {}
 

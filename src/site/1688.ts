@@ -7,7 +7,7 @@ import { NeedsHuman, Usage } from "../errors.ts";
 import { all, byPage, get, type Ops, str, strs } from "./op.ts";
 
 /** attrs：每个属性的取值，顺序同 Offer.props */
-export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string };
+export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
 export type Prop = { name: string; values: { name: string; image: string }[] };
 export type Offer = { offerId: string; url: string; title: string; image: string; unit: string; minQty: number; props: Prop[]; skus: Sku[] };
 
