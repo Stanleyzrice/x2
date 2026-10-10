@@ -140,7 +140,7 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 });
 
 import { checkListings } from "../src/check/listings.ts";
-import { auditKey } from "../src/listing/audit.ts";
+import { acceptIssues, auditIssues, auditKey, auditPassed } from "../src/listing/audit.ts";
 import { settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
 
@@ -166,18 +166,23 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	// 审过了、内容没变：待批准，一批两个写入（建商品、上架）
 	const l = ready();
 	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!, "新新家居日用好物賣場");
-	const ok = run({ ...l, audit: { key, ok: true, textIssues: [], images: [] } });
+	const ok = run({ ...l, audit: { key, textIssues: [], images: [] } });
 	assert.equal(ok.steps.get("7")!.step, "待批准");
 	const t = ok.todo.find((x) => x.kind === "上架");
 	assert.ok(t && t.kind === "上架");
 	assert.deepEqual(t.propose.writes.map((w) => w.op), ["建商品", "上架"]);
 	assert.equal((t.propose.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
 	// 审过以后改了标题：要再审
-	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key, ok: true } }).steps.get("7")!.step, "待台湾审核");
-	// 审核挑出图的问题：给人删图
-	const bad = run({ ...l, audit: { key, ok: false, textIssues: [], images: [{ id: "m1", issues: ["「产品」是簡體"] }] } });
+	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待台湾审核");
+	// 审核挑出的问题带编号：文案的给 agent 改，图的给人删除或放行；人放行了文案那条、保留了那张图，就待批准
+	const issues = { key, textIssues: ["規格名有簡體字"], images: [{ id: "m1", issues: ["「产品」是簡體"] }], at: "t0" };
+	const bad = run({ ...l, audit: issues });
 	assert.equal(bad.steps.get("7")!.step, "台湾审核未通过");
-	assert.match(bad.inbox[0]!.detail, /m1：「产品」是簡體/);
+	assert.match(bad.inbox[0]!.detail, /2\. 图 m1：「产品」是簡體/);
+	assert.match(bad.inbox[0]!.detail, /x2 listing audit 7 --accept/);
+	assert.match(bad.todo.find((x) => x.kind === "写文案")!.why, /1\. 規格名有簡體字/);
+	assert.equal(run({ ...l, audit: { ...issues, accepted: [{ n: 1, at: "t1" }] } }).inbox.length, 1);
+	assert.equal(run({ ...l, audit: { ...issues, accepted: [{ n: 1, at: "t1" }] }, kept_images: ["m1"] }).steps.get("7")!.step, "待批准");
 	// 待批准、待上架、已上架、已放弃、已暂停
 	assert.equal(run(l, [{ op: "建商品", status: "待批准", params: { listingId: "7" } }]).steps.get("7")!.step, "待批准");
 	const built = run({ ...l, product_id: "51567712845" });
@@ -199,4 +204,24 @@ test("已移除的规格：按选项名（括号里的说明可以不写）或�
 	assert.deepEqual(kept.variants.map((x) => x.sku), ["LT1-00", "LT1-01"]);
 	assert.deepEqual(kept.optionImages, { "黑貓.jpg": "o1" });
 	assert.notEqual(auditKey(kept, "水印"), auditKey(all, "水印"));
+});
+
+test("台湾审核放行：问题按编号（先文案、后图）；文案的放行记在这次审核里，图的记进保留的图；每条都放行了算通过", () => {
+	const a = { key: "k", textIssues: ["規格名有簡體字"], images: [{ id: "m2", issues: ["「产品」是簡體"] }, { id: "d1", issues: ["「干」", "「发」"] }], at: "t0" };
+	assert.deepEqual(auditIssues(a).map((x) => [x.n, x.kind, x.text, x.image ?? null, x.status]), [
+		[1, "文案", "規格名有簡體字", null, "待处理"], [2, "图", "「产品」是簡體", "m2", "待处理"], [3, "图", "「干」；「发」", "d1", "待处理"],
+	]);
+	assert.equal(auditPassed(a), false);
+	assert.equal(auditPassed({ key: "k", textIssues: [], images: [], at: "t0" }), true);
+	const x = acceptIssues(a, [], [1, 3, 9], "t1");
+	assert.deepEqual(x.unknown, [9]);
+	assert.deepEqual(x.audit.accepted, [{ n: 1, at: "t1" }]);
+	assert.deepEqual(x.kept, ["d1"]);
+	assert.deepEqual(auditIssues(x.audit, x.kept).map((i) => i.status), ["已放行", "待处理", "已放行"]);
+	// 放行过的不再记一次
+	const y = acceptIssues(x.audit, x.kept, [2, 1], "t2");
+	assert.deepEqual([y.audit.accepted, y.kept, auditPassed(y.audit, y.kept)], [[{ n: 1, at: "t1" }], ["d1", "m2"], true]);
+	// 重审出来的是新的结果：文案的放行不带过去（措辞会变），保留的图跟着商品稿，还是不挡
+	const again = { key: "k2", textIssues: ["規格名有简体字"], images: [{ id: "d1", issues: ["「乾」寫成「干」"] }], at: "t3" };
+	assert.deepEqual(auditIssues(again, y.kept).map((i) => i.status), ["待处理", "已放行"]);
 });

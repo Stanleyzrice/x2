@@ -1,6 +1,8 @@
 // 台湾成品审核：建商品前 Gemini 看成品图（一次 4 张）和标题、描述、规格，挑简体字、错字、误译（台湾买家不喜欢简体字）。
 // 提示照 lilto 的 listing_content.audit_taiwan（快照 1c8a7926，第 2 版）：逐字抄问题原文，不把繁体先转简体再指控它是简体；
-// 实物上印的字保留原貌；本店水印已核准。每张图都要按 index 回结果，漏了就报错；挑出任何问题就挡下。按内容的哈希缓存（记在商品稿的 audit 里）
+// 实物上印的字保留原貌；本店水印已核准。每张图都要按 index 回结果，漏了就报错。按内容的哈希缓存（记在商品稿的 audit 里）。
+// 挑出的每条问题有编号（先文案、后图），改掉或人放行才算通过（docs/listing.md「台湾审核放行」）：文案的放行记在这次审核里，内容一变就重审、放行作废
+// （Gemini 每次的措辞不一样，不按原文对旧的放行）；图的放行记成商品稿的「保留的图」，以后审核再挑它也不挡
 import { createHash } from "node:crypto";
 import { geminiJson } from "../service/gemini.ts";
 import { fetchImage } from "../service/image.ts";
@@ -9,7 +11,12 @@ import type { Product } from "./product.ts";
 import { tiersOf } from "./variants.ts";
 
 export const AUDIT_VERSION = 2;
-export type Audit = { key: string; ok: boolean; textIssues: string[]; images: { id: string; issues: string[] }[]; at: string };
+/** 审核挑出问题的一张图 */
+export type AuditImage = { id: string; issues: string[] };
+/** 一次审核的结果。accepted：人放行的文案问题（编号、时间） */
+export type Audit = { key: string; textIssues: string[]; images: AuditImage[]; accepted?: { n: number; at: string }[]; at: string };
+/** 一条问题：编号从 1 起，先文案、后图。待处理的挡着审核 */
+export type AuditIssue = { n: number; kind: "文案" | "图"; text: string; image?: string; status: "待处理" | "已放行" };
 
 const PROMPT = (mark: string, content: unknown) => `審核台灣 Shopee 零售成品。全程使用繁體中文，逐字抄錄問題原文，不得把繁體原文先轉成簡體再指控它是簡體。
 核對標題、詳情、規格及圖片中的行銷文字是否繁體、通順，適合台灣消費者理解。只列明確錯字、簡體字、矛盾或難懂的誤譯；不因個人文風偏好、資訊可更詳細而拒絕。
@@ -41,7 +48,7 @@ export async function auditTaiwan(p: Product, mark: string): Promise<Audit> {
 	const ids = auditImages(p);
 	const content = { title: p.title, description: p.description, specs: tiersOf(p.variants).tiers.map((t) => ({ name: t.name, options: t.options.map((o) => o.name) })) };
 	const textIssues = new Set<string>();
-	const images: { id: string; issues: string[] }[] = [];
+	const images: AuditImage[] = [];
 	for (let i = 0; i < Math.max(ids.length, 1); i += 4) {
 		const batch = ids.slice(i, i + 4);
 		const bytes = await Promise.all(batch.map((id) => fetchImage(`${IMAGE}${id}`)));
@@ -52,5 +59,27 @@ export async function auditTaiwan(p: Product, mark: string): Promise<Audit> {
 		for (const t of r.textIssues) textIssues.add(t);
 		for (const x of r.images) if (x.issues.length && batch[x.index]) images.push({ id: batch[x.index]!, issues: x.issues });
 	}
-	return { key: auditKey(p, mark), ok: textIssues.size === 0 && images.length === 0, textIssues: [...textIssues], images, at: new Date().toISOString() };
+	return { key: auditKey(p, mark), textIssues: [...textIssues], images, at: new Date().toISOString() };
+}
+
+/** 审核结果 → 编号的问题。kept：保留的图（图片 id），挑出它也不挡 */
+export function auditIssues(a: Partial<Audit>, kept: Iterable<string> = []): AuditIssue[] {
+	const keep = new Set(kept), accepted = new Set((a.accepted ?? []).map((x) => x.n));
+	const text = (a.textIssues ?? []).map((t, i): AuditIssue => ({ n: i + 1, kind: "文案", text: t, status: accepted.has(i + 1) ? "已放行" : "待处理" }));
+	const images = (a.images ?? []).map((x, i): AuditIssue => ({ n: text.length + i + 1, kind: "图", text: x.issues.join("；"), image: x.id, status: keep.has(x.id) ? "已放行" : "待处理" }));
+	return [...text, ...images];
+}
+
+/** 审核通过：审过，每条问题都放行了（没挑出问题也算） */
+export const auditPassed = (a: Partial<Audit>, kept: Iterable<string> = []) => auditIssues(a, kept).every((x) => x.status !== "待处理");
+
+/** 人放行第几条（人说了，agent 替人记）：文案的记进这次审核的 accepted，图的记进保留的图。没有的编号回在 unknown 里 */
+export function acceptIssues(a: Audit, kept: string[], ns: number[], at: string): { audit: Audit; kept: string[]; unknown: number[] } {
+	const all = auditIssues(a, kept);
+	const pick = all.filter((x) => ns.includes(x.n) && x.status === "待处理");
+	return {
+		audit: { ...a, accepted: [...(a.accepted ?? []), ...pick.filter((x) => x.kind === "文案").map((x) => ({ n: x.n, at }))] },
+		kept: [...new Set([...kept, ...pick.filter((x) => x.kind === "图").map((x) => x.image!)])],
+		unknown: ns.filter((n) => !all.some((x) => x.n === n)),
+	};
 }

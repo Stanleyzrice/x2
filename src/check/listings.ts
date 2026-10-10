@@ -1,5 +1,5 @@
 // 检查商品稿（docs/listing.md「每一步怎样算做完」）：每份的当前步骤、要人做的进收件箱、agent 能做的进 todo。纯函数，读写库在 index.ts
-import { auditKey } from "../listing/audit.ts";
+import { auditIssues, auditKey } from "../listing/audit.ts";
 import type { Settings } from "../listing/make.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
@@ -54,14 +54,16 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			continue;
 		}
 		if (!l.audit || l.audit.key !== auditKey(r.product, s.mark?.text ?? "")) { set("待台湾审核"); toAudit.push(id); continue; }
-		if (!l.audit.ok) {
-			const text = (l.audit.textIssues ?? []) as string[], imgs = (l.audit.images ?? []) as { id: string; issues: string[] }[];
-			set("台湾审核未通过", [...text, ...imgs.flatMap((x) => x.issues)].slice(0, 3).join("；"));
-			if (text.length) toWrite.push({ id, why: `台湾审核挑出文案的问题：${text.join("；")}` });
+		// 审核挑出的问题：改掉，或人放行（文案的放行记在审核里，图的放行是保留的图）才算通过
+		const open = auditIssues(l.audit, l.kept_images ?? []).filter((x) => x.status === "待处理");
+		if (open.length) {
+			const text = open.filter((x) => x.kind === "文案"), imgs = open.filter((x) => x.kind === "图");
+			set("台湾审核未通过", open.slice(0, 3).map((x) => `${x.n}. ${x.text}`).join("；"));
+			if (text.length) toWrite.push({ id, why: `台湾审核挑出文案的问题：${text.map((x) => `${x.n}. ${x.text}`).join("；")}` });
 			if (imgs.length) inbox.push({
 				key: `listing-image:${id}`, kind: "商品稿", shop: l.shop, due: null, link: null,
 				title: `商品稿：${name}（${l.shop}）台湾审核挑出 ${imgs.length} 张图有问题`,
-				detail: `${imgs.map((x) => `· 图 ${x.id}：${x.issues.join("；")}`).join("\n")}\n\n在 NocoDB「商品稿」的主图、详情图里删除这几张，再审一次（x2 listing audit ${id}）`,
+				detail: `${imgs.map((x) => `${x.n}. 图 ${x.image}：${x.text}`).join("\n")}\n\n不用的图：在 NocoDB「商品稿」的主图、详情图里删除，再审一次（x2 listing audit ${id}）\n要用的图（误报或无妨）：告诉 agent 放行哪几条（x2 listing audit ${id} --accept 编号）`,
 			});
 			continue;
 		}

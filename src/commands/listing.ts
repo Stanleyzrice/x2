@@ -3,14 +3,15 @@
 // x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
-// x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）
+// x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）；挑出的问题有编号
+// x2 listing audit <商品稿> --accept <编号…>           放行审核挑出的问题（人看过说是误报或无妨，人说了才用）
 // x2 listing drop <商品稿> <选项名或货号…>             去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
 import { syncImages } from "../check/index.ts";
-import { db } from "../db/index.ts";
+import { db, type Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { make, settingsOf } from "../listing/make.ts";
-import { auditKey, auditTaiwan } from "../listing/audit.ts";
+import { acceptIssues, type Audit, type AuditIssue, auditIssues, auditKey, auditPassed, auditTaiwan } from "../listing/audit.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
 import { keptVariants, matchVariants } from "../listing/variants.ts";
@@ -98,6 +99,15 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "audit") {
+		const at = rest.indexOf("--accept");
+		if (at >= 0) {
+			const ids = rest.slice(0, at).filter((a) => !a.startsWith("--"));
+			const ns = rest.slice(at + 1).filter((a) => !a.startsWith("--")).flatMap((a) => a.split(/[,，、]/)).filter(Boolean);
+			if (ids.length !== 1 || !ns.length || ns.some((n) => !/^\d+$/.test(n))) throw new Usage("x2 listing audit <商品稿> --accept <编号…>（编号是审核结果里的；人说了才放行）");
+			await accept(sql, ids[0]!, ns.map(Number));
+			const audits = await audit(sql, ids);
+			return out(audits, audits.map(auditLine).join("\n"));
+		}
 		let ids = plain(rest);
 		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and title is not null order by id`).map((r) => r.id as string);
 		const audits = await audit(sql, ids);
@@ -127,26 +137,51 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	throw new Usage("x2 listing add | make | show | text | audit | drop | list（见 docs/listing.md）");
 }
 
-type AuditResult = { id: string; ok: boolean | null; cached?: boolean; issues: string[] };
-const auditLine = (a: AuditResult) => `商品稿 ${a.id} 台湾审核：${a.ok === null ? `审不了：${a.issues.join("；")}` : a.ok ? `通过${a.cached ? "（审过）" : ""}` : `未通过\n  ${a.issues.join("\n  ")}`}`;
+/** ok：通过；null 是审不了（problems 是原因） */
+type AuditResult = { id: string; ok: boolean | null; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
+const auditLine = (a: AuditResult) => {
+	if (a.ok === null) return `商品稿 ${a.id} 台湾审核：审不了：${(a.problems ?? []).join("；")}`;
+	const lines = a.issues.map((x) => `  ${x.n}. ${x.kind === "图" ? `图 ${x.image}` : "文案"}：${x.text}${x.status === "待处理" ? "" : `（${x.status}）`}`);
+	const hint = a.ok ? [] : [`  人看过说是误报或无妨的才放行：x2 listing audit ${a.id} --accept <编号…>`];
+	return [`商品稿 ${a.id} 台湾审核：${a.ok ? "通过" : "未通过"}${a.cached ? "（审过）" : ""}`, ...lines, ...hint].join("\n");
+};
+
+/** 现在这份商品稿：先把人在 NocoDB 删的图记下来（删了的不审），再组商品 */
+async function listingNow(sql: Sql, id: string) {
+	const [l] = await sql`select * from listings where id = ${id}`;
+	if (!l) return null;
+	await syncImages(sql, l);
+	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	const s = settingsOf(row);
+	return { l, mark: s.mark?.text ?? "", kept: (l.kept_images ?? []) as string[], r: productOf(l, s) };
+}
 
 /** 台湾成品审核：内容没变的不重审（审核键记在商品稿的 audit 里） */
-async function audit(sql: Awaited<ReturnType<typeof db>>, ids: string[]): Promise<AuditResult[]> {
+async function audit(sql: Sql, ids: string[]): Promise<AuditResult[]> {
 	const out: AuditResult[] = [];
 	for (const id of ids) {
-		const [l] = await sql`select * from listings where id = ${id}`;
-		if (!l) { out.push({ id, ok: null, issues: ["没有这份商品稿"] }); continue; }
-		const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
-		const s = settingsOf(row);
-		const r = productOf(l, s);
-		if (!r.product) { out.push({ id, ok: null, issues: r.problems }); continue; }
-		const mark = s.mark?.text ?? "";
-		if (l.audit?.key === auditKey(r.product, mark)) { out.push({ id, ok: Boolean(l.audit.ok), cached: true, issues: [...(l.audit.textIssues ?? []), ...((l.audit.images ?? []) as any[]).flatMap((x) => x.issues)] }); continue; }
-		console.error(`台湾成品审核：商品稿 ${id}`);
-		const a = await auditTaiwan(r.product, mark);
-		await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;
-		out.push({ id, ok: a.ok, issues: [...a.textIssues, ...a.images.flatMap((x) => x.issues.map((i) => `图 ${x.id}：${i}`))] });
+		const c = await listingNow(sql, id);
+		if (!c) { out.push({ id, ok: null, problems: ["没有这份商品稿"], issues: [] }); continue; }
+		if (!c.r.product) { out.push({ id, ok: null, problems: c.r.problems, issues: [] }); continue; }
+		let a = c.l.audit as Audit | null;
+		const cached = a?.key === auditKey(c.r.product, c.mark);
+		if (!cached) {
+			console.error(`台湾成品审核：商品稿 ${id}`);
+			a = await auditTaiwan(c.r.product, c.mark);
+			await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;
+		}
+		out.push({ id, ok: auditPassed(a!, c.kept), ...(cached ? { cached } : {}), issues: auditIssues(a!, c.kept) });
 	}
 	return out;
+}
+
+/** 放行（人说了才用）：编号是上次审核结果里的，内容变了就对不上，要先重审 */
+async function accept(sql: Sql, id: string, ns: number[]): Promise<void> {
+	const c = await listingNow(sql, id);
+	if (!c) throw new Usage(`没有商品稿 ${id}`);
+	if (!c.r.product || !c.l.audit || c.l.audit.key !== auditKey(c.r.product, c.mark)) throw new Usage(`商品稿 ${id} 的内容和上次审核时不一样，编号作废：先 x2 listing audit ${id}，照新的编号放行`);
+	const x = acceptIssues(c.l.audit, c.kept, ns, new Date().toISOString());
+	if (x.unknown.length) throw new Usage(`商品稿 ${id} 的审核结果里没有第 ${x.unknown.join("、")} 条（x2 listing audit ${id} 看编号）`);
+	await sql`update listings set audit = ${sql.json(x.audit as any)}, kept_images = ${sql.json(x.kept)}, updated_at = now() where id = ${id}`;
 }
 
