@@ -1,3 +1,6 @@
 node_modules/
 .env
 .DS_Store
+
+# Claude Code 子 agent 的临时工作目录
+.claude/worktrees/

@@ -39,7 +39,8 @@ export async function offer(offerId: string): Promise<Offer> {
 		const https = (u: unknown) => (typeof u === "string" ? u.replace(/^\/\//, "https://") : "");
 		const unescape = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 		const freight = m.detailDescription?.freightInfo ?? {};
-		const weightOf = (skuId: unknown) => Number(freight.skuWeight?.[String(skuId)]) || Number(freight.unitWeight) || null;
+		// 小于 20 克的当作没给（见过填 0.001 kg 的，照它核价会定得太低）：交给 agent 往重了估
+		const weightOf = (skuId: unknown) => { const w = Number(freight.skuWeight?.[String(skuId)]) || Number(freight.unitWeight) || null; return w !== null && w >= 0.02 ? w : null; };
 		let json = "";
 		try { json = JSON.stringify(m); } catch { /* 有循环引用就只看页面的字 */ }
 		const text = String(document.body?.innerText ?? "");
