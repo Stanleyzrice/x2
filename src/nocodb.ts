@@ -23,7 +23,7 @@ type View = { title: string; kanban?: string; gallery?: string; form?: { heading
 type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; attachments?: string[]; selects?: Record<string, readonly string[]>; views: View[] };
 
 /** 商品稿里给 x2 用的 JSON 列：视图里都藏起来 */
-const LISTING_JSON = ["offer", "images", "variants", "pricing", "audit", "attributes", "category_path", "category_id", "removed_images", "offer_read_at"];
+const LISTING_JSON = ["offer", "images", "variants", "pricing", "audit", "attributes", "category_path", "category_id", "removed_images", "removed_variants", "offer_read_at"];
 
 const COLORS = ["#cfdffe", "#d0f1fd", "#c2f5e9", "#d1f7c4", "#ffeab6", "#fee2d5", "#ffdce5", "#ffdaf6", "#ede2fe", "#eeeeee"];
 
@@ -86,7 +86,7 @@ export function tables(): Table[] {
 				title: "标题", shop: "店铺", step: "卡在哪一步", step_detail: "细节", main_images: "主图", variants_text: "规格和价格", category_name: "类目",
 				problems: "要人补的", weight_kg: "重量（kg，人填）", freight_rmb: "国内运费（元/件，人填）", description: "描述", detail_images: "详情图", attributes_text: "属性", days_to_ship: "备货天数",
 				strategy: "策略", cancelled: "不上了", note: "备注", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", listed_at: "上架于", id: "编号", created_at: "加入于", updated_at: "更新于",
-				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "台湾审核", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "删掉的图", offer_read_at: "读货源于",
+				offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "台湾审核", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id", removed_images: "删掉的图", removed_variants: "去掉的规格", offer_read_at: "读货源于",
 			},
 			views: [
 				{ title: "全部", sorts: [["id", "desc"]], hide: [...LISTING_JSON] },

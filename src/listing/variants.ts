@@ -28,6 +28,23 @@ export function variantsOf(offer: Offer): Variant[] {
 	}));
 }
 
+/** 去掉人不要的规格（removed_variants：货号） */
+export const keptVariants = <T extends Variant>(variants: T[], removed: unknown): T[] => {
+	const r = new Set((removed ?? []) as string[]);
+	return variants.filter((v) => !r.has(v.sku));
+};
+
+/** 人说的选项名（「定製」，括号里的说明可以不写）或货号 → 配上的规格的货号；配不上的名字回在 unknown 里 */
+export function matchVariants(variants: Variant[], names: string[]): { skus: string[]; unknown: string[] } {
+	const skus = new Set<string>(), unknown: string[] = [];
+	for (const name of names) {
+		const hit = variants.filter((v) => v.sku === name || v.specs.some((x) => x.value === name || clean(x.value) === name));
+		if (!hit.length) unknown.push(name);
+		for (const v of hit) skus.add(v.sku);
+	}
+	return { skus: [...skus], unknown };
+}
+
 const SIZE_LABEL = /尺[寸码碼]|size/i;
 const SIZE_CODE = /(?<![A-Z])(?:[2-6]XL|X{1,4}[SL]|[SML])(?![A-Z])/g;
 

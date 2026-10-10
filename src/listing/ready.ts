@@ -4,8 +4,9 @@ import type { Pics } from "./images.ts";
 import type { Settings } from "./make.ts";
 import { type Product, productInfo } from "./product.ts";
 import type { Priced } from "./make.ts";
+import { keptVariants } from "./variants.ts";
 
-/** 商品稿（库里的一行）→ 要建的商品；缺的写成问题。人删掉的图不用 */
+/** 商品稿（库里的一行）→ 要建的商品；缺的写成问题。人删掉的图、去掉的规格不用 */
 export function productOf(l: any, s: Settings): { product?: Product; info?: Record<string, unknown>; hash?: string; problems: string[] } {
 	const problems: string[] = [];
 	if (!l.offer) return { problems: ["还没做商品稿"] };
@@ -14,13 +15,14 @@ export function productOf(l: any, s: Settings): { product?: Product; info?: Reco
 	const pics = (l.images ?? {}) as Pics;
 	const removed = new Set<string>([...((l.removed_images ?? []) as string[])]);
 	const usable = (list: Pics["main"] = []) => list.filter((p) => !p.drop && p.imageId && !removed.has(p.imageId));
-	const variants = ((l.variants ?? []) as Priced[]).map((v) => ({ ...v }));
+	const variants = keptVariants((l.variants ?? []) as Priced[], l.removed_variants).map((v) => ({ ...v }));
 	if (variants.some((v) => v.priceTwd === null)) problems.push("有规格没定价");
 	if (!l.category_path?.length) problems.push("还没定类目");
 	if (!l.days_to_ship) problems.push("还没定备货天数");
 	if (problems.length) return { problems };
-	// 规格图被筛掉的选项不挂图
-	const optionImages = Object.fromEntries(usable(pics.options).map((p) => [p.from, p.imageId!]));
+	// 规格图被筛掉的选项不挂图；去掉的规格的图不审
+	const used = new Set(variants.map((v) => v.image));
+	const optionImages = Object.fromEntries(usable(pics.options).filter((p) => used.has(p.from)).map((p) => [p.from, p.imageId!]));
 	for (const v of variants) if (v.image && !optionImages[v.image]) v.image = null;
 	const product: Product = {
 		parentSku: `LT${l.offer_id}`, title: String(l.title), description: String(l.description), categoryPath: (l.category_path as unknown[]).map(Number),

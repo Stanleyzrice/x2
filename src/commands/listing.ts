@@ -4,6 +4,7 @@
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
 // x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）
+// x2 listing drop <商品稿> <选项名或货号…>             去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
 import { syncImages } from "../check/index.ts";
 import { db } from "../db/index.ts";
@@ -12,6 +13,7 @@ import { make, settingsOf } from "../listing/make.ts";
 import { auditKey, auditTaiwan } from "../listing/audit.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
+import { keptVariants, matchVariants } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
 
 const readStdin = async () => {
@@ -68,8 +70,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
 		const facts = {
 			id: String(l.id), shop: l.shop, offerTitle: l.offer?.title ?? null, category: l.category_name, attributes: l.attributes_text,
-			specs: ((l.variants ?? []) as any[]).map((v) => v.specs.map((x: any) => `${x.label}：${x.value}`).join("，") || "（单规格）"),
-			weights: [...new Set(((l.variants ?? []) as any[]).map((v) => v.weightKg))], tags: l.offer?.tags ?? null,
+			specs: keptVariants((l.variants ?? []) as any[], l.removed_variants).map((v) => v.specs.map((x: any) => `${x.label}：${x.value}`).join("，") || "（单规格）"),
+			weights: [...new Set(keptVariants((l.variants ?? []) as any[], l.removed_variants).map((v) => v.weightKg))], tags: l.offer?.tags ?? null,
 			title: l.title, description: l.description, problems: l.problems,
 		};
 		return out(facts, JSON.stringify(facts, null, 1));
@@ -102,12 +104,27 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(audits, audits.map(auditLine).join("\n") || "没有要审的商品稿");
 	}
 
+	if (sub === "drop") {
+		const [id, ...names] = plain(rest);
+		if (!id || !names.length) throw new Usage("x2 listing drop <商品稿> <选项名或货号…>");
+		const [l] = await sql`select variants, removed_variants, problems from listings where id = ${id}`;
+		if (!l) throw new Usage(`没有商品稿 ${id}`);
+		const live = keptVariants(l.variants ?? [], l.removed_variants);
+		const { skus, unknown } = matchVariants(live, names);
+		if (unknown.length) throw new Usage(`商品稿 ${id} 的规格里没有：${unknown.join("、")}（x2 listing show ${id} 看规格）`);
+		if (skus.length === live.length) throw new Usage("规格都去掉了：不上这个货源就在「商品稿」里勾「不上了」");
+		const removed = [...new Set([...(l.removed_variants ?? []), ...skus])];
+		await sql`update listings set removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
+		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再审）`;
+		return out({ id, dropped: skus, left: live.length - skus.length }, `商品稿 ${id}：去掉 ${skus.length} 个规格，还剩 ${live.length - skus.length} 个\n下一步：${next}`);
+	}
+
 	if (sub === "list") {
 		const rows = await sql`select id::text, shop, offer_id, strategy, title, step, step_detail, problems, product_id from listings where not cancelled order by id`;
 		return out(rows, rows.length ? rows.map((r) => `${r.id} ${r.shop} ${r.offer_id} ${r.step ?? "（还没检查）"}${r.title ? `「${r.title}」` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | make | show | text | audit | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | make | show | text | audit | drop | list（见 docs/listing.md）");
 }
 
 type AuditResult = { id: string; ok: boolean | null; cached?: boolean; issues: string[] };

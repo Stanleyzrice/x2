@@ -8,7 +8,7 @@ import { attributes as attributeTree, type Category, categoryTree, recommendedCa
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
-import { type Variant, variantsOf } from "./variants.ts";
+import { keptVariants, type Variant, variantsOf } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
 
 /** 店铺设置（库里的一行）→ 核价参数、水印、上品的默认值 */
@@ -97,9 +97,9 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	if (o.minQty > 1) problems.push(`货源：起订量 ${o.minQty}，一件一件买不了`);
 
 	// 2. 规格、核价
-	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填
+	// 国内运费：人填的；没填就用 1688 页面上寄到我们这里买 1 件的运费（包邮是 0）；都没有才要人填。人去掉的规格不要
 	const freight = l.freight_rmb !== null ? Number(l.freight_rmb) : o.freight?.costRmb ?? (o.tags?.freeShipping ? 0 : null);
-	const priced = priceVariants(variantsOf(o), s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
+	const priced = priceVariants(keptVariants(variantsOf(o), l.removed_variants), s, { weightKg: l.weight_kg !== null ? Number(l.weight_kg) : null, freightRmb: freight });
 	problems.push(...priced.problems);
 
 	// 3. 图、类目、属性、备货天数：在这家店的浏览器里

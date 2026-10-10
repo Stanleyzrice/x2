@@ -30,7 +30,7 @@ test("核价：两道门都过的最小整数售价（和 lilto 的验算、真�
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
-import { tiersOf, uniqueNames, type Variant, variantsOf } from "../src/listing/variants.ts";
+import { matchVariants, tiersOf, uniqueNames, type Variant, variantsOf } from "../src/listing/variants.ts";
 
 const v = (specs: [string, string][], image: string | null = null): Variant => ({ sku: "", skuId: "", specId: "", specs: specs.map(([label, value]) => ({ label, value })), costRmb: 1, stock: 9, weightKg: 0.3, image });
 
@@ -186,4 +186,17 @@ test("商品稿的检查：卡在哪一步、要人补的进收件箱、agent �
 	assert.equal(run({ ...l, listed_at: new Date() }).steps.get("7")!.step, "已上架");
 	assert.equal(run({ ...l, cancelled: true }).steps.get("7")!.step, "不上了");
 	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "暂停上品");
+});
+
+test("去掉的规格：按选项名（括号里的说明可以不写）或货号配；去掉以后不上、规格图不审、要再审", () => {
+	const s = settingsOf(shopRow);
+	const sizes = ["40*60", "60*90cm（升級版）"];
+	const variants = ["黑貓", "定製"].flatMap((c, i) => sizes.map((z, j) => ({ ...v([["顏色", c], ["尺寸", z]], `${c}.jpg`), sku: `LT1-${i}${j}`, priceTwd: 133 })));
+	assert.deepEqual(matchVariants(variants, ["定製", "60*90cm", "LT1-00", "藍色"]), { skus: ["LT1-10", "LT1-11", "LT1-01", "LT1-00"], unknown: ["藍色"] });
+	const images = { main: [pic("m1")], detail: [], options: [pic("o1", "黑貓.jpg"), pic("o2", "定製.jpg")], waiting: [] };
+	const all = productOf(ready({ variants, images }), s).product!;
+	const kept = productOf(ready({ variants, images, removed_variants: ["LT1-10", "LT1-11"] }), s).product!;
+	assert.deepEqual(kept.variants.map((x) => x.sku), ["LT1-00", "LT1-01"]);
+	assert.deepEqual(kept.optionImages, { "黑貓.jpg": "o1" });
+	assert.notEqual(auditKey(kept, "水印"), auditKey(all, "水印"));
 });

@@ -296,6 +296,8 @@ alter table sources add column if not exists sku_exceptions text;
 
 -- 商品稿里人删掉的图（Shopee 的图片 id）：人在 NocoDB 的「主图」「详情图」里删了附件，x2 记在这里，再做商品稿也不用它
 alter table listings add column if not exists removed_images jsonb not null default '[]';
+-- 商品稿里人去掉的规格（货号，例 店里接不了的「定製」）：人说了，agent 用 x2 listing drop 写；再做商品稿也不要它
+alter table listings add column if not exists removed_variants jsonb not null default '[]';
 -- 商品稿的店铺不用外键（NocoDB 会把外键变成关联列，表单里就不能直接选店）；x2 做商品稿时核对店铺设置里有没有这家店
 alter table listings drop constraint if exists listings_shop_fkey;
 -- NocoDB 的附件是 JSON 文本（它写回来的也是文本）
