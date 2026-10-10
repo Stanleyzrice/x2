@@ -50,7 +50,7 @@ export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: 
 
 /** 当前步骤：按流程排（看板的列也是这个顺序） */
 export const STEPS = [
-	"缺货源", "规格不匹配", "待加购", "加购待批准", "待付款", "待预报", "预报待批准", "待到齐", "有到货问题", "待打包", "待 chanboss 收货", "待 chanboss 打包",
+	"缺货源", "规格不匹配", "待加购", "加购待批准", "待 1688 付款", "待预报", "预报待批准", "待到齐", "有到货问题", "待打包", "待 chanboss 收货", "待 chanboss 打包",
 	"外部采购", "已打包", "已取消",
 ] as const;
 
@@ -162,7 +162,7 @@ export function checkOrders(s: Snapshot): Result {
 			stepDetail = bad.map((x) => label(x.i)).join("、");
 		}
 		else if (!carted && !paid) step = sources.some((x) => flying.has(`${o.sn}:${x.i.modelId}`)) ? "加购待批准" : "待加购";
-		else if (!paid) step = "待付款";
+		else if (!paid) step = "待 1688 付款";
 		else if (needsBuy) step = forecastFlying.has(o.sn) ? "预报待批准" : "待预报";
 		else if (destination === "寄到我们这里") {
 			const missing = sources.filter((x) => !(x.line?.purchases ?? []).every((p) => p.signed)).map((x) => label(x.i));

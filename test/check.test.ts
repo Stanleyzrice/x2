@@ -49,12 +49,12 @@ test("货源齐了、待加购：agent 准备一行加购，同一个货源的�
 	assert.equal(r.inbox.length, 0);
 });
 
-test("加购了在购物车里：收件箱「付款」，订单停在待付款", () => {
+test("加购了在购物车里：收件箱「付款」，订单停在待 1688 付款", () => {
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }] }));
 	const pay = r.inbox.find((i) => i.key === "pay:A");
 	assert.ok(pay);
 	assert.match(pay.title, /「采购员」的购物车里 2 张订单的货 ¥30\.00/);
-	assert.equal(r.orders.get("2")!.step, "待付款");
+	assert.equal(r.orders.get("2")!.step, "待 1688 付款");
 	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
 });
 
