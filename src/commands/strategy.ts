@@ -1,6 +1,6 @@
 // x2 strategy：选品的策略（docs/listing.md「策略」）。agent 定策略、做实验；每份商品稿记下从哪个策略来，按策略看效果。
 // x2 strategy add <名字> --bet "假设" --how "选品方法"   记一个策略（试验中）
-// x2 strategy set <名字> --status 使用中|已停用|试验中 [--note …]
+// x2 strategy set <名字> [--status 使用中|已停用|试验中] [--bet "假设"] [--how "选品方法"] [--note …]   改状态，或者边试边改假设、选法
 // x2 strategy list                                     每个策略出了几份商品稿、上架了几个
 import { db } from "../db/index.ts";
 import { Usage } from "../errors.ts";
@@ -19,16 +19,19 @@ export async function strategyCommand(args: string[], json: boolean): Promise<vo
 		if (!name || !bet || !how) throw new Usage(`x2 strategy add <名字> --bet "假设" --how "选品方法"`);
 		const [r] = await sql`insert into strategies (name, bet, how, note) values (${name}, ${bet}, ${how}, ${flag(rest, "--note") ?? null})
 			on conflict (name) do nothing returning name`;
-		if (!r) throw new Usage(`已经有策略「${name}」了：改状态用 x2 strategy set`);
+		if (!r) throw new Usage(`已经有策略「${name}」了：改状态、假设、选法用 x2 strategy set`);
 		return out({ name, bet, how, status: "试验中" }, `记下策略「${name}」（试验中）。上它选出来的货源：x2 listing add <店> <链接…> --strategy ${name}`);
 	}
 
 	if (sub === "set") {
-		const status = flag(rest, "--status"), note = flag(rest, "--note");
-		if (!name || (status && !STATUS.includes(status)) || (!status && note === undefined)) throw new Usage(`x2 strategy set <名字> --status ${STATUS.join("|")} [--note …]`);
-		const r = await sql`update strategies set status = coalesce(${status ?? null}, status), note = coalesce(${note ?? null}, note), updated_at = now() where name = ${name} returning name`;
+		const status = flag(rest, "--status"), note = flag(rest, "--note"), bet = flag(rest, "--bet"), how = flag(rest, "--how");
+		const usage = `x2 strategy set <名字> [--status ${STATUS.join("|")}] [--bet "假设"] [--how "选品方法"] [--note …]`;
+		if (!name || (status && !STATUS.includes(status)) || [status, note, bet, how].every((x) => x === undefined) || bet === "" || how === "") throw new Usage(usage);
+		const r = await sql`update strategies set status = coalesce(${status ?? null}, status), note = coalesce(${note ?? null}, note),
+			bet = coalesce(${bet ?? null}, bet), how = coalesce(${how ?? null}, how), updated_at = now() where name = ${name} returning name`;
 		if (!r.length) throw new Usage(`没有策略「${name}」`);
-		return out({ name, status, note }, `策略「${name}」：${status ?? "（状态不变）"}${note ? `，备注：${note}` : ""}`);
+		const changed = [status && `状态 ${status}`, bet && `假设：${bet}`, how && `选品方法：${how}`, note && `备注：${note}`].filter(Boolean);
+		return out({ name, status, bet, how, note }, `策略「${name}」改了：${changed.join("；")}`);
 	}
 
 	if (sub === "list") {

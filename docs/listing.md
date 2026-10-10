@@ -175,7 +175,7 @@ x2 listing list                                    每份商品稿的简称、�
 
 ```
 x2 strategy add <名字> --bet "假设" --how "选品方法"
-x2 strategy set <名字> --status 使用中|已停用|试验中 [--note …]
+x2 strategy set <名字> [--status 使用中|已停用|试验中] [--bet …] [--how …] [--note …]   改状态，或者边试边改假设、选法
 x2 strategy list                      每个策略出了几份商品稿、上架了几个
 ```
 
