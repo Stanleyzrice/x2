@@ -29,8 +29,8 @@ export async function run(sql: Sql, opts: { batch?: string; tryOps?: string[] } 
 	const stuckBatches = new Set<string>(), stuckTargets = new Set<string>();
 	let blocked: string | null = null;
 
-	// 2. 核清
-	const unsure = await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') order by id` as unknown as Row[];
+	// 2. 核清（给了批次只核这一批的：做商品稿时译图跑自己那一批，不顺带去读 1688 的购物车）
+	const unsure = await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') ${opts.batch ? sql`and batch = ${opts.batch}` : sql``} order by id` as unknown as Row[];
 	for (const w of unsure) {
 		const op = ops[w.op];
 		if (!op) continue;

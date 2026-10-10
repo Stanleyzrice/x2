@@ -8,7 +8,10 @@ import { z } from "zod";
 import { buyAccount, in1688 } from "../accounts.ts";
 import type { Sql } from "../db/index.ts";
 import { current } from "../check/index.ts";
+import { db } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
+import { fetchImage } from "../service/image.ts";
+import { translate } from "../service/xiangji.ts";
 import { addToCart, cart as readCart, type CartLine, Gone, offer as readOffer } from "./1688.ts";
 import { forecast, NO_TRACKING, orders as chanbossOrders } from "./chanboss.ts";
 
@@ -155,4 +158,52 @@ const forecastOp: WriteOp<ForecastP> = {
 	},
 };
 
-export const WRITES: Record<string, WriteOp> = { 加购: cart, 预报: forecastOp };
+const translateParams = z.object({ items: z.array(z.object({ sha: z.string(), url: z.string() })).min(1).max(5) });
+type TranslateP = z.infer<typeof translateParams>;
+
+/** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）或 { failed }（象寄说译不成） */
+export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; saved: boolean }>> {
+	const rows = await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
+	return new Map(rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, saved: Boolean(r.saved) }]));
+}
+
+/** 象寄的地址大约 80 天失效：拿到就取回来存进库 */
+export async function saveTranslation(sql: Sql, origin: string, url: string): Promise<void> {
+	const b = await fetchImage(url);
+	await sql`insert into images ${sql({ sha256: b.sha256, kind: "译图", source: url, from_sha: origin, mime: b.mime, width: b.width, height: b.height, bytes: Buffer.from(b.bytes) })} on conflict (sha256) do nothing`;
+}
+
+/** 译图：交象寄把图上的简体字译成繁体（docs/listing.md「图」）。交一次收一次钱：先记意图再交；象寄说译不成的记在原图上（那张图不用了）；
+ * 答复里没有的、没拿到答复的是结果未知，不重交。做商品稿时自动批准、马上执行（一张约 0.025 元） */
+const translateOp: WriteOp<TranslateP> = {
+	describe: "交象寄把图上的简体字译成繁体（收费）",
+	params: translateParams,
+	target: (p) => `xiangji:${p.items.map((i) => i.sha.slice(0, 12)).join(",")}`,
+	key: (p) => `xiangji:${p.items.map((i) => i.sha).sort().join(",")}`,
+	display: (p) => `译图 ${p.items.length} 张`,
+	where: (_sql, _p, fn) => fn(),
+	async prepare(sql, p) {
+		const state = await translationState(sql, p.items.map((i) => i.sha));
+		const items = p.items.filter((i) => !state.has(i.sha));
+		return items.length ? { params: { items }, before: {} } : { skip: "这几张都译过了" };
+	},
+	async submit(sql, p) {
+		const r = await translate(p.items.map((i) => i.url));
+		if (r.kind !== "done") return r;
+		const shaOf = new Map(p.items.map((i) => [i.url, i.sha]));
+		const at = new Date().toISOString();
+		for (const t of r.results) await sql`update images set checks = checks || ${sql.json({ 译图: { url: t.url, at } })} where sha256 = ${shaOf.get(t.origin)!}`;
+		for (const f of r.failed) await sql`update images set checks = checks || ${sql.json({ 译图: { failed: f.why, at } })} where sha256 = ${shaOf.get(f.origin)!}`;
+		// 记下了地址再取图：取不回来下次照地址再取，不用再付钱
+		for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
+		if (r.missing.length) return { kind: "unknown", why: `象寄的答复里没有 ${r.missing.length} 张（不知道扣没扣钱）` };
+		return { kind: "done", data: { translated: r.results.length, failed: r.failed } };
+	},
+	async check(p) {
+		const state = await translationState(await db(), p.items.map((i) => i.sha));
+		const done = p.items.every((i) => state.get(i.sha)?.url || state.get(i.sha)?.failed || state.get(i.sha)?.saved);
+		return { done: done ? true : null, readback: Object.fromEntries(state) };
+	},
+};
+
+export const WRITES: Record<string, WriteOp> = { 加购: cart, 预报: forecastOp, 译图: translateOp };

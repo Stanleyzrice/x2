@@ -4,6 +4,7 @@
 // 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先回读）
 import "../src/env.ts";
 import { dbCommand } from "../src/commands/db.ts";
+import { listingCommand } from "../src/commands/listing.ts";
 import { approveCommand, proposeCommand, runCommand, status } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
 import { nocodbCommand } from "../src/commands/nocodb.ts";
@@ -21,6 +22,7 @@ const commands: Record<string, () => Promise<void>> = {
 	approve: () => approveCommand(args, json),
 	run: () => runCommand(args, json),
 	source: () => sourceCommand(args, json),
+	listing: () => listingCommand(args, json),
 	db: () => dbCommand(args, json),
 	nocodb: () => nocodbCommand(args, json),
 	schema: async () => schema(),
@@ -35,7 +37,13 @@ const help = [
 	"  x2 run [--batch N] [--try 操作]  执行批准了的写入：先核清结果未知的，再一个一个做、读回来",
 	"  x2 source [商品…] [--url 链接]   给店里的商品找货源（以图搜图）；不给商品就找检查算出来缺的",
 	"  x2 source <商品> --spec \"店里的规格名 = 货源的规格名\"   记下人定的规格例外（按名字配不上时）",
-	"  x2 db migrate | import          建表；把 ~/x2 的 JSON 迁进库（只用一次）",
+	"上品（见 docs/listing.md）：",
+	"  x2 listing add <店> <1688 链接…>  要上的货源（--strategy 名字：从哪个策略来）",
+	"  x2 listing make [商品稿…]         做商品稿：读货源、规格和核价、图（筛字、译图、水印、传图）、类目属性",
+	"  x2 listing show <商品稿>          写文案要用的事实",
+	"  x2 listing text <商品稿> --title … --description …   agent 写的标题和描述",
+	"  x2 listing list                  所有商品稿走到哪了",
+	"  x2 db migrate | import | import-shops   建表；把 ~/x2 的 JSON、lilto 的店铺设置迁进库（只用一次）",
 	"  x2 nocodb                       按 docs/loop.md「视图」建 NocoDB：连库、中文名、视图（可以重复跑）",
 	"读站点（只读）：",
 	...sitesHelp(),
