@@ -31,7 +31,7 @@ x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_N
 
 ```sh
 x2 listing add cheeroutdoor <1688 链接>   # 添加货源：一个货源 × 一家店一份商品稿
-x2 listing make                         # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 水印 → 传图）、类目属性
+x2 listing make                         # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 译图检查 → 水印 → 传图）、类目属性
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description …   # agent 写的标题和描述，写完马上台湾成品审核
 x2 listing list                         # 每份商品稿的当前步骤

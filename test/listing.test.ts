@@ -140,7 +140,8 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 });
 
 import { checkListings } from "../src/check/listings.ts";
-import { acceptIssues, auditIssues, auditKey, auditPassed } from "../src/listing/audit.ts";
+import { acceptIssues, auditDropped, auditIssues, auditKey, auditPassed, dispose, dropAudited, restoreAudited, roleOf } from "../src/listing/audit.ts";
+import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
 import { settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
 
@@ -224,4 +225,68 @@ test("台湾审核放行：问题按编号（先文案、后图）；文案的�
 	// 重审出来的是新的结果：文案的放行不带过去（措辞会变），保留的图跟着商品稿，还是不挡
 	const again = { key: "k2", textIssues: ["規格名有简体字"], images: [{ id: "d1", issues: ["「乾」寫成「干」"] }], at: "t3" };
 	assert.deepEqual(auditIssues(again, y.kept).map((i) => i.status), ["待处理", "已放行"]);
+});
+
+test("台湾审核挑出的图：印在商品上的、保留的图只记备注；后加的文案，详情图和不是封面的主图 x2 去掉，封面、规格图留给人", () => {
+	assert.equal(dispose("印在商品上", "封面", false, true), "备注");
+	assert.equal(dispose("后加的文案", "详情图", true, true), "备注");
+	assert.equal(dispose("后加的文案", "详情图", false, true), "已去掉");
+	assert.equal(dispose("后加的文案", "主图", false, true), "已去掉");
+	assert.equal(dispose("后加的文案", "封面", false, true), "待处理");
+	assert.equal(dispose("后加的文案", "规格图", false, true), "待处理");
+	// 已经再审了两轮、没问出字在哪：留给人
+	assert.equal(dispose("后加的文案", "详情图", false, false), "待处理");
+	assert.equal(dispose(null, "详情图", false, true), "待处理");
+	// 图在商品里是什么：同一张图在几处的，封面 > 规格图 > 主图 > 详情图
+	const p = productOf(ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("o1", "o1b.jpg")], options: [pic("o1", "k.jpg")], waiting: [] } }), settingsOf(shopRow)).product!;
+	assert.deepEqual(["m1", "m2", "d1", "o1"].map((id) => roleOf(p, id)), ["封面", "主图", "详情图", "规格图"]);
+	assert.equal(roleOf({ ...p, images: ["o1"] }, "o1"), "封面");
+});
+
+test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图），商品里不用它，记进审核结果；人放行了放回来", () => {
+	const s = settingsOf(shopRow);
+	const pics: Pics = { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("m2", "m2b.jpg"), { ...pic("d9"), drop: "超过张数，不用" }], options: [pic("o1", "k.jpg")], waiting: [] };
+	const dropped = dropAudited(pics, [{ id: "m2", issues: ["「产品」是簡體", "「质量」"] }, { id: "d9", issues: ["「干」"] }]);
+	assert.deepEqual([...dropped.main, ...dropped.detail].map((x) => x.drop ?? null), [null, "台湾审核：「产品」是簡體；「质量」", null, "台湾审核：「产品」是簡體；「质量」", "超过张数，不用"]);
+	assert.equal(pics.main[1]!.drop, undefined);
+	assert.deepEqual(productOf(ready({ images: dropped }), s).product!.images, ["m1"]);
+	assert.deepEqual(auditDropped(dropped), [{ id: "m2", issues: ["「产品」是簡體；「质量」"], where: "后加的文案", role: "主图", action: "已去掉" }]);
+	assert.deepEqual(restoreAudited(dropped, ["m2", "d9"]), pics);
+	// 审核结果里：去掉的、印在商品上的不挡；封面上后加的文案待处理，放行就是保留的图；放行去掉的图要放回来
+	const a = { key: "k", textIssues: [], at: "t0", images: [
+		...auditDropped(dropped),
+		{ id: "o1", issues: ["地墊上的「浴水生财」"], where: "印在商品上" as const, role: "规格图" as const, action: "备注" as const },
+		{ id: "m1", issues: ["「随心定制」"], where: "后加的文案" as const, role: "封面" as const, action: "待处理" as const },
+	] };
+	assert.deepEqual(auditIssues(a).map((x) => [x.n, x.role, x.where, x.status]), [[1, "主图", "后加的文案", "已去掉"], [2, "规格图", "印在商品上", "不算问题"], [3, "封面", "后加的文案", "待处理"]]);
+	assert.deepEqual([auditPassed(a), auditPassed(a, ["m1"])], [false, true]);
+	const x = acceptIssues(a, [], [1, 2], "t1");
+	assert.deepEqual([x.kept, x.restore, x.unknown], [["m2"], ["m2"], []]);
+});
+
+test("检查：x2 处理过的图不挡；封面、规格图上后加的文案进收件箱，写着换掉或放行", () => {
+	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
+	const l = ready();
+	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!, "新新家居日用好物賣場");
+	const done = [{ id: "d1", issues: ["「干」"], where: "后加的文案", role: "详情图", action: "已去掉" }, { id: "o1", issues: ["「浴水生财」"], where: "印在商品上", role: "规格图", action: "备注" }];
+	assert.equal(checkListings([{ ...l, audit: { key, textIssues: [], images: done } }], s, []).steps.get("7")!.step, "待批准");
+	const cover = checkListings([{ ...l, audit: { key, textIssues: [], images: [...done, { id: "m1", issues: ["「随心定制」"], where: "后加的文案", role: "封面", action: "待处理" }] } }], s, []);
+	assert.equal(cover.steps.get("7")!.step, "台湾审核未通过");
+	assert.equal(cover.inbox.length, 1);
+	assert.match(cover.inbox[0]!.detail, /^3\. 封面 m1：「随心定制」/);
+	assert.match(cover.inbox[0]!.detail, /换掉：.*\n放行.*--accept/);
+});
+
+test("译图检查：象寄改了商品上的字、还有简体字、转错的字，这张不用；模型说的简体字、错字要在它抄的字里，还要过 OpenCC", () => {
+	const c = (o: Partial<TranslatedCheck>): TranslatedCheck => ({ text: [], simplified: [], wrong: [], productText: [], ...o });
+	assert.equal(translatedDrop(c({ text: ["一衝即淨"] })), null);
+	assert.equal(translatedDrop(c({ productText: ["生财！ → 生財！"] })), "象寄改了商品上印的字：生财！ → 生財！");
+	// 简体字：模型把原图的字当成译图的、把繁体当成简体的不算；台湾也用的「台」不算
+	assert.equal(translatedDrop(c({ text: ["雙面防滑", "矩阵防滑纹理"], simplified: ["矩阵", "纹理"] })), "译图还有简体字：矩阵、纹理");
+	assert.equal(translatedDrop(c({ text: ["賦予空間自然流暢氣質"], simplified: ["赋予", "空间"] })), null);
+	assert.equal(translatedDrop(c({ text: ["科技絨浴室地墊", "台灣出貨"], simplified: ["科技絨浴室地墊", "台灣"] })), null);
+	// 转错的字：同一个简体字选错了繁体（干 → 幹，应为乾）；异体字、换说法、英文不算，它没抄到的不算
+	assert.equal(translatedDrop(c({ text: ["至好の方式快速吸水易幹"], wrong: ["易幹 → 易乾"] })), "译图有转错的字：易幹 → 易乾");
+	assert.equal(translatedDrop(c({ text: ["較頑固汙漬", "質量問題", "防滑 S", "瞬吸快乾"], wrong: ["汙 → 污", "質量 → 品質", "防滑 S → 防滑 vs", "瞬吸快幹 → 瞬吸快乾"] })), null);
+	assert.equal(translatedDrop(c({ text: ["易幹"], wrong: ["易幹 → 易乾"], productText: ["浴水 → 重画"] })), "象寄改了商品上印的字：浴水 → 重画；译图有转错的字：易幹 → 易乾");
 });

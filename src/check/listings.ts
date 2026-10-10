@@ -54,7 +54,8 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			continue;
 		}
 		if (!l.audit || l.audit.key !== auditKey(r.product, s.mark?.text ?? "")) { set("待台湾审核"); toAudit.push(id); continue; }
-		// 审核挑出的问题：改掉，或人放行（文案的放行记在审核里，图的放行是保留的图）才算通过
+		// 审核挑出的问题：改掉，或人放行（文案的放行记在审核里，图的放行是保留的图）才算通过。
+		// 挑出的图 x2 先处理（印在商品上的不算、详情图上后加的文案去掉），剩下的（多是封面、规格图）给人：换掉或放行
 		const open = auditIssues(l.audit, l.kept_images ?? []).filter((x) => x.status === "待处理");
 		if (open.length) {
 			const text = open.filter((x) => x.kind === "文案"), imgs = open.filter((x) => x.kind === "图");
@@ -63,7 +64,7 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			if (imgs.length) inbox.push({
 				key: `listing-image:${id}`, kind: "商品稿", shop: l.shop, due: null, link: null,
 				title: `商品稿：${name}（${l.shop}）台湾审核挑出 ${imgs.length} 张图有问题`,
-				detail: `${imgs.map((x) => `${x.n}. 图 ${x.image}：${x.text}`).join("\n")}\n\n不用的图：在 NocoDB「商品稿」的主图、详情图里删除，再审一次（x2 listing audit ${id}）\n要用的图（误报或无妨）：告诉 agent 放行哪几条（x2 listing audit ${id} --accept 编号）`,
+				detail: `${imgs.map((x) => `${x.n}. ${x.role ?? "图"} ${x.image}：${x.text}`).join("\n")}\n\n换掉：主图、详情图在 NocoDB「商品稿」里删除（封面删了，下一张主图当封面）；规格图换不了，不要这个规格就告诉 agent（x2 listing drop）\n放行（误报或无妨，这张要用）：告诉 agent 放行哪几条（x2 listing audit ${id} --accept 编号）`,
 			});
 			continue;
 		}

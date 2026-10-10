@@ -1,9 +1,10 @@
 // 一份商品稿的图（docs/listing.md「图」）：收图 → 取字节、量尺寸、剔掉占位图 → 筛字（Gemini）→ 要译的交象寄（写入「译图」）
-// → 本店水印 → 看成品（Gemini）→ 传 Shopee。都按字节的 sha256 记在 images、shop_images 表里：重跑不重复付钱、不重复传。
+// → 译图检查（Gemini 比原图和译图）→ 本店水印 → 看成品（Gemini）→ 传 Shopee。都按字节的 sha256 记在 images、shop_images 表里：重跑不重复付钱、不重复传。
 // 在这家店的浏览器里跑（水印在页面的 canvas 里画，传图用页面的 UploadService）
+import * as OpenCC from "opencc-js";
 import { type Sql } from "../db/index.ts";
 import { run } from "../run.ts";
-import { geminiJson, model } from "../service/gemini.ts";
+import { geminiJson, type Image, model } from "../service/gemini.ts";
 import { type Bytes, fetchImage, inspect } from "../service/image.ts";
 import { uploadImages } from "../site/shopee/products.ts";
 import { saveTranslation, translationState } from "../site/writes.ts";
@@ -34,6 +35,67 @@ async function screened(sql: Sql, b: Bytes): Promise<{ verdict: Verdict; simplif
 	const r = await screen(b);
 	const c = { verdict: r.verdict, ...(r.simplified === undefined ? {} : { simplified: r.simplified }) };
 	await sql`update images set verdict = ${r.verdict}, checks = checks || ${sql.json({ [key]: c })} where sha256 = ${b.sha256}`;
+	return c;
+}
+
+// 译图检查：原图和译图一起交给 Gemini，问两件事：译图上后加的文案还有没有简体字（象寄漏译的，和简转繁选错的字，例 易干 → 易幹）；
+// 商品本体上印的字有没有被象寄改动（象寄的接口没有「商品上的字不译」的选项，一张图上两样都有时它会连商品上的字一起改，照片里的商品就和买家收到的不一样了）。
+// 任何一样有，这张不用。默认模型分不清繁简（会把繁体当简体、把原图的字当成译图的），所以先让它照抄译图上的字，
+// 它说的简体字、错字由代码用 OpenCC 把关：要在它抄的字里，而且真是简体、真是同一个简体字选错了繁体（不是异体字、不是换了说法）
+export const TRANSLATED_VERSION = 1;
+export const TRANSLATED_PROMPT = `第一张是原图，第二张是译图（要上架的图）：象寄把原图上的简体中文译成繁体，得到第二张。只返回JSON：
+text：第二张（译图）上后加的文案（标题、卖点、说明、参数、标签、角标），一段一段照第二张上的原样抄；不要抄第一张，不要顺手改字，商品本体上印的字不抄。
+simplified：text 里还是简体的字所在的词（例 「工艺」的「艺」是简体，繁体是「藝」）。繁简写法一样的字不算（例 打理方便、科技）；繁体、日文、英文、数字不算。没有则[]。
+wrong：text 里简转繁选错的字所在的词：同一个简体字对应几个繁体字，按意思选错了（例 「易干」是容易乾，要写成「易乾」，写成「易幹」是错的）。每条写「错的词 → 对的词」，两边只差选错的字；异体字（例 汙和污、裡和裏）、用词的不同、英文、数字、符号都不算。没有则[]。
+productText：商品本体上印的字被象寄改动的地方，每处写「原图的字 → 译图的字」（被涂掉写「原图的字 → 涂掉」，字没变、被重画的写「原图的字 → 重画」）。商品本体上印的字是印在实物表面、跟着实物的形状和材质走的字：地垫印花图案里的字、瓶身标签、包装印刷、表盘铭牌。后加在图上的圆圈、方框、色块里的说明标签、角标、标题不是商品本体，它们译成繁体是对的，不要列。商品上的字和原图一模一样（字、字体、位置都没变）则[]。
+数组为空才算没有。`;
+const TRANSLATED_FIELDS = ["text", "simplified", "wrong", "productText"] as const;
+const TRANSLATED_SCHEMA = { type: "object", properties: Object.fromEntries(TRANSLATED_FIELDS.map((k) => [k, { type: "array", items: { type: "string" } }])), required: TRANSLATED_FIELDS };
+export type TranslatedCheck = Record<(typeof TRANSLATED_FIELDS)[number], string[]>;
+
+let cc: { traditional: ((s: string) => string)[]; simplified: (s: string) => string; variant: ((s: string) => string)[] } | null = null;
+const opencc = () => (cc ??= {
+	traditional: (["t", "tw", "hk"] as const).map((to) => OpenCC.Converter({ from: "cn", to })),
+	simplified: OpenCC.Converter({ from: "t", to: "cn" }),
+	variant: [OpenCC.Converter({ from: "t", to: "tw" }), OpenCC.Converter({ from: "tw", to: "t" })],
+});
+/** 词里有简体字：三种繁体（OpenCC 标准、台湾、香港）都要改它。台湾也用的字（台、群）、异体字不算 */
+const hasSimplified = (w: string) => opencc().traditional.every((f) => f(w) !== w);
+/** 两个字是简转繁选错：同一个简体字的两个繁体字（幹、乾 都是 干），又不是台湾的异体字（汙、污） */
+const misconverted = (a: string, b: string) => a !== b && opencc().simplified(a) === opencc().simplified(b) && !opencc().variant.some((f) => f(a) === b || f(b) === a);
+const han = (s: string) => [...s].filter((c) => /\p{Script=Han}/u.test(c));
+
+/** 译图检查的结果 → 不用这张的原因；没问题回 null。简体字、错字要在模型抄的字里，还要过 OpenCC 这一关 */
+export function translatedDrop(c: TranslatedCheck): string | null {
+	const bare = (s: string) => s.replace(/\s/g, "");
+	const seen = bare(c.text.join(""));
+	const on = (w: string) => bare(w) !== "" && seen.includes(bare(w));
+	const simplified = c.simplified.filter((w) => on(w) && hasSimplified(w));
+	const wrong = c.wrong.filter((x) => {
+		const [a = "", b = ""] = x.split(/→|->/).map((t) => t.trim());
+		const p = han(a), q = han(b), diff = p.map((ch, i) => [ch, q[i] ?? ""] as const).filter(([u, v]) => u !== v);
+		return on(a) && p.length === q.length && diff.length > 0 && diff.every(([u, v]) => misconverted(u, v));
+	});
+	const product = c.productText.map((x) => x.trim()).filter(Boolean);
+	const why = [
+		product.length ? `象寄改了商品上印的字：${product.join("、")}` : "",
+		simplified.length ? `译图还有简体字：${simplified.join("、")}` : "",
+		wrong.length ? `译图有转错的字：${wrong.join("、")}` : "",
+	].filter(Boolean);
+	return why.join("；") || null;
+}
+
+/** 译图检查：原图、译图一起问 Gemini */
+export const checkTranslated = (original: Image, translated: Image) => geminiJson<TranslatedCheck>(TRANSLATED_PROMPT, [original, translated], TRANSLATED_SCHEMA);
+
+/** 译图检查，按「译图检查:版本:模型」记在译图那一行 */
+async function translatedChecked(sql: Sql, original: Bytes, translated: string): Promise<TranslatedCheck> {
+	const key = `译图检查:${TRANSLATED_VERSION}:${model()}`;
+	const [seen] = await sql`select checks->${key} as c from images where sha256 = ${translated}`;
+	if (seen?.c) return seen.c;
+	const [row] = await sql`select bytes from images where sha256 = ${translated}`;
+	const c = await checkTranslated(original, inspect(new Uint8Array(row!.bytes), "译图"));
+	await sql`update images set checks = checks || ${sql.json({ [key]: c })} where sha256 = ${translated}`;
 	return c;
 }
 
@@ -104,7 +166,7 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 		if (pics.detail.includes(p) && (p.width! < 700 || p.height! < 32)) { p.drop = `详情图太小（${p.width}×${p.height}，宽要 ≥ 700）`; continue; }
 		const s = await screened(sql, bytes.get(p.sha!)!);
 		Object.assign(p, s);
-		if (s.verdict === "d") p.drop = "有供应商痕迹（工厂、批发、联系方式、人民币价……）";
+		if (s.verdict === "d") p.drop = "有供应商痕迹或写给 1688 买家的说明（工厂、批发、联系方式、人民币价、售后、定制……）";
 	}
 
 	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；没拿到答复的等人核对
@@ -133,6 +195,13 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 			} else if (t?.failed) p.drop = `象寄译不成：${t.failed}`;
 			else if (still.has(p.sha!)) { p.drop = "译图结果未知：等人核对"; pics.waiting.push(p.from); }
 			else p.drop = "还没译好";
+		}
+		// 译图检查：还有简体字、象寄改了商品上印的字，这张不用（主图、详情图的张数在下一步才截，后面的图补上来）
+		const check = toTranslate.filter((p) => p.translated && !p.drop);
+		if (check.length) log(`检查译图（${new Set(check.map((p) => p.translated)).size} 张）`);
+		for (const p of check) {
+			const why = translatedDrop(await translatedChecked(sql, bytes.get(p.sha!)!, p.translated!));
+			if (why) p.drop = why;
 		}
 	}
 

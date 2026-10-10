@@ -3,7 +3,7 @@
 // x2 listing make [商品稿…]                           做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格、类目、属性、服务）
 // x2 listing text <商品稿> --title … --description …  agent 写的标题和描述（也可以从 stdin 读 [{ id, title, description }]），写完马上台湾成品审核
-// x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）；挑出的问题有编号
+// x2 listing audit [商品稿…]                          台湾成品审核（Gemini 看成品图和文案，挑简体字、错字、误译）；挑出的问题有编号，挑出的图 x2 先处理
 // x2 listing audit <商品稿> --accept <编号…>           放行审核挑出的问题（人看过说是误报或无妨，人说了才用）
 // x2 listing drop <商品稿> <选项名或货号…>             去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing list                                    所有商品稿走到哪了
@@ -11,7 +11,7 @@ import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { make, settingsOf } from "../listing/make.ts";
-import { acceptIssues, type Audit, type AuditIssue, auditIssues, auditKey, auditPassed, auditTaiwan } from "../listing/audit.ts";
+import { acceptIssues, type Audit, auditDropped, type AuditIssue, auditIssues, auditKey, auditPassed, auditTaiwan, dropAudited, restoreAudited } from "../listing/audit.ts";
 import { productOf } from "../listing/ready.ts";
 import { textProblems } from "../listing/text.ts";
 import { keptVariants, matchVariants } from "../listing/variants.ts";
@@ -141,7 +141,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 type AuditResult = { id: string; ok: boolean | null; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
 const auditLine = (a: AuditResult) => {
 	if (a.ok === null) return `商品稿 ${a.id} 台湾审核：审不了：${(a.problems ?? []).join("；")}`;
-	const lines = a.issues.map((x) => `  ${x.n}. ${x.kind === "图" ? `图 ${x.image}` : "文案"}：${x.text}${x.status === "待处理" ? "" : `（${x.status}）`}`);
+	const what = (x: AuditIssue) => (x.kind === "图" ? `${x.role ?? "图"} ${x.image}${x.where ? `（${x.where}）` : ""}` : "文案");
+	const lines = a.issues.map((x) => `  ${x.n}. ${what(x)}：${x.text}${x.status === "待处理" ? "" : `（${x.status}）`}`);
 	const hint = a.ok ? [] : [`  人看过说是误报或无妨的才放行：x2 listing audit ${a.id} --accept <编号…>`];
 	return [`商品稿 ${a.id} 台湾审核：${a.ok ? "通过" : "未通过"}${a.cached ? "（审过）" : ""}`, ...lines, ...hint].join("\n");
 };
@@ -156,18 +157,30 @@ async function listingNow(sql: Sql, id: string) {
 	return { l, mark: s.mark?.text ?? "", kept: (l.kept_images ?? []) as string[], r: productOf(l, s) };
 }
 
-/** 台湾成品审核：内容没变的不重审（审核键记在商品稿的 audit 里） */
+/** 挑出后加文案的详情图、不是封面的主图：x2 去掉以后最多再审几轮 */
+const MAX_REAUDIT = 2;
+
+/** 台湾成品审核：内容没变的不重审（审核键记在商品稿的 audit 里）。挑出的图 x2 能去掉的去掉（不进已删除的图），重组商品再审，NocoDB 的附件跟着变 */
 async function audit(sql: Sql, ids: string[]): Promise<AuditResult[]> {
 	const out: AuditResult[] = [];
 	for (const id of ids) {
-		const c = await listingNow(sql, id);
+		let c = await listingNow(sql, id);
 		if (!c) { out.push({ id, ok: null, problems: ["没有这份商品稿"], issues: [] }); continue; }
 		if (!c.r.product) { out.push({ id, ok: null, problems: c.r.problems, issues: [] }); continue; }
 		let a = c.l.audit as Audit | null;
 		const cached = a?.key === auditKey(c.r.product, c.mark);
 		if (!cached) {
-			console.error(`台湾成品审核：商品稿 ${id}`);
-			a = await auditTaiwan(c.r.product, c.mark);
+			for (let round = 0; c.r.product; round++) {
+				console.error(`台湾成品审核：商品稿 ${id}${round ? `（去掉挑出的图以后第 ${round} 次再审）` : ""}`);
+				a = await auditTaiwan(c.r.product, c.mark, { kept: c.kept, canDrop: round < MAX_REAUDIT });
+				const drops = a.images.filter((x) => x.action === "已去掉");
+				if (!drops.length) break;
+				await sql`update listings set images = ${sql.json(dropAudited(c.l.images, drops) as any)}, updated_at = now() where id = ${id}`;
+				c = (await listingNow(sql, id))!;
+			}
+			if (!c.r.product) { out.push({ id, ok: null, problems: c.r.problems, issues: [] }); continue; }
+			// x2 去掉的图（这一次的、以前的）也记进审核结果：人看得到，要用可以放行
+			a = { ...a!, images: [...auditDropped(c.l.images), ...a!.images] };
 			await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;
 		}
 		out.push({ id, ok: auditPassed(a!, c.kept), ...(cached ? { cached } : {}), issues: auditIssues(a!, c.kept) });
@@ -182,6 +195,8 @@ async function accept(sql: Sql, id: string, ns: number[]): Promise<void> {
 	if (!c.r.product || !c.l.audit || c.l.audit.key !== auditKey(c.r.product, c.mark)) throw new Usage(`商品稿 ${id} 的内容和上次审核时不一样，编号作废：先 x2 listing audit ${id}，照新的编号放行`);
 	const x = acceptIssues(c.l.audit, c.kept, ns, new Date().toISOString());
 	if (x.unknown.length) throw new Usage(`商品稿 ${id} 的审核结果里没有第 ${x.unknown.join("、")} 条（x2 listing audit ${id} 看编号）`);
-	await sql`update listings set audit = ${sql.json(x.audit as any)}, kept_images = ${sql.json(x.kept)}, updated_at = now() where id = ${id}`;
+	// x2 去掉的图放行了：放回来（内容变了，接着会再审一次）
+	const images = x.restore.length ? restoreAudited(c.l.images, x.restore) : c.l.images;
+	await sql`update listings set audit = ${sql.json(x.audit as any)}, kept_images = ${sql.json(x.kept)}, images = ${sql.json(images)}, updated_at = now() where id = ${id}`;
 }
 
