@@ -73,7 +73,7 @@ x2 schema                                   # 全部操作的说明和参数（J
 x2/
 ├ bin/x2.ts               命令行入口：x2 <命令> …
 ├ AGENTS.md               agent 开起来做什么、不许做什么（CLAUDE.md 引它）
-├ docs/                   loop.md 循环怎么转；orders.md 订单；glossary.md 词
+├ docs/                   loop.md 循环怎么转；orders.md 订单；listing.md 上品；glossary.md 词
 ├ src/
 │ ├ browser.ts            唯一碰 cdp-relay 的地方：选浏览器（using）、用自己开的标签页、在页面里发请求
 │ ├ accounts.ts           按店找浏览器：每个浏览器里登录着哪家店、哪个 1688 账号
