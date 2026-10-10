@@ -1,6 +1,8 @@
 // 1688：货源详情、购物车、加购。货源详情是服务端渲染进页面的全局变量（window.context.result.global.globalData.model），打开商品页读它，不用签名。
 // 查过的事实（2026-09-30）：tradeModel.skuMap 是规格（specAttrs 用「&gt;」连接几个属性，例「kitty猫款式5&gt;20*30cm【硅藻泥】3mm」）；
-// offerDetail.skuProps 是属性（prop，例「颜色」「尺寸」）和它的取值（value: {name, imageUrl}），第一个属性的取值带图片；只有一个规格的货源没有 skuMap
+// offerDetail.skuProps 是属性（prop，例「颜色」「尺寸」）和它的取值（value: {name, imageUrl}），第一个属性的取值带图片；只有一个规格的货源没有 skuMap。
+// 2026-10-10 核对过：mainImageList 是 { fullPathImageURI }；detailDescription.freightInfo.skuWeight 按 skuId 记运费重量（kg），没有的用 unitWeight；
+// 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee
 import { z } from "zod";
 import { page } from "../browser.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
@@ -9,7 +11,9 @@ import { all, byPage, get, type Ops, str, strs } from "./op.ts";
 /** attrs：每个属性的取值，顺序同 Offer.props */
 export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
 export type Prop = { name: string; values: { name: string; image: string }[] };
-export type Offer = { offerId: string; url: string; title: string; image: string; unit: string; minQty: number; props: Prop[]; skus: Sku[] };
+/** 货源的服务：一件代发、包邮、48 小时发货（deliveryDays 是卖家承诺几天内发货） */
+export type Tags = { onePsale: boolean; freeShipping: boolean; ship48h: boolean; deliveryDays: number | null };
+export type Offer = { offerId: string; url: string; title: string; image: string; unit: string; minQty: number; props: Prop[]; skus: Sku[]; images?: string[]; detailUrl?: string | null; tags?: Tags };
 
 /** 1688 链接或货源 id → 货源 id（纯数字）；认不出是 null */
 export function offerIdOf(linkOrId: string): string | null {
@@ -28,25 +32,52 @@ export async function offer(offerId: string): Promise<Offer> {
 		const m = (window as any).context?.result?.global?.globalData?.model;
 		if (!m?.tradeModel) return location.href.includes("login") || location.href.includes("punish") ? { error: "1688 要登录或要过滑块：在浏览器里处理一下" } : { gone: true as const };
 		const t = m.tradeModel, d = m.offerDetail;
+		const data = (window as any).context?.result?.data;
+		const https = (u: unknown) => (typeof u === "string" ? u.replace(/^\/\//, "https://") : "");
 		const unescape = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+		const freight = m.detailDescription?.freightInfo ?? {};
+		const weightOf = (skuId: unknown) => Number(freight.skuWeight?.[String(skuId)]) || Number(freight.unitWeight) || null;
+		let json = "";
+		try { json = JSON.stringify(m); } catch { /* 有循环引用就只看页面的字 */ }
+		const text = String(document.body?.innerText ?? "");
+		const days = /"deliveryLimit":(\d+)/.exec(json);
+		const tags = {
+			onePsale: /"isOnePsale":true/.test(json) || /一件代发/.test(json + text),
+			freeShipping: /"freeDeliverFee":true/.test(json),
+			ship48h: (days !== null && Number(days[1]) <= 2) || /"serviceName":"(?:24|48)小时发货"/.test(json),
+			deliveryDays: days ? Number(days[1]) : null,
+		};
+		const images = [...new Set([...((d.mainImageList ?? []) as any[]).map((i) => https(i?.fullPathImageURI ?? i)), ...((data?.gallery?.fields?.mainImage ?? []) as unknown[]).map(https)].filter(Boolean))];
+		const detailUrl = https(d.detailUrl ?? data?.description?.fields?.detailUrl) || null;
 		const hasSkus = (t.skuMap ?? []).length > 0;
 		const props = hasSkus
 			? ((d.skuProps ?? []) as { prop?: string; value?: { name: string; imageUrl?: string }[] }[])
 				.map((p) => ({ name: p.prop ?? "", values: (p.value ?? []).map((v) => ({ name: unescape(v.name), image: v.imageUrl ?? "" })) }))
 			: [];
 		// 第一个属性的取值 → 图片
-		const images = new Map<string, string>((props[0]?.values ?? []).map((v) => [v.name, v.image]));
+		const valueImages = new Map<string, string>((props[0]?.values ?? []).map((v) => [v.name, https(v.image)]));
 		const skus = hasSkus
 			? (t.skuMap as any[]).map((s) => {
 				const attrs = unescape(s.specAttrs ?? "").split(">");
-				return { skuId: String(s.skuId), specId: s.specId ?? "", name: attrs.join(" / "), attrs, price: Number(s.price || s.discountPrice || t.minPrice), stock: Number(s.canBookCount ?? 0), image: images.get(attrs[0]!) ?? "" };
+				return { skuId: String(s.skuId), specId: s.specId ?? "", name: attrs.join(" / "), attrs, price: Number(s.price || s.discountPrice || t.minPrice), stock: Number(s.canBookCount ?? 0), image: valueImages.get(attrs[0]!) ?? "", weightKg: weightOf(s.skuId) };
 			})
-			: [{ skuId: String(t.offerId), specId: "", name: "", attrs: [], price: Number(t.minPrice), stock: Number(t.canBookedAmount ?? 0), image: d.mainImageList?.[0]?.fullPathImageURI ?? "" }];
-		return { offerId: String(t.offerId), url, title: d.subject, image: d.mainImageList?.[0]?.fullPathImageURI ?? "", unit: t.unit ?? "", minQty: Number(t.beginAmount ?? 1), props, skus };
+			: [{ skuId: String(t.offerId), specId: "", name: "", attrs: [], price: Number(t.minPrice), stock: Number(t.canBookedAmount ?? 0), image: d.mainImageList?.[0]?.fullPathImageURI ?? "", weightKg: weightOf(t.offerId) }];
+		return { offerId: String(t.offerId), url, title: d.subject, image: images[0] ?? "", unit: t.unit ?? "", minQty: Number(t.beginAmount ?? 1), props, skus, images, detailUrl, tags };
 	}, url);
 	if ("error" in got) throw new NeedsHuman(`读 1688 货源 ${offerId}：${got.error}`);
 	if ("gone" in got) throw new Gone(`1688 货源 ${offerId} 不存在或已下架`);
 	return got;
+}
+
+/** 详情图：detailUrl 回的是 `var offer_details={"content":"<html>"};`（浏览器跨域拿不到，在这边取）。按出现的顺序取 <img src>，去重，最多 40 张 */
+export async function detailImages(detailUrl: string): Promise<string[]> {
+	const r = await fetch(detailUrl, { headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", referer: "https://detail.1688.com/" }, signal: AbortSignal.timeout(30_000) });
+	if (!r.ok) throw new Error(`取 1688 详情 HTTP ${r.status}`);
+	const text = await r.text();
+	let html = text;
+	try { html = String(JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)).content ?? ""); } catch { /* 不是 JSON 外壳：当成 HTML */ }
+	const urls = [...html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi)].map((m) => m[1]!.replace(/^\/\//, "https://")).filter((u) => /^https:\/\//.test(u));
+	return [...new Set(urls)].slice(0, 40);
 }
 
 // ── mtop ──
