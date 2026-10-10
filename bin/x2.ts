@@ -2,6 +2,7 @@
 // x2 的命令行：x2 <命令> [参数…] [--json]。--json 给 agent 读，不加给人读。
 // 输出约定：stdout 只放结果；stderr 只放进度、日志；--json 时出错也在 stdout：{ "error": { "kind", "message" } }。
 // 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先回读）
+import "../src/env.ts";
 import { dbCommand } from "../src/commands/db.ts";
 import { approveCommand, proposeCommand, runCommand, status } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
