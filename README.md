@@ -30,6 +30,7 @@ x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_N
 上品（[docs/listing.md](docs/listing.md)）：
 
 ```sh
+x2 listing quote <1688 链接>             # 报价（选品用）：售价区间、每个规格的价格和重量、服务、起订量；不做图、不存库
 x2 listing add cheeroutdoor <1688 链接>   # 添加货源：一个货源 × 一家店一份商品稿
 x2 listing make --jobs 3                # 做商品稿：读货源、规格和核价、图（筛字 → 译图 → 译图检查 → 水印 → 传图）、类目属性；几份同时做
 x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不到的国内运费由 agent 估（只填空着的），马上重新核价

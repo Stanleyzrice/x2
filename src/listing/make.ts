@@ -2,7 +2,7 @@
 // 缺的（类目不在本店范围、要填字的属性……）记成问题，检查把它们放进收件箱给人；人处理了以后再跑一次，做过的不重做。
 // 1688 没给的重量、读不到的国内运费不算问题：agent 估（x2 listing estimate，只填空着的），写完照货源快照重新核价（reprice），不用再读 1688。
 // 几份同时做（x2 listing make --jobs）：碰浏览器的（读 1688 货源、加水印、传图、类目、属性、备货天数）按浏览器排队，读 1688 隔几秒（queue.ts）；
-// 问 Gemini、交象寄、取图不排队
+// 问 Gemini、交象寄、取图不排队。报价（quote，选品用）用第 2 步的同一套代码，不做图、不存库
 import { alibabaAccounts } from "../accounts.ts";
 import { type Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
@@ -13,7 +13,7 @@ import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import { nicknameFor } from "./text.ts";
-import { limitProblems, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
+import { limitProblems, priceRange, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
 
 /** 店铺设置（库里的一行）→ 核价参数、水印、上品的默认值 */
@@ -118,6 +118,28 @@ export function specsAndPrices(o: Offer, s: Settings, opts: { removed?: string[]
 	return { specs, problems: [...(o.minQty > 1 ? [`货源：起订量 ${o.minQty}，无法单件购买`] : []), ...built.problems, ...structureProblems(specs)] };
 }
 
+
+/** 报价（选品用，x2 listing quote）：照做商品稿的第 2 步排规格、按店铺设置核价，不做图、不存库。1688 没给重量的规格按 assume.weightKg 算、
+ * 读不到国内运费的按 assume.freightRmb 算（往重了、往高了估），用了估的写出来 */
+export function quote(o: Offer, s: Settings, assume: { weightKg: number; freightRmb: number }) {
+	const read = freightOf(o, null);
+	const freightRmb = read ?? assume.freightRmb;
+	const { specs, problems } = specsAndPrices(o, s, { weightKg: assume.weightKg, freightRmb });
+	const given = new Map(o.skus.map((k) => [k.skuId, k]));
+	const list = specs.variants.map((v) => {
+		const k = given.get(v.skuId);
+		return { sku: v.sku, spec: (k?.attrs ?? []).filter(Boolean).join(" / ") || k?.name || "（单规格）", priceTwd: v.priceTwd, weightKg: v.weightKg, weightAssumed: !((k?.weightKg ?? 0) > 0), costRmb: v.costRmb, stock: v.stock };
+	});
+	const guessed = list.filter((x) => x.weightAssumed).length;
+	return {
+		offerId: o.offerId, url: o.url, title: o.title, shop: s.shop, minQty: o.minQty,
+		tags: { onePsale: Boolean(o.tags?.onePsale), ship48h: Boolean(o.tags?.ship48h), freeShipping: Boolean(o.tags?.freeShipping), deliveryDays: o.tags?.deliveryDays ?? null },
+		freightRmb, freightAssumed: read === null,
+		weightAssumed: guessed ? `${guessed} 个规格 1688 没给重量，按 ${assume.weightKg} kg 算` : null,
+		variants: list.length, priceTwd: priceRange(specs.variants), specs: specsText(specs), list,
+		problems: [...problems, ...pricingProblems(specs, [])],
+	};
+}
 
 /** 做一份商品稿。回这一轮的问题（给人看的） */
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {

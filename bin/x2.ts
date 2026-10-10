@@ -40,6 +40,7 @@ const help = [
 	"  x2 source [商品…] [--url 链接]   给店里的商品找货源（以图搜图）；不给商品就找检查算出来缺的",
 	"  x2 source <商品> --spec \"店里的规格名 = 货源的规格名\"   记下人定的规格例外（按名字配不上时）",
 	"上品（见 docs/listing.md）：",
+	"  x2 listing quote <1688 链接> [--shop 店] [--weight kg] [--freight 元/件]   报价（选品用）：售价区间、每个规格的价格和重量；不做图、不存库",
 	"  x2 listing add <店> <1688 链接…>  添加货源（--strategy 名字：从哪个策略来）",
 	"  x2 listing make [商品稿…] [--jobs N]   做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；几份同时做（默认 3）",
 	"  x2 listing estimate <商品稿> [--weight kg] [--freight 元/件]   估 1688 没给的重量、读不到的国内运费（只填空着的），马上重新核价",

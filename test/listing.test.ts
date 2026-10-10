@@ -280,7 +280,7 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 import { checkListings } from "../src/check/listings.ts";
 import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop } from "../src/listing/audit.ts";
 import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
-import { estimateNeeds, freightOf, pricingProblems, reprice, settingsOf } from "../src/listing/make.ts";
+import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
 
 const shopRow = { shop: "cheeroutdoor", shop_id: "1554182542", fx: "4.4", price_per_kg_rmb: "10.8", label_fee_rmb: "1.5", weight_rounding_kg: "0.01", return_loss_rate: "0.03", min_margin_rate: "0.25", min_margin_rmb: "8", commission_rate: "0.06", pre_order_rate: "0.03", payment_rate: "0.025", coin_rate: "0.015", free_shipping_rate: "0.06", free_shipping_min_twd: "0", shipping_net_twd: "0", pre_order: true, min_purchase: 1, stock_cap: 50, channels: "30005,30006", categories: null, watermark_text: "新新家居日用好物賣場", watermark_size: 64, watermark_opacity: "0.35", watermark_position: "center", paused: null };
@@ -635,4 +635,24 @@ test("同一件事同时要的只做一次；几份一起做：结果照顺序�
 		return `做完 ${id}`;
 	});
 	assert.deepEqual(r.map((x) => (x.ok ? x.value : `${x.started ? "出错" : "没开始"}：${(x.error as Error).message}`)), ["做完 1", "出错：1688 要过滑块", "没开始：1688 要过滑块", "没开始：1688 要过滑块"]);
+});
+
+test("报价：照做商品稿排规格、按店铺设置核价，不做图、不存库；1688 没给的重量、读不到的国内运费按给的估，写清楚哪些是估的", () => {
+	const s = settingsOf(shopRow);
+	const o = offerOf([["尺寸", ["40*60cm", "60*90cm"]]], [[["40*60cm"]], [["60*90cm"]]]);
+	o.skus[1]!.weightKg = null;
+	Object.assign(o, { title: "硅藻泥地垫", tags: { onePsale: true, freeShipping: false, ship48h: true, deliveryDays: 2 }, freight: { costRmb: null, to: "" } });
+	const q = quote(o, s, { weightKg: 1, freightRmb: 10 });
+	const low = minPrice(10, 10, 0.3, s.params, true)!, high = minPrice(10, 10, 1, s.params, true)!;
+	assert.ok(low < high);
+	assert.deepEqual([q.shop, q.priceTwd, q.variants, q.minQty, q.freightRmb, q.freightAssumed, q.weightAssumed], ["cheeroutdoor", `NT$${low}–${high}`, 2, 1, 10, true, "1 个规格 1688 没给重量，按 1 kg 算"]);
+	assert.deepEqual(q.tags, { onePsale: true, ship48h: true, freeShipping: false, deliveryDays: 2 });
+	assert.deepEqual(q.list.map((x) => [x.sku, x.spec, x.priceTwd, x.weightKg, x.weightAssumed]), [["LT1-s0", "40*60cm", low, 0.3, false], ["LT1-s1", "60*90cm", high, 1, true]]);
+	assert.match(q.specs, /^尺寸（2）：/);
+	assert.deepEqual(q.problems, []);
+	// 读得到国内运费、1688 都给了重量的不估；起订量大于 1、定不了价的写进问题
+	const read = { ...o, minQty: 3, freight: { costRmb: 8, to: "" }, skus: o.skus.map((k) => ({ ...k, weightKg: 0.5 })) };
+	const r = quote(read, s, { weightKg: 1, freightRmb: 10 });
+	assert.deepEqual([r.freightRmb, r.freightAssumed, r.weightAssumed, r.problems], [8, false, null, ["货源：起订量 3，无法单件购买"]]);
+	assert.equal(quote({ ...o, tags: { ...o.tags!, freeShipping: true }, freight: { costRmb: 0, to: "" } }, s, { weightKg: 1, freightRmb: 10 }).freightRmb, 0);
 });

@@ -1,6 +1,8 @@
 // x2 listing：上品（docs/listing.md）。
 // x2 listing add <店> <1688 链接…> [--strategy 名字]   添加货源：一个货源 × 一家店一份商品稿
 // x2 listing make [商品稿…] [--jobs N]                做商品稿：读货源、规格和核价、图、类目属性（不给就做所有还没做好的）；几份同时做（默认 3）
+// x2 listing quote <1688 链接或货源 id> [--shop 店] [--weight kg] [--freight 元/件]
+//                                                    报价（选品用）：读货源、排规格、按店铺设置核价，和做商品稿同一套代码，不做图、不存库
 // x2 listing estimate <商品稿> [--weight <kg>] [--freight <元/件>]
 //                                                    agent 估 1688 没给的重量、读不到的国内运费：只填空着的（人填过的不动），写完马上重新核价（不读 1688）
 // x2 listing show <商品稿>                            写文案要用的事实（货源标题、规格的层和选项、类目、属性、服务）
@@ -18,7 +20,7 @@ import { z } from "zod";
 import { syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
-import { estimateNeeds, freightOf, make, pricingProblems, savePrices, settingsOf } from "../listing/make.ts";
+import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
 import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, auditKey, dropAudited, issueLine, restoreAudited, textCheck } from "../listing/audit.ts";
 import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
@@ -101,6 +103,26 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		}
 		const hint = (r: { id: string; needs: string[] }) => (r.needs.length ? `\n  估：x2 listing estimate ${r.id}${r.needs.includes("重量") ? " --weight <kg>" : ""}${r.needs.includes("国内运费") ? " --freight <元/件>" : ""}` : "");
 		return out(results, results.map((r) => `${r.name}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
+	}
+
+	if (sub === "quote") {
+		// 报价（选品用）：1688 没给重量的按 --weight 算（默认 1 kg），读不到国内运费的按 --freight 算（默认 10 元），都往重了、往高了估；用了估的写出来
+		const usage = "x2 listing quote <1688 链接或货源 id> [--shop 店] [--weight kg] [--freight 元/件]（店默认 cheeroutdoor；1688 没给的重量按 --weight 算，默认 1；读不到的国内运费按 --freight 算，默认 10）";
+		const link = plain(rest, "--shop", "--weight", "--freight")[0];
+		const offerId = link ? offerIdOf(link) : null;
+		const opts = z.object({ shop: z.string().min(1).default("cheeroutdoor"), weight: z.coerce.number().positive().finite().default(1), freight: z.coerce.number().nonnegative().finite().default(10) })
+			.safeParse({ shop: flag(rest, "--shop"), weight: flag(rest, "--weight"), freight: flag(rest, "--freight") });
+		if (!offerId || !opts.success) throw new Usage(usage);
+		const [row] = await sql`select * from shop_settings where shop = ${opts.data.shop}`;
+		if (!row) throw new Usage(`没有「${opts.data.shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
+		const q = quote(await readOffer1688(offerId), settingsOf(row), { weightKg: opts.data.weight, freightRmb: opts.data.freight });
+		const freight = q.freightAssumed ? `${q.freightRmb} 元/件（1688 读不到，按 --freight 估的）` : q.tags.freeShipping ? "0（包邮）" : `${q.freightRmb} 元/件（1688 页面上寄到我们这里买 1 件）`;
+		const tags = [q.tags.onePsale ? "一件代发" : "", q.tags.ship48h ? "48 小时发货" : q.tags.deliveryDays ? `${q.tags.deliveryDays} 天内发货` : ""].filter(Boolean).join("、") || "无";
+		return out(q, [
+			`${q.title}（${q.offerId}）`, `${q.shop} 售价 ${q.priceTwd}（${q.variants} 个规格）`, ...q.specs.split("\n").map((x) => `  ${x}`),
+			`国内运费：${freight}`, `重量：${q.weightAssumed ? `${q.weightAssumed}（估的）` : "1688 都给了"}`, `服务：${tags}；起订量 ${q.minQty}`,
+			...(q.problems.length ? [`问题：${q.problems.join("；")}`] : []),
+		].join("\n"));
 	}
 
 	if (sub === "estimate") {
@@ -262,7 +284,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | quote | make | estimate | show | text | audit | keep | drop | list（见 docs/listing.md）");
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */
