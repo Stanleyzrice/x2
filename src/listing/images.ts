@@ -1,5 +1,5 @@
 // 一份商品稿的图（docs/listing.md「图」）：收图 → 取字节、量尺寸、剔掉占位图 → 筛字（Gemini）→ 要译的交象寄（写入「译图」）
-// → 译图检查（Gemini 比原图和译图）→ 本店水印 → 看成品（Gemini）→ 传 Shopee。都按字节的 sha256 记在 images、shop_images 表里：重跑不重复付钱、不重复传。
+// → 译图检查（Gemini 分两次问）→ 本店水印 → 看成品（Gemini）→ 传 Shopee。都按字节的 sha256 记在 images、shop_images 表里：重跑不重复付钱、不重复传。
 // 在这家店的浏览器里跑（水印在页面的 canvas 里画，传图用页面的 UploadService）
 import * as OpenCC from "opencc-js";
 import { type Sql } from "../db/index.ts";
@@ -38,20 +38,29 @@ async function screened(sql: Sql, b: Bytes): Promise<{ verdict: Verdict; simplif
 	return c;
 }
 
-// 译图检查：原图和译图一起交给 Gemini，问两件事：译图上后加的文案还有没有简体字（象寄漏译的，和简转繁选错的字，例 易干 → 易幹）；
-// 商品本体上印的字有没有被象寄改动（象寄的接口没有「商品上的字不译」的选项，一张图上两样都有时它会连商品上的字一起改，照片里的商品就和买家收到的不一样了）。
-// 任何一样有，这张不用。默认模型分不清繁简（会把繁体当简体、把原图的字当成译图的），所以先让它照抄译图上的字，
-// 它说的简体字、错字由代码用 OpenCC 把关：要在它抄的字里，而且真是简体、真是同一个简体字选错了繁体（不是异体字、不是换了说法）
-export const TRANSLATED_VERSION = 1;
-export const TRANSLATED_PROMPT = `第一张是原图，第二张是译图（要上架的图）：象寄把原图上的简体中文译成繁体，得到第二张。只返回JSON：
+// 译图检查：分两次问 Gemini。第一问只给译图：后加的文案还有没有简体字（象寄漏译的，和简转繁选错的字，例 易干 → 易幹）；
+// 两张一起给时，模型会把原图的字当成译图上的。默认模型也分不清繁简（会把繁体当简体），所以先让它照抄译图上的字，
+// 它说的简体字、错字由代码用 OpenCC 把关：要在它抄的字里，而且真是简体、真是同一个简体字选错了繁体（不是异体字、不是换了说法）。
+// 第二问给原图和译图：商品本体上印的字有没有被象寄改动（象寄的接口没有「商品上的字不译」的选项，一张图上两样都有时它会连商品上的字一起改，
+// 照片里的商品就和买家收到的不一样了）。只取 productText；照抄、简体字、错字这几栏照样问、不用：只问商品上的字时，模型把圆圈里的标签也当成商品上的字。
+// 任何一样有，这张不用
+export const TRANSLATED_VERSION = 2;
+export const TRANSLATED_TEXT_PROMPT = `这是一张电商详情图，图上的简体中文刚由象寄译成繁体。只返回JSON：
+text：图上后加的文案（标题、卖点、说明、参数、标签、角标），一段一段照图上的原样抄，不要顺手改字；商品本体上印的字不抄。
+simplified：text 里还是简体的字所在的词（例 「工艺」的「艺」是简体，繁体是「藝」）。繁简写法一样的字不算（例 打理方便、科技）；繁体、日文、英文、数字不算。没有则[]。
+wrong：text 里简转繁选错的字所在的词：同一个简体字对应几个繁体字，按意思选错了（例 「易干」是容易乾，要写成「易乾」，写成「易幹」是错的）。每条写「错的词 → 对的词」，两边只差选错的字；异体字（例 汙和污、裡和裏）、用词的不同、英文、数字、符号都不算。没有则[]。
+数组为空才算没有。`;
+export const TRANSLATED_PRODUCT_PROMPT = `第一张是原图，第二张是译图（要上架的图）：象寄把原图上的简体中文译成繁体，得到第二张。只返回JSON：
 text：第二张（译图）上后加的文案（标题、卖点、说明、参数、标签、角标），一段一段照第二张上的原样抄；不要抄第一张，不要顺手改字，商品本体上印的字不抄。
 simplified：text 里还是简体的字所在的词（例 「工艺」的「艺」是简体，繁体是「藝」）。繁简写法一样的字不算（例 打理方便、科技）；繁体、日文、英文、数字不算。没有则[]。
 wrong：text 里简转繁选错的字所在的词：同一个简体字对应几个繁体字，按意思选错了（例 「易干」是容易乾，要写成「易乾」，写成「易幹」是错的）。每条写「错的词 → 对的词」，两边只差选错的字；异体字（例 汙和污、裡和裏）、用词的不同、英文、数字、符号都不算。没有则[]。
 productText：商品本体上印的字被象寄改动的地方，每处写「原图的字 → 译图的字」（被涂掉写「原图的字 → 涂掉」，字没变、被重画的写「原图的字 → 重画」）。商品本体上印的字是印在实物表面、跟着实物的形状和材质走的字：地垫印花图案里的字、瓶身标签、包装印刷、表盘铭牌。后加在图上的圆圈、方框、色块里的说明标签、角标、标题不是商品本体，它们译成繁体是对的，不要列。商品上的字和原图一模一样（字、字体、位置都没变）则[]。
 数组为空才算没有。`;
-const TRANSLATED_FIELDS = ["text", "simplified", "wrong", "productText"] as const;
-const TRANSLATED_SCHEMA = { type: "object", properties: Object.fromEntries(TRANSLATED_FIELDS.map((k) => [k, { type: "array", items: { type: "string" } }])), required: TRANSLATED_FIELDS };
-export type TranslatedCheck = Record<(typeof TRANSLATED_FIELDS)[number], string[]>;
+const strings = (keys: readonly string[]) => ({ type: "object", properties: Object.fromEntries(keys.map((k) => [k, { type: "array", items: { type: "string" } }])), required: keys });
+const TEXT_FIELDS = ["text", "simplified", "wrong"] as const;
+const PRODUCT_FIELDS = [...TEXT_FIELDS, "productText"] as const;
+/** 译图检查的结果：text、simplified、wrong 来自第一问（只看译图），productText 来自第二问（比原图和译图） */
+export type TranslatedCheck = Record<(typeof PRODUCT_FIELDS)[number], string[]>;
 
 let cc: { traditional: ((s: string) => string)[]; simplified: (s: string) => string; variant: ((s: string) => string)[] } | null = null;
 const opencc = () => (cc ??= {
@@ -85,8 +94,14 @@ export function translatedDrop(c: TranslatedCheck): string | null {
 	return why.join("；") || null;
 }
 
-/** 译图检查：原图、译图一起问 Gemini */
-export const checkTranslated = (original: Image, translated: Image) => geminiJson<TranslatedCheck>(TRANSLATED_PROMPT, [original, translated], TRANSLATED_SCHEMA);
+/** 译图检查：分两次问 Gemini（简体字、错字只给译图；商品上印的字给原图和译图） */
+export async function checkTranslated(original: Image, translated: Image): Promise<TranslatedCheck> {
+	const [t, p] = await Promise.all([
+		geminiJson<Pick<TranslatedCheck, (typeof TEXT_FIELDS)[number]>>(TRANSLATED_TEXT_PROMPT, [translated], strings(TEXT_FIELDS)),
+		geminiJson<TranslatedCheck>(TRANSLATED_PRODUCT_PROMPT, [original, translated], strings(PRODUCT_FIELDS)),
+	]);
+	return { text: t.text, simplified: t.simplified, wrong: t.wrong, productText: p.productText };
+}
 
 /** 译图检查，按「译图检查:版本:模型」记在译图那一行 */
 async function translatedChecked(sql: Sql, original: Bytes, translated: string): Promise<TranslatedCheck> {
