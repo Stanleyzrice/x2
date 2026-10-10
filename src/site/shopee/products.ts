@@ -8,6 +8,7 @@
 // - 1000100256 是通用的字段校验失败码（缺尺码表也回它），不等于重复
 // - 直接开卖的发布路径回 10025；成功的配方是先发成下架（unlisted: true），人看过再上架
 import { page } from "../../browser.ts";
+import { NeedsHuman } from "../../errors.ts";
 import { IMAGE, ORIGIN, seller, type Write, write } from "./seller.ts";
 
 const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? String(id) : `${IMAGE}${id}`);
@@ -130,52 +131,71 @@ export function deleteProducts(productIds: string[]): Promise<Write> {
 	return write("/api/v3/product/delete_product_info", { body: { product_id_list: productIds.map(Number) } });
 }
 
-/** 写：传一张商品图，回图片 id。图片服务的签名只有页面里的 UploadService 算得出：到 webpack 模块里找它（要先打开过新增商品页，SDK 才加载）。
- * biz 4207 是主图。bytes 经 base64 传进页面 */
-export async function uploadImage(base64: string, filename = "x2.jpg", mime = "image/jpeg", biz = 4207): Promise<string> {
+/** 到新增商品页（传图的 UploadService 只在这页加载）。店铺被限制时这页跳到「權限不足 / 賣場遷移中」：要人处理，不再往下做 */
+export async function productPage() {
 	const p = await page(ORIGIN);
-	await p.goto(`${ORIGIN}/portal/product/new`);
-	const r = await p.run(async (b64: string, filename: string, mime: string, biz: number) => {
-		const w = window as any;
-		const find = async () => {
-			const reqs: any[] = await new Promise((resolve) => {
-				const found: any[] = [];
-				const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
-				let pending = names.length;
-				if (!pending) return resolve(found);
-				for (const n of names) {
-					try { w[n].push([[`__x2_up_${n}_${Date.now()}`], {}, (req: any) => { found.push(req); if (--pending <= 0) resolve(found); }]); } catch { if (--pending <= 0) resolve(found); }
-				}
-				setTimeout(() => resolve(found), 3000);
-			});
-			for (const req of reqs) {
-				// 上传模块在按需加载的代码块里：先把名字里带 upload. 的代码块都加载了
-				for (let i = 0; i < 600; i++) {
-					let u: unknown;
-					try { u = req.u?.(i); } catch { continue; }
-					if (u && /upload\./.test(String(u))) { try { await req.e(i); } catch { /* 没有这一块 */ } }
-				}
-				for (const id in req.m ?? {}) {
-					if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(req.m[id]))) continue;
-					let mod: any;
-					try { mod = req(id); } catch { continue; }
-					for (const v of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
-						if (typeof v === "function" && typeof v.prototype?.uploadImage === "function" && typeof v.$instance?.uploadImage === "function") return v.$instance;
+	if (!/\/portal\/product\/(new|\d+)/.test(await p.run(() => location.pathname))) await p.goto(`${ORIGIN}/portal/product/new`);
+	const blocked = await p.run(() => /no-permission/.test(location.href) || /您的權限不足|卖场迁移中|賣場遷移中/.test(String(document.body?.innerText ?? "")));
+	if (blocked) throw new NeedsHuman("Shopee 这家店现在不能新增商品（權限不足 / 賣場遷移中）：到卖家中心看一眼；要暂停上品就在「店铺设置」里写原因");
+	return p;
+}
+
+/** 写：传一批商品图，回每张的图片 id（顺序同 files）。图片服务的签名只有页面里的 UploadService 算得出：到 webpack 模块里找它，找到记在页面上，一张一张传（隔 0.5 秒）。
+ * biz 4207 是商品图。任何一张失败就抛错（传图不收钱、不上架，重来就是）。bytes 经 base64 传进页面 */
+export async function uploadImages(files: { base64: string; mime: string }[], biz = 4207): Promise<string[]> {
+	const p = await productPage();
+	const ids: string[] = [];
+	for (const [i, f] of files.entries()) {
+		if (i > 0) await new Promise((r) => setTimeout(r, 500));
+		const ext = f.mime === "image/png" ? "png" : f.mime === "image/webp" ? "webp" : "jpg";
+		const r = await p.run(async (b64: string, filename: string, mime: string, biz: number) => {
+			const w = window as any;
+			const find = async () => {
+				const reqs: any[] = await new Promise((resolve) => {
+					const found: any[] = [];
+					const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
+					let pending = names.length;
+					if (!pending) return resolve(found);
+					for (const n of names) {
+						try { w[n].push([[`__x2_up_${n}_${Date.now()}`], {}, (req: any) => { found.push(req); if (--pending <= 0) resolve(found); }]); } catch { if (--pending <= 0) resolve(found); }
+					}
+					setTimeout(() => resolve(found), 3000);
+				});
+				for (const req of reqs) {
+					// 上传模块在按需加载的代码块里：先把名字里带 upload. 的代码块都加载了
+					for (let i = 0; i < 600; i++) {
+						let u: unknown;
+						try { u = req.u?.(i); } catch { continue; }
+						if (u && /upload\./.test(String(u))) { try { await req.e(i); } catch { /* 没有这一块 */ } }
+					}
+					for (const id in req.m ?? {}) {
+						if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(req.m[id]))) continue;
+						let mod: any;
+						try { mod = req(id); } catch { continue; }
+						for (const v of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
+							if (typeof v === "function" && typeof v.prototype?.uploadImage === "function" && typeof v.$instance?.uploadImage === "function") return v.$instance;
+						}
 					}
 				}
-			}
-			return null;
-		};
-		let service: any = null;
-		for (let i = 0; i < 5 && !service; i++) { service = await find(); if (!service) await new Promise((r) => setTimeout(r, 2000)); }
-		if (!service) return { error: "没找到页面的 UploadService：先在浏览器里打开一次新增商品页" };
-		const bin = atob(b64);
-		const bytes = new Uint8Array(bin.length);
-		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-		const res = await service.uploadImage(new File([bytes], filename, { type: mime }), { biz, func: ["compress"], useMms: true });
-		const id = res?.data?.resourceId;
-		return id ? { imageId: String(id) } : { error: `传图没有回图片 id：${JSON.stringify(res?.error ?? res).slice(0, 200)}` };
-	}, base64, filename, mime, biz);
-	if ("error" in r) throw new Error(r.error);
-	return r.imageId;
+				return null;
+			};
+			for (let i = 0; i < 5 && !w.__x2Upload; i++) { w.__x2Upload = await find(); if (!w.__x2Upload) await new Promise((r) => setTimeout(r, 2000)); }
+			if (!w.__x2Upload) return { error: "没找到页面的 UploadService：先在浏览器里打开一次新增商品页" };
+			const bin = atob(b64);
+			const bytes = new Uint8Array(bin.length);
+			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+			const res = await w.__x2Upload.uploadImage(new File([bytes], filename, { type: mime }), { biz, func: ["compress"], useMms: true });
+			const id = res?.data?.resourceId;
+			return id ? { imageId: String(id) } : { error: `传图没有回图片 id：${JSON.stringify(res?.error ?? res).slice(0, 200)}` };
+		}, f.base64, `x2.${ext}`, f.mime, biz);
+		if ("error" in r) throw new Error(r.error);
+		ids.push(r.imageId);
+	}
+	return ids;
+}
+
+/** 写：传一张商品图，回图片 id */
+export async function uploadImage(base64: string, filename = "x2.jpg", mime = "image/jpeg", biz = 4207): Promise<string> {
+	void filename;
+	return (await uploadImages([{ base64, mime }], biz))[0]!;
 }

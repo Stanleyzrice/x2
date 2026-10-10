@@ -116,3 +116,25 @@ test("读回来核对：图片可以是地址；价格、库存、规格对不�
 	got.name = "別的標題";
 	assert.deepEqual(readbackProblems(sent, got, channels), ["标题和提交的不一致", "规格 LT952803717616-3 的选项、售价或库存和提交的不一致"]);
 });
+
+import { daysToShip, pickAttributes, recommendedPath } from "../src/listing/category.ts";
+
+test("属性：只送必填的；是 / 否选否，有其他、一般的选它；要填字的交给人", () => {
+	const r = pickAttributes([
+		{ id: "100824", name: "智能裝置", mandatory: true, maxValues: 1, values: [{ valueId: "4258", name: "是" }, { valueId: "4259", name: "否" }] },
+		{ id: "100001", name: "材質", mandatory: true, maxValues: 1, values: [{ valueId: "1", name: "棉" }, { valueId: "9", name: "其他" }] },
+		{ id: "100002", name: "產地", mandatory: false, maxValues: 1, values: [{ valueId: "2", name: "台灣" }] },
+		{ id: "100003", name: "型號", mandatory: true, maxValues: 1, values: [] },
+	]);
+	assert.deepEqual(r.attributes, [{ attribute_id: 100824, attribute_values: [{ value_id: 4259 }] }, { attribute_id: 100001, attribute_values: [{ value_id: 9 }] }]);
+	assert.deepEqual(r.text, ["智能裝置：否", "材質：其他"]);
+	assert.deepEqual(r.missing, ["型號"]);
+});
+
+test("类目：取第一个推荐；出货天数取类目的上限", () => {
+	assert.deepEqual(recommendedPath({ category_recommend_list: [{ category_path: [100637, 100728, 101324] }, { category_path: [1, 2] }] })?.path, [100637, 100728, 101324]);
+	assert.equal(recommendedPath({ category_recommend_list: [] }), null);
+	const rules = [{ categoryIds: ["101324"], min: 2, max: 10 }, { categoryIds: ["100559"], min: 2, max: 15 }];
+	assert.equal(daysToShip(101324, rules), 10);
+	assert.equal(daysToShip(1, rules), null);
+});
