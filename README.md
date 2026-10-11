@@ -120,7 +120,8 @@ x2/
 │ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、listing.ts、db.ts、nocodb.ts
 ├ .claude/skills/
 │ ├ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 采购单分给订单 → 预报 → 人打包
-│ └ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → Gemini 文字检查 → 人审稿批准 → 建商品 → 上架
+│ ├ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → Gemini 文字检查 → 人审稿批准 → 建商品 → 上架
+│ └ selection/SKILL.md    选品：按策略找词和竞品 → 以图搜 1688 同款 → 报价 → 照选品规矩筛 → 写选品理由加成商品稿
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
 ├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
