@@ -16,9 +16,9 @@ import { NeedsHuman } from "./errors.ts";
 type Cond = { col: string; op: string; value?: string | number; sub?: string };
 /** 一个条件，或几个「或」起来的条件；最外层的几项「且」起来 */
 type Filter = Cond | { or: Cond[] };
-/** 不给 form 是表格：group 分组（单选列的组按取值的顺序排），rowHeight 行高（0 矮、1 中、2 高、3 很高）。
- * form：表单（人填一行新的），fields 是表单上的列和它的说明，required 是必填的；表单不能是第一个（默认视图是表格） */
-type View = { title: string; form?: { heading: string; fields: Record<string, string>; required?: string[] }; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[]; rowHeight?: number };
+/** 不给 form、gallery 是表格：group 分组（组按值排，见 schema.sql 的 step），rowHeight 行高（0 矮、1 中、2 高、3 很高）。
+ * form：表单（人填一行新的），fields 是表单上的列和它的说明，required 是必填的；gallery：画廊，封面是这个附件列；表单、画廊不能是第一个（默认视图是表格） */
+type View = { title: string; gallery?: string; form?: { heading: string; fields: Record<string, string>; required?: string[] }; filters?: Filter[]; sorts?: [string, "asc" | "desc"][]; group?: [string, "asc" | "desc"][]; hide?: string[]; rowHeight?: number };
 /** columns：列名 → 中文名，也是视图里列的顺序；links：显示成链接的列；attachments：显示成附件的列（库里是 JSON 文本）；
  * selects：显示成单选的列和它的取值（按这个顺序，分组也是这个顺序）；primary：显示值（主列，表格的第一列），关联里看到的是它 */
 type Table = { name: string; title: string; columns: Record<string, string>; links?: string[]; attachments?: string[]; selects?: Record<string, readonly string[]>; primary?: string; views: View[] };
@@ -88,6 +88,11 @@ export function tables(): Table[] {
 			views: [
 				// 按当前步骤倒序分组（step 按字的编码排，见 schema.sql）：待补充、待批准在最前，已批准、已上架在最后。行调高，主图、规格图、详情图看得见缩略图；删掉不要的图就是在「主图」「详情图」里删附件（「规格图」只看，删了下一轮写回去）
 				{ title: "全部", group: [["step", "desc"]], sorts: [["id", "asc"]], hide: LISTING_HIDDEN, rowHeight: 2 },
+				// 审稿：待批准的、待补充的，封面是主图，图看得比表格的缩略图大；点开卡片能勾「批准上架」、删图
+				{
+					title: "审稿", gallery: "main_images", filters: [{ or: [{ col: "step", op: "eq", value: "待批准" }, { col: "step", op: "eq", value: "待补充" }] }],
+					sorts: [["id", "asc"]], hide: [...LISTING_HIDDEN, "detail_images", "description", "created_at", "updated_at", "listed_at", "product_id", "offer_id", "id", "approved_at"],
+				},
 				{
 					title: "添加货源",
 					form: { heading: "添加 1688 货源", fields: { shop: "上品的店铺", offer_id: "1688 商品链接（完整粘贴）", note: "补充说明（例：选它的理由）" }, required: ["shop", "offer_id"] },
@@ -266,6 +271,7 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 					for (const f of (await api<{ list: any[] }>("GET", `/views/${viewId}/filters`)).list) await api("DELETE", `/filters/${f.id}`);
 					for (const s of (await api<{ list: any[] }>("GET", `/views/${viewId}/sorts`)).list) await api("DELETE", `/sorts/${s.id}`);
 				} else if (spec.form) viewId = (await api<any>("POST", `/tables/${model.id}/forms`, { title: spec.title, heading: spec.form.heading })).id;
+				else if (spec.gallery) viewId = (await api<any>("POST", `/tables/${model.id}/galleries`, { title: spec.title, fk_cover_image_col_id: colId(spec.gallery) })).id;
 				else viewId = (await api<any>("POST", `/tables/${model.id}/grids`, { title: spec.title })).id;
 				for (const f of spec.filters ?? []) {
 					const cond = (c: Cond, extra: object = {}) => ({ fk_column_id: colId(c.col), comparison_op: c.op, comparison_sub_op: c.sub, value: c.value, ...extra });
@@ -288,6 +294,16 @@ export async function setup(sql: Sql, log: (s: string) => void = console.error):
 						await api("PATCH", `/form-columns/${fc.id}`, {
 							show: i >= 0, order: i >= 0 ? i + 1 : keys.length + 1, label: t.columns[name] ?? name, description: spec.form.fields[name] ?? "", required: (spec.form.required ?? []).includes(name),
 						});
+					}
+					views++;
+					continue;
+				}
+				if (spec.gallery) {
+					// 画廊：卡片上显示哪些列、什么顺序
+					for (const vc of (await api<{ list: any[] }>("GET", `/views/${viewId}/columns`)).list) {
+						const name = nameOf(vc.fk_column_id);
+						if (!name) continue;
+						await api("PATCH", `/views/${viewId}/columns/${vc.id}`, { show: !(spec.hide ?? []).includes(name), order: order.includes(name) ? order.indexOf(name) + 1 : order.length + 1 });
 					}
 					views++;
 					continue;
