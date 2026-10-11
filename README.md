@@ -37,6 +37,7 @@ x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不�
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description … --tiers … --nickname …   # agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查
 x2 listing approve 3 5                  # 人在终端里说「批准」时，替人勾「批准上架」
+x2 listing cancel 4 --why …             # 人在终端里说「放弃」时，替人勾「放弃」（建了商品的要下架，不是放弃）
 x2 listing noted 3                      # 照人写的「备注」做完：记下看过（备注再改，todo 又给出来）
 x2 listing list                         # 每份商品稿的简称、当前步骤
 x2 strategy list                        # 选品的策略：第几版、每个出了几份商品稿、上架了几个

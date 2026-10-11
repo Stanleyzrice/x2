@@ -19,6 +19,9 @@
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
 //                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
 // x2 listing approve <商品稿…>                        人在终端里说「批准」：替人勾「批准上架」（只勾待批准、待上架的；有一份不行就都不勾），x2 run 建商品、上架
+// x2 listing cancel <商品稿…> [--why "原因"]
+//                                                    人在终端里说「放弃」：替人勾「放弃」（建了商品的要下架，不是放弃；建商品还没核清的先核清；有一份不行就都不勾），
+//                                                    马上是已放弃。原因只回显，不存
 // x2 listing noted <商品稿…>                          照人写的「备注」做完：记下看过的备注（备注再改，x2 status 的 todo 又给出来）
 // x2 listing list                                    所有商品稿走到哪了
 // 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
@@ -342,6 +345,42 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(done, [...done.map((x) => `${x.name}：${x.step}`), "下一步：x2 run"].join("\n"));
 	}
 
+	if (sub === "cancel") {
+		// 和人在 NocoDB 里勾「放弃」是同一个勾。已经建了商品的不是放弃，是下架；建商品提交了、还没核清的可能已经建了，先核清。
+		// 原因不存：「备注」是人写的，也没有放原因的列，只回显。勾完马上重算当前步骤（已放弃）；还没提交的建商品、上架 x2 run 标成未执行
+		const usage = `x2 listing cancel <商品稿…> [--why "原因"]（人在终端里说了「放弃」才用）`;
+		const a = z.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1), why: z.string().trim().min(1).optional() })
+			.safeParse({ ids: plain(rest, "--why"), why: rest.includes("--why") ? flag(rest, "--why") ?? "" : undefined });
+		if (!a.success) throw new Usage(usage);
+		const want = [...new Set(a.data.ids)];
+		const name = await namesOf(sql, want);
+		const rows = await sql`select id::text, cancelled, product_id, listed_at from listings where id in ${sql(want)}`;
+		const writes = await sql`select id::text, params->>'listingId' as listing, op, status from writes
+			where op in ('建商品', '上架') and include and status in ('已批准', '已提交', '结果未知', '不一致') and params->>'listingId' in ${sql(want)} order by id`;
+		const bad = want.flatMap((id) => {
+			const r = rows.find((x) => x.id === id);
+			if (!r) return [`没有商品稿 ${id}`];
+			if (r.cancelled) return [];
+			if (r.listed_at) return [`${name(id)}已上架（商品 ${r.product_id ?? "—"}）：不卖了是下架，不是放弃`];
+			if (r.product_id) return [`${name(id)}已经建了商品（商品 ${r.product_id}，下架）：不上架就别勾「批准上架」，不是放弃`];
+			const unsure = writes.filter((w) => w.listing === id && w.status !== "已批准");
+			return unsure.length ? [`${name(id)}在建商品中（${unsure.map((w) => `${w.op}：${w.status}`).join("；")}）：可能已经建了，先核清（x2 run 读回来）`] : [];
+		});
+		if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没放弃`);
+		const already = new Set(rows.filter((r) => r.cancelled).map((r) => r.id as string));
+		await sql`update listings set cancelled = true, updated_at = now() where id in ${sql(want)} and not cancelled and product_id is null and listed_at is null`;
+		const r = await listingsCheck(sql, want);
+		const done = want.map((id) => ({
+			id, name: name(id), step: r.steps.get(id)?.step ?? null, already: already.has(id), why: a.data.why ?? null,
+			// 还没提交的建商品、上架（已批准）：x2 run 不执行
+			pending: writes.filter((w) => w.listing === id && w.status === "已批准").map((w) => w.id as string),
+		}));
+		return out(done, [
+			...done.map((x) => `${x.name}：${x.already ? "已经放弃了" : x.step}${x.pending.length ? "（还没提交的建商品、上架 x2 run 不执行）" : ""}`),
+			...(a.data.why ? [`原因：${a.data.why}`] : []),
+		].join("\n"));
+	}
+
 	if (sub === "noted") {
 		// 记下看过的备注原文；人写的备注不改
 		const ids = z.array(z.string().regex(/^\d+$/)).min(1).safeParse(plain(rest));
@@ -361,7 +400,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | approve | noted | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | approve | cancel | noted | list（见 docs/listing.md）");
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */

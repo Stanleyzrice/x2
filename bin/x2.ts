@@ -50,6 +50,7 @@ const help = [
 	"  x2 listing show <商品稿>          写文案要用的事实",
 	"  x2 listing text <商品稿> --title … --description … [--tiers JSON] [--nickname 简称]   agent 写的标题、描述、规格名和简称",
 	"  x2 listing approve <商品稿…>      替人勾「批准上架」（人在终端里说了批准时）；x2 run 建商品、上架",
+	"  x2 listing cancel <商品稿…> [--why 原因]   替人勾「放弃」（人在终端里说了放弃时）；建了商品的要下架，不是放弃",
 	"  x2 listing noted <商品稿…>        照人写的「备注」做完：记下看过的备注",
 	"  x2 listing list                  所有商品稿走到哪了",
 	"  x2 strategy add | set | list | log   选品的策略（假设、选品方法、版本号）；set 要 --why，版本号加 1；log 看变更记录",

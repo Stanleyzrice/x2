@@ -13,7 +13,7 @@ import { listingCommand } from "../src/commands/listing.ts";
 import { ruleCommand } from "../src/commands/rule.ts";
 import { strategyCommand } from "../src/commands/strategy.ts";
 import { close, migrate } from "../src/db/index.ts";
-import { Usage } from "../src/errors.ts";
+import { NeedsHuman, Usage } from "../src/errors.ts";
 import { approve, propose } from "../src/propose.ts";
 import { run } from "../src/run.ts";
 import { setException } from "../src/source.ts";
@@ -238,6 +238,46 @@ test("备注：x2 status 的 todo 给出人新写、改过的备注；x2 listing
 	await db`update listings set cancelled = true where step = '待批准'`;
 	await check(db, reads());
 	assert.equal((await db`select open from inbox where key = 'listing-approve:cheeroutdoor'`)[0]!.open, false);
+});
+
+test("x2 listing cancel：替人勾「放弃」，马上是已放弃；建了商品的要下架、建商品还没核清的先核清，有一份不行就都不勾；x2 run 不给放弃了的建商品，还没提交的标成未执行", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const [a, b, c, d] = [await readyListing(db, "83"), await readyListing(db, "84"), await readyListing(db, "85"), await readyListing(db, "86")];
+	const now = async (id: string) => ({ ...(await db`select step, cancelled from listings where id = ${id}`)[0] });
+	await assert.rejects(listing(["cancel"]), Usage);
+	await assert.rejects(listing(["cancel", a, "--why"]), Usage);
+	// 建了商品的：要下架，不是放弃；有一份不行就都不勾
+	await db`update listings set product_id = '9002' where id = ${b}`;
+	await assert.rejects(listing(["cancel", a, b]), (e: Error) => e instanceof Usage && /（商品 9002，下架）：不上架就别勾「批准上架」，不是放弃\n一份都没放弃$/.test(e.message));
+	await db`update listings set listed_at = now() where id = ${b}`;
+	await assert.rejects(listing(["cancel", b]), (e: Error) => e instanceof Usage && /已上架（商品 9002）：不卖了是下架，不是放弃/.test(e.message));
+	await assert.rejects(listing(["cancel", a, "999999"]), (e: Error) => e instanceof Usage && /没有商品稿 999999/.test(e.message));
+	assert.equal((await now(a)).cancelled, false);
+	// 勾了「批准上架」、还没 x2 run 就放弃：马上是已放弃，x2 run 不建商品；原因只回显
+	const result = new Map<string, { sent: Submitted; done: boolean | null }>(), sent: string[] = [];
+	const ops = listingOps(result, sent);
+	await listing(["approve", a]);
+	const r = await listing(["cancel", a, "--why", "和 ni1206 撞货"]);
+	assert.deepEqual(r.map((x: any) => [x.id, x.step, x.already, x.why, x.pending]), [[a, "已放弃", false, "和 ni1206 撞货", []]]);
+	assert.deepEqual(await now(a), { step: "已放弃", cancelled: true });
+	assert.equal((await run(db, {}, ops)).ran.length, 0);
+	// 再放弃一次：说一声，不算错
+	assert.deepEqual((await listing(["cancel", a])).map((x: any) => x.already), [true]);
+	// x2 run 生成了建商品、上架，没提交（浏览器没连上）就放弃：下一次 x2 run 标成未执行，不提交、不用等浏览器
+	await listing(["approve", c]);
+	const blocked = await run(db, {}, { ...ops, 建商品: { ...ops.建商品, where: async () => { throw new NeedsHuman("没有登录着店铺的浏览器"); } } });
+	assert.ok(blocked.blocked);
+	const pending = await db`select id::text, status from writes where params->>'listingId' = ${c} order by id`;
+	assert.deepEqual(pending.map((w) => w.status), ["已批准", "已批准"]);
+	assert.deepEqual((await listing(["cancel", c])).map((x: any) => [x.step, x.pending]), [["已放弃", pending.map((w) => w.id)]]);
+	const ran = await run(db, {}, { ...ops, 建商品: { ...ops.建商品, where: async () => { throw new NeedsHuman("没有登录着店铺的浏览器"); } } });
+	assert.deepEqual([ran.blocked, ran.ran.map((x) => [x.op, x.status, x.why])], [null, [["建商品", "未执行", "商品稿已放弃"], ["上架", "未执行", "商品稿已放弃"]]]);
+	assert.deepEqual([sent, (await now(c)).step], [[], "已放弃"]);
+	// 建商品提交了、还没核清：可能已经建了，先核清；人核清了（没建成）才放弃得了
+	const [w] = await db`insert into writes (batch, op, target, params, display, key, status) values (997, '建商品', 't:86', ${db.json({ listingId: d })}, '建商品', 'create:86', '结果未知') returning id::text`;
+	await assert.rejects(listing(["cancel", d]), (e: Error) => e instanceof Usage && /在建商品中（建商品：结果未知）：可能已经建了，先核清/.test(e.message));
+	await db`update writes set status = '被拒' where id = ${w!.id}`;
+	assert.deepEqual((await listing(["cancel", d])).map((x: any) => x.step), ["已放弃"]);
 });
 
 test("收件箱：每轮重算，只更新不重复；这一轮读成功了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {

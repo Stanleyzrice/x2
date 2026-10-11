@@ -130,7 +130,7 @@ x2 propose               agent 写一批待批准的写入（JSON 从 stdin 进�
 x2 approve <批次>         人在终端里说「批准」：agent 替人勾上
 x2 run [--try 操作,…]     执行批准了的写入（勾了「批准上架」、内容没变的商品稿先生成建商品、上架）；没在真站点跑过的写操作要加 --try；执行完马上重算涉及的商品稿的当前步骤（收件箱等 x2 status）
 x2 source …              给商品找货源、写规格例外
-x2 listing …             上品：quote、add、why、make、estimate、show、text、audit、keep、drop、approve、noted、list
+x2 listing …             上品：quote、add、why、make、estimate、show、text、audit、keep、drop、approve、cancel、noted、list
 x2 strategy …            选品的策略：add、set、list、log
 x2 rule …                选品规矩：add、retire、list
 x2 <站点> <操作>          读站点（只读）
