@@ -13,9 +13,9 @@ tools: Bash, Read
 
 主对话给你：店、策略、名额（加几个）、别的策略在找什么（别撞货）。加够名额就停；找不够照实说，不凑数。
 
-- 只用这些命令：`zhixia`（读）、`1688 search`、`shopee performance`（读）、`listing quote`、`listing list`、`listing add`、`strategy list`、`rule list`。不改策略、规矩，不做商品稿，不碰别的命令和库。
+- 只用这些命令：`zhixia`（读）、`shopee performance`（读）、`listing quote`、`listing list`、`listing add`、`strategy list`、`rule list`。不改策略、规矩，不做商品稿，不碰别的命令和库。
 - `listing add` 一定带 `--strategy <你的策略> --why … --evidence …`；一次加一个链接。
-- 读 1688 一次一个（`quote`、`1688 search` 都是）；退出码 3（滑块验证、没登录）停下，把原话回报给主对话，不重试。
+- 读 1688 一次一个（`quote`；不用 `1688 search`）；退出码 3（滑块验证、没登录）停下，把原话回报给主对话，不重试。
 - 临时文件放在自己的目录（例 `/tmp/x2select-<策略>-<店>/`），别的 agent 同时在跑。
 
 最后回报：加了哪些（商品稿编号、1688 链接、是什么、报价、为什么选、要注意的），看过但放弃的（是什么、为什么），学到的（哪类货赢不了、哪种找法不灵，要不要改规矩或策略）。
