@@ -392,7 +392,13 @@ begin
 end $$;
 create or replace trigger listings_approve before update on listings for each row execute function listings_approve();
 
--- 当前步骤的分组：NocoDB 里商品稿按它分组。NocoDB 按值排组（单选不按取值的顺序），文字排不出想要的顺序，enum 按声明的顺序排：
--- 要人做的在前，接着按流程，做完的、停下的在最后。和 src/check/listings.ts 的 LISTING_STEPS 一样；照 step 算，x2 不写它
-do $$ begin create type listing_step as enum ('待批准', '待补充', '待做商品稿', '待写文案', '待 Gemini 文字检查', '已批准', '建商品中', '待上架', '已暂停', '已上架', '已放弃'); exception when duplicate_object then null; end $$;
-alter table listings add column if not exists step_group listing_step generated always as (case step when '待批准' then '待批准'::listing_step when '待补充' then '待补充'::listing_step when '待做商品稿' then '待做商品稿'::listing_step when '待写文案' then '待写文案'::listing_step when '待 Gemini 文字检查' then '待 Gemini 文字检查'::listing_step when '已批准' then '已批准'::listing_step when '建商品中' then '建商品中'::listing_step when '待上架' then '待上架'::listing_step when '已暂停' then '已暂停'::listing_step when '已上架' then '已上架'::listing_step when '已放弃' then '已放弃'::listing_step end) stored;
+-- 当前步骤的分组：NocoDB 里商品稿按 step 倒序分组（NocoDB 按值排组，单选不按取值的顺序）。step 按字的编码排（collate "C"，哪台机器都一样），
+-- 倒序正好是待补充、待批准在最前，已批准、已上架在最后（测试「当前步骤的分组顺序」盯着）。
+-- 给 NocoDB 看的列不用 enum：NocoDB 拿单选列和 '' 比（NULLIF），enum 不收 ''，整张表读不出来
+alter table listings drop column if exists step_group;
+drop type if exists listing_step;
+do $$ begin
+	if (select collation_name from information_schema.columns where table_schema = current_schema() and table_name = 'listings' and column_name = 'step') is distinct from 'C' then
+		alter table listings alter column step type text collate "C";
+	end if;
+end $$;

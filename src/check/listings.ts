@@ -7,8 +7,7 @@ import { listingName, textProblems } from "../listing/text.ts";
 import { specsOf } from "../listing/variants.ts";
 import type { EstimateItem, InboxItem, Todo, Write } from "./orders.ts";
 
-/** 当前步骤。NocoDB 里商品稿按它分组，组也是这个顺序：要人做的在前，接着按流程，做完的、停下的在最后。
- * 库里的 enum listing_step（schema.sql）和它一样：加、改步骤两边一起改 */
+/** 当前步骤。NocoDB 里商品稿按它的字倒序分组（schema.sql：step 按字的编码排）；加、改步骤看测试「当前步骤的分组顺序」 */
 export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待 Gemini 文字检查", "已批准", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
 

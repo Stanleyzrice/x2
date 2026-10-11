@@ -690,9 +690,12 @@ test("备注：人写了或改了备注、agent 还没看过的进 todo（带原
 	assert.equal(todo({ note: "不上了", cancelled: true }), undefined);
 });
 
-test("当前步骤的顺序：库里的 enum listing_step 和 LISTING_STEPS 一样（NocoDB 按它排组）", async () => {
+test("当前步骤的分组顺序：NocoDB 按字的编码倒序排组，待补充、待批准在最前，已批准、已上架在最后", async () => {
 	const schema = await (await import("node:fs/promises")).readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
-	const m = schema.match(/create type listing_step as enum \(([^)]*)\)/);
-	assert.deepEqual(m![1]!.split(",").map((x) => x.trim().replace(/^'|'$/g, "")), [...LISTING_STEPS]);
-	for (const step of LISTING_STEPS) assert.ok(schema.includes(`when '${step}' then '${step}'::listing_step`), step);
+	assert.ok(schema.includes('alter table listings alter column step type text collate "C"'));
+	// collate "C" 按 UTF-8 字节排，和 JS 比较 BMP 字符串（UTF-16 码元）的顺序一样
+	const order = [...LISTING_STEPS].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+	assert.deepEqual(order.slice(0, 2), ["待补充", "待批准"]);
+	assert.deepEqual(order.slice(-2), ["已批准", "已上架"]);
+	assert.ok(order.indexOf("已放弃") >= order.length - 3);
 });

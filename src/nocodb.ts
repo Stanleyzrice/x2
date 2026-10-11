@@ -25,7 +25,7 @@ type Table = { name: string; title: string; columns: Record<string, string>; lin
 
 /** 商品稿里给 x2 用的列（JSON、hash……）：视图里都藏起来 */
 const LISTING_HIDDEN = ["offer", "images", "variants", "pricing", "audit", "attributes", "category_path", "category_id", "removed_images", "removed_variants", "kept_images", "offer_read_at",
-	"pick_snapshot", "approved_hash", "content_hash", "unapproved_why", "noted", "step"];
+	"pick_snapshot", "approved_hash", "content_hash", "unapproved_why", "noted"];
 
 /** x2 用的表：库里留着，NocoDB 的侧栏里藏起来（标成多对多的中间表，NocoDB 默认不显示） */
 export const HIDDEN_TABLES = ["images", "shop_images"];
@@ -77,18 +77,17 @@ export function tables(): Table[] {
 		},
 		{
 			name: "listings", title: "商品稿", attachments: ["main_images", "detail_images", "option_images"], primary: "nickname",
-			// 当前步骤显示的是 step_group（照 step 算的 enum，组按 LISTING_STEPS 的顺序排）；step 是 x2 写的文本，藏起来
-			selects: { step_group: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
+						selects: { step: LISTING_STEPS, shop: ["cheeroutdoor", "ni1206"] },
 			columns: {
-				nickname: "简称", approve: "批准上架", step_group: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", detail_images: "详情图",
+				nickname: "简称", approve: "批准上架", step: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", main_images: "主图", variants_text: "规格和价格", option_images: "规格图", detail_images: "详情图",
 				title: "标题", description: "描述", category_name: "类目", attributes_text: "属性", problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）", days_to_ship: "备货天数",
 				cancelled: "放弃", strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", offer_id: "货源（1688 链接）", product_id: "Shopee 商品 id", approved_at: "批准时间", listed_at: "上架时间", id: "编号", created_at: "创建时间", updated_at: "更新时间",
 				pick_snapshot: "选品快照", offer: "货源快照", images: "图（JSON）", variants: "规格（JSON）", pricing: "核价参数", audit: "Gemini 文字检查", attributes: "属性（JSON）", category_path: "类目路径", category_id: "类目 id",
-				removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间", approved_hash: "批准时的内容（hash）", content_hash: "内容（hash）", unapproved_why: "去掉勾的原因", noted: "看过的备注", step: "当前步骤（文本）",
+				removed_images: "已删除的图", removed_variants: "已移除的规格", kept_images: "保留的图", offer_read_at: "货源读取时间", approved_hash: "批准时的内容（hash）", content_hash: "内容（hash）", unapproved_why: "去掉勾的原因", noted: "看过的备注",
 			},
 			views: [
-				// 按当前步骤分组：待批准、待补充在最前，已上架、已放弃在最后。行调高，主图、规格图、详情图看得见缩略图；删掉不要的图就是在「主图」「详情图」里删附件（「规格图」只看，删了下一轮写回去）
-				{ title: "全部", group: [["step_group", "asc"]], sorts: [["id", "asc"]], hide: LISTING_HIDDEN, rowHeight: 2 },
+				// 按当前步骤倒序分组（step 按字的编码排，见 schema.sql）：待补充、待批准在最前，已批准、已上架在最后。行调高，主图、规格图、详情图看得见缩略图；删掉不要的图就是在「主图」「详情图」里删附件（「规格图」只看，删了下一轮写回去）
+				{ title: "全部", group: [["step", "desc"]], sorts: [["id", "asc"]], hide: LISTING_HIDDEN, rowHeight: 2 },
 				{
 					title: "添加货源",
 					form: { heading: "添加 1688 货源", fields: { shop: "上品的店铺", offer_id: "1688 商品链接（完整粘贴）", note: "补充说明（例：选它的理由）" }, required: ["shop", "offer_id"] },
