@@ -9,7 +9,7 @@ import { auditKey } from "../src/listing/audit.ts";
 import { settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
 import type { Reads } from "../src/read.ts";
-import { listingCommand } from "../src/commands/listing.ts";
+import { listingCommand, setCategory } from "../src/commands/listing.ts";
 import { ruleCommand } from "../src/commands/rule.ts";
 import { strategyCommand } from "../src/commands/strategy.ts";
 import { close, migrate } from "../src/db/index.ts";
@@ -278,6 +278,34 @@ test("x2 listing cancel：替人勾「放弃」，马上是已放弃；建了商
 	await assert.rejects(listing(["cancel", d]), (e: Error) => e instanceof Usage && /在建商品中（建商品：结果未知）：可能已经建了，先核清/.test(e.message));
 	await db`update writes set status = '被拒' where id = ${w!.id}`;
 	assert.deepEqual((await listing(["cancel", d])).map((x: any) => x.step), ["已放弃"]);
+});
+
+test("x2 listing category：人定的类目要是叶子、在本店允许的类目里；写路径、名字，清掉属性、备货天数和类目的问题，马上是待做商品稿（勾了「批准上架」的去掉勾）；建了商品的不改", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const id = await readyListing(db, "87");
+	const tree = async () => [{ id: "100630", name: "居家生活", children: [{ id: "100721", name: "浴室用品", children: [{ id: "101324", name: "地墊", children: [] }, { id: "101325", name: "浴簾", children: [] }] }] }];
+	const now = async () => ({ ...(await db`select category_path, category_id::text, category_name, attributes, attributes_text, days_to_ship, problems, step, approve from listings where id = ${id}`)[0] });
+	await assert.rejects(setCategory(db, "999999", "101324", tree), (e: Error) => e instanceof Usage && /没有商品稿 999999/.test(e.message));
+	await assert.rejects(setCategory(db, id, "100721", tree), (e: Error) => e instanceof Usage && /不是叶子类目，选它下面的：地墊（101324）、浴簾（101325）/.test(e.message));
+	await assert.rejects(setCategory(db, id, "1", tree), (e: Error) => e instanceof Usage && /类目树里没有类目 1/.test(e.message));
+	await db`update shop_settings set categories = ${db.json(["101324"])} where shop = 'cheeroutdoor'`;
+	await assert.rejects(setCategory(db, id, "101325", tree), (e: Error) => e instanceof Usage && /「居家生活 > 浴室用品 > 浴簾」不在 cheeroutdoor 允许的类目里/.test(e.message));
+	assert.equal((await now()).category_name, null);
+	// 勾了「批准上架」以后人定了类目：内容变了，去掉勾；做商品稿记的类目、属性的问题不算了，照新的类目重做商品稿
+	await listing(["approve", id]);
+	await db`update listings set problems = ${"类目：推荐的「雨衣」不在本店允许的类目里\n属性：必填的「材質」待人工填写"} where id = ${id}`;
+	const r = await setCategory(db, id, "101324", tree);
+	assert.deepEqual([r.category, r.categoryPath, r.step], ["居家生活 > 浴室用品 > 地墊", [100630, 100721, 101324], "待做商品稿"]);
+	assert.deepEqual(await now(), { category_path: [100630, 100721, 101324], category_id: "101324", category_name: "居家生活 > 浴室用品 > 地墊", attributes: null, attributes_text: null, days_to_ship: null, problems: null, step: "待做商品稿", approve: false });
+	// 别的问题照旧：还是待补充
+	await db`update shop_settings set categories = null where shop = 'cheeroutdoor'`;
+	await db`update listings set problems = ${"货源：起订量 2，无法单件购买\n备货天数：无法读取这个类目的备货天数规则"} where id = ${id}`;
+	const again = await setCategory(db, id, "101325", tree);
+	assert.deepEqual([again.before, again.step, (await now()).problems], ["居家生活 > 浴室用品 > 地墊", "待补充", "货源：起订量 2，无法单件购买"]);
+	// 建了商品的不改
+	await db`update listings set product_id = '9003' where id = ${id}`;
+	await assert.rejects(setCategory(db, id, "101324", tree), (e: Error) => e instanceof Usage && /已经建了商品（商品 9003）：不改类目/.test(e.message));
+	assert.equal((await now()).category_name, "居家生活 > 浴室用品 > 浴簾");
 });
 
 test("收件箱：每轮重算，只更新不重复；这一轮读成功了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {

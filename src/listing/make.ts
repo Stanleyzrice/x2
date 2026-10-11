@@ -183,8 +183,10 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	// 4. 类目、属性、备货天数：卖家中心的接口，在这家店的浏览器里排队
 	else Object.assign(done, await browser(async () => {
 		const out: Record<string, unknown> = {};
+		// 已经有类目的（上次推荐的，人定的：x2 listing category）不再问推荐，照用
 		let path: number[] = l.category_path ?? [];
-		if (!path.length) {
+		const kept = path.length > 0;
+		if (!kept) {
 			log("推荐类目");
 			const rec = recommendedPath(await recommendedCategory(o.title, cover.imageId!));
 			if (!rec) { problems.push("类目：Shopee 未推荐类目，待人定"); return out; }
@@ -192,7 +194,9 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		}
 		const leaf = path[path.length - 1]!;
 		const names = await categoryNames().catch(() => new Map<string, string>());
-		Object.assign(out, { category_path: path, category_id: leaf, category_name: path.map((c) => names.get(String(c)) ?? String(c)).join(" > ") });
+		// 类目树读不到：已经有的类目的名字照旧
+		const name = names.size || !kept ? path.map((c) => names.get(String(c)) ?? String(c)).join(" > ") : l.category_name ?? path.join(" > ");
+		Object.assign(out, { category_path: path, category_id: leaf, category_name: name });
 		if (s.categories && !s.categories.has(String(leaf))) problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
 		const attrs = pickAttributes(await attributeTree(leaf));
 		Object.assign(out, { attributes: attrs.attributes, attributes_text: attrs.text.join("\n") || null });

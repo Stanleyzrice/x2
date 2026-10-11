@@ -18,6 +18,9 @@
 // x2 listing keep <商品稿> <主图 N、详情图 N…>          保留的图：x2 去掉的放回来，以后检查再挑它也不去掉（人说了才用）
 // x2 listing drop <商品稿> <选项名、层名:选项名或货号…> [--merge]
 //                                                    去掉人不要的规格（例 店里接不了的「定製」）：人说了才用
+// x2 listing category <商品稿> <叶子类目 id>
+//                                                    人在终端里定了类目：写成人定的类目（要是叶子、在本店允许的类目里；建了商品的不改），属性、备货天数清掉，
+//                                                    再 x2 listing make（有类目就不再问 Shopee 推荐）
 // x2 listing approve <商品稿…>                        人在终端里说「批准」：替人勾「批准上架」（只勾待批准、待上架的；有一份不行就都不勾），x2 run 建商品、上架
 // x2 listing cancel <商品稿…> [--why "原因"]
 //                                                    人在终端里说「放弃」：替人勾「放弃」（建了商品的要下架，不是放弃；建商品还没核清的先核清；有一份不行就都不勾），
@@ -26,10 +29,12 @@
 // x2 listing list                                    所有商品稿走到哪了
 // 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
 import { z } from "zod";
+import { inShop } from "../accounts.ts";
 import { listingsCheck, syncImages } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
 import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
+import { CATEGORY_PROBLEM, leafPath } from "../listing/category.ts";
 import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, auditKey, dropAudited, issueLine, restoreAudited, textCheck } from "../listing/audit.ts";
 import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
@@ -39,6 +44,7 @@ import { type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.t
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
+import { type Category, categoryTree } from "../site/shopee/products.ts";
 
 const readStdin = async () => {
 	const chunks: Buffer[] = [];
@@ -125,8 +131,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const jobs = Number(flag(rest, "--jobs") ?? 3);
 		if (!Number.isInteger(jobs) || jobs < 1 || jobs > 10) throw new Usage(usage);
 		let ids = plain(rest, "--jobs");
-		// 不给就做：还没做的、待补充的、规格是旧格式的
-		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object') order by id`).map((r) => r.id as string);
+		// 不给就做：还没做的、待补充的、规格是旧格式的、换了类目还没照它做属性和备货天数的
+		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object' or (category_path is not null and days_to_ship is null)) order by id`).map((r) => r.id as string);
 		if (!ids.length) return out([], "没有要做的商品稿");
 		const before = await namesOf(sql, ids);
 		const settled = await each(ids, jobs, async (id) => {
@@ -325,6 +331,17 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out({ id, name: listingName(l), dropped: r.skus, left, merged: r.merged }, `${listingName(l)}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);
 	}
 
+	if (sub === "category") {
+		// 人在终端里定了类目（推荐的不在本店允许的类目里、推荐错了）：类目树在这家店的浏览器里读
+		const usage = "x2 listing category <商品稿> <叶子类目 id>（人在终端里定了类目才用；类目 id 见 x2 shopee category-tree）";
+		const [id, category, ...extra] = plain(rest);
+		const a = z.object({ id: z.string().regex(/^\d+$/), category: z.string().regex(/^\d+$/) }).safeParse({ id, category });
+		if (!a.success || extra.length) throw new Usage(usage);
+		const r = await setCategory(sql, a.data.id, a.data.category, (shopId) => inShop(shopId, () => categoryTree()));
+		const notes = [r.cancelled ? "这份已放弃：要上就去掉「放弃」" : "", r.before && r.before !== r.category ? `原来是「${r.before}」` : ""].filter(Boolean);
+		return out(r, [`${r.name}：类目定为「${r.category}」，属性、备货天数清掉了${notes.length ? `（${notes.join("；")}）` : ""}`, `下一步：x2 listing make ${r.id}（照新的类目做属性、备货天数）`].join("\n"));
+	}
+
 	if (sub === "approve") {
 		// 和人在 NocoDB 里勾是同一个勾：先重算（内容的 hash 是最新的），勾上时触发器记下这一刻的内容；再重算一次，当前步骤变成已批准
 		const ids = z.array(z.string().regex(/^\d+$/)).min(1).safeParse(plain(rest));
@@ -400,7 +417,31 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | approve | cancel | noted | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | approve | cancel | noted | list（见 docs/listing.md）");
+}
+
+/** 人定的类目（x2 listing category）：要是 Shopee 类目树里的叶子（tree 读这家店的类目树），在本店允许的类目里；已经建了商品的不改。
+ * 写类目的路径、id、名字；属性、备货天数跟着类目变，清掉，做商品稿第 4 步记的问题（类目、属性、备货天数）也不算了；马上重算当前步骤（待做商品稿）。
+ * 以后做商品稿照用这个类目，不再问 Shopee 推荐 */
+export async function setCategory(sql: Sql, id: string, category: string, tree: (shopId: string) => Promise<Category[]>) {
+	const [l] = await sql`select * from listings where id = ${id}`;
+	if (!l) throw new Usage(`没有商品稿 ${id}`);
+	const name = listingName(l);
+	if (l.product_id || l.listed_at) throw new Usage(`${name}已经建了商品（商品 ${l.product_id ?? "—"}）：不改类目`);
+	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	if (!row) throw new Usage(`店铺设置里没有「${l.shop}」`);
+	const s = settingsOf(row);
+	const found = leafPath(await tree(s.shopId), category);
+	if ("error" in found) throw new Usage(`${name}：${found.error}`);
+	const full = found.names.join(" > ");
+	if (s.categories && !s.categories.has(category)) throw new Usage(`${name}：「${full}」不在 ${l.shop} 允许的类目里（店铺设置的「允许的类目」）`);
+	const problems = String(l.problems ?? "").split("\n").filter((x) => x && !CATEGORY_PROBLEM.test(x)).join("\n") || null;
+	const [done] = await sql`update listings set category_path = ${sql.json(found.path)}, category_id = ${category}, category_name = ${full},
+		attributes = null, attributes_text = null, days_to_ship = null, problems = ${problems}, updated_at = now()
+		where id = ${id} and product_id is null and listed_at is null returning id`;
+	if (!done) throw new Usage(`${name}刚建了商品：不改类目`);
+	const r = await listingsCheck(sql, [id]);
+	return { id, name, category: full, categoryPath: found.path, before: (l.category_name as string | null) ?? null, cancelled: Boolean(l.cancelled), step: r.steps.get(id)?.step ?? null };
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */

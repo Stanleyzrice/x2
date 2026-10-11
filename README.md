@@ -36,6 +36,7 @@ x2 listing make --jobs 3                # 做商品稿：读货源、规格和�
 x2 listing estimate 3 --weight 1 --freight 10   # 1688 没给的重量、读不到的国内运费由 agent 估（只填空着的），马上重新核价
 x2 listing show 3                       # 写文案要用的事实
 x2 listing text 3 --title … --description … --tiers … --nickname …   # agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查
+x2 listing category 4 101686            # 人在终端里定了类目时，写成人定的类目（叶子、本店允许的），再 x2 listing make
 x2 listing approve 3 5                  # 人在终端里说「批准」时，替人勾「批准上架」
 x2 listing cancel 4 --why …             # 人在终端里说「放弃」时，替人勾「放弃」（建了商品的要下架，不是放弃）
 x2 listing noted 3                      # 照人写的「备注」做完：记下看过（备注再改，todo 又给出来）

@@ -49,6 +49,7 @@ const help = [
 	"  x2 listing estimate <商品稿> [--weight kg] [--freight 元/件]   估 1688 没给的重量、读不到的国内运费（只填空着的），马上重新核价",
 	"  x2 listing show <商品稿>          写文案要用的事实",
 	"  x2 listing text <商品稿> --title … --description … [--tiers JSON] [--nickname 简称]   agent 写的标题、描述、规格名和简称",
+	"  x2 listing category <商品稿> <类目 id>   人定的类目（人在终端里定了时；叶子、本店允许的）；再 x2 listing make",
 	"  x2 listing approve <商品稿…>      替人勾「批准上架」（人在终端里说了批准时）；x2 run 建商品、上架",
 	"  x2 listing cancel <商品稿…> [--why 原因]   替人勾「放弃」（人在终端里说了放弃时）；建了商品的要下架，不是放弃",
 	"  x2 listing noted <商品稿…>        照人写的「备注」做完：记下看过的备注",

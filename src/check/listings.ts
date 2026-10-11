@@ -47,7 +47,7 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 	const hashes = new Map<string, string | null>(), approvals = new Map<string, Approval>(), approved: ListingsChecked["approved"] = [];
 	const waiting: { id: string; shop: string }[] = [], notes: { id: string; name: string; note: string }[] = [];
 	// 商品稿都用「简称（店铺）」叫，agent 要跑命令的带上编号（listingName）
-	const toMake: string[] = [], stale: string[] = [], toWrite: { id: string; why: string }[] = [], toCheck: string[] = [], toEstimate: EstimateItem[] = [];
+	const toMake: string[] = [], stale: string[] = [], recategorized: string[] = [], toWrite: { id: string; why: string }[] = [], toCheck: string[] = [], toEstimate: EstimateItem[] = [];
 	const names = new Map<string, string>(), plainNames = new Map<string, string>();
 	const lines = (...xs: (string | null | undefined)[]) => xs.filter(Boolean).join("\n") || null;
 	for (const l of listings) {
@@ -103,10 +103,12 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			inbox.push({
 				key: `listing-fix:${id}`, kind: "商品稿", shop: l.shop, due: null, link: null,
 				title: `商品稿：${name}待补充：${String(l.problems).split("\n")[0]}`,
-				detail: `${l.problems}\n\n处理好以后 agent 再做一次（x2 listing make ${id}）。类目不在本店范围：在「店铺设置」里加上这个类目；不上这个货源：勾「放弃」`,
+				detail: `${l.problems}\n\n处理好以后 agent 再做一次（x2 listing make ${id}）。类目不在本店范围：在「店铺设置」里加上这个类目，或者告诉 agent 换成哪个类目；不上这个货源：勾「放弃」`,
 			});
 			continue;
 		}
+		// 人换了类目（x2 listing category 清掉了属性、备货天数）：照新的类目重做商品稿
+		if (l.category_path?.length && !l.days_to_ship) { set("待做商品稿", "换了类目，待照新的类目做属性、备货天数"); recategorized.push(id); continue; }
 		if (needs.length) { set("待做商品稿", `缺${needs.join("、")}：agent 估`); continue; }
 		if (!l.title || !l.description) { set("待写文案"); toWrite.push({ id, why: "还没写" }); continue; }
 		const bad = textProblems(String(l.title), String(l.description));
@@ -147,9 +149,10 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 	}
 	const todo: Todo[] = [];
 	const named = (ids: string[]) => ids.map((id) => names.get(id)!).join("、");
-	if (toMake.length || stale.length) {
-		const why = [toMake.length ? `还没做：${named(toMake)}` : "", stale.length ? `规格是旧格式，要重做：${named(stale)}` : ""].filter(Boolean).join("；");
-		todo.push({ kind: "做商品稿", why, ids: [...toMake, ...stale], command: `x2 listing make ${[...toMake, ...stale].join(" ")}` });
+	if (toMake.length || stale.length || recategorized.length) {
+		const why = [toMake.length ? `还没做：${named(toMake)}` : "", stale.length ? `规格是旧格式，要重做：${named(stale)}` : "", recategorized.length ? `换了类目，要照新的类目重做：${named(recategorized)}` : ""].filter(Boolean).join("；");
+		const ids = [...toMake, ...stale, ...recategorized];
+		todo.push({ kind: "做商品稿", why, ids, command: `x2 listing make ${ids.join(" ")}` });
 	}
 	if (toEstimate.length) todo.push({
 		kind: "估重量、国内运费",

@@ -255,7 +255,7 @@ test("读回来核对：图片可以是地址；价格、库存、规格对不�
 	assert.deepEqual(readbackProblems(sent, got, channels), ["标题和提交的不一致", "规格 LT952803717616-3 的选项、售价或库存和提交的不一致"]);
 });
 
-import { daysToShip, pickAttributes, recommendedPath } from "../src/listing/category.ts";
+import { CATEGORY_PROBLEM, daysToShip, leafPath, pickAttributes, recommendedPath } from "../src/listing/category.ts";
 
 test("属性：只送必填的；是 / 否选否，有其他、一般的选它；要填字的交给人", () => {
 	const r = pickAttributes([
@@ -275,6 +275,15 @@ test("类目：取第一个推荐；出货天数取类目的上限", () => {
 	const rules = [{ categoryIds: ["101324"], min: 2, max: 10 }, { categoryIds: ["100559"], min: 2, max: 15 }];
 	assert.equal(daysToShip(101324, rules), 10);
 	assert.equal(daysToShip(1, rules), null);
+});
+
+test("人定的类目：在类目树里找叶子，回从根到它的路径和名字；找不到的、不是叶子的（列出下一层）说清楚；换了类目，做商品稿记的类目、属性、备货天数的问题不算了", () => {
+	const tree = [{ id: "100630", name: "居家生活", children: [{ id: "100721", name: "浴室用品", children: [{ id: "101324", name: "地墊", children: [] }, { id: "101325", name: "浴簾", children: [] }] }] }];
+	assert.deepEqual(leafPath(tree, "101324"), { path: [100630, 100721, 101324], names: ["居家生活", "浴室用品", "地墊"] });
+	assert.deepEqual(leafPath(tree, "1"), { error: "Shopee 的类目树里没有类目 1" });
+	assert.deepEqual(leafPath(tree, "100721"), { error: "「居家生活 > 浴室用品」不是叶子类目，选它下面的：地墊（101324）、浴簾（101325）" });
+	const problems = ["类目：推荐的「雨衣」不在本店允许的类目里", "属性：必填的「材質」待人工填写", "备货天数：无法读取这个类目的备货天数规则", "货源：起订量 2，无法单件购买"];
+	assert.deepEqual(problems.filter((x) => !CATEGORY_PROBLEM.test(x)), ["货源：起订量 2，无法单件购买"]);
 });
 
 import { checkListings, LISTING_STEPS, UNAPPROVED } from "../src/check/listings.ts";
@@ -356,6 +365,14 @@ test("商品稿的检查：当前步骤、待补充的进收件箱、agent 能�
 	assert.equal(run({ ...l, listed_at: new Date() }).steps.get("7")!.step, "已上架");
 	assert.equal(run({ ...l, cancelled: true }).steps.get("7")!.step, "已放弃");
 	assert.equal(checkListings([l], new Map([["cheeroutdoor", { ...s.get("cheeroutdoor")!, paused: "店铺被限制" }]]), []).steps.get("7")!.step, "已暂停");
+});
+
+test("检查：人换了类目（属性、备货天数清掉了）、没有别的问题的，照新的类目重做商品稿（agent 的 todo，不进收件箱）", () => {
+	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
+	const r = checkListings([ready({ days_to_ship: null, attributes: null })], s, []);
+	assert.deepEqual([r.steps.get("7"), r.inbox, r.todo[0]!.why, (r.todo[0] as any).command], [{ step: "待做商品稿", detail: "换了类目，待照新的类目做属性、备货天数" }, [], "换了类目，要照新的类目重做：雨衣（cheeroutdoor，#7）", "x2 listing make 7"]);
+	// 还有别的问题：照旧待补充
+	assert.equal(checkListings([ready({ days_to_ship: null, problems: "货源：起订量 2，无法单件购买" })], s, []).steps.get("7")!.step, "待补充");
 });
 
 test("去掉规格以后：去掉的不上，规格图只挂还在的选项，审核键跟着变；规格名变了，审核键也跟着变", () => {
