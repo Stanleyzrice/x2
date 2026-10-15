@@ -96,12 +96,15 @@ export async function textCheck(p: Product, opts: { image: (id: string) => Promi
 			const id = batch[x.index]!;
 			const role = roleOf(p, id), keep = kept.has(id);
 			const where = keep ? null : await textWhere(bytes[x.index]!, x.issues);
-			return { id, issues: x.issues, ...(where ? { where } : {}), role, ...(shouldDrop(where, role, keep, opts.canDrop ?? false) ? { dropped: true } : {}) };
+			return { id, issues: uniqIssues(x.issues), ...(where ? { where } : {}), role, ...(shouldDrop(where, role, keep, opts.canDrop ?? false) ? { dropped: true } : {}) };
 		}));
-		return { textIssues: r.textIssues, images };
+		return { textIssues: uniqIssues(r.textIssues), images };
 	}));
 	return { key: auditKey(p), textIssues: [...new Set(results.flatMap((r) => r.textIssues))], images: results.flatMap((r) => r.images), at: new Date().toISOString() };
 }
+
+/** 一张图的问题去掉重复的：Gemini 偶尔把同一句重复上百遍（一条里用「；」连着的也拆开比） */
+export const uniqIssues = (issues: string[]) => [...new Set(issues.flatMap((s) => s.split("；")).map((s) => s.trim()).filter(Boolean))];
 
 /** x2 去掉挑出的图：主图、详情图里这几张（图片 id）的 Pic 写上 drop */
 export function dropAudited(pics: Pics, drops: AuditImage[]): Pics {
@@ -125,7 +128,7 @@ export function restoreAudited(pics: Pics, ids: Iterable<string>): Pics {
 export function auditDropped(pics: Pics): AuditImage[] {
 	const out = new Map<string, AuditImage>();
 	for (const [list, role] of [[pics.main ?? [], "主图"], [pics.detail ?? [], "详情图"]] as const) for (const p of list) {
-		if (p.imageId && p.drop?.startsWith(AUDIT_DROP) && !out.has(p.imageId)) out.set(p.imageId, { id: p.imageId, issues: [p.drop.slice(AUDIT_DROP.length)], where: "后加的文案", role, dropped: true });
+		if (p.imageId && p.drop?.startsWith(AUDIT_DROP) && !out.has(p.imageId)) out.set(p.imageId, { id: p.imageId, issues: uniqIssues([p.drop.slice(AUDIT_DROP.length)]), where: "后加的文案", role, dropped: true });
 	}
 	return [...out.values()];
 }
@@ -142,7 +145,7 @@ export function auditIssues(a: Partial<Audit>, kept: Iterable<string> = [], name
 	const text = (a.textIssues ?? []).map((t, i): AuditIssue => ({ n: i + 1, kind: "文案", text: t, status: "提示" }));
 	return [...text, ...ordered.map(({ x, status }, i): AuditIssue => {
 		const name = names.get(x.id);
-		return { n: text.length + i + 1, kind: "图", text: x.issues.join("；"), image: x.id, ...(name ? { name } : {}), ...(x.role ? { role: x.role } : {}), ...(x.where ? { where: x.where } : {}), status };
+		return { n: text.length + i + 1, kind: "图", text: uniqIssues(x.issues).join("；"), image: x.id, ...(name ? { name } : {}), ...(x.role ? { role: x.role } : {}), ...(x.where ? { where: x.where } : {}), status };
 	})];
 }
 

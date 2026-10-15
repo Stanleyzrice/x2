@@ -287,7 +287,7 @@ test("人定的类目：在类目树里找叶子，回从根到它的路径和�
 });
 
 import { checkListings, UNAPPROVED } from "../src/check/listings.ts";
-import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop } from "../src/listing/audit.ts";
+import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop, uniqIssues } from "../src/listing/audit.ts";
 import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
@@ -459,7 +459,7 @@ test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图）
 	assert.deepEqual([...dropped.main, ...dropped.detail].map((x) => x.drop ?? null), [null, "Gemini 文字检查：「产品」是簡體；「质量」", null, "Gemini 文字检查：「产品」是簡體；「质量」", "超过张数，不用"]);
 	assert.equal(pics.main[1]!.drop, undefined);
 	assert.deepEqual(productOf(ready({ images: dropped }), s).product!.images, ["m1"]);
-	assert.deepEqual(auditDropped(dropped), [{ id: "m2", issues: ["「产品」是簡體；「质量」"], where: "后加的文案", role: "主图", dropped: true }]);
+	assert.deepEqual(auditDropped(dropped), [{ id: "m2", issues: ["「产品」是簡體", "「质量」"], where: "后加的文案", role: "主图", dropped: true }]);
 	assert.deepEqual(restoreAudited(dropped, ["m2", "d9"]), pics);
 });
 
@@ -707,3 +707,12 @@ test("备注：人写了或改了备注、agent 还没看过的进 todo（带原
 	assert.equal(todo({ note: "不上了", cancelled: true }), undefined);
 });
 
+
+test("Gemini 文字检查一句话重复上百遍：一张图的问题去掉重复的，存着的、x2 去掉时写的原因也一样", () => {
+	const line = "圖片中出現簡體字「纸」，應修正為繁體字「紙」。";
+	assert.deepEqual(uniqIssues([line, line, `${line}；${line}`, " ", "另一條"]), [line, "另一條"]);
+	const issues = auditIssues({ textIssues: [], images: [{ id: "d5", issues: [Array(200).fill(line).join("；")], role: "详情图", dropped: true }] }, [], new Map([["d5", "详情图 5"]]));
+	assert.equal(issueLine(issues[0]!), `1. 详情图 5：${line}（x2 已去掉）`);
+	const pics = { main: [], detail: [{ from: "d.jpg", imageId: "d5", drop: `Gemini 文字检查：${line}；${line}` }], options: [] };
+	assert.deepEqual(auditDropped(pics as any).map((x) => x.issues), [[line]]);
+});
