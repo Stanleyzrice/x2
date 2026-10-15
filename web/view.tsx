@@ -1,6 +1,6 @@
 // 一个视图：读行（每 15 秒、回到页面时再读），按列分组，表格或卡片；表格点一行开卡片。人改一格马上存，存不进说原话
 import { Badge, Button, Dialog, Empty, Input, InputArea, LayerCard, Loader, Select, Table, Tabs } from "@cloudflare/kumo";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Column, fail, keyOf, type Meta, type Row, toast } from "./api.ts";
 import { Outline, type Section } from "./outline.tsx";
 import { Edit, type Save, Show } from "./value.tsx";
@@ -37,9 +37,9 @@ export function TableView({ meta, view, onView }: { meta: Meta; view: View; onVi
 	const grouped = rows ? groups(rows, view.group) : [];
 	// 目录：卡片一张一节（名字是第一列），表格一组一节
 	const first = meta.columns[0]!.name;
-	const sections: Section[] = view.cards
-		? (rows ?? []).map((r, i) => ({ id: `s${i}`, label: String(r[first] ?? "—") }))
-		: grouped.flatMap(([g, list], i) => (g === null ? [] : [{ id: `s${i}`, label: `${g}（${list.length}）` }]));
+	const labels = view.cards ? (rows ?? []).map((r) => String(r[first] ?? "—")) : grouped.flatMap(([g, list]) => (g === null ? [] : [`${g}（${list.length}）`]));
+	// 名字没变就是同一份目录（每 15 秒重读一次行，别让目录重新量）
+	const sections: Section[] = useMemo(() => labels.map((label, i) => ({ id: `s${i}`, label })), [labels.join("\n")]);
 
 	return (
 		<div className="flex flex-col gap-4 p-4 pt-16 md:p-6">
