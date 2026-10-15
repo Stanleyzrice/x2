@@ -2,6 +2,7 @@
 import { Badge, Button, Dialog, Empty, Input, InputArea, LayerCard, Loader, Select, Table, Tabs } from "@cloudflare/kumo";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Column, fail, keyOf, type Meta, type Row, toast } from "./api.ts";
+import { Outline, type Section } from "./outline.tsx";
 import { Edit, type Save, Show } from "./value.tsx";
 
 type View = Meta["views"][number];
@@ -33,6 +34,12 @@ export function TableView({ meta, view, onView }: { meta: Meta; view: View; onVi
 	const saver = (row: Row) => (col: string): Save => (value) =>
 		api.set(meta.name, row._key, col, value).then((r) => setRows((all) => all?.map((x) => (keyOf(x) === keyOf(row) ? (r ?? x) : x)) ?? null), fail);
 	const row = rows?.find((r) => keyOf(r) === opened);
+	const grouped = rows ? groups(rows, view.group) : [];
+	// 目录：卡片一张一节（名字是第一列），表格一组一节
+	const first = meta.columns[0]!.name;
+	const sections: Section[] = view.cards
+		? (rows ?? []).map((r, i) => ({ id: `s${i}`, label: String(r[first] ?? "—") }))
+		: grouped.flatMap(([g, list], i) => (g === null ? [] : [{ id: `s${i}`, label: `${g}（${list.length}）` }]));
 
 	return (
 		<div className="flex flex-col gap-4 p-4 pt-16 md:p-6">
@@ -43,14 +50,15 @@ export function TableView({ meta, view, onView }: { meta: Meta; view: View; onVi
 				<div className="grow" />
 				{meta.form && <AddForm meta={meta} onAdded={load} />}
 			</header>
-			{!rows ? <Loader /> : !rows.length ? <Empty title={view.empty ?? "没有"} /> : groups(rows, view.group).map(([g, list]) => (
-				<section key={g ?? ""} className="flex flex-col gap-3">
+			{!rows ? <Loader /> : !rows.length ? <Empty title={view.empty ?? "没有"} /> : grouped.map(([g, list], i) => (
+				<section key={g ?? ""} id={view.cards ? undefined : `s${i}`} className="flex scroll-mt-4 flex-col gap-3">
 					{g !== null && <h2 className="flex items-center gap-2 text-sm font-medium"><Badge variant="neutral">{g}</Badge><span className="text-kumo-subtle">{list.length}</span></h2>}
 					{view.cards
-						? list.map((r) => <Card key={keyOf(r)} meta={meta} row={r} save={saver(r)} />)
+						? list.map((r) => <Card key={keyOf(r)} id={`s${rows.indexOf(r)}`} meta={meta} row={r} save={saver(r)} />)
 						: <Rows meta={meta} rows={list} group={view.group?.col} save={saver} open={(r) => setOpened(keyOf(r))} />}
 				</section>
 			))}
+			<Outline sections={sections} unit={view.cards ? "张" : "组"} />
 			<Dialog.Root open={Boolean(row)} onOpenChange={(o) => !o && setOpened(null)}>
 				<Dialog size="xl" className="max-h-[90vh] overflow-y-auto p-0">
 					<Dialog.Title className="sr-only">{meta.title}</Dialog.Title>
@@ -92,10 +100,10 @@ function Rows({ meta, rows, group, save, open }: { meta: Meta; rows: Row[]; grou
 }
 
 /** 一行的卡片：第一列是标题，下面一列一行；人能改的给控件 */
-function Card({ meta, row, save }: { meta: Meta; row: Row; save: (col: string) => Save }) {
+function Card({ id, meta, row, save }: { id?: string; meta: Meta; row: Row; save: (col: string) => Save }) {
 	const [first, ...rest] = meta.columns;
 	return (
-		<LayerCard>
+		<LayerCard id={id} className="scroll-mt-4">
 			<LayerCard.Secondary className="text-base font-medium"><Show col={first!} value={row[first!.name]} /></LayerCard.Secondary>
 			<LayerCard.Primary className="flex flex-col gap-3">
 				{rest.map((c) => (
