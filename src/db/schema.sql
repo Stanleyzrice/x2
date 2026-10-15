@@ -226,8 +226,6 @@ create table if not exists listings (
 	-- 规格（docs/listing.md「规格」）：层和规格一起存，{ tiers: [{ source（1688 的层名）, name, options: [{ source（1688 的原值）, name, image }] }],
 	-- variants: [{ sku, skuId, specId, options（每层一个选项的下标）, costRmb, stock, weightKg, priceTwd }] }。做商品稿时从货源生成，以后都改它；空是还没做
 	variants jsonb,
-	-- 给人看的「规格和价格」
-	variants_text text,
 	-- 图：{ main: [...], detail: [...], options: {...}, sizeChart }，每张 { from（原图地址）, sha（原图）, final（成品）, imageId, width, height, verdict }
 	images jsonb not null default '{}',
 	-- 核价用的参数快照
@@ -316,6 +314,8 @@ end $$;
 alter table listings drop column if exists main_images;
 alter table listings drop column if exists detail_images;
 alter table listings drop column if exists option_images;
+-- 规格和价格照 variants 现算（网页上是表格，命令行是 specsText），不另存
+alter table listings drop column if exists variants_text;
 -- 到货问题的类型默认「损坏」
 alter table arrival_issues alter column kind set default '损坏';
 -- 简称：人和 agent 认商品稿用的简体中文短名（最多 12 字，例 浴水生财猫狗地垫），不上 Shopee。x2 做商品稿时先填 1688 标题的前 12 个字，

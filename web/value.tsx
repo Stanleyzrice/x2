@@ -1,6 +1,7 @@
 // 一格：照列的类型显示；人能改的照类型给控件，改完就存（勾、选马上存，字离开输入框时存）。表格和卡片都用它
-import { Badge, Button, Checkbox, Input, InputArea, Link, Select } from "@cloudflare/kumo";
+import { Badge, Button, Checkbox, Input, InputArea, Link, Select, Table } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
+import type { SpecsTable } from "../src/listing/variants.ts";
 import type { Pic } from "../src/web/tables.ts";
 import type { Column } from "./api.ts";
 
@@ -17,6 +18,7 @@ const jsonText = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v
 /** 只看的一格；compact 是表格里（长字截断、图小） */
 export function Show({ col, value, compact }: { col: Column; value: unknown; compact?: boolean }) {
 	if (col.type === "pics") return <Pics pics={(value ?? []) as Pic[]} compact={compact} />;
+	if (col.type === "specs" && value) return <Specs specs={value as SpecsTable} compact={compact} />;
 	if (empty(value)) return <span className="text-kumo-inactive">—</span>;
 	if (col.type === "bool") return <Checkbox checked={Boolean(value)} disabled aria-label={col.label} />;
 	if (col.type === "time") return <span className="whitespace-nowrap">{time(String(value))}</span>;
@@ -70,6 +72,59 @@ function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean; save?: 
 					</figcaption>
 				</figure>
 			))}
+		</div>
+	);
+}
+
+type SpecRow = SpecsTable["rows"][number];
+const price = (p: number | null) => (p === null ? "未定价" : `NT$${p}`);
+/** 规格表里的数：都一样的写在上面一行，不一样的才成一列 */
+const FIELDS: { label: string; of: (r: SpecRow) => string }[] = [
+	{ label: "售价", of: (r) => price(r.priceTwd) },
+	{ label: "进价", of: (r) => `¥${r.costRmb}` },
+	{ label: "库存", of: (r) => String(r.stock) },
+	{ label: "重量", of: (r) => (r.weightKg === null ? "缺重量" : `${r.weightKg} kg`) },
+];
+
+/** 规格和价格：一个规格一行（规格图、每层的选项、不一样的数），都一样的数写在上面；表格里只写个数和售价 */
+function Specs({ specs, compact }: { specs: SpecsTable; compact?: boolean }) {
+	const { rows, tiers, removed } = specs;
+	const same = FIELDS.filter((f) => new Set(rows.map(f.of)).size <= 1);
+	const varying = FIELDS.filter((f) => !same.includes(f));
+	if (compact) {
+		const prices = [...new Set(rows.map((r) => r.priceTwd))].filter((p) => p !== null) as number[];
+		const range = prices.length ? (prices.length === 1 ? price(prices[0]!) : `${price(Math.min(...prices))}–${Math.max(...prices)}`) : "未定价";
+		return <span className="whitespace-nowrap">{rows.length > 1 || tiers.length ? `${rows.length} 个规格 · ` : ""}{range}</span>;
+	}
+	const images = rows.some((r) => r.image);
+	return (
+		<div className="flex flex-col gap-2">
+			<div className="text-sm text-kumo-subtle">
+				{[`${rows.length} 个规格`, ...same.map((f) => `${f.label}${rows.length > 1 ? "都是" : ""} ${rows[0] ? f.of(rows[0]) : "—"}`)].join(" · ")}
+			</div>
+			{tiers.length > 0 && (
+				<div className="max-h-[28rem] overflow-auto rounded-lg border border-kumo-line">
+					<Table>
+						<Table.Header>
+							<Table.Row>
+								{images && <Table.Head className="w-16 whitespace-nowrap">规格图</Table.Head>}
+								{tiers.map((t) => <Table.Head key={t} className="whitespace-nowrap">{t}</Table.Head>)}
+								{varying.map((f) => <Table.Head key={f.label} className="whitespace-nowrap text-right">{f.label}</Table.Head>)}
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{rows.map((r) => (
+								<Table.Row key={r.sku}>
+									{images && <Table.Cell>{r.image && <img src={r.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-10 max-w-none rounded object-cover" />}</Table.Cell>}
+									{r.options.map((o, a) => <Table.Cell key={tiers[a]}>{o}</Table.Cell>)}
+									{varying.map((f) => <Table.Cell key={f.label} className="text-right tabular-nums">{f.of(r)}</Table.Cell>)}
+								</Table.Row>
+							))}
+						</Table.Body>
+					</Table>
+				</div>
+			)}
+			{removed.length > 0 && <div className="text-sm text-kumo-subtle">已移除：{removed.map((x) => `${x.name}（${x.count} 个规格）`).join("、")}</div>}
 		</div>
 	);
 }

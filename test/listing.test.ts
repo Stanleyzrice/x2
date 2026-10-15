@@ -30,7 +30,7 @@ test("核价：两道门都过的最小整数售价（和 lilto 的验算、真�
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
-import { dropSpecs, limitProblems, OLD_SPECS, priceRange, removedOf, renameSpecs, type Specs, specsFrom, specsOf, specsText, structureProblems } from "../src/listing/variants.ts";
+import { dropSpecs, limitProblems, OLD_SPECS, priceRange, removedOf, renameSpecs, type Specs, specsFrom, specsOf, specsTable, specsText, structureProblems } from "../src/listing/variants.ts";
 import type { Offer } from "../src/site/1688.ts";
 
 /** 一个货源：props 是 [层名, 取值…]（第一层的取值带图「<取值>.jpg」），skus 是 [各层的取值, 库存]，规格 id 是 s<第几个> */
@@ -715,4 +715,17 @@ test("Gemini 文字检查一句话重复上百遍：一张图的问题去掉重�
 	assert.equal(issueLine(issues[0]!), `1. 详情图 5：${line}（x2 已去掉）`);
 	const pics = { main: [], detail: [{ from: "d.jpg", imageId: "d5", drop: `Gemini 文字检查：${line}；${line}` }], options: [] };
 	assert.deepEqual(auditDropped(pics as any).map((x) => x.issues), [[line]]);
+});
+
+test("规格表（网页）：一个规格一行，按选项排，每层的选项名、第一层的规格图；已移除的另列", () => {
+	const s = grid([["款式", ["斑點狗", "香蕉狗"]], ["尺寸", ["40×60cm", "50×80cm"]]], (c) => [133, 155][c[1]!]!);
+	s.tiers[0]!.options[1]!.image = null;
+	s.variants.reverse();
+	const t = specsTable(s, [{ name: "定製", count: 3 }], (from) => `https://shopee/${from}`);
+	assert.deepEqual(t.tiers, ["款式", "尺寸"]);
+	assert.deepEqual(t.rows.map((r) => [r.options, r.image, r.priceTwd]), [
+		[["斑點狗", "40×60cm"], "https://shopee/斑點狗.jpg", 133], [["斑點狗", "50×80cm"], "https://shopee/斑點狗.jpg", 155],
+		[["香蕉狗", "40×60cm"], null, 133], [["香蕉狗", "50×80cm"], null, 155],
+	]);
+	assert.deepEqual(t.removed, [{ name: "定製", count: 3 }]);
 });

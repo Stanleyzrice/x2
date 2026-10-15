@@ -8,7 +8,7 @@ import { LISTING_STEPS } from "../check/listings.ts";
 import { Usage } from "../errors.ts";
 import { addListings } from "../listing/pick.ts";
 import { LABEL, numbered, usedPics } from "../listing/product.ts";
-import { isSingle, specsOf } from "../listing/variants.ts";
+import { isSingle, removedOf, specsOf, specsTable } from "../listing/variants.ts";
 import { IMAGE } from "../site/shopee/seller.ts";
 
 /** 人能改的一格：options 是可选的值；when 是这一行能改的条件（例 结果未知的写入才能改状态）；set 不是改一列（例 删图） */
@@ -26,7 +26,7 @@ export type Table = {
 };
 export type Row = Record<string, any>;
 export type Key = Record<string, string>;
-export type ColumnType = "bool" | "number" | "time" | "text" | "json" | "image" | "link" | "pics";
+export type ColumnType = "bool" | "number" | "time" | "text" | "json" | "image" | "link" | "pics" | "specs";
 
 /** 给网页的：一张表的列（类型、能不能改、可选的值）、视图、表单 */
 export type Meta = {
@@ -80,6 +80,14 @@ async function choose(sql: Sql, key: Key, value: unknown): Promise<void> {
 	});
 }
 
+/** 商品稿的规格和价格（算出来的「规格和价格」）：规格表，规格图传好了用 Shopee 的地址；还没做商品稿的是 null */
+function specsRows(l: Row) {
+	const s = specsOf(l.variants);
+	if (!s) return null;
+	const shopee = new Map(((l.images?.options ?? []) as any[]).filter((p) => p.imageId).map((p) => [p.from as string, `${IMAGE}${p.imageId}`]));
+	return specsTable(s, removedOf(l.offer, l.removed_variants), (from) => shopee.get(from) ?? from);
+}
+
 const shops = async (sql: Sql) => (await sql`select shop from shop_settings order by shop`).map((r) => r.shop as string);
 
 /** 侧栏从上到下的顺序；每张表的第一个视图是默认的。要人做的都在收件箱里 */
@@ -93,11 +101,11 @@ export const TABLES: Table[] = [
 	{
 		name: "listings", title: "商品稿", key: ["id"],
 		columns: {
-			nickname: "简称", approve: "批准上架", step: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", pics: "图", variants_text: "规格和价格",
+			nickname: "简称", approve: "批准上架", step: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", pics: "图", specs: "规格和价格",
 			title: "标题", description: "描述", category_name: "类目", attributes_text: "属性", problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）",
 			days_to_ship: "备货天数", cancelled: "放弃", strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", offer_id: "货源", product_id: "Shopee 商品 id", approved_at: "批准时间", listed_at: "上架时间", id: "编号",
 		},
-		computed: { pics: { type: "pics", of: picsOf } },
+		computed: { pics: { type: "pics", of: picsOf }, specs: { type: "specs", of: specsRows } },
 		edit: {
 			nickname: {}, note: {}, title: {}, description: {}, weight_kg: {}, freight_rmb: {},
 			// 勾：待批准、待上架的才能勾；去掉勾随时能。放弃：建了商品的是下架，不是放弃

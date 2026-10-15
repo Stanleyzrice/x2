@@ -332,6 +332,25 @@ export function specsText(s: Specs, removed: { name: string; count: number }[] =
 	return lines.join("\n");
 }
 
+/** 规格表（网页上给人看）：每层的名字；一个规格一行（每层的选项、规格图、进价、售价、库存、重量、货号），按选项排；已移除的 */
+export type SpecsTable = {
+	tiers: string[];
+	rows: { options: string[]; image: string | null; costRmb: number; priceTwd: number | null; stock: number; weightKg: number | null; sku: string }[];
+	removed: { name: string; count: number }[];
+};
+
+/** image：第一层选项的 1688 图片地址 → 给人看的地址（传好了是 Shopee 的） */
+export function specsTable(s: Specs, removed: { name: string; count: number }[], image: (from: string) => string | null): SpecsTable {
+	const rows = [...s.variants].sort((x, y) => x.options.reduce((d, o, a) => d || o - (y.options[a] ?? 0), 0)).map((v) => {
+		const first = s.tiers[0]?.options[v.options[0] ?? -1];
+		return {
+			options: v.options.map((o, a) => s.tiers[a]?.options[o]?.name ?? ""), image: first?.image ? image(first.image) : null,
+			costRmb: v.costRmb, priceTwd: v.priceTwd, stock: v.stock, weightKg: v.weightKg, sku: v.sku,
+		};
+	});
+	return { tiers: s.tiers.map((t) => t.name), rows, removed };
+}
+
 /** 已移除的规格（货号）→ 给人看的：整个取值都移除了的（例 定製 的每个尺寸）写这个取值，别的写各层的取值；名字照 1688 的转繁体 */
 export function removedOf(offer: Offer | null | undefined, removed: string[] | null | undefined): { name: string; count: number }[] {
 	if (!offer?.skus || !removed?.length) return [];

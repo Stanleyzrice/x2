@@ -190,8 +190,9 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		await savePrices(sql, now, settingsOf(row));
 		const left = estimateNeeds(now);
 		const problems = [...String(now!.problems ?? "").split("\n").filter(Boolean), ...pricingProblems(specsOf(now!.variants)!, left)];
-		return out({ id, name: listingName(now!), notes, needs: left, problems, prices: now!.variants_text }, [
-			`${listingName(now!)}：${notes.join("；")}`, `规格和价格：\n  ${String(now!.variants_text ?? "").split("\n").join("\n  ")}`,
+		const prices = specsText(specsOf(now!.variants)!, removedOf(now!.offer, now!.removed_variants));
+		return out({ id, name: listingName(now!), notes, needs: left, problems, prices }, [
+			`${listingName(now!)}：${notes.join("；")}`, `规格和价格：\n  ${prices.split("\n").join("\n  ")}`,
 			problems.length ? `还有：${problems.join("；")}` : "核价好了（下一步看 x2 status）",
 		].join("\n"));
 	}
@@ -250,7 +251,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 				}
 			}
 			if (problems.length) { results.push({ id: it.id, saved: false, problems }); continue; }
-			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs), variants_text: specsText(specs, removedOf(l.offer, l.removed_variants)) } : {};
+			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs) } : {};
 			// 简称只在空着、还是自动填的那个值时写：人在网页上改过的不改
 			const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
 			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() } as any)} where id = ${it.id}`;
@@ -303,7 +304,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const r = dropSpecs(specs, names, merge);
 		if ("error" in r) throw new Usage(`${listingName(l)}：${r.error}`);
 		const removed = [...new Set([...(l.removed_variants ?? []), ...r.skus])];
-		await sql`update listings set variants = ${sql.json(r.specs)}, variants_text = ${specsText(r.specs, removedOf(l.offer, removed))}, removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
+		await sql`update listings set variants = ${sql.json(r.specs)}, removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
 		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再查）`;
 		const left = r.specs.variants.length;
 		return out({ id, name: listingName(l), dropped: r.skus, left, merged: r.merged }, `${listingName(l)}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);

@@ -13,7 +13,7 @@ import { makeImages, type Pics } from "./images.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import { nicknameFor } from "./text.ts";
-import { limitProblems, priceRange, removedOf, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
+import { limitProblems, priceRange, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 import type { Mark } from "./watermark.ts";
 
 /** 店铺设置（库里的一行）→ 核价参数、水印、上品的默认值 */
@@ -85,12 +85,12 @@ export function reprice(l: any, s: Settings): { specs: Specs; freightRmb: number
 	return { specs: { tiers: specs.tiers, variants }, freightRmb, changed };
 }
 
-/** 重新核价，用的重量、国内运费变了才存（规格、规格和价格、核价参数）。l 跟着改；回存了没有 */
+/** 重新核价，用的重量、国内运费变了才存（规格、核价参数）。l 跟着改；回存了没有 */
 export async function savePrices(sql: Sql, l: any, s: Settings): Promise<boolean> {
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
-	const fields = { variants: r.specs, variants_text: specsText(r.specs, removedOf(l.offer, l.removed_variants)), pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
-	await sql`update listings set variants = ${sql.json(fields.variants as any)}, variants_text = ${fields.variants_text}, pricing = ${sql.json(fields.pricing as any)}, updated_at = now() where id = ${l.id}`;
+	const fields = { variants: r.specs, pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
+	await sql`update listings set variants = ${sql.json(fields.variants as any)}, pricing = ${sql.json(fields.pricing as any)}, updated_at = now() where id = ${l.id}`;
 	Object.assign(l, fields);
 	return true;
 }
@@ -204,7 +204,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		offer: { offerId: o.offerId, url: o.url, title: o.title, images: o.images, detail, tags: o.tags, freight: o.freight, minQty: o.minQty, props: o.props, skus: o.skus },
 		offer_read_at: new Date(),
 		variants: specs,
-		variants_text: specsText(specs, removedOf(o, l.removed_variants)),
 		pricing: { params: s.params, preOrder: s.preOrder, freightRmb: freight, at: new Date().toISOString() },
 	}, problems);
 }
