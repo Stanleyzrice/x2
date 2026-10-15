@@ -1,4 +1,4 @@
-// 现读：x2 status 每次经浏览器把要用的站点数据读进内存，不存库（只有订单写回库，给 NocoDB 里看进度）。
+// 现读：x2 status 每次经浏览器把要用的站点数据读进内存，不存库（只有订单写回库，给网页上看进度）。
 // 读什么：chanboss 的订单（两家店都在）；每个登录着的 1688 账号的购物车、采购单（带物流、进行中的退款）。
 // 哪一样读不了就记下来（results）：检查照常算，靠它关的收件箱这一轮不关（漏读不算做完）。
 // 同一个进程里 2 分钟内读过的复用（x2 run 一批几项加购、x2 source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
@@ -130,7 +130,7 @@ async function attempt<T>(results: Read[], what: string, who: string, fn: () => 
 	}
 }
 
-/** 现读一遍：chanboss 订单写回 orders（NocoDB 里看进度），要买的商品的货源更新快照，1688 的购物车、采购单留在内存里 */
+/** 现读一遍：chanboss 订单写回 orders（网页上看进度），要买的商品的货源更新快照，1688 的购物车、采购单留在内存里 */
 export async function readAll(sql: Sql, log: (s: string) => void = console.error): Promise<Reads> {
 	const results: Read[] = [];
 	log(`读 chanboss 订单${again("订单")}`);

@@ -71,7 +71,7 @@ export async function importJson(sql: Sql, dir: string, account: string) {
 	});
 }
 
-// lilto 的店铺设置（act/operating/shop-settings，本机镜像 ~/.lilto/cos 下）→ shop_settings：允许的类目、水印。只用一次，只填还空着的格子（人在 NocoDB 改过的不覆盖）。
+// lilto 的店铺设置（act/operating/shop-settings，本机镜像 ~/.lilto/cos 下）→ shop_settings：允许的类目、水印。只用一次，只填还空着的格子（人改过的不覆盖）。
 // lilto 按卖家账号 id 记店：348440 是 ni1206，1555026956 是 cheeroutdoor
 const LILTO_SHOPS: Record<string, string> = { "348440": "ni1206", "1555026956": "cheeroutdoor" };
 

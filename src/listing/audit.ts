@@ -21,7 +21,7 @@ export type AuditImage = { id: string; issues: string[]; where?: Where; role?: R
 export type Audit = { key: string; textIssues: string[]; images: AuditImage[]; at: string };
 /** 一条问题怎么样了：提示（给人看；文案的，写文案的 agent 先照着改，最多两次）、已去掉（x2 去掉的图）、不算问题（印在商品上的字）、保留的图（人说要用的） */
 export type IssueStatus = "提示" | "已去掉" | "不算问题" | "保留的图";
-/** 一条问题：编号从 1 起，先文案、后图，不算问题的、保留的图排在最后。name 是图在附件上的名字 */
+/** 一条问题：编号从 1 起，先文案、后图，不算问题的、保留的图排在最后。name 是图的名字 */
 export type AuditIssue = { n: number; kind: "文案" | "图"; text: string; image?: string; name?: string; role?: Role; where?: Where; status: IssueStatus };
 /** x2 去掉的图：Pic 的 drop 以它开头（人删的图记在已删除的图里，不在这） */
 export const AUDIT_DROP = "Gemini 文字检查：";
@@ -133,7 +133,7 @@ export function auditDropped(pics: Pics): AuditImage[] {
 /** 要人看的：提示、x2 去掉的图（不算问题的、保留的图不用再看） */
 const shown = (s: IssueStatus) => s === "提示" || s === "已去掉";
 
-/** 检查结果 → 编号的问题。kept：保留的图（图片 id）；names：图在附件上的名字（imageNames） */
+/** 检查结果 → 编号的问题。kept：保留的图（图片 id）；names：图的名字（imageNames） */
 export function auditIssues(a: Partial<Audit>, kept: Iterable<string> = [], names: Map<string, string> = new Map()): AuditIssue[] {
 	const keep = new Set(kept);
 	const statusOf = (x: AuditImage): IssueStatus => (x.dropped ? "已去掉" : keep.has(x.id) ? "保留的图" : x.where === "印在商品上" ? "不算问题" : "提示");
@@ -148,7 +148,7 @@ export function auditIssues(a: Partial<Audit>, kept: Iterable<string> = [], name
 
 const SUFFIX: Record<IssueStatus, string> = { 提示: "", 已去掉: "（x2 已去掉）", 不算问题: "（印在商品上，不算问题）", 保留的图: "（保留的图）" };
 
-/** 一条问题写成一行：编号、文案或图在附件上的名字（不写图片 id）、问题原文、怎么样了 */
+/** 一条问题写成一行：编号、文案或图的名字（不写图片 id）、问题原文、怎么样了 */
 export const issueLine = (x: AuditIssue) => `${x.n}. ${x.kind === "文案" ? "文案" : x.name ?? x.role ?? "图"}：${x.text}${SUFFIX[x.status]}`;
 
 /** 商品稿的「说明」：要人看的问题，带编号；没有回 null */

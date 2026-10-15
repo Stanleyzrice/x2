@@ -62,7 +62,7 @@ async function approvedListings(sql: Sql, ops: Record<string, WriteOp>): Promise
 }
 
 /** 4. 这一次碰过的商品稿（建商品、上架的写入）：建商品、上架被拒或没执行的去掉勾（原因写进说明，改好了再勾，免得每次 x2 run 都再交一次），
- * 再马上重算当前步骤，NocoDB 里不用等下一次 x2 status。出错只记在 stderr：写入的结果照样要报给人 */
+ * 再马上重算当前步骤，网页上不用等下一次 x2 status。出错只记在 stderr：写入的结果照样要报给人 */
 async function refreshListings(sql: Sql, ran: Ran[]): Promise<void> {
 	const ids = [...new Set(ran.map((x) => x.id))];
 	if (!ids.length) return;

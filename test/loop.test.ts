@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import postgres from "postgres";
 import { z } from "zod";
-import { check, listingsCheck, syncImages } from "../src/check/index.ts";
+import { check, listingsCheck } from "../src/check/index.ts";
 import { UNAPPROVED } from "../src/check/listings.ts";
 import { auditKey } from "../src/listing/audit.ts";
 import { settingsOf } from "../src/listing/make.ts";
@@ -109,7 +109,7 @@ async function readyListing(db: postgres.Sql, offerId: string): Promise<string> 
 		values ('cheeroutdoor', ${offerId}, ${db.json(offer)}, ${db.json(specs)}, ${db.json(images)}, '輕便雨衣 成人連身 防水透氣 騎車通勤', '防水雨衣，騎車通勤用', ${db.json([100637, 101324])}, 10, ${db.json([])}, ${`雨衣${offerId}`})
 		returning id::text`;
 	const id = l!.id as string;
-	await listingsCheck(db, [id]); // 核价、附件
+	await listingsCheck(db, [id]); // 核价
 	const [row] = await db`select * from listings where id = ${id}`;
 	const [s] = await db`select * from shop_settings where shop = 'cheeroutdoor'`;
 	await db`update listings set audit = ${db.json({ key: auditKey(productOf(row, settingsOf(s)).product!), textIssues: [], images: [] })} where id = ${id}`;
@@ -146,7 +146,7 @@ test("批准上架：人勾了、内容没变的 x2 run 建商品、上架（马
 	await assert.rejects(propose(db, { title: "上架", writes: [{ op: "建商品", params: { listingId: id } }] }, ops), (e: Error) => e instanceof Usage && /批准上架/.test(e.message));
 	// 没勾：不做
 	assert.equal((await run(db, {}, ops)).ran.length, 0);
-	// 人在 NocoDB 里勾上：记下这一刻的内容
+	// 人在网页上勾上：记下这一刻的内容
 	await db`update listings set approve = true where id = ${id}`;
 	assert.equal((await now()).approved_hash, before.content_hash);
 	// 建商品结果未知：马上是建商品中，上架不做；再跑先核清，不重发
@@ -357,50 +357,6 @@ test("规格例外：x2 source --spec 写进选用的货源那一行；两边都
 	assert.equal(row!.sku_exceptions, "特粗26管雙層側三網150金+輪 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮");
 });
 
-test("商品稿的图和 NocoDB 附件：x2 放上去；人删了哪张记下来，以后不用；新做好的照样加进去", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
-	const db = sql!;
-	const pic = (id: string) => ({ from: `${id}.jpg`, imageId: id, width: 800, height: 800 });
-	const images = { main: [pic("m1"), pic("m2"), { from: "m3.jpg", drop: "有供应商痕迹" }], detail: [pic("d1")], options: [] };
-	const [l] = await db`insert into listings (shop, offer_id, images) values ('cheeroutdoor', '1', ${db.json(images)}) returning *`;
-	await syncImages(db, l);
-	const ids = (col: string) => (JSON.parse(l![col]) as { url: string }[]).map((a) => a.url.split("/").pop());
-	assert.deepEqual(ids("main_images"), ["m1", "m2"]);
-	assert.deepEqual(ids("detail_images"), ["d1"]);
-	// 人在 NocoDB 删了 m1
-	await db`update listings set main_images = ${JSON.stringify([{ url: "https://down-tw.img.susercontent.com/file/m2", title: "主图 2" }])} where id = ${l!.id}`;
-	const [after] = await db`select * from listings where id = ${l!.id}`;
-	await syncImages(db, after);
-	const [now] = await db`select removed_images, main_images from listings where id = ${l!.id}`;
-	assert.deepEqual(now!.removed_images, ["m1"]);
-	// 重做商品稿以后多了一张 m4：照样加进去，m1 还是不用
-	await db`update listings set images = ${db.json({ ...images, main: [...images.main, pic("m4")], shown: after!.images.shown })} where id = ${l!.id}`;
-	const [again] = await db`select * from listings where id = ${l!.id}`;
-	await syncImages(db, again);
-	const [last] = await db`select main_images from listings where id = ${l!.id}`;
-	assert.deepEqual((JSON.parse(last!.main_images) as { url: string }[]).map((a) => a.url.split("/").pop()), ["m2", "m4"]);
-});
-
-test("商品稿的规格图：第一层每个选项一张附件，标题是选项名；只给人看，人删了不记、下一轮写回去", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
-	const db = sql!;
-	const pic = (id: string, from: string) => ({ from, imageId: id, width: 800, height: 800 });
-	const names = [["黑猫", "水生財黑貓咪", "a.jpg"], ["黄狗", "遇水生財黃蘋狗", "b.jpg"], ["白猫", "白貓", "c.jpg"]];
-	const specs = {
-		tiers: [{ source: "颜色", name: "款式", options: names.map(([source, name, image]) => ({ source, name, image })) }],
-		variants: names.map((_, k) => ({ sku: `LT2-${k}`, skuId: `${k}`, specId: `${k}`, options: [k], costRmb: 1, stock: 9, weightKg: 0.3, priceTwd: 133 })),
-	};
-	const images = { main: [pic("m1", "m1.jpg")], detail: [], options: [pic("o1", "a.jpg"), pic("o2", "b.jpg"), { from: "c.jpg", drop: "有供应商痕迹" }] };
-	const [l] = await db`insert into listings (shop, offer_id, images, variants) values ('cheeroutdoor', '2', ${db.json(images)}, ${db.json(specs)}) returning *`;
-	await syncImages(db, l);
-	const att = (t: string) => (JSON.parse(t) as { url: string; title: string }[]).map((a) => [a.title, a.url.split("/").pop()]);
-	assert.deepEqual(att(l!.option_images), [["水生財黑貓咪", "o1"], ["遇水生財黃蘋狗", "o2"]]);
-	// 人在 NocoDB 删了一张规格图：不记成已删除的图，下一轮写回去
-	await db`update listings set option_images = ${JSON.stringify([{ url: "https://down-tw.img.susercontent.com/file/o2", title: "遇水生財黃蘋狗" }])} where id = ${l!.id}`;
-	const [edited] = await db`select * from listings where id = ${l!.id}`;
-	await syncImages(db, edited);
-	const [now] = await db`select removed_images, option_images from listings where id = ${l!.id}`;
-	assert.deepEqual([now!.removed_images, att(now!.option_images)], [[], [["水生財黑貓咪", "o1"], ["遇水生財黃蘋狗", "o2"]]]);
-});
-
 /** x2 的一条命令（--json），回它的输出 */
 async function command(fn: (args: string[], json: boolean) => Promise<void>, args: string[]): Promise<any> {
 	process.env.X2_DATABASE_URL = url!;
@@ -452,21 +408,18 @@ test("x2 listing text：规格名交得不对（重名、层数不对）什么�
 	assert.deepEqual([row!.title, row!.description, row!.variants], [null, null, specs]);
 });
 
-test("x2 listing keep：按附件上的名字找图，x2 去掉的放回来、记进保留的图；人删的不放回来", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("x2 listing keep：按图的名字找图，x2 去掉的放回来、记进保留的图；人删的不放回来", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const pic = (id: string, extra: object = {}) => ({ from: `${id}.jpg`, imageId: id, width: 800, height: 800, ...extra });
 	const images = { main: [pic("m1"), pic("m2", { drop: "Gemini 文字检查：「质量」" })], detail: [pic("d1"), pic("d2")], options: [] };
 	const [l] = await db`insert into listings (shop, offer_id, images, removed_images) values ('cheeroutdoor', '5', ${db.json(images)}, ${db.json(["d1"])}) returning id::text`;
 	const id = l!.id as string;
-	await assert.rejects(listing(["keep", id, "详情图 1"]), (e: Error) => e instanceof Usage && /详情图 1是人在 NocoDB 删的/.test(e.message));
+	await assert.rejects(listing(["keep", id, "详情图 1"]), (e: Error) => e instanceof Usage && /详情图 1是人删的/.test(e.message));
 	await assert.rejects(listing(["keep", id, "主图 9"]), (e: Error) => e instanceof Usage && /没有主图 9（有：主图 1、主图 2、详情图 1、详情图 2）/.test(e.message));
 	const r = await listing(["keep", id, "主图", "2", "详情图2"]);
 	assert.deepEqual([r.kept, r.restored, r.audit[0].checked], [["主图 2", "详情图 2"], ["主图 2"], false]);
-	const [now] = await db`select images, kept_images, main_images, detail_images from listings where id = ${id}`;
+	const [now] = await db`select images, kept_images from listings where id = ${id}`;
 	assert.deepEqual([now!.images.main[1].drop, now!.kept_images], [undefined, ["m2", "d2"]]);
-	// 附件跟着变：放回来的「主图 2」又在了；人删的「详情图 1」不在，「详情图 2」的名字不变
-	const titles = (t: string) => (JSON.parse(t) as { title: string }[]).map((a) => a.title);
-	assert.deepEqual([titles(now!.main_images), titles(now!.detail_images)], [["主图 1", "主图 2"], ["详情图 2"]]);
 });
 
 test("x2 listing estimate：只填空着的「重量」「国内运费」，人填过的不动；写完马上重新核价，人改了也照着重算", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
@@ -486,7 +439,7 @@ test("x2 listing estimate：只填空着的「重量」「国内运费」，人�
 	assert.deepEqual([Number(now!.weight_kg), Number(now!.freight_rmb), now!.pricing.freightRmb], [1, 10, 10]);
 	assert.deepEqual(now!.variants.variants.map((v: any) => v.weightKg), [0.3, 1]);
 	assert.ok(now!.variants.variants.every((v: any) => v.priceTwd > 0));
-	// 人在 NocoDB 改成 0.8：agent 再估也不改；照人改的重新核价
+	// 人在网页上改成 0.8：agent 再估也不改；照人改的重新核价
 	await db`update listings set weight_kg = 0.8 where id = ${id}`;
 	const again = await listing(["estimate", id, "--weight", "2"]);
 	assert.deepEqual(again.notes, ["重量：已有 0.8 kg（人填的或估过的），不改"]);
@@ -508,7 +461,7 @@ test("x2 listing text 交简称：简体、最多 12 字，不对就什么都不
 	assert.deepEqual([bad.text[0].saved, bad.text[0].problems], [false, ["简称「浴水生財貓狗地墊」有繁体字，要用简体中文（浴水生财猫狗地垫）"]]);
 	const ok = await text("浴水生财猫狗地垫");
 	assert.deepEqual([ok.text[0].saved, ok.text[0].name], [true, `浴水生财猫狗地垫（cheeroutdoor，#${id}）`]);
-	// 人在 NocoDB 改了：agent 再交也不改，说一声
+	// 人在网页上改了：agent 再交也不改，说一声
 	await db`update listings set nickname = '猫咪地垫' where id = ${id}`;
 	const again = await text("可爱猫狗地垫");
 	assert.deepEqual([again.text[0].saved, again.text[0].notes], [true, ["简称：已有「猫咪地垫」，不改（只在空着、还是自动填的时候写）"]]);

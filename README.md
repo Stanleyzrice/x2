@@ -9,11 +9,11 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 | 概念 | 是什么 | 例 |
 |---|---|---|
 | **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `site/writes.ts`，只由 `x2 run` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
-| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准、到货问题、商品稿）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在 NocoDB 里看和填 | 收件箱、写入、货源、订单、商品稿 |
+| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、批准、到货问题、商品稿）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在网页上（`x2 web`）看和填 | 收件箱、写入、货源、订单、商品稿 |
 | **循环** | 现读站点 → 检查（算出收件箱和 agent 要做的）→ agent 准备写入、人在收件箱里做和批准 → `x2 run` 执行、读回来 → 下一轮。做完 = 收件箱是空的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 propose`、`x2 run` |
 | **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步等人 | `.claude/skills/orders/SKILL.md`、`.claude/skills/listing/SKILL.md` |
 
-人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报、建商品、上架）只有一条路：人批准（加购、预报：agent 用 `x2 propose` 写成待批准的写入，人在收件箱里勾「批准」；建商品、上架：人在 NocoDB「商品稿」里勾「批准上架」），`x2 run` 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
+人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报、建商品、上架）只有一条路：人批准（加购、预报：agent 用 `x2 propose` 写成待批准的写入，人在收件箱里勾「批准」；建商品、上架：人在网页「商品稿」里勾「批准上架」），`x2 run` 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
 
 ## 推进：x2 status
 
@@ -24,7 +24,7 @@ x2 source <商品 id>             # 给店里一个商品找货源：以图搜�
 x2 propose < 一批.json          # 写一批待批准的写入；收件箱加一行「批准」
 x2 approve 12                  # 人在终端里说「批准」时，替人勾上
 x2 run                         # 执行批准了的写入；勾了「批准上架」的商品稿建商品、上架
-x2 nocodb                      # 建 NocoDB：连库、中文名、视图（X2_NOCODB_URL、X2_NOCODB_EMAIL、X2_NOCODB_PASSWORD、X2_NOCODB_META_URL）
+x2 web                         # 开网页：收件箱、商品稿（审稿、批准上架、删图）、订单、货源、设置（默认 127.0.0.1:5170；--host 0.0.0.0 给同一个网络里别的电脑）
 ```
 
 上品（[docs/listing.md](docs/listing.md)）：
@@ -47,7 +47,7 @@ x2 rule add "<规矩>" --why …              # 选品规矩（所有策略共�
 x2 listing add cheeroutdoor <1688 链接> --strategy 搜索缺口 --why … --evidence …   # 按策略选的：记下选品理由、依据、当时的策略和规矩
 ```
 
-建商品、上架是写入：人在 NocoDB「商品稿」里一份一份勾「批准上架」→ `x2 run`（勾了以后内容变了，x2 去掉勾）。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
+建商品、上架是写入：人在网页「商品稿」里一份一份勾「批准上架」→ `x2 run`（勾了以后内容变了，x2 去掉勾）。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
 
 两家店各开一个浏览器（Chrome 的不同用户），1688、知虾、chanboss 登录在其中一个里。x2 按登录选浏览器（每个进程现读一次，不存库）：Shopee 按店，1688、知虾、chanboss 用登录着的那个；要强制指定，设 `X2_BROWSER`（浏览器在 cdp-relay 里的 id）。几个 x2 同时跑：同一个浏览器的同一个站点一次只让一个进程用，别的排队（stderr 写着在等谁）；1688 的页面两次加载之间隔 3 秒，跳了滑块验证就停下（退出码 3，说在哪个浏览器里拉）。
 
@@ -116,15 +116,16 @@ x2/
 │ ├ listing/              上品：price.ts 核价、variants.ts 规格、screen.ts 筛字、watermark.ts 水印、images.ts 图、category.ts 类目属性、product.ts 建商品的 product_info 和读回来核对、audit.ts Gemini 文字检查、make.ts 做商品稿、queue.ts 同时做的上限和按浏览器排队
 │ ├ service/              外部服务：gemini.ts、xiangji.ts（象寄译图，收费）、image.ts（取图、认格式、宽高、sha256）
 │ ├ env.ts                启动时读仓库根目录的 .env
-│ ├ nocodb.ts             x2 nocodb：按 loop.md「视图」建 NocoDB
+│ ├ web/                  x2 web 的服务：tables.ts 哪些表、列给人看，怎么看，人能改哪几格；server.ts 照它读写库、发界面
 │ ├ similar.ts            规格名的比较：按字比，列出缺的数字、颜色；matchSku 加购时按店里的规格名在货源的规格里配，配不上的看规格例外
-│ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、listing.ts、db.ts、nocodb.ts
+│ └ commands/             x2 的子命令，一个文件一组：site.ts（读站点）、loop.ts（status、propose、approve、run）、source.ts、listing.ts、db.ts、web.ts
 ├ .claude/skills/
 │ ├ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 采购单分给订单 → 预报 → 人打包
 │ ├ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → Gemini 文字检查 → 人审稿批准 → 建商品 → 上架
 │ └ selection/SKILL.md    选品：按策略找词和竞品 → 以图搜 1688 同款 → 报价 → 照选品规矩筛 → 写选品理由加成商品稿
+├ web/                    网页的界面（React、Cloudflare Kumo）：main.tsx 侧栏和路由，view.tsx 表格、卡片、表单，value.tsx 照类型显示和改一格；x2 web 打包进 web/dist
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
-├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）
+├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）；网页的（React、Kumo、Vite、Tailwind）是 devDependencies
 └ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
 ```
 

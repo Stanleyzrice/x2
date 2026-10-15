@@ -14,7 +14,7 @@ export type SourceSku = { skuId: string; specId: string; name: string; price: nu
  * title、skus 是快照（x2 现读这个货源时更新）：店里的规格按名字在 skus 里配；配不上的看 exceptions（规格例外，人定的） */
 export type Source = { itemId: string; offerId: string; title: string | null; skus: SourceSku[]; chosen: boolean; sure: boolean; broken: string | null; exceptions?: string | null };
 export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null; error?: string | null };
-/** 到货问题：人在 NocoDB 的表单里上报的、未处理的（错货、少件、损坏……） */
+/** 到货问题：人在网页的表单里上报的、未处理的（错货、少件、损坏……） */
 export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
 /** buyAccount：采购账号（1688 userId），x2 只往它加购 */
 /** shipWaitHours：1688 付了款多久还没发货算异常 */
@@ -28,7 +28,7 @@ export type Snapshot = {
 };
 
 export type InboxItem = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
-/** step：当前步骤（下面 STEPS 里的一个，NocoDB 里订单按它分组）；stepDetail：说明（哪件未到、哪个规格缺货源……） */
+/** step：当前步骤（下面 STEPS 里的一个，网页上订单按它分组）；stepDetail：说明（哪件未到、哪个规格缺货源……） */
 export type Computed = { daysLeft: number | null; destination: string | null; step: string; stepDetail: string | null };
 /** 加购这个写操作的参数：同一个货源规格的几张订单合成一行。newSources：随这次加购一起批准的新货源（店里的商品 id） */
 export type CartParams = {
@@ -55,7 +55,7 @@ export type EstimateItem = {
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
 export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };
 
-/** 当前步骤：按流程排（NocoDB 里订单按它分组，组也是这个顺序） */
+/** 当前步骤：按流程排（网页上订单按它分组，组也是这个顺序） */
 export const STEPS = [
 	"缺货源", "规格不匹配", "待加购", "加购待批准", "待 1688 付款", "待预报", "预报待批准", "待到齐", "有到货问题", "待打包", "待 chanboss 收货", "待 chanboss 打包",
 	"外部采购", "已打包", "已取消",

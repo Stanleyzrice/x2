@@ -30,7 +30,7 @@
 // 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
 import { z } from "zod";
 import { inShop } from "../accounts.ts";
-import { listingsCheck, syncImages } from "../check/index.ts";
+import { listingsCheck } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
 import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
@@ -117,9 +117,8 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const before = await namesOf(sql, ids);
 		const settled = await each(ids, jobs, async (id) => {
 			const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`));
-			// 做好的图马上放进 NocoDB 的附件（不等下一次 x2 status）；缺重量、国内运费的告诉 agent 估，定不了价的、超过上限的现算
+			// 缺重量、国内运费的告诉 agent 估，定不了价的、超过上限的现算
 			const [l] = await sql`select * from listings where id = ${id}`;
-			if (l) await syncImages(sql, l);
 			const specs = l ? specsOf(l.variants) : null;
 			const needs = l ? estimateNeeds(l) : [];
 			return { ...r, name: l ? listingName(l) : `商品稿 ${id}`, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] };
@@ -252,7 +251,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			}
 			if (problems.length) { results.push({ id: it.id, saved: false, problems }); continue; }
 			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs), variants_text: specsText(specs, removedOf(l.offer, l.removed_variants)) } : {};
-			// 简称只在空着、还是自动填的那个值时写：人在 NocoDB 改过的不改
+			// 简称只在空着、还是自动填的那个值时写：人在网页上改过的不改
 			const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
 			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() } as any)} where id = ${it.id}`;
 			results.push({ id: it.id, saved: true, problems: [], ...(nick ? {} : { notes: [`简称：已有「${l.nickname}」，不改（只在空着、还是自动填的时候写）`] }) });
@@ -273,19 +272,18 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "keep") {
-		// 保留的图（人说了才用）：按附件上的名字（主图 N、详情图 N）找图；x2 去掉的放回来；都记进保留的图，以后检查再挑它也不去掉
+		// 保留的图（人说了才用）：按图的名字（主图 N、详情图 N）找图；x2 去掉的放回来；都记进保留的图，以后检查再挑它也不去掉
 		const [id, ...words] = plain(rest);
 		const asked = [...new Set([...words.join(" ").matchAll(/(主图|详情图)\s*(\d+)/g)].map((m) => `${m[1]} ${m[2]}`))];
-		if (!id || !asked.length) throw new Usage("x2 listing keep <商品稿> <主图 N、详情图 N…>（附件上的名字，见商品稿的说明；人说了才用）");
+		if (!id || !asked.length) throw new Usage("x2 listing keep <商品稿> <主图 N、详情图 N…>（图的名字，见商品稿的说明；人说了才用）");
 		const [l] = await sql`select * from listings where id = ${id}`;
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
-		await syncImages(sql, l);
 		const named = new Map<string, Pic>();
 		for (const role of ["main", "detail"] as const) for (const { pic, n } of numbered(l.images ?? {}, role)) named.set(`${LABEL[role]} ${n}`, pic);
 		const unknown = asked.filter((x) => !named.has(x));
 		if (unknown.length) throw new Usage(`${listingName(l)}没有${unknown.join("、")}（有：${[...named.keys()].join("、") || "无"}）`);
 		const deleted = asked.filter((x) => (l.removed_images ?? []).includes(named.get(x)!.imageId));
-		if (deleted.length) throw new Usage(`${listingName(l)}的${deleted.join("、")}是人在 NocoDB 删的（已删除的图），不放回来`);
+		if (deleted.length) throw new Usage(`${listingName(l)}的${deleted.join("、")}是人删的（已删除的图），不放回来`);
 		const ids = [...new Set(asked.map((x) => named.get(x)!.imageId!))];
 		const restored = asked.filter((x) => named.get(x)!.drop?.startsWith(AUDIT_DROP));
 		await sql`update listings set images = ${sql.json(restoreAudited(l.images, ids) as any)}, kept_images = ${sql.json([...new Set([...(l.kept_images ?? []), ...ids])])}, updated_at = now() where id = ${id}`;
@@ -323,7 +321,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "approve") {
-		// 和人在 NocoDB 里勾是同一个勾：先重算（内容的 hash 是最新的），勾上时触发器记下这一刻的内容；再重算一次，当前步骤变成已批准
+		// 和人在网页上勾是同一个勾：先重算（内容的 hash 是最新的），勾上时触发器记下这一刻的内容；再重算一次，当前步骤变成已批准
 		const ids = z.array(z.string().regex(/^\d+$/)).min(1).safeParse(plain(rest));
 		if (!ids.success) throw new Usage("x2 listing approve <商品稿…>（人在终端里说了「批准」才用）");
 		const want = [...new Set(ids.data)];
@@ -343,7 +341,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "cancel") {
-		// 和人在 NocoDB 里勾「放弃」是同一个勾。已经建了商品的不是放弃，是下架；建商品提交了、还没核清的可能已经建了，先核清。
+		// 和人在网页上勾「放弃」是同一个勾。已经建了商品的不是放弃，是下架；建商品提交了、还没核清的可能已经建了，先核清。
 		// 原因不存：「备注」是人写的，也没有放原因的列，只回显。勾完马上重算当前步骤（已放弃）；还没提交的建商品、上架 x2 run 标成未执行
 		const usage = `x2 listing cancel <商品稿…> [--why "原因"]（人在终端里说了「放弃」才用）`;
 		const a = z.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1), why: z.string().trim().min(1).optional() })
@@ -424,7 +422,7 @@ export async function setCategory(sql: Sql, id: string, category: string, tree: 
 	return { id, name, category: full, categoryPath: found.path, before: (l.category_name as string | null) ?? null, cancelled: Boolean(l.cancelled), step: r.steps.get(id)?.step ?? null };
 }
 
-/** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写附件上的名字） */
+/** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写图的名字） */
 type CheckResult = { id: string; name: string; checked: boolean; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
 const checkLine = (c: CheckResult) => {
 	if (!c.checked) return `${c.name} Gemini 文字检查：查不了：${(c.problems ?? []).join("；")}`;
@@ -436,11 +434,10 @@ const checkLine = (c: CheckResult) => {
 	].join("\n");
 };
 
-/** 现在这份商品稿：先把人在 NocoDB 删的图记下来（删了的不查），再组商品 */
+/** 现在这份商品稿组成的商品（人删的图不查） */
 async function listingNow(sql: Sql, id: string) {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) return null;
-	await syncImages(sql, l);
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
 	return { l, kept: (l.kept_images ?? []) as string[], r: productOf(l, settingsOf(row)) };
 }
@@ -449,7 +446,7 @@ async function listingNow(sql: Sql, id: string) {
 const MAX_RECHECK = 2;
 
 /** Gemini 文字检查：内容没变的不重查（检查键记在商品稿的 audit 里）。看的是加水印之前的图（unmarked）。
- * 挑出的图 x2 能去掉的去掉（不进已删除的图），重组商品再查，NocoDB 的附件跟着变 */
+ * 挑出的图 x2 能去掉的去掉（不进已删除的图），重组商品再查 */
 async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 	const out: CheckResult[] = [];
 	for (const id of ids) {

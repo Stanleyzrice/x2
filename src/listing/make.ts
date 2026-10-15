@@ -6,7 +6,7 @@
 import { alibabaAccounts } from "../accounts.ts";
 import { type Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
-import { detailImages, Gone, offerIdOf, offer as readOffer, type Offer } from "../site/1688.ts";
+import { detailImages, Gone, offer as readOffer, type Offer } from "../site/1688.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../site/shopee/products.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
@@ -145,18 +145,9 @@ export function quote(o: Offer, s: Settings, assume: { weightKg: number; freight
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
+	// 店铺有外键：一定有店铺设置
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
-	if (!row) return save(sql, id, {}, [`店铺：店铺设置里缺「${l.shop}」`]);
-	// 人在 NocoDB 表单里贴的是整个链接：改成货源 id
-	const offerId = offerIdOf(String(l.offer_id));
-	if (!offerId) return save(sql, id, {}, [`货源：无法识别「${l.offer_id}」（贴 1688 的商品链接）`]);
-	if (offerId !== l.offer_id) {
-		const [dup] = await sql`select id from listings where shop = ${l.shop} and offer_id = ${offerId} and id <> ${id}`;
-		if (dup) return save(sql, id, { cancelled: true, note: `和商品稿 ${dup.id} 重复` }, []);
-		await sql`update listings set offer_id = ${offerId} where id = ${id}`;
-		l.offer_id = offerId;
-	}
-	const s = settingsOf(row);
+	const s = settingsOf(row!);
 	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
 	// 1. 货源（1688 的页面、详情图的地址：排队，和上一次读 1688 隔几秒）
@@ -176,8 +167,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
 	const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark, browser, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)) }, log);
-	// 上次放进 NocoDB 附件的（images.shown）留着：人删了哪张靠它认
-	const done: Record<string, unknown> = { images: { ...pics, shown: l.images?.shown } };
+	const done: Record<string, unknown> = { images: pics };
 	const cover = pics.main.find((p) => p.imageId);
 	if (!cover) problems.push("图：缺可用的主图");
 	// 4. 类目、属性、备货天数：卖家中心的接口，在这家店的浏览器里排队

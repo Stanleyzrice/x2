@@ -2,12 +2,9 @@
 // 收件箱（只更新不重复，条件不成立就关）、订单上算出来的列、规格定了货源以后删掉它剩下的候选。
 // 只有这一行靠的那几样这一轮都读成功了，才关它：漏读不算做完。人勾了「已处理」的（x2 看不到结果的事），关掉以后不再开
 import type { Sql } from "../db/index.ts";
-import { IMAGE } from "../site/shopee/seller.ts";
 import { NeedsHuman } from "../errors.ts";
 import { read1688, type Read, type Reads } from "../read.ts";
 import { savePrices, settingsOf, type Settings } from "../listing/make.ts";
-import { LABEL, usedPics } from "../listing/product.ts";
-import { isSingle, specsOf } from "../listing/variants.ts";
 import { checkListings } from "./listings.ts";
 import { checkOrders, type InboxItem, planned, type Result, type Snapshot, type Todo } from "./orders.ts";
 
@@ -84,42 +81,8 @@ async function loopItems(sql: Sql, reads: Reads): Promise<InboxItem[]> {
 
 export type Checked = { todo: Todo[]; opened: number; closed: number };
 
-/** 商品稿的图和 NocoDB 的附件对一下：x2 上次放上去的（images.shown）里人删掉的记进 removed_images；
- * 再把现在要用的（usedPics：做好的、没去掉、没删的；主图最多 9 张、详情图最多 12 张）写回附件，标题是「主图 N」「详情图 N」（号不跟着删图变）。
- * 附件是 Shopee 的图片地址，NocoDB 直接显示。规格图（第一层每个选项一张，标题是选项名）只给人看：人删了不记，每次照规格写回去 */
-export async function syncImages(sql: Sql, l: any): Promise<void> {
-	if (!l.images?.main) return;
-	const removed = new Set<string>((l.removed_images ?? []) as string[]);
-	const shown = (l.images.shown ?? {}) as Record<string, string[]>;
-	const idOf = (a: any) => String(a?.url ?? "").split("?")[0]!.split("/").pop()!;
-	const parse = (t: string | null) => { try { return t ? (JSON.parse(t) as any[]).map(idOf) : null; } catch { return null; } };
-	const cols = [["main_images", "main"], ["detail_images", "detail"]] as const;
-	for (const [col, role] of cols) {
-		const present = parse(l[col]);
-		if (present) for (const id of shown[role] ?? []) if (!present.includes(id)) removed.add(id);
-	}
-	const next: Record<string, string[]> = {};
-	const att: Record<string, string> = {};
-	for (const [col, role] of cols) {
-		const used = usedPics(l.images, role, removed);
-		next[role] = used.map(({ pic }) => pic.imageId!);
-		att[col] = JSON.stringify(used.map(({ pic, n }) => ({ url: `${IMAGE}${pic.imageId}`, title: `${LABEL[role]} ${n}`, mimetype: "image/jpeg" })));
-	}
-	const specs = specsOf(l.variants);
-	const optionIds = new Map(((l.images.options ?? []) as any[]).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId)).map((p) => [p.from as string, p.imageId as string]));
-	const options = specs && !isSingle(specs) ? specs.tiers[0]!.options.flatMap((o) => {
-		const id = o.image ? optionIds.get(o.image) : undefined;
-		return id ? [{ url: `${IMAGE}${id}`, title: o.name, mimetype: "image/jpeg" }] : [];
-	}) : [];
-	att.option_images = JSON.stringify(options);
-	const images = { ...l.images, shown: next };
-	if (JSON.stringify(shown) === JSON.stringify(next) && l.main_images === att.main_images && l.detail_images === att.detail_images && l.option_images === att.option_images && removed.size === (l.removed_images ?? []).length) return;
-	await sql`update listings set images = ${sql.json(images)}, removed_images = ${sql.json([...removed])}, main_images = ${att.main_images!}, detail_images = ${att.detail_images!}, option_images = ${att.option_images} where id = ${l.id}`;
-	Object.assign(l, { images, removed_images: [...removed], main_images: att.main_images, detail_images: att.detail_images, option_images: att.option_images });
-}
-
 /** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点。
- * 还没建的先对一下附件（人删的图），「重量」「国内运费」改过的重新核价（不读 1688）；当前步骤、说明写回库。
+ * 还没建的「重量」「国内运费」改过的重新核价（不读 1688）；当前步骤、说明写回库。
  * ids：只看这几份（x2 run 执行完马上更新涉及的商品稿）；不给是全部（x2 status） */
 export async function listingsCheck(sql: Sql, ids?: string[]) {
 	if (ids && !ids.length) return checkListings([], new Map(), []);
@@ -130,7 +93,6 @@ export async function listingsCheck(sql: Sql, ids?: string[]) {
 	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「已暂停」 */ } }
 	for (const l of rows) {
 		if (l.cancelled || l.product_id) continue;
-		await syncImages(sql, l);
 		const s = settings.get(l.shop);
 		if (s) await savePrices(sql, l, s);
 	}

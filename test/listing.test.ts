@@ -286,7 +286,7 @@ test("人定的类目：在类目树里找叶子，回从根到它的路径和�
 	assert.deepEqual(problems.filter((x) => !CATEGORY_PROBLEM.test(x)), ["货源：起订量 2，无法单件购买"]);
 });
 
-import { checkListings, LISTING_STEPS, UNAPPROVED } from "../src/check/listings.ts";
+import { checkListings, UNAPPROVED } from "../src/check/listings.ts";
 import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop } from "../src/listing/audit.ts";
 import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "../src/listing/make.ts";
@@ -417,7 +417,7 @@ test("交规格名：个数、顺序照 show，按第几层第几个选项改；
 	assert.notEqual(key(r.specs!), key(s));
 });
 
-test("Gemini 文字检查挑出的问题：编号先文案、后图，不算问题的、保留的图排在最后；说明里只写要人看的，图写附件上的名字", () => {
+test("Gemini 文字检查挑出的问题：编号先文案、后图，不算问题的、保留的图排在最后；说明里只写要人看的，图写图的名字", () => {
 	const a = { key: "k", at: "t0", textIssues: ["標題「质量」是簡體"], images: [
 		{ id: "o1", issues: ["地墊上的「浴水生财」"], where: "印在商品上" as const, role: "规格图" as const },
 		{ id: "d3", issues: ["「质量保证」"], where: "后加的文案" as const, role: "详情图" as const, dropped: true },
@@ -465,7 +465,7 @@ test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图）
 
 import { imageNames, numbered, usedPics } from "../src/listing/product.ts";
 
-test("附件上的名字：传好的图排号，人删了的、x2 去掉的也占着号，别的图的名字不变；规格图写选项名；一张图在几处写几个名字", () => {
+test("图的名字：传好的图排号，人删了的、x2 去掉的也占着号，别的图的名字不变；规格图写选项名；一张图在几处写几个名字", () => {
 	const d = (id: string, width = 800, height = 800) => ({ from: `${id}.jpg`, imageId: id, width, height });
 	const pics: Pics = {
 		main: [d("m1"), { from: "x.jpg", drop: "有供应商痕迹" }, { ...d("m2"), drop: "Gemini 文字检查：「质量」" }, d("m3")],
@@ -479,11 +479,11 @@ test("附件上的名字：传好的图排号，人删了的、x2 去掉的也�
 	assert.deepEqual(usedPics(pics, "main", new Set(["m1"])).map((x) => [x.pic.imageId, x.n]), [["m3", 3]]);
 	const names = imageNames(pics, colors());
 	assert.deepEqual(Object.fromEntries(names), { m1: "主图 1", m2: "主图 2", m3: "主图 3、详情图 2", d1: "详情图 1", d2: "详情图 3", o1: "规格图：黑色" });
-	// 附件和组商品用的是同一套
+	// 网页和组商品用的是同一套
 	assert.deepEqual(productOf(ready({ images: pics, removed_images: ["m1"] }), settingsOf(shopRow)).product!.images, ["m3"]);
 });
 
-test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明（图写附件上的名字）；不进收件箱，不给 agent 再派写文案", () => {
+test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明（图写图的名字）；不进收件箱，不给 agent 再派写文案", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const l = ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("d2")], options: [pic("o1", "k.jpg")] } });
 	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
@@ -707,12 +707,3 @@ test("备注：人写了或改了备注、agent 还没看过的进 todo（带原
 	assert.equal(todo({ note: "不上了", cancelled: true }), undefined);
 });
 
-test("当前步骤的分组顺序：NocoDB 按字的编码倒序排组，待补充、待批准在最前，已批准、已上架在最后", async () => {
-	const schema = await (await import("node:fs/promises")).readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
-	assert.ok(schema.includes('alter table listings alter column step type text collate "C"'));
-	// collate "C" 按 UTF-8 字节排，和 JS 比较 BMP 字符串（UTF-16 码元）的顺序一样
-	const order = [...LISTING_STEPS].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-	assert.deepEqual(order.slice(0, 2), ["待补充", "待批准"]);
-	assert.deepEqual(order.slice(-2), ["已批准", "已上架"]);
-	assert.ok(order.indexOf("已放弃") >= order.length - 3);
-});

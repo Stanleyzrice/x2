@@ -1,6 +1,6 @@
 // 建商品的 product_info，和建完以后读回来逐项核对。照 lilto 的 build_product_info、submitted_content_problems（快照 1c8a7926）：
 // 9-01 卖家中心新增商品页提交的成功样本逐字段照抄。docs/listing.md「建商品、上架」。
-// 也定商品里用哪几张主图、详情图，和图在 NocoDB 附件上的名字（主图 N、详情图 N、规格图：选项名）
+// 也定商品里用哪几张主图、详情图，和图的名字（主图 N、详情图 N、规格图：选项名；网页上、说明里、x2 listing keep 都用它）
 import type { Pic, Pics } from "./images.ts";
 import { isSingle, type Specs, structureProblems, type Tier, type Variant } from "./variants.ts";
 
@@ -47,22 +47,22 @@ export type Product = {
 export const detailFits = (width: number, height: number) => width >= 700 && height >= 32 && width / height >= 0.5 && width / height <= 32;
 
 export const MAX_MAIN = 9, MAX_DETAIL = 12;
-/** 附件上的名字：主图 N、详情图 N */
+/** 图的名字：主图 N、详情图 N */
 export const LABEL = { main: "主图", detail: "详情图" } as const;
 
-/** 主图、详情图排上号（附件上的「主图 N」「详情图 N」）：传好的图（有图片 id；详情图的尺寸还要合 Shopee 的要求）按顺序排，
+/** 主图、详情图排上号（「主图 N」「详情图 N」）：传好的图（有图片 id；详情图的尺寸还要合 Shopee 的要求）按顺序排，
  * 人删了的、x2 去掉的也占着号，别的图的名字不跟着变 */
 export function numbered(pics: Partial<Pics>, role: "main" | "detail"): { pic: Pic; n: number }[] {
 	let n = 0;
 	return (pics[role] ?? []).flatMap((pic) => (pic.imageId && (role === "main" || detailFits(pic.width ?? 0, pic.height ?? 0)) ? [{ pic, n: ++n }] : []));
 }
 
-/** 商品里用的主图、详情图（NocoDB 附件、组商品都用它）：排上号的里面没去掉、没被人删的，主图最多 9 张、详情图最多 12 张 */
+/** 商品里用的主图、详情图（网页、组商品都用它）：排上号的里面没去掉、没被人删的，主图最多 9 张、详情图最多 12 张 */
 export function usedPics(pics: Partial<Pics>, role: "main" | "detail", removed: Set<string>): { pic: Pic; n: number }[] {
 	return numbered(pics, role).filter(({ pic }) => !pic.drop && !removed.has(pic.imageId!)).slice(0, role === "main" ? MAX_MAIN : MAX_DETAIL);
 }
 
-/** 图在附件上的名字（图片 id → 名字）：主图 N、详情图 N、规格图：选项名。一张图在几处就写几个 */
+/** 图的名字（图片 id → 名字）：主图 N、详情图 N、规格图：选项名。一张图在几处就写几个 */
 export function imageNames(pics: Partial<Pics>, specs: Specs | null): Map<string, string> {
 	const names = new Map<string, string[]>();
 	const add = (id: string, name: string) => names.set(id, [...(names.get(id) ?? []), name]);

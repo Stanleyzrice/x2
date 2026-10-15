@@ -1,8 +1,8 @@
 -- 库的结构。x2 每个进程第一次用库时跑一遍：只建没有的表、加没有的列，所以每一句都要能重复跑。
 -- 表建好以后再加列：不改 create table，在最后「加列」一节写 alter table … add column if not exists（已有的库里 create table 不会再跑）。
--- 表名、列名用英文（NocoDB 里显示中文）；给人看的值（类别、状态）用中文，NocoDB 里直接能读。
+-- 表名、列名用英文（网页上显示中文，见 src/web/tables.ts）；给人看的值（类别、状态）用中文。
 --
--- 只存三类（docs/loop.md「怎样工作」）：站点上没有的（人的决定、设置）；写入的记录；给团队在 NocoDB 里看的（订单的进度）。
+-- 只存三类（docs/loop.md「怎样工作」）：站点上没有的（人的决定、设置）；写入的记录；给团队在网页上看的（订单的进度）。
 -- 站点上有的（购物车、采购单、1688 商品详情、店里的商品、登录着的账号）不存：每次 x2 status 经浏览器现读。
 
 -- ── 设置 ──
@@ -29,7 +29,7 @@ insert into order_settings (id) values (1) on conflict do nothing;
 
 -- 货源：一行是「店里一个商品 × 一个货源」。一个商品只用一个货源（chosen：选用，一个商品最多一行）；没 chosen 的是还在挑的。
 -- 规格不存对应：加购时按店里的规格名，在货源的规格里配。
--- 货源的样子（标题、图、规格和价格）存一份快照：下架了还知道原来买的是什么，好比价、好在 NocoDB 里看图挑。x2 每次现读这个货源就更新快照；买之前一律现读，不信快照
+-- 货源的样子（标题、图、规格和价格）存一份快照：下架了还知道原来买的是什么，好比价、好在网页上看图挑。x2 每次现读这个货源就更新快照；买之前一律现读，不信快照
 create table if not exists sources (
 	item_id text not null,
 	-- 货源在哪个站、站上的 id：现在都是 1688
@@ -60,7 +60,7 @@ create table if not exists sources (
 );
 create unique index if not exists sources_chosen on sources (item_id) where chosen;
 
--- 到货问题：错货、少件、损坏。x2 看不到，人在 NocoDB 的表单里上报（订单号、商品和规格、问题类型、件数），处理完勾「已处理」。
+-- 到货问题：错货、少件、损坏。x2 看不到，人在网页的表单里上报（订单号、商品和规格、问题类型、件数），处理完勾「已处理」。
 -- 未处理的：订单停在「有到货问题」，不提醒打包；收件箱一行一个问题
 create table if not exists arrival_issues (
 	id bigserial primary key,
@@ -157,7 +157,7 @@ create table if not exists orders (
 
 -- ── 上品（docs/listing.md） ──
 
--- 店铺设置：一家店一行，人定的：核价参数、上品的默认值、允许的类目、水印、暂停上品。在 NocoDB 里改；比例在 0–1、汇率大于 0，填错存不进
+-- 店铺设置：一家店一行，人定的：核价参数、上品的默认值、允许的类目、水印、暂停上品。在网页上改；比例在 0–1、汇率大于 0，填错存不进
 -- 核价参数的默认值是 lilto 的 landed-cost.json（2026-09-02 依账单和结算截图定）
 create table if not exists shop_settings (
 	shop text primary key,
@@ -197,12 +197,12 @@ create table if not exists shop_settings (
 -- 两家店的平台费不一样：ni1206 的免运方案费每单最低 NT$60；cheeroutdoor 有虾币回馈 1.5%
 insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd) values ('ni1206', '348425', 0, 60), ('cheeroutdoor', '1554182542', 0.015, 0) on conflict do nothing;
 
--- 商品稿：一个货源 × 一家店。x2 做（读货源、类目属性、规格和价格、图），agent 写标题和描述，人在 NocoDB 里审稿。
+-- 商品稿：一个货源 × 一家店。x2 做（读货源、类目属性、规格和价格、图），agent 写标题和描述，人在网页上审稿。
 -- 人改：标题、描述、重量、国内运费、放弃（cancelled）、备注、策略；主图、详情图（删掉的那张就不要了）。重量、国内运费空着的 agent 估
 create table if not exists listings (
 	id bigserial primary key,
 	shop text not null,
-	-- 1688 的货源 id（人在 NocoDB 表单里贴整个链接也行，x2 做商品稿时改成 id）
+	-- 1688 的货源 id（人贴的链接，添加货源时改成 id）
 	offer_id text not null,
 	-- 从哪个策略来（现在都是人选的）：以后按策略看效果
 	strategy text not null default '人选',
@@ -230,9 +230,6 @@ create table if not exists listings (
 	variants_text text,
 	-- 图：{ main: [...], detail: [...], options: {...}, sizeChart }，每张 { from（原图地址）, sha（原图）, final（成品）, imageId, width, height, verdict }
 	images jsonb not null default '{}',
-	-- 给人在 NocoDB 里看、删的图：NocoDB 的附件（JSON 文本，[{ url: Shopee 的图片地址, title, mimetype }]）；人删了哪张，x2 记进 removed_images
-	main_images text,
-	detail_images text,
 	-- 核价用的参数快照
 	pricing jsonb,
 	-- Gemini 文字检查的结果（只提示，不挡）
@@ -297,29 +294,32 @@ insert into strategies (name, bet, how, status) values ('人选', '人挑的货�
 -- ── 加列（表建好以后加的列写在这里） ──
 
 -- 规格例外：店里的规格按名字在货源的规格里配不上时，人定的。一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）；
--- 只记例外，配得上的不记。人在 NocoDB 里写，或者人在终端里说了、agent 用 x2 source <商品 id> --spec 写。换了货源就跟着那一行删掉
+-- 只记例外，配得上的不记。人在网页上写，或者人在终端里说了、agent 用 x2 source <商品 id> --spec 写。换了货源就跟着那一行删掉
 alter table sources add column if not exists sku_exceptions text;
 
--- 已删除的图（Shopee 的图片 id）：人在 NocoDB 的「主图」「详情图」里删了附件，x2 记在这里，再做商品稿也不用它
+-- 已删除的图（Shopee 的图片 id）：人在网页上删的主图、详情图，再做商品稿也不用它
 alter table listings add column if not exists removed_images jsonb not null default '[]';
 -- 已移除的规格（货号，例 店里接不了的「定製」）：人说了，agent 用 x2 listing drop 写；再做商品稿也不要它
 alter table listings add column if not exists removed_variants jsonb not null default '[]';
 -- 规格存成层和规格（{ tiers, variants }），空是还没做商品稿；旧格式（规格的数组）的要重做商品稿
 alter table listings alter column variants drop not null;
 alter table listings alter column variants drop default;
--- 规格图：第一层每个选项一张（标题是选项名），NocoDB 的附件（JSON 文本）。只给人看：x2 照规格写回去，人删了不记
-alter table listings add column if not exists option_images text;
 -- 保留的图（Shopee 的图片 id）：人看过说要用的图（人说了，agent 用 x2 listing keep 写）：x2 去掉的放回来，以后 Gemini 文字检查再挑它也不去掉
 alter table listings add column if not exists kept_images jsonb not null default '[]';
--- 商品稿的店铺不用外键（NocoDB 会把外键变成关联列，表单里就不能直接选店）；x2 做商品稿时核对店铺设置里有没有这家店
-alter table listings drop constraint if exists listings_shop_fkey;
--- NocoDB 的附件是 JSON 文本（它写回来的也是文本）
-alter table listings alter column main_images type text using main_images::text;
-alter table listings alter column detail_images type text using detail_images::text;
+-- 商品稿的店铺：店铺设置里有的
+do $$ begin
+	if not exists (select 1 from pg_constraint where conname = 'listings_shop_fkey') then
+		alter table listings add constraint listings_shop_fkey foreign key (shop) references shop_settings (shop);
+	end if;
+end $$;
+-- 图在网页上照 images 现算（src/web/tables.ts），不另存
+alter table listings drop column if exists main_images;
+alter table listings drop column if exists detail_images;
+alter table listings drop column if exists option_images;
 -- 到货问题的类型默认「损坏」
 alter table arrival_issues alter column kind set default '损坏';
 -- 简称：人和 agent 认商品稿用的简体中文短名（最多 12 字，例 浴水生财猫狗地垫），不上 Shopee。x2 做商品稿时先填 1688 标题的前 12 个字，
--- 写文案的 agent 写标题时一起写（只在空着、还是自动填的那个值时写）；人在 NocoDB 改过的 agent 不再改
+-- 写文案的 agent 写标题时一起写（只在空着、还是自动填的那个值时写）；人在网页上改过的 agent 不再改
 alter table listings add column if not exists nickname text;
 
 -- ── 选品可追溯（docs/listing.md「策略」）：每份商品稿为什么选、按的是哪一版策略和选品规矩 ──
@@ -357,7 +357,7 @@ alter table listings add column if not exists pick_snapshot jsonb;
 
 -- ── 批准上架、备注（docs/listing.md「审稿、批准」） ──
 
--- 批准上架：人在 NocoDB 里一份一份勾（agent 替人勾用 x2 listing approve），勾了 x2 run 建商品、上架。
+-- 批准上架：人在网页上一份一份勾（agent 替人勾用 x2 listing approve），勾了 x2 run 建商品、上架。
 -- 内容（content_hash）：检查算出来的、要建的商品（product_info）的 hash，只在待批准、已批准时有；内容一变（标题、规格、图……）先清掉，等下一次检查重算。
 -- 勾的时候记下内容（approved_hash）和批准时间；检查、x2 run 时内容和勾的时候对不上就去掉勾，原因写在 unapproved_why（说明里给人看）
 alter table listings add column if not exists approve boolean not null default false;
@@ -368,14 +368,14 @@ alter table listings add column if not exists unapproved_why text;
 -- 看过的备注：agent 照人写的「备注」做完，记下当时的备注原文（x2 listing noted）；备注再改，x2 status 的 todo 又给出来
 alter table listings add column if not exists noted text;
 
--- 勾「批准上架」、内容变了：在库里记，人在 NocoDB 里勾的也记得到。
+-- 勾「批准上架」、内容变了：在库里记，人在网页上勾的也记得到。
 -- 勾的时候内容的 hash 还没重算（刚改过），approved_hash 先空着，下一次检查认作勾的那一刻的内容；空着的时候内容又变了，记成 changed，检查去掉勾
 create or replace function listings_approve() returns trigger language plpgsql as $$
 declare
 	changed boolean := row(new.offer_id, new.title, new.description, new.variants, new.images, new.removed_images, new.removed_variants, new.category_path,
-		new.attributes, new.days_to_ship, new.problems, new.main_images, new.detail_images, new.weight_kg, new.freight_rmb)
+		new.attributes, new.days_to_ship, new.problems, new.weight_kg, new.freight_rmb)
 		is distinct from row(old.offer_id, old.title, old.description, old.variants, old.images, old.removed_images, old.removed_variants, old.category_path,
-		old.attributes, old.days_to_ship, old.problems, old.main_images, old.detail_images, old.weight_kg, old.freight_rmb);
+		old.attributes, old.days_to_ship, old.problems, old.weight_kg, old.freight_rmb);
 begin
 	if changed and new.content_hash is not distinct from old.content_hash then new.content_hash := null; end if;
 	if new.approve and not old.approve then
@@ -392,13 +392,5 @@ begin
 end $$;
 create or replace trigger listings_approve before update on listings for each row execute function listings_approve();
 
--- 当前步骤的分组：NocoDB 里商品稿按 step 倒序分组（NocoDB 按值排组，单选不按取值的顺序）。step 按字的编码排（collate "C"，哪台机器都一样），
--- 倒序正好是待补充、待批准在最前，已批准、已上架在最后（测试「当前步骤的分组顺序」盯着）。
--- 给 NocoDB 看的列不用 enum：NocoDB 拿单选列和 '' 比（NULLIF），enum 不收 ''，整张表读不出来
-alter table listings drop column if exists step_group;
-drop type if exists listing_step;
-do $$ begin
-	if (select collation_name from information_schema.columns where table_schema = current_schema() and table_name = 'listings' and column_name = 'step') is distinct from 'C' then
-		alter table listings alter column step type text collate "C";
-	end if;
-end $$;
+-- images 不存 shown（放在建触发器之后）
+update listings set images = images - 'shown' where images ? 'shown';

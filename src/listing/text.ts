@@ -12,7 +12,7 @@ export const autoNickname = (title: string | null | undefined): string | null =>
 export const nicknameFor = (current: string | null | undefined, prevTitle: string | null | undefined, title: string): string | null =>
 	current?.trim() && current !== autoNickname(prevTitle) ? current : autoNickname(title);
 
-/** agent 能不能写简称：空着的、还是自动填的那个值才写（人在 NocoDB 改过的不改） */
+/** agent 能不能写简称：空着的、还是自动填的那个值才写（人在网页上改过的不改） */
 export const nicknameOpen = (l: { nickname?: string | null; offer?: { title?: string } | null }) => !l.nickname?.trim() || l.nickname === autoNickname(l.offer?.title);
 
 let toCn: ((s: string) => string) | null = null;

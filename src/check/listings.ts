@@ -7,7 +7,7 @@ import { listingName, textProblems } from "../listing/text.ts";
 import { specsOf } from "../listing/variants.ts";
 import type { EstimateItem, InboxItem, Todo, Write } from "./orders.ts";
 
-/** 当前步骤。NocoDB 里商品稿按它的字倒序分组（schema.sql：step 按字的编码排）；加、改步骤看测试「当前步骤的分组顺序」 */
+/** 当前步骤。网页上商品稿按它分组，组也是这个顺序（要人看的在前） */
 export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待 Gemini 文字检查", "已批准", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
 
@@ -69,10 +69,10 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 				steps.set(id, { step, detail: lines(why, detail) });
 			}
 		};
-		// Gemini 文字检查挑出的问题（只提示）：带编号写进说明，图写附件上的名字
+		// Gemini 文字检查挑出的问题（只提示）：带编号写进说明，图写图的名字
 		const auditLines = () => (l.audit ? auditNotes(auditIssues(l.audit, l.kept_images ?? [], imageNames(l.images ?? {}, specsOf(l.variants)))) : null);
 		if (l.cancelled) { set("已放弃"); continue; }
-		if (!s) { set("已暂停", "店铺设置无法读取：检查 NocoDB「店铺设置」里这家店填的数"); continue; }
+		if (!s) { set("已暂停", "店铺设置无法读取：检查网页「店铺设置」里这家店填的数"); continue; }
 		if (l.listed_at) { set("已上架", l.product_id ? `商品 ${l.product_id}` : null); continue; }
 		const ours = writes.filter((w) => (w.op === "建商品" || w.op === "上架") && String(w.params?.listingId) === id);
 		const mine = ours.filter((w) => IN_FLIGHT.has(w.status));
@@ -138,13 +138,13 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			waiting.push({ id, shop: l.shop });
 		}
 	}
-	// 收件箱：一家店一行，提醒去 NocoDB「商品稿」里看、勾；没有待批准的就关
+	// 收件箱：一家店一行，提醒去网页「商品稿」里看、勾；没有待批准的就关
 	for (const shop of [...new Set(waiting.map((x) => x.shop))]) {
 		const ids = waiting.filter((x) => x.shop === shop).map((x) => x.id);
 		inbox.push({
 			key: `listing-approve:${shop}`, kind: "商品稿", shop, due: null, link: null,
 			title: `待批准：${shop} ${ids.length} 个商品稿`,
-			detail: `${ids.map((id) => plainNames.get(id)).join("、")}\n\n在 NocoDB「商品稿」里看标题、图、规格和价格、说明，看过的勾「批准上架」；agent 接着 x2 run 建商品、上架。要改的写在「备注」里`,
+			detail: `${ids.map((id) => plainNames.get(id)).join("、")}\n\n在网页「商品稿」的「审稿」里看标题、图、规格和价格、说明，看过的勾「批准上架」；agent 接着 x2 run 建商品、上架。要改的写在「备注」里`,
 		});
 	}
 	const todo: Todo[] = [];

@@ -39,7 +39,7 @@ export async function propose(sql: Sql, input: unknown, ops: Record<string, Writ
 	const rows = p.writes.map((w, i) => {
 		const op = ops[w.op];
 		if (!op) throw new Usage(`第 ${i + 1} 项：没有 ${w.op} 这个写操作（有：${Object.keys(ops).join("、")}）`);
-		if (w.op === "建商品" || w.op === "上架") throw new Usage(`第 ${i + 1} 项：建商品、上架不经 x2 propose：人在 NocoDB「商品稿」里勾「批准上架」（人在终端里说批准，用 x2 listing approve <商品稿>），x2 run 执行`);
+		if (w.op === "建商品" || w.op === "上架") throw new Usage(`第 ${i + 1} 项：建商品、上架不经 x2 propose：人在网页「商品稿」里勾「批准上架」（人在终端里说批准，用 x2 listing approve <商品稿>），x2 run 执行`);
 		const parsed = op.params.safeParse(w.params);
 		if (!parsed.success) throw new Usage(`第 ${i + 1} 项（${w.op}）参数不对：${parsed.error.issues.map((x) => `${x.path.join(".")}：${x.message}`).join("；")}`);
 		const params = parsed.data as any;
