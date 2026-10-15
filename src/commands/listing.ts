@@ -40,7 +40,7 @@ import { type Pic, type Pics, unmarked } from "../listing/images.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
 import { each } from "../listing/queue.ts";
 import { productOf } from "../listing/ready.ts";
-import { type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
+import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
 import { offerIdOf } from "../site/1688.ts";
@@ -74,27 +74,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const a = z.object({ strategy: text.optional(), why: text.optional(), evidence: text.optional() }).refine((x) => !x.strategy || x.why)
 			.safeParse({ strategy: flag(rest, "--strategy"), why: flag(rest, "--why"), evidence: flag(rest, "--evidence") });
 		if (!shop || !links.length || !a.success) throw new Usage(usage);
-		const strategy = a.data.strategy ?? "人选";
-		const [st] = await sql`select name from strategies where name = ${strategy}`;
-		if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "假设" --how "选品方法"`);
-		const [s] = await sql`select shop from shop_settings where shop = ${shop}`;
-		if (!s) throw new Usage(`没有「${shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
-		const offerIds = links.map((link) => {
-			const id = offerIdOf(link);
-			if (!id) throw new Usage(`认不出 1688 链接：${link}`);
-			return id;
-		});
-		// 选品快照：这一刻的策略和在用的选品规矩，几个链接一起加的是同一份
-		const snapshot = await pickSnapshot(sql, strategy);
-		// 回库里存着的理由、依据、快照：已经有的商品稿是它原来的
-		const added: { id: string; offerId: string; isNew: boolean; why: string | null; evidence: string | null; snapshot: PickSnapshot | null }[] = [];
-		for (const offerId of offerIds) {
-			// 已经有的不改（理由、快照照旧）：补理由用 x2 listing why
-			const [r] = await sql`insert into listings (shop, offer_id, strategy, pick_why, pick_evidence, pick_snapshot)
-				values (${shop}, ${offerId}, ${strategy}, ${a.data.why ?? null}, ${a.data.evidence ?? null}, ${sql.json(snapshot as any)})
-				on conflict (shop, offer_id) do update set updated_at = listings.updated_at returning id::text, (xmax = 0) as is_new, pick_why, pick_evidence, pick_snapshot`;
-			added.push({ id: r!.id, offerId, isNew: Boolean(r!.is_new), why: r!.pick_why, evidence: r!.pick_evidence, snapshot: r!.pick_snapshot });
-		}
+		const { added, snapshot } = await addListings(sql, { shop, links, ...a.data });
 		const name = await namesOf(sql, added.map((a) => a.id));
 		const old = added.some((x) => !x.isNew) && a.data.why ? "\n已经有了的不改理由、快照：补记用 x2 listing why <商品稿> --why …" : "";
 		return out(added.map((a) => ({ ...a, name: name(a.id) })),

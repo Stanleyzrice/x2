@@ -11,6 +11,7 @@ import { approveCommand, proposeCommand, runCommand, status } from "../src/comma
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
 import { nocodbCommand } from "../src/commands/nocodb.ts";
 import { sourceCommand } from "../src/commands/source.ts";
+import { webCommand } from "../src/commands/web.ts";
 import { close } from "../src/db/index.ts";
 import { EXIT, kindOf, Usage } from "../src/errors.ts";
 
@@ -29,6 +30,7 @@ const commands: Record<string, () => Promise<void>> = {
 	rule: () => ruleCommand(args, json),
 	db: () => dbCommand(args, json),
 	nocodb: () => nocodbCommand(args, json),
+	web: () => webCommand(args, json),
 	schema: async () => schema(),
 };
 
@@ -56,6 +58,7 @@ const help = [
 	"  x2 listing list                  所有商品稿走到哪了",
 	"  x2 strategy add | set | list | log   选品的策略（假设、选品方法、版本号）；set 要 --why，版本号加 1；log 看变更记录",
 	"  x2 rule add | retire | list       选品规矩（所有策略共用）：add、retire 要 --why；停用的不删",
+	"  x2 web [--host 127.0.0.1] [--port 5170]   开网页：收件箱、商品稿（审稿、批准上架、删图）、订单、货源、设置；人在这里看、填、批准",
 	"  x2 db migrate | import | import-shops   建表；把 ~/x2 的 JSON、lilto 的店铺设置迁进库（只用一次）",
 	"  x2 nocodb                       按 docs/loop.md「视图」建 NocoDB：连库、中文名、视图（可以重复跑）",
 	"读站点（只读）：",

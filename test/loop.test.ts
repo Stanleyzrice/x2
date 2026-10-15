@@ -15,6 +15,7 @@ import { strategyCommand } from "../src/commands/strategy.ts";
 import { close, migrate } from "../src/db/index.ts";
 import { NeedsHuman, Usage } from "../src/errors.ts";
 import { approve, propose } from "../src/propose.ts";
+import { serve } from "../src/web/server.ts";
 import { run } from "../src/run.ts";
 import { setException } from "../src/source.ts";
 import type { Submitted, WriteOp } from "../src/site/writes.ts";
@@ -586,4 +587,69 @@ test("x2 listing add：按策略选的要 --why；记下选品理由、依据和
 	// 人选的、加进来时有快照的：补理由，快照不动
 	const h = await listing(["why", human[0].id, "--why", "运营贴的"]);
 	assert.deepEqual([h.backfilled, h.snapshot.backfilled, h.snapshot.at], [false, false, human[0].snapshot.at]);
+});
+
+test("网页：只收人能改的格，照类型和条件收；删图记进已删除的图；表单添一行", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+	const db = sql!;
+	const { port, stop } = await serve(db, { host: "127.0.0.1", port: 0, dist: "/nonexistent" });
+	const call = async (method: string, body?: unknown, path = "/api/rows") => {
+		const r = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+		return { status: r.status, body: await r.json() as any };
+	};
+	const set = (table: string, key: Record<string, string>, col: string, value: unknown) => call("PATCH", { table, key, col, value });
+	try {
+		const meta = (await call("GET", undefined, "/api/meta")).body as any[];
+		const listing = meta.find((m) => m.name === "listings");
+		assert.deepEqual(listing.columns.filter((c: any) => ["approve", "pics", "step"].includes(c.name)).map((c: any) => [c.name, c.type, Boolean(c.edit)]),
+			[["approve", "bool", true], ["step", "text", false], ["pics", "pics", true]]);
+
+		// 不是人改的列、条件不成立的行：不收
+		const [l] = await db`insert into listings (shop, offer_id, images, step) values ('cheeroutdoor', '777901', ${db.json({ main: [{ from: "a.jpg", imageId: "m1", width: 800, height: 800 }, { from: "b.jpg", imageId: "m2", width: 800, height: 800 }], detail: [], options: [] })}, '待写文案') returning id::text`;
+		const key = { id: l!.id as string };
+		assert.equal((await set("listings", key, "step", "已上架")).status, 400);
+		// 照类型收：重量是数，空的是 null
+		assert.equal((await set("listings", key, "weight_kg", "很重")).status, 400);
+		assert.equal((await set("listings", key, "weight_kg", 0.8)).body.weight_kg, 0.8);
+		assert.equal((await set("listings", key, "note", "")).body.note, null);
+
+		// 删图、放回：记进、移出已删除的图；规格图、没有的图不收
+		const removed = await set("listings", key, "pics", { id: "m1", removed: true });
+		assert.deepEqual(removed.body.pics.map((p: any) => [p.label, p.state]), [["主图 1", "removed"], ["主图 2", "used"]]);
+		assert.deepEqual((await db`select removed_images from listings where id = ${key.id}`)[0]!.removed_images, ["m1"]);
+		assert.equal((await set("listings", key, "pics", { id: "nope", removed: true })).status, 400);
+		await set("listings", key, "pics", { id: "m1", removed: false });
+		assert.deepEqual((await db`select removed_images from listings where id = ${key.id}`)[0]!.removed_images, []);
+
+		// 收件箱：「批准」只在批准的那一行能勾
+		await db`insert into inbox (key, kind, title) values ('approve:77', '批准', '批准：试'), ('late:S9', '快到期', '快到期：S9')`;
+		const late = await set("inbox", { key: "late:S9" }, "approve", true);
+		assert.match(late.body.error, /现在不能改「批准」/);
+		const ok = await set("inbox", { key: "approve:77" }, "approve", true);
+		assert.deepEqual([ok.body.approve, ok.body._readonly], [true, []]);
+		assert.deepEqual((await set("inbox", { key: "late:S9" }, "note", "明天发")).body._readonly, ["approve"]);
+
+		// 库里的约束：说原话
+		assert.match((await set("shop_settings", { shop: "cheeroutdoor" }, "fx", -1)).body.error, /fx_check/);
+		assert.equal((await set("shop_settings", { shop: "cheeroutdoor" }, "watermark_position", "左边")).status, 400);
+
+		// 写入：结果未知的才能改成已核对、被拒
+		const [wr] = await db`insert into writes (batch, op, target, params, key, status) values (99, '加购', 't', '{}', 'k99', '成功') returning id::text`;
+		assert.equal((await set("writes", { id: wr!.id }, "status", "已核对")).status, 400);
+		await db`update writes set status = '结果未知' where id = ${wr!.id}`;
+		assert.equal((await set("writes", { id: wr!.id }, "status", "已核对")).body.status, "已核对");
+
+		// 选用：一个商品只用一个货源
+		await db`insert into sources (item_id, offer_id, chosen) values ('W1', 'a', true), ('W1', 'b', false)`;
+		await set("sources", { item_id: "W1", offer_id: "b" }, "chosen", true);
+		assert.deepEqual((await db`select offer_id from sources where item_id = 'W1' and chosen`).map((r) => r.offer_id), ["b"]);
+
+		// 表单：必填的要填；添加货源认 1688 链接
+		assert.match((await call("POST", { table: "arrival_issues", values: { item: "红T L" } })).body.error, /要填「订单号」/);
+		const issue = await call("POST", { table: "arrival_issues", values: { sn: "S1", kind: "少件", qty: "2" } });
+		assert.deepEqual((await db`select sn, kind, qty from arrival_issues where id = ${issue.body.key.id}`).map((r) => ({ ...r })), [{ sn: "S1", kind: "少件", qty: 2 }]);
+		const added = await call("POST", { table: "listings", values: { shop: "ni1206", offer_id: "https://detail.1688.com/offer/123456.html" } });
+		assert.deepEqual((await db`select shop, offer_id, strategy from listings where id = ${added.body.key}`).map((r) => ({ ...r })), [{ shop: "ni1206", offer_id: "123456", strategy: "人选" }]);
+	} finally {
+		await stop();
+	}
 });
