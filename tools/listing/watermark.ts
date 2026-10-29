@@ -10,7 +10,7 @@ import type { Mark } from "./pics.ts";
 export const WATERMARK_VERSION = 1;
 export const markKey = (m: Mark) => `水印:${WATERMARK_VERSION}:${JSON.stringify([m.text, m.size, m.opacity, m.position])}`;
 
-/** 给一张图加本店水印，回成品（JPEG）。在当前选中的浏览器里画（about:blank 不行：cdp-relay 只开有网址的标签页，用卖家中心） */
+/** 给一张图加本店水印，回成品（JPEG）。在当前选中的浏览器里画（about:blank 不行：booey 只开有网址的标签页，用卖家中心） */
 export async function watermark(img: { bytes: Uint8Array; mime: string }, mark: Mark): Promise<Bytes> {
 	const p = await page("https://seller.shopee.tw");
 	const r = await p.run(

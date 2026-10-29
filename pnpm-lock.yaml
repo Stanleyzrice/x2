@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@wuwe1/cdp-relay':
-        specifier: github:wuwe1/cdp-relay#v1.0.0
-        version: https://codeload.github.com/wuwe1/cdp-relay/tar.gz/40bb97833c8a92e7d15a48f04e0d847b678e8481
+      '@wuwe1/booey':
+        specifier: github:wuwe1/booey#v2.0.0
+        version: https://codeload.github.com/wuwe1/booey/tar.gz/c46103fbff630fb43859aecba8bf94482ed92762
       opencc-js:
         specifier: ^1.4.2
         version: 1.4.2
@@ -919,9 +919,9 @@ packages:
       oxc-transform-react:
         optional: true
 
-  '@wuwe1/cdp-relay@https://codeload.github.com/wuwe1/cdp-relay/tar.gz/40bb97833c8a92e7d15a48f04e0d847b678e8481':
-    resolution: {tarball: https://codeload.github.com/wuwe1/cdp-relay/tar.gz/40bb97833c8a92e7d15a48f04e0d847b678e8481}
-    version: 1.0.0
+  '@wuwe1/booey@https://codeload.github.com/wuwe1/booey/tar.gz/c46103fbff630fb43859aecba8bf94482ed92762':
+    resolution: {tarball: https://codeload.github.com/wuwe1/booey/tar.gz/c46103fbff630fb43859aecba8bf94482ed92762}
+    version: 2.0.0
     engines: {node: '>=22.18'}
     hasBin: true
 
@@ -3341,7 +3341,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.3.4(@types/node@24.19.0)(jiti@2.7.0)
 
-  '@wuwe1/cdp-relay@https://codeload.github.com/wuwe1/cdp-relay/tar.gz/40bb97833c8a92e7d15a48f04e0d847b678e8481':
+  '@wuwe1/booey@https://codeload.github.com/wuwe1/booey/tar.gz/c46103fbff630fb43859aecba8bf94482ed92762':
     dependencies:
       ws: 8.22.0
     transitivePeerDependencies:

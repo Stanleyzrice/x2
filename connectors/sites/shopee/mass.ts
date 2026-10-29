@@ -1,7 +1,7 @@
 // 批量上架（mass upload）。一个一个建商品，必填的认证属性会被一个一个点名、补不完，所以 lilto 旧工作台走的是批量：
 // 下模板 → 在本机把数据填进 xlsx → 传模板 → 等解析（异步）→ 草稿池里等图摄取完 → 发布成下架 → 人看过再上架。
 // 模板按店发（列 = 这家店的物流渠道），不能存下来给别的店用；给了类目 id 才有 ps_product_global_attribute.<id> 这类属性列。
-// xlsx 在页面和本机之间用 base64 传（cdp-relay 只传得了 JSON）
+// xlsx 在页面和本机之间用 base64 传（booey 只传得了 JSON）
 import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { ORIGIN, row, seller, type Write, withData, write } from "./seller.ts";

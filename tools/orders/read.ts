@@ -132,7 +132,7 @@ export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: s
 	const name = s?.buy_account as string | null;
 	if (!name) return null;
 	const a = (await logins("1688")).find((x) => x.account.name === name || x.account.id === name);
-	if (!a) throw (await challengeIn("1688")) ?? new NeedsHuman(`采购账号「${name}」没有登录：在浏览器里登录这个 1688 账号，确认 cdp-relay 扩展已连接`);
+	if (!a) throw (await challengeIn("1688")) ?? new NeedsHuman(`采购账号「${name}」没有登录：在浏览器里登录这个 1688 账号，确认 booey 扩展已连接`);
 	return { userId: a.account.id, loginId: a.account.name };
 }
 

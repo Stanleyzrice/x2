@@ -112,7 +112,7 @@ function fakePage(url: string, frames: { src: string; width: number }[] = []) {
 const PUNISH = "https://h5api.m.1688.com//h5/mtop.x/2.0/_____tmd_____/punish?x5secdata=xxx";
 
 test("1688 页面里跑的表达式：没有验证照常跑；有验证（整页、看得见的验证框）不跑；跑的时候验证框弹出来就不等了", async () => {
-	// 和 cdp-relay 一样按 JSON 拿回来（vm 里的对象原型不一样，直接比不相等）
+	// 和 booey 一样按 JSON 拿回来（vm 里的对象原型不一样，直接比不相等）
 	const run = async (code: string, ctx: vm.Context) => JSON.parse(JSON.stringify(await vm.runInContext(code, ctx)));
 	assert.deepEqual(
 		await run(
