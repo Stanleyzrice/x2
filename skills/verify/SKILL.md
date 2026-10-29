@@ -14,6 +14,7 @@ description: 改完 x2 的代码、说「做完了」或提交之前，照改了
 | 改了 | 怎么验 | 算验过 |
 |---|---|---|
 | `tools`、`platform` 的纯函数 | 上面那条 | 新测试改之前红、改之后绿 |
+| 写入引擎（`platform/writes.ts`）、订单的步骤和加购预报（`tools/orders/check.ts`、`writes.ts`） | 模型跟着改，照 `platform/writes.tla`、`tools/orders/flow.tla` 开头的命令跑 TLC | 规则都成立（两台电脑那份照它的注释破）；查出的新路径先在临时库上重放 |
 | 业务工具读写库（检查、核价、表） | 开着 `x2 web --scratch`，命令前加 `X2_DATABASE_URL=` 临时库的地址，在拷贝上跑 | 输出和改之前一样，或只差你要改的 |
 | connector 的读、回包解析 | 对真站点跑那个读：`x2 <站点> <工具> --json` | 读到了、没报「回包变了」；真回包去掉个人信息换进 `fixtures/`，`NOTES.md`「回包样本」跟着改 |
 | 写站点（`submit`、写操作） | 你不跑。人约好一单、人在场，`--try` 跑一次，跑完人在站点上看 | 人说站点上对了 |

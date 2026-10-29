@@ -1,0 +1,54 @@
+---
+title: "一张订单的一个规格"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 采购
+    lg1: 等核清
+    lg2: chanboss
+    lg3: 结束
+  }
+  class lg0 blue
+  class lg1 orange
+  class lg2 teal
+  class lg3 tan
+  s0: 缺货源
+  s1: 已取消
+  s2: 待加购
+  s3: 待加购#65288;加购没核清#65289;
+  s4: 待 1688 付款
+  s5: 待预报
+  s6: 待预报#65288;预报没核清#65289;
+  s7: 待 chanboss 收货
+  s8: 待 chanboss 打包
+  s9: 已打包
+  [*] --> s0
+  s0 --> s1: 订单取消
+  s0 --> s2: 人选定货源
+  s2 --> s1: 订单取消
+  s2 --> s3: agent 交加购
+  s3 --> s2: 加购没做成或没执行#65288;被拒#12289;不做#12289;进程退出#65289; or 进程退出#65288;待执行的下一个 x2 清掉#65289;
+  s3 --> s1: 订单取消
+  s3 --> s4: 加购做成了#65288;读回来#12289;核清或人看过#65289;
+  s3 --> s5: 人付款
+  s4 --> s2: 人从购物车删了
+  s4 --> s5: 人付款
+  s4 --> s1: 订单取消
+  s5 --> s1: 订单取消
+  s5 --> s6: agent 交预报
+  s6 --> s5: 进程退出#65288;待执行的下一个 x2 清掉#65289; or 预报没做成或没执行
+  s6 --> s1: 订单取消
+  s6 --> s7: 预报提交到 chanboss
+  s7 --> s8: chanboss 收到货
+  s7 --> s1: 订单取消
+  s8 --> s9: chanboss 打包
+  class s0 blue
+  class s1 tan
+  class s2 blue
+  class s3 orange
+  class s4 blue
+  class s5 blue
+  class s6 orange
+  class s7 teal
+  class s8 teal
+  class s9 tan
