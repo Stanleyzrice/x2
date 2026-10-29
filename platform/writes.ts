@@ -129,10 +129,18 @@ export function failed(now: string | undefined): "未执行" | "结果未知" | 
 	return null;
 }
 
-/** 这台电脑上交了以后进程没执行完就退出了（Ctrl-C、kill、断电）的待执行：没提交过，记成未执行。不清的话同一个 key 一直「还没核清」，再也交不了。
- * 进程还在的不动（可能正要执行）；没记进程号的（加这一列以前交的）算退出了。别的电脑交的看不出，等那台的 x2 清 */
-export function orphaned(rows: { id: string; pid: number | null }[], self: number, isAlive: (pid: number) => boolean): string[] {
-	return rows.filter((r) => r.pid === null || (r.pid !== self && !isAlive(r.pid))).map((r) => r.id);
+/** 一条写入是谁在执行（交它的进程执行它）：这个进程自己、这台电脑上还开着的另一个进程、已经退出了的（没记进程号的旧行也算），别的电脑的看不出。
+ * 退出了的留下的待执行没提交过，清成未执行（不清的话同一个 key 一直「还没核清」，再也交不了）；
+ * 还开着的另一个进程的已提交可能正在提交，核清不碰（不然读回来看不到、改成结果未知，人去看了记成被拒，它又到了站点） */
+export function owner(
+	w: { host: string | null; pid: number | null },
+	me: { host: string; pid: number },
+	isAlive: (pid: number) => boolean,
+): "我" | "开着" | "退出了" | "看不出" {
+	if (w.host !== me.host) return "看不出";
+	if (w.pid === null) return "退出了";
+	if (w.pid === me.pid) return "我";
+	return isAlive(w.pid) ? "开着" : "退出了";
 }
 
 /** 这个状态要停下同一批、同一个对象上的写入 */
@@ -185,16 +193,19 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 	const halted: Stuck = { batches: new Set(), targets: new Set() };
 	let blocked: string | null = null;
 
-	const left = await sql<{ id: string; pid: number | null }[]>`select id::text, pid from writes where status = '待执行' and host = ${host}`;
-	const gone = orphaned(left, process.pid, alive);
+	const me = { host, pid: process.pid };
+	const left = await sql<{ id: string; host: string; pid: number | null }[]>`select id::text, host, pid from writes where status = '待执行' and host = ${host}`;
+	const gone = left.filter((w) => owner(w, me, alive) === "退出了").map((w) => w.id);
 	if (gone.length) {
 		const cleared = await sql<Ran[]>`update writes set status = '未执行', error = '交了以后进程没执行就退出了', finished_at = now()
 			where id in ${sql(gone)} and status = '待执行' returning id::text, batch::text, op, display, status`;
 		for (const w of cleared) ran.push({ ...w, why: "交了以后进程没执行就退出了：没提交过，要做再交一次" });
 	}
 
-	const unsure =
-		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') order by writes.id`) as unknown as Row[];
+	const unsure = (
+		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback, host, pid from writes
+			where status in ('已提交', '结果未知') order by writes.id`) as unknown as (Row & { host: string | null; pid: number | null })[]
+	).filter((w) => owner(w, me, alive) !== "开着");
 	for (const w of unsure) {
 		const op = ops[w.op];
 		if (!op) continue;
