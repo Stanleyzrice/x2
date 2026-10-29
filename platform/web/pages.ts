@@ -138,8 +138,21 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 	});
 }
 
+/** 改一个组件的参数：整份换掉，照它的 schema.ts 校验（generative、interactable 都行）；网页下一次重读就变 */
+export async function update(sql: Sql, item: string, input: unknown): Promise<{ id: string; component: string }> {
+	const id = itemId(item);
+	return sql.begin(async (tx) => {
+		const [i] = await tx`select component, page_id from page_items where id = ${id} for update`;
+		if (!i) throw new Usage(`没有组件 ${item}（x2 page show 看编号）`);
+		const props = parseProps(i.component, input);
+		await tx`update page_items set props = ${tx.json(props as any)} where id = ${id}`;
+		await tx`update pages set updated_at = now() where id = ${i.page_id}`;
+		return { id, component: i.component as string };
+	});
+}
+
 export async function closeItem(sql: Sql, item: string): Promise<void> {
-	if (!/^\d+$/.test(item)) throw new Usage(`没有这个组件：${item}`);
+	itemId(item);
 	const interactable = [...COMPONENTS.values()].filter((c) => c.kind === "interactable").map((c) => c.name);
 	await sql`delete from page_items where id = ${item} and component in ${sql(interactable)}`;
 }
@@ -154,5 +167,10 @@ export const refKey = (props: unknown) => {
 
 function pageId(id: string): string {
 	if (!/^\d+$/.test(id)) throw new Usage(`页是数字编号：${id}`);
+	return id;
+}
+
+function itemId(id: string): string {
+	if (!/^\d+$/.test(id)) throw new Usage(`组件是数字编号：${id}`);
 	return id;
 }

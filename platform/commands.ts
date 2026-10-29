@@ -6,7 +6,7 @@ import { db } from "./db/index.ts";
 import { Usage } from "./errors.ts";
 import { status } from "./status.ts";
 import { type Checked, findTool, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
-import { catalog, createPage, deletePage, listPages, parseItem, push, showPage } from "./web/pages.ts";
+import { catalog, createPage, deletePage, listPages, parseItem, push, showPage, update } from "./web/pages.ts";
 import { serve } from "./web/server.ts";
 import { run } from "./writes.ts";
 
@@ -159,6 +159,17 @@ export const page: Toolkit = {
 				},
 			),
 			text: (d) => d.map((x: any) => `${x.replaced ? "换了" : "放了"} ${x.component}（${x.id}）`).join("\n"),
+		},
+		update: {
+			...get(
+				"改一个组件的参数（generative、interactable 都行）：整份换掉，照组件的参数校验；网页重读就变。现在的参数看 x2 page show --json",
+				z.object({
+					item: str("组件编号（x2 page show 里的）"),
+					props: z.preprocess(parseJson, z.unknown()).describe("新的 props（整份）的 JSON；写 - 从 stdin 读"),
+				}),
+				async (p) => update(await db(), p.item, p.props),
+			),
+			text: (r) => `改了 ${r.component}（${r.id}）`,
 		},
 		components: {
 			...get("组件的说明和参数（JSON Schema）", undefined, async () => catalog()),
