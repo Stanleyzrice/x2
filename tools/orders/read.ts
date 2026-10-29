@@ -5,7 +5,7 @@
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
 import { orders as chanbossOrders } from "../../connectors/sites/chanboss/api.ts";
-import { challengeIn, inAccount, logins } from "../../platform/browser/accounts.ts";
+import { challengeIn, inAccount, logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import type { Read } from "../../platform/tool.ts";

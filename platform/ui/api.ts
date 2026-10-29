@@ -2,9 +2,9 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Item, Props, Session, SessionSummary } from "../web/sessions.ts";
-import type { Key, Meta, Pic, Row } from "../web/tables.ts";
+import type { Grid, Key, Meta, Pic, Row } from "../web/tables.ts";
 
-export type { Item, Key, Meta, Pic, Props, Row, Session, SessionSummary };
+export type { Grid, Item, Key, Meta, Pic, Props, Row, Session, SessionSummary };
 export type Column = Meta["columns"][number];
 export type View = Meta["views"][number];
 export type Filter = Record<string, string | string[]>;

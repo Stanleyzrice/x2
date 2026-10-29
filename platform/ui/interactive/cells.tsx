@@ -7,8 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import type { SpecsTable } from "../../../tools/listing/variants.ts";
-import type { Column, Pic } from "../api.ts";
+import type { Column, Grid, Pic } from "../api.ts";
 
 export type Save = (value: unknown) => void;
 
@@ -24,7 +23,7 @@ const jsonText = (v: unknown) =>
 
 export function Show({ col, value, compact }: { col: Column; value: unknown; compact?: boolean }) {
 	if (col.type === "pics") return <Pics pics={(value ?? []) as Pic[]} compact={compact} />;
-	if (col.type === "specs" && value) return <Specs specs={value as SpecsTable} compact={compact} />;
+	if (col.type === "grid" && value) return <GridCell grid={value as Grid} compact={compact} />;
 	if (empty(value)) return <span className="text-muted-foreground">—</span>;
 	if (col.type === "bool") return <Checkbox checked={Boolean(value)} disabled aria-label={col.label} />;
 	if (col.type === "time") return <span className="whitespace-nowrap">{time(String(value))}</span>;
@@ -118,65 +117,36 @@ function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean | undefi
 	);
 }
 
-type SpecRow = SpecsTable["rows"][number];
-const price = (p: number | null) => (p === null ? "未定价" : `NT$${p}`);
-const FIELDS: { label: string; of: (r: SpecRow) => string }[] = [
-	{ label: "售价", of: (r) => price(r.priceTwd) },
-	{ label: "进价", of: (r) => `¥${r.costRmb}` },
-	{ label: "库存", of: (r) => String(r.stock) },
-	{ label: "重量", of: (r) => (r.weightKg === null ? "缺重量" : `${r.weightKg} kg`) },
-];
-
-function Specs({ specs, compact }: { specs: SpecsTable; compact?: boolean | undefined }) {
-	const { rows, tiers, removed } = specs;
-	const same = FIELDS.filter((f) => new Set(rows.map(f.of)).size <= 1);
-	const varying = FIELDS.filter((f) => !same.includes(f));
-	if (compact) {
-		const prices = [...new Set(rows.map((r) => r.priceTwd))].filter((p) => p !== null) as number[];
-		const range = prices.length ? (prices.length === 1 ? price(prices[0]!) : `${price(Math.min(...prices))}–${Math.max(...prices)}`) : "未定价";
-		return (
-			<span className="whitespace-nowrap">
-				{rows.length > 1 || tiers.length ? `${rows.length} 个规格 · ` : ""}
-				{range}
-			</span>
-		);
-	}
-	const images = rows.some((r) => r.image);
+function GridCell({ grid, compact }: { grid: Grid; compact?: boolean | undefined }) {
+	if (compact) return <span className="whitespace-nowrap">{grid.summary}</span>;
+	const images = grid.rows.some((r) => r.image);
 	return (
 		<div className="flex flex-col gap-2">
-			<div className="text-sm text-muted-foreground">
-				{[`${rows.length} 个规格`, ...same.map((f) => `${f.label}${rows.length > 1 ? "都是" : ""} ${rows[0] ? f.of(rows[0]) : "—"}`)].join(" · ")}
-			</div>
-			{tiers.length > 0 && (
+			<div className="text-sm text-muted-foreground">{grid.caption}</div>
+			{grid.columns.length > 0 && grid.rows.length > 0 && (
 				<div className="max-h-[28rem] overflow-auto rounded-lg border">
 					<Table>
 						<TableHeader>
 							<TableRow>
-								{images && <TableHead className="w-16">规格图</TableHead>}
-								{tiers.map((t) => (
-									<TableHead key={t}>{t}</TableHead>
-								))}
-								{varying.map((f) => (
-									<TableHead key={f.label} className="text-right">
-										{f.label}
+								{images && <TableHead className="w-16" />}
+								{grid.columns.map((c) => (
+									<TableHead key={c.label} className={c.numeric ? "text-right" : undefined}>
+										{c.label}
 									</TableHead>
 								))}
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{rows.map((r) => (
-								<TableRow key={r.sku}>
+							{grid.rows.map((r) => (
+								<TableRow key={r.key}>
 									{images && (
 										<TableCell>
 											{r.image && <img src={r.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-10 max-w-none rounded object-cover" />}
 										</TableCell>
 									)}
-									{r.options.map((o, a) => (
-										<TableCell key={tiers[a]}>{o}</TableCell>
-									))}
-									{varying.map((f) => (
-										<TableCell key={f.label} className="text-right tabular-nums">
-											{f.of(r)}
+									{r.cells.map((v, k) => (
+										<TableCell key={grid.columns[k]?.label ?? k} className={grid.columns[k]?.numeric ? "text-right tabular-nums" : undefined}>
+											{v}
 										</TableCell>
 									))}
 								</TableRow>
@@ -185,7 +155,7 @@ function Specs({ specs, compact }: { specs: SpecsTable; compact?: boolean | unde
 					</Table>
 				</div>
 			)}
-			{removed.length > 0 && <div className="text-sm text-muted-foreground">已移除：{removed.map((x) => `${x.name}（${x.count} 个规格）`).join("、")}</div>}
+			{grid.note && <div className="text-sm text-muted-foreground">{grid.note}</div>}
 		</div>
 	);
 }

@@ -6,7 +6,7 @@
 // 跨进程（两个 x2 同时开）的排队不在这里
 
 import { gemini as ask, geminiJson as askJson, type Image } from "../../connectors/services/gemini/api.ts";
-import { inAccount, logins } from "../../platform/browser/accounts.ts";
+import { inAccount, logins } from "../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 
 export type Runner = <T>(fn: () => Promise<T>) => Promise<T>;

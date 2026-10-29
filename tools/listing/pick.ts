@@ -1,4 +1,4 @@
-// 选品可追溯：商品稿加进来那一刻按的是哪一版策略、哪些选品规矩
+// 选品可追溯：商品稿加进来那一刻按的是哪一版策略、哪些选品规矩。读选品的表（strategies、selection_rules：数据上的依赖，不 import 选品的代码）
 
 import { offerIdOf } from "../../connectors/sites/1688/api.ts";
 import type { Sql } from "../../platform/db/index.ts";
@@ -28,7 +28,7 @@ export function snapshotLine(s: PickSnapshot): string {
 	return `${s.backfilled ? `补记于 ${when(s.at)}，按现在的` : `${when(s.at)}，按`}${st}、${rules}`;
 }
 
-export const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
+const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
 
 export type Added = { id: string; offerId: string; isNew: boolean; why: string | null; evidence: string | null; snapshot: PickSnapshot | null };
 

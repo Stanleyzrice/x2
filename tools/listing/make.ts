@@ -6,7 +6,7 @@
 
 import { detailImages, Gone, type Offer, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../../connectors/sites/shopee/products.ts";
-import { logins } from "../../platform/browser/accounts.ts";
+import { logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";

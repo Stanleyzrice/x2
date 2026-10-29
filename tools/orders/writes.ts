@@ -5,7 +5,7 @@ import { type CartLine, Gone, cart as readCart, offer as readOffer } from "../..
 import { cartAdd } from "../../connectors/sites/1688/index.ts";
 import { ordersBySn as liveOrders, NO_TRACKING } from "../../connectors/sites/chanboss/api.ts";
 import { forecastOrder } from "../../connectors/sites/chanboss/index.ts";
-import { inAccount } from "../../platform/browser/accounts.ts";
+import { inAccount } from "../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import type { WriteOp } from "../../platform/writes.ts";
 import { buyAccount } from "./read.ts";

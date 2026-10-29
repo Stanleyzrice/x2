@@ -1,14 +1,11 @@
 // 选品（x2 selection <工具>）：策略（假设、选品方法、版本号；每份商品稿记下从哪个策略来、按的是第几版，按策略看效果）和选品规矩（所有策略共用，旧的不删）。
-// 别的业务工具用的（添加货源、选品快照）从这里拿
 import { z } from "zod";
 import { db } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, str, type Toolkit } from "../../platform/tool.ts";
-import { when } from "./pick.ts";
 import { SELECTION_TABLES } from "./tables.ts";
 
-export { type Added, addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
-
+const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
 const STATUS = ["试验中", "使用中", "已停用"] as const;
 const FIELD = { status: "状态", bet: "假设", how: "选品方法", note: "备注" } as const;
 type Field = keyof typeof FIELD;

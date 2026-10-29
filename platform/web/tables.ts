@@ -29,7 +29,16 @@ export type Table = {
 };
 export type Row = Record<string, any>;
 export type Key = Record<string, string>;
-export type ColumnType = "bool" | "number" | "time" | "text" | "json" | "image" | "link" | "pics" | "specs";
+export type ColumnType = "bool" | "number" | "time" | "text" | "json" | "image" | "link" | "pics" | "grid";
+
+/** 一格里的小表格（例 商品稿的规格和价格）：业务工具把自己的数据转成它，网页照通用的画。表格里一格只显示 summary，展开是 caption、表、note */
+export type Grid = {
+	summary: string;
+	caption: string;
+	columns: { label: string; numeric?: boolean }[];
+	rows: { key: string; image: string | null; cells: string[] }[];
+	note: string | null;
+};
 
 export type Meta = {
 	name: string;

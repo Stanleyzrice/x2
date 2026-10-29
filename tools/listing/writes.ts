@@ -6,7 +6,7 @@ import type { Outcome } from "../../connectors/services/xiangji/api.ts";
 import { translateImages } from "../../connectors/services/xiangji/index.ts";
 import { channels, productInfo, productPage } from "../../connectors/sites/shopee/products.ts";
 import { createListing, findByParentSku, listProduct } from "../../connectors/sites/shopee/publish.ts";
-import { inAccount } from "../../platform/browser/accounts.ts";
+import { inAccount } from "../../platform/browser/browser.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import type { WriteOp } from "../../platform/writes.ts";
 import { minPrice } from "./price.ts";

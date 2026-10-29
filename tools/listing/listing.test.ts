@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { margin, minPrice, type PriceParams, payout } from "./price.ts";
 import { parseVerdict } from "./screen.ts";
+import { specsGrid } from "./tables.ts";
 
 const base = {
 	fx: 4.4,
@@ -1403,6 +1404,26 @@ test("规格表（网页）：一个规格一行，按选项排，每层的选�
 		],
 	);
 	assert.deepEqual(t.removed, [{ name: "定製", count: 3 }]);
+});
+
+test("规格表给网页的小表格：每层一列，一样的写在表上面、不一样的才成列；一格里只写几个规格和售价区间", () => {
+	const row = (options: string[], priceTwd: number) => ({ options, image: null, costRmb: 10, priceTwd, stock: 9, weightKg: 0.5, sku: options.join("-") });
+	const g = specsGrid({ tiers: ["尺寸"], rows: [row(["40×60cm"], 133), row(["50×80cm"], 155)], removed: [{ name: "定製", count: 3 }] });
+	assert.deepEqual(g, {
+		summary: "2 个规格 · NT$133–155",
+		caption: "2 个规格 · 进价都是 ¥10 · 库存都是 9 · 重量都是 0.5 kg",
+		columns: [{ label: "尺寸" }, { label: "售价", numeric: true }],
+		rows: [
+			{ key: "40×60cm", image: null, cells: ["40×60cm", "NT$133"] },
+			{ key: "50×80cm", image: null, cells: ["50×80cm", "NT$155"] },
+		],
+		note: "已移除：定製（3 个规格）",
+	});
+	const single = specsGrid({ tiers: [], rows: [{ ...row([], 133), sku: "LT1-0" }], removed: [] });
+	assert.deepEqual(
+		[single.summary, single.caption, single.columns, single.note],
+		["NT$133", "1 个规格 · 售价 NT$133 · 进价 ¥10 · 库存 9 · 重量 0.5 kg", [], null],
+	);
 });
 
 test("筛字的回答：整个是一个字母（可以重复、带标点反引号）才算", () => {

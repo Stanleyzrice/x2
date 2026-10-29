@@ -2,12 +2,12 @@
 import { IMAGE } from "../../connectors/sites/shopee/seller.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
-import type { Key, Pic, Row, Table } from "../../platform/web/tables.ts";
-import { addListings } from "../selection/index.ts";
+import type { Grid, Key, Pic, Row, Table } from "../../platform/web/tables.ts";
 import { LISTING_STEPS } from "./check.ts";
+import { addListings } from "./pick.ts";
 import { LABEL, numbered, usedPics } from "./product.ts";
 import { listingsCheck } from "./status.ts";
-import { isSingle, removedOf, specsOf, specsTable } from "./variants.ts";
+import { isSingle, removedOf, type SpecsTable, specsOf, specsTable } from "./variants.ts";
 
 function picsOf(l: Row): Pic[] {
 	if (!l.images?.main) return [];
@@ -43,11 +43,35 @@ async function setPic(sql: Sql, key: Key, value: unknown): Promise<void> {
 	await sql`update listings set removed_images = ${sql.json([...removed])}, updated_at = now() where id = ${key.id!}`;
 }
 
-function specsRows(l: Row) {
+type SpecRow = SpecsTable["rows"][number];
+const price = (p: number | null) => (p === null ? "未定价" : `NT$${p}`);
+const FIELDS: { label: string; of: (r: SpecRow) => string }[] = [
+	{ label: "售价", of: (r) => price(r.priceTwd) },
+	{ label: "进价", of: (r) => `¥${r.costRmb}` },
+	{ label: "库存", of: (r) => String(r.stock) },
+	{ label: "重量", of: (r) => (r.weightKg === null ? "缺重量" : `${r.weightKg} kg`) },
+];
+
+/** 规格和价格给网页的小表格：每层一列；售价、进价、库存、重量都一样的写在表上面，不一样的才成列 */
+export function specsGrid({ tiers, rows, removed }: SpecsTable): Grid {
+	const same = FIELDS.filter((f) => new Set(rows.map(f.of)).size <= 1);
+	const varying = FIELDS.filter((f) => !same.includes(f));
+	const prices = [...new Set(rows.map((r) => r.priceTwd))].filter((p) => p !== null) as number[];
+	const range = prices.length ? (prices.length === 1 ? price(prices[0]!) : `${price(Math.min(...prices))}–${Math.max(...prices)}`) : "未定价";
+	return {
+		summary: `${rows.length > 1 || tiers.length ? `${rows.length} 个规格 · ` : ""}${range}`,
+		caption: [`${rows.length} 个规格`, ...same.map((f) => `${f.label}${rows.length > 1 ? "都是" : ""} ${rows[0] ? f.of(rows[0]) : "—"}`)].join(" · "),
+		columns: tiers.length ? [...tiers.map((label) => ({ label })), ...varying.map((f) => ({ label: f.label, numeric: true }))] : [],
+		rows: rows.map((r) => ({ key: r.sku, image: r.image, cells: [...r.options, ...varying.map((f) => f.of(r))] })),
+		note: removed.length ? `已移除：${removed.map((x) => `${x.name}（${x.count} 个规格）`).join("、")}` : null,
+	};
+}
+
+function specsRows(l: Row): Grid | null {
 	const s = specsOf(l.variants);
 	if (!s) return null;
 	const shopee = new Map(((l.images?.options ?? []) as any[]).filter((p) => p.imageId).map((p) => [p.from as string, `${IMAGE}${p.imageId}`]));
-	return specsTable(s, removedOf(l.offer, l.removed_variants), (from) => shopee.get(from) ?? from);
+	return specsGrid(specsTable(s, removedOf(l.offer, l.removed_variants), (from) => shopee.get(from) ?? from));
 }
 
 const shops = async (sql: Sql) => (await sql`select shop from shop_settings order by shop`).map((r) => r.shop as string);
@@ -82,7 +106,7 @@ export const LISTING_TABLES: Table[] = [
 			listed_at: "上架时间",
 			id: "编号",
 		},
-		computed: { pics: { type: "pics", of: picsOf }, specs: { type: "specs", of: specsRows } },
+		computed: { pics: { type: "pics", of: picsOf }, specs: { type: "grid", of: specsRows } },
 		edit: {
 			nickname: {},
 			note: {},

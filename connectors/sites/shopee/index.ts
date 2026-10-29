@@ -1,7 +1,7 @@
 // x2 shopee <工具>：卖家中心的工具。读的直接跑；建商品、上架是写（publish.ts），只经上品的写工具
 import { writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { inAccount } from "../../../platform/browser/accounts.ts";
+import { inAccount } from "../../../platform/browser/browser.ts";
 import { all, byPage, day, flag, get, list, num, parseJson, str, type Toolkit } from "../../../platform/tool.ts";
 import { conversations, messages, unreplied } from "./chat.ts";
 import { income, incomeComponents } from "./finance.ts";
