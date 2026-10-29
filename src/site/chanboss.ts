@@ -1,4 +1,4 @@
-// chanboss（c.chanboss.com，货代）：订单、退件、库存、扣款流水（读）；预报（写，只由 x2 run 执行）。
+// chanboss（c.chanboss.com，货代）：订单、退件、库存、扣款流水（读）；预报（写，只经 x2 do）。
 // 凭证是 localStorage 的 __tk，放进 x-wh-sessionkey 请求头（没有 cookie）；外壳 { code, data, message }，code 10000 是成功，90000 是会话失效。
 // 这个站不按登录的账号过滤：每个列表都要带 seller_id，换一个 id 能读到别的卖家（lilto 查到的越权）。所以 seller_id 只用 identity() 读到的自己的 id。
 // 频率：两次请求隔 2 秒以上（lilto 的上限每秒 0.5 次）

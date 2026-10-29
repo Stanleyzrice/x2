@@ -1,4 +1,4 @@
-// 检查订单：拿 docs/orders.md「每一步怎样算做完」和「异常」对一遍库，算出收件箱、agent 要做的，和订单上「当前步骤」等列。
+// 检查订单：拿 docs/orders.md「每一步怎样算做完」和「异常」对一遍库，算出要提醒人的、agent 要做的，和订单上「当前步骤」等列。
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
 import { exceptionFor, matchSku, rank as nearest } from "../similar.ts";
 import { type CartLine, type CartWrite, type Line, type Need, type Purchase, reconcile } from "./reconcile.ts";
@@ -27,22 +27,26 @@ export type Snapshot = {
 	accounts: Map<string, string>;
 };
 
-export type InboxItem = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
+/** 提醒人做的一件事。key 是「类别:对象」：x2 看不到结果的，人做完用 x2 handled <key> 记下，不再提醒 */
+export type Reminder = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
 /** step：当前步骤（下面 STEPS 里的一个，网页上订单按它分组）；stepDetail：说明（哪件未到、哪个规格缺货源……） */
 export type Computed = { daysLeft: number | null; destination: string | null; step: string; stepDetail: string | null };
-/** 加购这个写操作的参数：同一个货源规格的几张订单合成一行。newSources：随这次加购一起批准的新货源（店里的商品 id） */
+/** 加购这个写操作的参数：同一个货源规格的几张订单合成一行。newSources：随这次加购一起定下的新货源（店里的商品 id） */
 export type CartParams = {
 	offerId: string; skuId: string; qty: number; title: string; sku: string; price: number | null;
 	lines: { sn: string; modelId: string; qty: number }[]; newSources: string[]; account?: string;
 };
+/** 一批写入：x2 do 从 stdin 读的 JSON */
+export type Batch = { title: string; writes: { op: string; params: unknown }[] };
 export type ForecastParams = { sn: string; chanbossId: string; chanbossTime: number; lines: { modelId: string; chanbossModelId: string; qty: number; trackingNo: string | null }[] };
 export type Todo =
 	| { kind: "找货源"; why: string; items: { itemId: string; name: string; why: string }[]; command: string }
-	| { kind: "加购" | "预报"; why: string; propose: { title: string; writes: { op: string; params: CartParams | ForecastParams }[] } }
+	// batch：现成的一批写入，给人看过、人同意了交给 x2 do
+	| { kind: "加购" | "预报"; why: string; batch: Batch }
 	| { kind: "取消预报"; why: string; orders: string[] }
 	| { kind: "核清"; why: string; writes: string[]; command: string }
-	// 上品（docs/listing.md）：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；上架：人勾了「批准上架」的，x2 run 建商品、上架；备注：照人写的备注做
-	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查" | "上架"; why: string; ids: string[]; command: string }
+	// 上品（docs/listing.md）：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；备注：照人写的备注做
+	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查"; why: string; ids: string[]; command: string }
 	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[]; command: string }
 	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; command: string };
 
@@ -53,16 +57,16 @@ export type EstimateItem = {
 };
 
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
-export type Result = { inbox: InboxItem[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };
+export type Result = { reminders: Reminder[]; orders: Map<string, Computed>; cart: Map<string, { orders: string; shouldBuy: string }>; todo: Todo[]; covered: Set<string> };
 
 /** 当前步骤：按流程排（网页上订单按它分组，组也是这个顺序） */
 export const STEPS = [
-	"缺货源", "规格不匹配", "待加购", "加购待批准", "待 1688 付款", "待预报", "预报待批准", "待到齐", "有到货问题", "待打包", "待 chanboss 收货", "待 chanboss 打包",
+	"缺货源", "规格不匹配", "待加购", "待 1688 付款", "待预报", "待到齐", "有到货问题", "待打包", "待 chanboss 收货", "待 chanboss 打包",
 	"外部采购", "已打包", "已取消",
 ] as const;
 
 /** 写入还没有结果、或结果要人看：同一个对象不再准备新的 */
-const IN_FLIGHT = new Set(["待批准", "已批准", "已提交", "结果未知", "不一致"]);
+const IN_FLIGHT = new Set(["待执行", "已提交", "结果未知", "不一致"]);
 const DONE = new Set(["成功", "已核对"]);
 const CART_URL = "https://cart.1688.com/cart.htm";
 const CHANBOSS_ORDERS = "https://c.chanboss.com/order/orderList";
@@ -80,7 +84,7 @@ export const isPacked = (o: Order) => o.chanbossStatus === "已打包" || o.chan
 export const isOpen = (o: Order) => o.platformStatus === "待出货" && !isPacked(o);
 
 export function checkOrders(s: Snapshot): Result {
-	const inbox: InboxItem[] = [];
+	const reminders: Reminder[] = [];
 	const todo: Todo[] = [];
 	const computed = new Map<string, Computed>();
 	const who = (account: string) => s.accounts.get(account) ?? account;
@@ -109,7 +113,7 @@ export function checkOrders(s: Snapshot): Result {
 	}
 	/** 外部采购（采购单对上了，不是经 x2 加购的） */
 	const boughtOutside = new Set(lines.filter((l) => l.outside).map((l) => `${l.sn}:${l.modelId}`));
-	// 正在路上的加购（待批准……结果未知）：这些订单行不再准备
+	// 正在路上的加购（还没核清的）：这些订单行不再准备
 	const flying = new Set(s.writes.filter((w) => w.op === "加购" && IN_FLIGHT.has(w.status)).flatMap((w) => (w.params.lines as CartParams["lines"]).map((l) => `${l.sn}:${l.modelId}`)));
 	const forecastFlying = new Set(s.writes.filter((w) => w.op === "预报" && IN_FLIGHT.has(w.status)).map((w) => w.params.sn as string));
 
@@ -145,7 +149,7 @@ export function checkOrders(s: Snapshot): Result {
 		if (isCancelled(o)) { checkCancelled(o); continue; }
 		if (!isOpen(o)) {
 			computed.set(o.sn, { daysLeft, destination: null, step: isPacked(o) ? "已打包" : o.platformStatus, stepDetail: o.chanbossStatus || null });
-			if (o.problem && !isPacked(o)) inbox.push(problem(o));
+			if (o.problem && !isPacked(o)) reminders.push(problem(o));
 			continue;
 		}
 		const sources = o.items.map((i) => ({ i, src: sourceOf(i), line: lineOf.get(`${o.sn}:${i.modelId}`) }));
@@ -168,9 +172,15 @@ export function checkOrders(s: Snapshot): Result {
 			step = bad.every((x) => x.src.state === "规格不匹配") ? "规格不匹配" : "缺货源";
 			stepDetail = bad.map((x) => label(x.i)).join("、");
 		}
-		else if (!carted && !paid) step = sources.some((x) => flying.has(`${o.sn}:${x.i.modelId}`)) ? "加购待批准" : "待加购";
+		else if (!carted && !paid) {
+			step = "待加购";
+			if (sources.some((x) => flying.has(`${o.sn}:${x.i.modelId}`))) stepDetail = "加购的结果还没核清";
+		}
 		else if (!paid) step = "待 1688 付款";
-		else if (needsBuy) step = forecastFlying.has(o.sn) ? "预报待批准" : "待预报";
+		else if (needsBuy) {
+			step = "待预报";
+			if (forecastFlying.has(o.sn)) stepDetail = "预报的结果还没核清";
+		}
 		else if (destination === "寄到我们这里") {
 			const missing = sources.filter((x) => !(x.line?.purchases ?? []).every((p) => p.signed)).map((x) => label(x.i));
 			step = missing.length ? "待到齐" : "待打包";
@@ -218,24 +228,24 @@ export function checkOrders(s: Snapshot): Result {
 			});
 		}
 		// 打包：寄到我们这里、到齐了、报过了
-		if (destination === "寄到我们这里" && arrived && !needsBuy && !issues.length) inbox.push({
+		if (destination === "寄到我们这里" && arrived && !needsBuy && !issues.length) reminders.push({
 			key: `pack:${o.sn}`, kind: "打包", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS,
 			title: `打包：订单 ${o.sn} 的货已到齐`,
 			detail: `${o.items.map((i) => `${label(i)} × ${i.qty}`).join("\n")}\n按这张订单装箱，在 chanboss 上打印 SKU 拣货单贴上，寄给 chanboss`,
 		});
 		// 快到期：离出货期限不到 N 天还没打包，直接给人
-		if (daysLeft !== null && daysLeft < s.settings.lateDays) inbox.push({
+		if (daysLeft !== null && daysLeft < s.settings.lateDays) reminders.push({
 			key: `late:${o.sn}`, kind: "快到期", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS,
 			title: `快到期：订单 ${o.sn} 出货期限剩余 ${Math.max(0, Math.floor(daysLeft))} 天，未打包（当前步骤：${step}${stepDetail ? `，${stepDetail}` : ""}）`,
 			detail: o.items.map((i) => `${label(i)} × ${i.qty}`).join("\n"),
 		});
-		if (o.problem) inbox.push(problem(o));
+		if (o.problem) reminders.push(problem(o));
 	}
 
-	// 到货问题：一个问题一行，人在「到货问题」里勾「已处理」就关
+	// 到货问题：一个问题一行，人在「到货问题」里勾「已处理」就不再提醒
 	for (const x of s.issues) {
 		const o = s.orders.find((y) => y.sn === x.sn);
-		inbox.push({
+		reminders.push({
 			key: `issue:${x.id}`, kind: "到货问题", shop: o?.shop ?? null, due: o?.shipBy ?? null, link: null,
 			title: `到货问题：订单 ${x.sn} ${issueText(x)}`,
 			detail: [
@@ -247,18 +257,18 @@ export function checkOrders(s: Snapshot): Result {
 		});
 	}
 
-	function problem(o: Order): InboxItem {
+	function problem(o: Order): Reminder {
 		return { key: `problem:${o.sn}`, kind: "问题单", shop: o.shop, due: o.shipBy, link: CHANBOSS_ORDERS, title: `问题单：订单 ${o.sn} 被 chanboss 标记问题`, detail: o.problem ?? "" };
 	}
 
 	// 买家取消：看货走到了哪（docs/orders.md「买家取消」）。
-	// 购物车里的：删掉（x2 看得到删没删）。货的去处（退款、退回卖家、合并给新订单、台湾仓）：x2 看不到结果，人做完在收件箱勾「已处理」。
+	// 购物车里的：删掉（x2 看得到删没删）。货的去处（退款、退回卖家、合并给新订单、台湾仓）：x2 看不到结果，人做完 x2 handled 记下。
 	// chanboss 上的预报：不重要了，agent 去取消
 	function checkCancelled(o: Order) {
 		const mine = o.items.map((i) => ({ i, line: lineOf.get(`${o.sn}:${i.modelId}`) }));
 		computed.set(o.sn, { daysLeft: null, destination: null, step: "已取消", stepDetail: o.chanbossStatus || null });
 		const inCart = lines.filter((l) => l.sn === o.sn && l.cartQty > 0);
-		if (inCart.length) inbox.push({
+		if (inCart.length) reminders.push({
 			key: `cancel:${o.sn}`, kind: "取消", shop: o.shop, due: null, link: CART_URL,
 			title: `取消：订单 ${o.sn} 已取消，购物车里还有 ${inCart.reduce((n, l) => n + l.cartQty, 0)} 件待删除`,
 			detail: inCart.map((l) => `${label(o.items.find((i) => i.modelId === l.modelId)!)} × ${l.cartQty}（账号 ${who(l.account)}）`).join("\n"),
@@ -276,7 +286,7 @@ export function checkOrders(s: Snapshot): Result {
 			if (due && due < s.now) where = null;
 		} else if (o.chanbossStatus === "已到齐") { where = "货在 chanboss 仓库"; what = "给新订单用（合并发货），或者退回卖家"; }
 		else if (bought.length) {
-			// 退款：进行中的写出走到哪一步（x2 看得到，退成了这一行自己关）；关闭了是没退成，要人再处理
+			// 退款：进行中的写出走到哪一步（x2 看得到，退成了就不再提醒）；关闭了是没退成，要人再处理
 			const refunds = bought.flatMap((x) => x.line!.purchases.map((p) => p.refund)).filter((r): r is NonNullable<typeof r> => Boolean(r));
 			const closedRefund = refunds.find((r) => r.status === "refundclose");
 			const going = refunds.find((r) => r.status !== "refundclose" && r.status !== "refundsuccess");
@@ -285,26 +295,26 @@ export function checkOrders(s: Snapshot): Result {
 			else if (closedRefund) { where = "退款已关闭（未退成）"; what = "重新申请，或者定去处"; }
 			else { where = shipped ? "1688 已发货" : "已付款，1688 未发货"; what = shipped ? "退回 1688 卖家" : "在 1688 申请退款"; }
 		}
-		if (where) inbox.push({
+		if (where) reminders.push({
 			key: `cancel-goods:${o.sn}`, kind: "取消", shop: o.shop, due, link: isPacked(o) || o.chanbossStatus === "已到齐" ? CHANBOSS_ORDERS : BUYER_ORDERS,
 			title: `取消：订单 ${o.sn} 已取消，${where}，${what}`,
 			detail: [
 				...o.items.map((i) => `${label(i)} × ${i.qty}`),
 				...bought.map((x) => `采购单 ${x.line!.purchases.map((p) => `${p.orderId}${p.refund ? `（${p.refund.kind ?? "退款"}：${p.refund.label}）` : ""}`).join("、")}：${label(x.i)} × ${x.line!.paidQty}${x.line!.outside ? "（外部采购）" : ""}`),
-				"", bought.length ? "x2 读得到退款、退货的进度：退款成功后这一行自动关闭" : "处理完在这一行勾「已处理」",
+				"", bought.length ? "x2 读得到退款、退货的进度：退款成功后不再提醒" : `处理完告诉 agent（x2 handled cancel-goods:${o.sn}）`,
 			].join("\n"),
 		});
 	}
 
-	// ── 收件箱：选货源、付款 ──
-	for (const [itemId, c] of toChoose) inbox.push({
+	// ── 提醒：选货源、付款 ──
+	for (const [itemId, c] of toChoose) reminders.push({
 		key: `source:${itemId}`, kind: "选货源", shop: c.shop, due: c.due, link: null,
 		title: `选货源：${short(c.item.name, 20)} 待人工选定`, detail: `找到的货源在「货源」里（按店里的商品分组），勾选一个「选用」`,
 	});
 	// 规格不匹配：人定哪个配哪个，写进货源那一行的「规格例外」（照抄第一个最像的，不对就改）；或者换货源
 	for (const [modelId, c] of unmatched) {
 		const near = nearest(c.item.spec, c.src.skus).slice(0, 5).map((k) => k.name);
-		inbox.push({
+		reminders.push({
 			key: `sku:${modelId}`, kind: "规格不匹配", shop: c.shop, due: c.due, link: null,
 			title: `规格不匹配：${label(c.item)}`,
 			detail: [
@@ -340,7 +350,7 @@ export function checkOrders(s: Snapshot): Result {
 		const sns = new Set(p.lines.map((l) => l.sn));
 		const total = p.lines.reduce((sum, l) => sum + (offerName(l).price ?? Number.NaN) * l.cartQty, 0);
 		const not = [...cartRows.entries()].filter(([k, r]) => k.startsWith(`${account}|`) && r.shouldBuy.startsWith("不该买"));
-		inbox.push({
+		reminders.push({
 			key: `pay:${account}`, kind: "付款", shop: null, due: p.due, link: CART_URL,
 			title: `付款：1688 账号「${who(account)}」的购物车里 ${sns.size} 张订单的货${Number.isNaN(total) ? "" : ` ¥${total.toFixed(2)}`}`,
 			detail: [
@@ -364,7 +374,7 @@ export function checkOrders(s: Snapshot): Result {
 		const sns = [...new Set(lines.filter((l) => l.purchases.some((b) => b.orderId === orderId)).map((l) => l.sn))];
 		const hours = Math.floor((s.now.getTime() - ps[0]!.paidAt!.getTime()) / 3600_000);
 		const due = sns.map((sn) => s.orders.find((o) => o.sn === sn)?.shipBy).filter((d): d is Date => Boolean(d)).sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
-		inbox.push({
+		reminders.push({
 			key: `unshipped:${orderId}`, kind: "未发货", shop: null, due, link: BUYER_ORDERS,
 			title: `未发货：1688 采购单 ${orderId} 付款已 ${hours} 小时仍未发货${sns.length ? `（订单 ${sns.join("、")}）` : ""}`,
 			detail: `${ps.map((p) => `${p.offerId} / ${p.offerSkuId ?? ""} × ${p.qty}`).join("\n")}\n找卖家催发货；催不动就退款换一家（x2 会重新准备加购）`,
@@ -378,30 +388,30 @@ export function checkOrders(s: Snapshot): Result {
 		const sns = new Set(plan.flatMap((c) => c.lines.map((l) => l.sn)));
 		todo.push({
 			kind: "加购", why: `${sns.size} 张订单货源齐了，待加购`,
-			propose: { title: `加购：${plan.map((c) => `${short(c.title, 10)} / ${c.sku} × ${c.qty}`).join("；")}（订单 ${[...sns].join("、")}）`, writes: plan.map((params) => ({ op: "加购", params })) },
+			batch: { title: `加购：${plan.map((c) => `${short(c.title, 10)} / ${c.sku} × ${c.qty}`).join("；")}（订单 ${[...sns].join("、")}）`, writes: plan.map((params) => ({ op: "加购", params })) },
 		});
 	}
 	if (forecasts.length) todo.push({
 		kind: "预报", why: `${forecasts.length} 张订单已付款，待预报`,
-		propose: {
+		batch: {
 			title: `预报 ${forecasts.length} 张订单（${s.settings.channel}、${forecasts.every((f) => f.lines.every((l) => !l.trackingNo)) ? "无单号" : "带快递单号"}）：${forecasts.map((f) => f.sn).join("、")}`,
 			writes: forecasts.map((params) => ({ op: "预报", params })),
 		},
 	});
 	if (unforecast.length) todo.push({ kind: "取消预报", why: `${unforecast.length} 张取消的订单在 chanboss 上还是已预报（不重要；x2 还不会取消预报，先不管）`, orders: unforecast });
 	const unknown = s.writes.filter((w) => w.status === "结果未知" || w.status === "已提交");
-	if (unknown.length) todo.push({ kind: "核清", why: `${unknown.length} 个写入结果未知：先读回来`, writes: unknown.map((w) => w.id), command: "x2 run" });
+	if (unknown.length) todo.push({ kind: "核清", why: `${unknown.length} 个写入结果未知：先读回来`, writes: unknown.map((w) => w.id), command: "x2 verify" });
 
-	return { inbox, orders: computed, cart: new Map([...cartRows].map(([k, r]) => [k, { orders: r.orders.join("、"), shouldBuy: r.shouldBuy }])), todo,
+	return { reminders, orders: computed, cart: new Map([...cartRows].map(([k, r]) => [k, { orders: r.orders.join("、"), shouldBuy: r.shouldBuy }])), todo,
 		covered: new Set([...lineOf.values()].filter((l) => l.state !== "不见了").map((l) => `${l.sn}:${l.modelId}`)) };
 }
 
-/** 检查现在认为该做的：加购的订单行（订单号:规格 id）、该预报的订单号。x2 propose 只收这些；x2 run 加购前现读一遍再对一次 */
+/** 检查现在认为该做的：加购的订单行（订单号:规格 id）、该预报的订单号。x2 do 只收这些；加购前现读一遍再对一次 */
 export function planned(r: Result): { cart: Set<string>; forecast: Set<string> } {
 	const cart = new Set<string>(), forecast = new Set<string>();
 	for (const t of r.todo) {
-		if (t.kind === "加购") for (const w of t.propose.writes) for (const l of (w.params as CartParams).lines) cart.add(`${l.sn}:${l.modelId}`);
-		if (t.kind === "预报") for (const w of t.propose.writes) forecast.add((w.params as ForecastParams).sn);
+		if (t.kind === "加购") for (const w of t.batch.writes) for (const l of (w.params as CartParams).lines) cart.add(`${l.sn}:${l.modelId}`);
+		if (t.kind === "预报") for (const w of t.batch.writes) forecast.add((w.params as ForecastParams).sn);
 	}
 	return { cart, forecast };
 }

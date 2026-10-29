@@ -27,7 +27,7 @@ export function nicknameProblems(nickname: string): string[] {
 	return p;
 }
 
-/** 商品稿在收件箱、命令输出里的叫法：简称（店铺），命令要用编号的跟在后面，例 浴水生财猫狗地垫（cheeroutdoor，#2）。还没有简称的用 1688 标题的前 12 个字、货源 id */
+/** 商品稿在提醒、命令输出里的叫法：简称（店铺），命令要用编号的跟在后面，例 浴水生财猫狗地垫（cheeroutdoor，#2）。还没有简称的用 1688 标题的前 12 个字、货源 id */
 export function listingName(l: { id?: unknown; shop?: string | null; nickname?: string | null; offer?: { title?: string } | null; offer_id?: string | null }, withId = true): string {
 	const name = l.nickname?.trim() || autoNickname(l.offer?.title) || `货源 ${l.offer_id ?? ""}`.trim();
 	return `${name}（${[l.shop, withId && l.id !== undefined ? `#${l.id}` : ""].filter(Boolean).join("，")}）`;

@@ -7,7 +7,7 @@ import { dbCommand } from "../src/commands/db.ts";
 import { listingCommand } from "../src/commands/listing.ts";
 import { ruleCommand } from "../src/commands/rule.ts";
 import { strategyCommand } from "../src/commands/strategy.ts";
-import { approveCommand, proposeCommand, runCommand, status } from "../src/commands/loop.ts";
+import { doCommand, handledCommand, resolveCommand, status, verifyCommand } from "../src/commands/loop.ts";
 import { schema, site, sites, sitesHelp } from "../src/commands/site.ts";
 import { sourceCommand } from "../src/commands/source.ts";
 import { webCommand } from "../src/commands/web.ts";
@@ -20,9 +20,10 @@ const [cmd, ...args] = argv.filter((a) => a !== "--json");
 
 const commands: Record<string, () => Promise<void>> = {
 	status: () => status(args, json),
-	propose: () => proposeCommand(args, json),
-	approve: () => approveCommand(args, json),
-	run: () => runCommand(args, json),
+	do: () => doCommand(args, json),
+	verify: () => verifyCommand(args, json),
+	resolve: () => resolveCommand(args, json),
+	handled: () => handledCommand(args, json),
 	source: () => sourceCommand(args, json),
 	listing: () => listingCommand(args, json),
 	strategy: () => strategyCommand(args, json),
@@ -35,10 +36,11 @@ const commands: Record<string, () => Promise<void>> = {
 const help = [
 	"x2 <命令> [参数…] [--json]",
 	"推进（见 docs/loop.md）：",
-	"  x2 status                      现读站点 → 检查 → 更新收件箱 → 说要做什么",
-	"  x2 propose < 一批.json          写一批待批准的写入（x2 status --json 的 todo 里有现成的）；收件箱加一行「批准」",
-	"  x2 approve <批次>               替人勾「批准」（人在终端里说了批准时）",
-	"  x2 run [--batch N] [--try 操作]  执行批准了的写入（勾了「批准上架」的商品稿生成建商品、上架）：先核清结果未知的，再一个一个做、读回来",
+	"  x2 status                      现读站点 → 检查 → 说要人做的、agent 能做的",
+	"  x2 do [--try 操作] < 一批.json   人在终端里同意了：执行一批写入（x2 status --json 的 todo 里有现成的）：先核清结果未知的，再一个一个做、读回来",
+	"  x2 verify                      读回来核清结果未知的写入",
+	"  x2 resolve <写入> 已核对|被拒     人到站点上看过结果未知的写入",
+	"  x2 handled <key…> [--note 说明]  x2 看不到结果的事，人说做完了：不再提醒",
 	"  x2 source [商品…] [--url 链接]   给店里的商品找货源（以图搜图）；不给商品就找检查算出来缺的",
 	"  x2 source <商品> --spec \"店里的规格名 = 货源的规格名\"   记下人定的规格例外（按名字配不上时）",
 	"上品（见 docs/listing.md）：",
@@ -50,14 +52,14 @@ const help = [
 	"  x2 listing show <商品稿>          写文案要用的事实",
 	"  x2 listing text <商品稿> --title … --description … [--tiers JSON] [--nickname 简称]   agent 写的标题、描述、规格名和简称",
 	"  x2 listing category <商品稿> <类目 id>   人定的类目（人在终端里定了时；叶子、本店允许的）；再 x2 listing make",
-	"  x2 listing approve <商品稿…>      替人勾「批准上架」（人在终端里说了批准时）；x2 run 建商品、上架",
+	"  x2 listing publish <商品稿…>      人在终端里说了批准：建商品、上架",
 	"  x2 listing cancel <商品稿…> [--why 原因]   替人勾「放弃」（人在终端里说了放弃时）；建了商品的要下架，不是放弃",
 	"  x2 listing noted <商品稿…>        照人写的「备注」做完：记下看过的备注",
 	"  x2 listing list                  所有商品稿走到哪了",
 	"  x2 strategy add | set | list | log   选品的策略（假设、选品方法、版本号）；set 要 --why，版本号加 1；log 看变更记录",
 	"  x2 rule add | retire | list       选品规矩（所有策略共用）：add、retire 要 --why；停用的不删",
-	"  x2 web [--host 127.0.0.1] [--port 5170]   开网页：收件箱、商品稿（审稿、批准上架、删图）、订单、货源、设置；人在这里看、填、批准",
-	"  x2 db migrate | import | import-shops   建表；把 ~/x2 的 JSON、lilto 的店铺设置迁进库（只用一次）",
+	"  x2 web [--host 127.0.0.1] [--port 5170]   开网页：商品稿（审稿、删图）、订单、货源、设置；人在这里看、填",
+	"  x2 db migrate                  建表、加列",
 	"读站点（只读）：",
 	...sitesHelp(),
 	"  x2 schema  全部站点操作的说明和参数（JSON Schema）",

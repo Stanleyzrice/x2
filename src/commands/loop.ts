@@ -1,11 +1,11 @@
-// 循环的命令：x2 status、x2 propose、x2 approve、x2 run。见 docs/loop.md「agent 开起来做什么」
+// 循环的命令：x2 status、x2 do、x2 verify、x2 resolve、x2 handled。见 docs/loop.md
+import { addBatch } from "../batch.ts";
 import { check } from "../check/index.ts";
-import type { Todo } from "../check/orders.ts";
+import type { Reminder, Todo } from "../check/orders.ts";
 import { db } from "../db/index.ts";
 import { EXIT, NeedsHuman, Usage } from "../errors.ts";
-import { approve, propose } from "../propose.ts";
 import { readAll } from "../read.ts";
-import { run } from "../run.ts";
+import { type Outcome, run } from "../run.ts";
 
 const readStdin = async () => {
 	const chunks: Buffer[] = [];
@@ -13,71 +13,86 @@ const readStdin = async () => {
 	return Buffer.concat(chunks).toString("utf8");
 };
 
-/** x2 status：现读站点 → 检查 → 更新收件箱 → 说三件事：这次读到了什么、收件箱里有什么、agent 能做什么 */
+/** x2 status：现读站点 → 检查 → 说三件事：这次读到了什么、要人做的、agent 能做的 */
 export async function status(_args: string[], json: boolean): Promise<void> {
 	const sql = await db();
 	const reads = await readAll(sql);
-	const { todo } = await check(sql, reads);
-	const inbox = await sql`select key, kind, title, detail, due, approve from inbox where open and (snooze_until is null or snooze_until < now()) order by due nulls last, kind`;
-	const snoozed = await sql`select count(*)::int as n from inbox where open and snooze_until >= now()`;
-	const [{ n: unknown }] = await sql`select count(*)::int as n from writes where status in ('结果未知', '已提交', '不一致')` as any;
+	const { todo, reminders } = await check(sql, reads);
+	const due = (r: Reminder) => r.due?.getTime() ?? Number.POSITIVE_INFINITY;
+	const human = [...reminders].sort((a, b) => due(a) - due(b) || a.kind.localeCompare(b.kind));
 	const who = (w: string) => reads.accounts.get(w) ?? w;
 	if (json) {
-		return console.log(JSON.stringify({
-			read: reads.results.map((r) => ({ ...r, who: who(r.who) })),
-			inbox: inbox.map((i) => ({ key: i.key, kind: i.kind, title: i.title, detail: i.detail, due: i.due, approve: i.approve })),
-			snoozed: snoozed[0]!.n, todo, unknown,
-		}));
+		console.log(JSON.stringify({ read: reads.results.map((r) => ({ ...r, who: who(r.who) })), human, todo }));
+	} else {
+		const data = reads.results.map((r) => `${r.what}${r.what === "订单" || r.what === "采购账号" ? "" : ` ${who(r.who)}`}${r.ok ? (r.rows !== undefined && r.what !== "采购账号" ? ` ${r.rows} 行` : "") : `：读不了（${String(r.error).split("\n")[0]}）`}`);
+		// 中文字占两格：按显示宽度对齐
+		const width = (t: string) => [...t].reduce((n, c) => n + (c.charCodeAt(0) > 0xff ? 2 : 1), 0);
+		const pad = (label: string, lines: string[]) => lines.map((l, i) => `${i === 0 ? label : ""}${" ".repeat(8 - width(i === 0 ? label : ""))}${l}`).join("\n");
+		console.log(pad("读到", data));
+		console.log(pad("人", human.length ? human.map((r) => r.title) : ["现在没有要人做的"]));
+		console.log(pad("agent", todo.length ? todo.map(todoLine) : ["没有"]));
 	}
-	const data = reads.results.map((r) => `${r.what}${r.what === "订单" || r.what === "采购账号" ? "" : ` ${who(r.who)}`}${r.ok ? (r.rows !== undefined && r.what !== "采购账号" ? ` ${r.rows} 行` : "") : `：读不了（${String(r.error).split("\n")[0]}）`}`);
-	// 中文字占两格：按显示宽度对齐
-	const width = (t: string) => [...t].reduce((n, c) => n + (c.charCodeAt(0) > 0xff ? 2 : 1), 0);
-	const pad = (label: string, lines: string[]) => lines.map((l, i) => `${(i === 0 ? label : "")}${" ".repeat(8 - width(i === 0 ? label : ""))}${l}`).join("\n");
-	console.log(pad("读到", data));
-	console.log(pad("收件箱", inbox.length ? inbox.map((i) => `${i.title}${i.approve ? "（已勾批准，等 x2 run）" : ""}`) : ["空的：现在没有要人做的"]));
-	if (snoozed[0]!.n) console.log(pad("", [`另有 ${snoozed[0]!.n} 件推迟了`]));
-	console.log(pad("agent", todo.length ? todo.map(todoLine) : ["没有"]));
-	console.log(pad("未知", [String(unknown)]));
 	if (reads.results.some((r) => r.blocked)) process.exitCode = EXIT.human;
 }
 
 function todoLine(t: Todo): string {
-	if (t.kind === "找货源") return `找货源：${t.why}（${t.command}）`;
-	if (t.kind === "核清") return `核清：${t.why}（${t.command}）`;
-	if (t.kind === "取消预报") return `取消预报：${t.why}`;
-	if (t.kind === "做商品稿" || t.kind === "写文案" || t.kind === "Gemini 文字检查" || t.kind === "估重量、国内运费" || t.kind === "上架" || t.kind === "备注") return `${t.kind}：${t.why}（${t.command}）`;
-	return `${t.kind}：${t.why}（x2 status --json 的 todo 里有现成的一批，看过交给 x2 propose）`;
+	if ("batch" in t) return `${t.kind}：${t.why}（x2 status --json 的 todo 里有现成的一批：给人看过、人同意了交给 x2 do）`;
+	if (!("command" in t)) return `${t.kind}：${t.why}`;
+	return `${t.kind}：${t.why}（${t.command}）`;
 }
 
-/** x2 propose < 一批.json */
-export async function proposeCommand(_args: string[], json: boolean): Promise<void> {
-	const text = await readStdin();
-	let input: unknown;
-	try { input = JSON.parse(text); } catch { throw new Usage("x2 propose 从 stdin 读 JSON：{ title, writes: [{ op, params }] }"); }
-	const r = await propose(await db(), input);
-	if (json) return console.log(JSON.stringify(r));
-	const waiting = r.writes.some((w) => w.status === "待批准");
-	console.log(`第 ${r.batch} 批，${r.writes.length} 项：\n${r.writes.map((w) => `  ${w.display}（${w.status}）`).join("\n")}`);
-	console.log(waiting ? "收件箱里加了一行「批准」：人勾了以后 x2 run；人在终端里说「批准」，用 x2 approve " + r.batch : "不用批准：x2 run");
-}
-
-/** x2 approve <批次> */
-export async function approveCommand(args: string[], json: boolean): Promise<void> {
-	if (!args[0]) throw new Usage("x2 approve <批次>：替人在收件箱里勾「批准」（人在终端里说了批准时用）");
-	const n = await approve(await db(), args[0]);
-	console.log(json ? JSON.stringify({ batch: args[0], writes: n }) : `第 ${args[0]} 批勾上了批准（${n} 项）：x2 run 执行`);
-}
-
-/** x2 run [--batch N] [--try 操作] */
-export async function runCommand(args: string[], json: boolean): Promise<void> {
-	const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-	const tryOp = flag("--try");
-	const r = await run(await db(), { batch: flag("--batch"), tryOps: tryOp ? tryOp.split(/[,，]/) : [] });
+/** 写入的结果，一行一项；结果未知的退出码 4，要人处理的抛 NeedsHuman */
+export function report(r: Outcome, json: boolean): void {
 	if (r.unknown) process.exitCode = EXIT.unknown;
 	if (json) console.log(JSON.stringify(r));
 	else {
-		console.log(r.ran.length ? r.ran.map((x) => `[${x.status}] #${x.id} ${x.op} ${x.display}${x.why ? `：${x.why}` : ""}`).join("\n") : "没有要执行的写入");
-		if (r.unknown) console.log("\n结果未知的不会重发：到站点上看一眼，在「写入」里改成已核对或被拒");
+		console.log(r.ran.length ? r.ran.map((x) => `[${x.status}] #${x.id} ${x.op} ${x.display}${x.why ? `：${x.why}` : ""}`).join("\n") : "没有要核清、要执行的写入");
+		if (r.unknown) console.log("\n结果未知的不会重发：请人到站点上看一眼，x2 resolve <写入> 已核对|被拒");
 	}
 	if (r.blocked) throw new NeedsHuman(r.blocked);
+}
+
+const flag = (args: string[], name: string) => {
+	const i = args.indexOf(name);
+	return i >= 0 ? args[i + 1] : undefined;
+};
+
+/** x2 do [--try 操作] < 一批.json：人在终端里同意了，记进库、马上执行 */
+export async function doCommand(args: string[], json: boolean): Promise<void> {
+	const text = await readStdin();
+	let input: unknown;
+	try {
+		input = JSON.parse(text);
+	} catch {
+		throw new Usage("x2 do 从 stdin 读 JSON：{ title, writes: [{ op, params }] }（人在终端里同意了才用）");
+	}
+	const sql = await db();
+	const batch = await addBatch(sql, input);
+	const tryOp = flag(args, "--try");
+	report(await run(sql, { batch, tryOps: tryOp ? tryOp.split(/[,，]/) : [] }), json);
+}
+
+/** x2 verify：读回来核清已提交、结果未知的写入 */
+export async function verifyCommand(_args: string[], json: boolean): Promise<void> {
+	report(await run(await db()), json);
+}
+
+/** x2 resolve <写入> 已核对|被拒：人到站点上看过结果未知、不一致的写入 */
+export async function resolveCommand(args: string[], json: boolean): Promise<void> {
+	const [id, status] = args;
+	if (!id || !/^\d+$/.test(id) || (status !== "已核对" && status !== "被拒")) throw new Usage("x2 resolve <写入> 已核对|被拒（人到站点上看过了才用：做成了是已核对，没做成是被拒）");
+	const rows = await (await db())`update writes set status = ${status}, finished_at = now() where id = ${id} and status in ('结果未知', '不一致', '已提交') returning id::text, op, display`;
+	if (!rows.length) throw new Usage(`写入 #${id} 不是结果未知、不一致`);
+	const w = rows[0]!;
+	console.log(json ? JSON.stringify({ id, status }) : `#${id} ${w.op} ${w.display ?? ""}：${status}`);
+}
+
+/** x2 handled <key…> [--note 说明]：x2 看不到结果的事，人做完了，不再提醒 */
+export async function handledCommand(args: string[], json: boolean): Promise<void> {
+	const note = flag(args, "--note") ?? null;
+	const keys = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--note");
+	if (!keys.length) throw new Usage("x2 handled <key…> [--note 说明]（key 在 x2 status --json 的 human 里；人说做完了才用）");
+	const sql = await db();
+	for (const key of keys) await sql`insert into handled (key, note) values (${key}, ${note}) on conflict (key) do update set note = excluded.note, at = now()`;
+	console.log(json ? JSON.stringify({ keys }) : `不再提醒：${keys.join("、")}`);
 }

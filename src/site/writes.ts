@@ -1,7 +1,7 @@
-// 站点的写操作：只由 x2 run 执行批准过的写入（x2 propose 写成待批准，人在收件箱批准）。读操作在 op.ts，写不进那个通用入口。
-// 每个写操作分四步，x2 run 按顺序调：
+// 站点的写操作：人在终端里同意了，agent 用 x2 do（加购、预报）、x2 listing publish（建商品、上架）交给 run.ts 执行。读操作在 op.ts，写不进那个通用入口。
+// 每个写操作分四步，run.ts 按顺序调：
 // 1. prepare：现读，看还该不该做（订单取消了、货源下架了就不做），记下做之前站点上是什么样（before）
-// 2. 记意图：x2 run 把写入改成「已提交」再提交（进程这时挂了，下一轮当结果未知，先读回来）
+// 2. 记意图：run.ts 把写入改成「已提交」再提交（进程这时挂了，下一轮当结果未知，先读回来）
 // 3. submit：提交一次，回三态：做了、被拒、结果未知（没拿到答复）
 // 4. check：读回来，和 before 比：做了、没做、看不出（看不出就是结果未知，不重发）
 import { z } from "zod";
@@ -32,7 +32,7 @@ export type WriteOp<P = any> = {
 	key: (p: P) => string;
 	/** 给人看的一行 */
 	display: (p: P) => string;
-	/** 还没在真站点上跑过：第一次要和运营约好一个对象，一起跑 x2 run --try <操作> */
+	/** 还没在真站点上跑过：第一次要和运营约好一个对象，一起跑 x2 do --try <操作> */
 	untried?: string;
 	/** 在哪个浏览器里做 */
 	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
@@ -40,7 +40,7 @@ export type WriteOp<P = any> = {
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
 	/** fresh：刚提交完就读（这时没变化就是没做）；不是 fresh 时（过了一阵再核）没变化也可能是人动过，只认「做了」 */
 	check: (p: P, before: any, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
-	/** 做成了以后在库里记的（例 随加购一起批准的货源写进规格） */
+	/** 做成了以后在库里记的（例 随加购一起定下的货源写进规格） */
 	after?: (sql: Sql, p: P) => Promise<void>;
 };
 
@@ -57,7 +57,7 @@ async function liveOrders(sns: string[]): Promise<Map<string, any>> {
 const cartParams = z.object({
 	offerId: z.string(), skuId: z.string(), qty: z.number().int().positive(), title: z.string(), sku: z.string(), price: z.number().nullable(),
 	lines: z.array(z.object({ sn: z.string(), modelId: z.string(), qty: z.number().int().positive() })).min(1),
-	/** 随这次加购一起批准的新货源（店里的商品 id）：加上了才标成「选用」 */
+	/** 随这次加购一起定下的新货源（店里的商品 id）：加上了才标成「选用」 */
 	newSources: z.array(z.string()).default([]),
 	/** 加在哪个 1688 账号（userId）：执行时填采购账号，记下 */
 	account: z.string().optional(),
@@ -83,7 +83,7 @@ const cart: WriteOp<CartP> = {
 		const account = (await buyAccount(sql))!.userId;
 		if (p.account && p.account !== account) return { skip: `只往采购账号加购，这一项写的是另一个账号 ${p.account}` };
 		// 现读 1688 的购物车和采购单再对一次：准备和执行之间有人外部采购了、或者已经加进购物车了，就不加（免得买重）。
-		// 同一次 x2 run 里 2 分钟内读过的复用（一批几项不用每项重读）；读不全就停
+		// 同一次 x2 do 里 2 分钟内读过的复用（一批几项不用每项重读）；读不全就停
 		const covered = (await current(sql)).covered;
 		const dup = p.lines.filter((l) => covered.has(`${l.sn}:${l.modelId}`));
 		if (dup.length) return { skip: `订单 ${dup.map((l) => l.sn).join("、")} 的货已经买了或者在购物车里了（刚读的采购单、购物车）` };
@@ -117,7 +117,7 @@ const cart: WriteOp<CartP> = {
 		const d = now - Number(before?.inCart ?? 0);
 		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
 	},
-	// 随这次加购一起批准的新货源（店里的商品 id）：那一行标成「选用」（这个商品还没定货源时）
+	// 随这次加购一起定下的新货源（店里的商品 id）：那一行标成「选用」（这个商品还没定货源时）
 	async after(sql, p) {
 		for (const itemId of p.newSources) {
 			await sql`update sources set chosen = true, chosen_at = now() where item_id = ${itemId} and offer_id = ${p.offerId}
@@ -139,7 +139,7 @@ const forecastOp: WriteOp<ForecastP> = {
 	target: (p) => `chanboss:${p.sn}`,
 	key: (p) => `forecast:${p.sn}`,
 	display: (p) => `订单 ${p.sn}：${p.lines.every((l) => !l.trackingNo) ? "无单号" : p.lines.map((l) => l.trackingNo).join("、")}`,
-	untried: "预报的请求体是照 chanboss 页面的 JS 拼的，还没在真订单上跑过：和运营约好一张单，一起跑 x2 run --try 预报，跑完在 chanboss 上看一眼",
+	untried: "预报的请求体是照 chanboss 页面的 JS 拼的，还没在真订单上跑过：和运营约好一张单，一起跑 x2 do --try 预报，跑完在 chanboss 上看一眼",
 	where: (_sql, _p, fn) => fn(),
 	async prepare(_sql, p) {
 		const o = (await liveOrders([p.sn])).get(p.sn);
@@ -179,7 +179,7 @@ export async function saveTranslation(sql: Sql, origin: string, url: string): Pr
 }
 
 /** 译图：交象寄把图上的简体字译成繁体（docs/listing.md「图」）。交一次收一次钱：先记意图再交；象寄说译不成的记在原图上（那张图不用了）；
- * 答复里没有的、没拿到答复的是结果未知，不重交。做商品稿时自动批准、马上执行（一张约 0.025 元） */
+ * 答复里没有的、没拿到答复的是结果未知，不重交。做商品稿时马上执行（一张约 0.025 元） */
 const translateOp: WriteOp<TranslateP> = {
 	describe: "交象寄把图上的简体字译成繁体（收费）",
 	params: translateParams,
@@ -232,12 +232,12 @@ async function findBySku(parentSku: string, name: string): Promise<string | null
 	return null;
 }
 
-// name：商品稿的叫法「简称（店铺）」，只给人看（收件箱、x2 run 的输出）
+// name：商品稿的叫法「简称（店铺）」，只给人看（x2 status、写入的输出）
 const createParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), productInfo: z.record(z.string(), z.unknown()), hash: z.string(), name: z.string().optional() });
 type CreateP = z.infer<typeof createParams>;
 
 /** 建商品：在这家店的卖家中心页面里发 create_product_info，先建成下架，读回来逐项核对。
- * 批准以后商品稿改过（现组的 product_info 和批准时的不一样）就不建；用现在的店铺设置再核一次价 */
+ * 人同意以后商品稿又改过（现组的 product_info 和交给 x2 的不一样）就不建；用现在的店铺设置再核一次价 */
 const createOp: WriteOp<CreateP> = {
 	describe: "在 Shopee 上建商品（先建成下架）",
 	params: createParams,
@@ -251,7 +251,7 @@ const createOp: WriteOp<CreateP> = {
 		if (now.l.product_id) return { skip: `已经建好了（商品 ${now.l.product_id}）` };
 		if (now.s.paused) return { skip: `暂停上品：${now.s.paused}` };
 		if (!now.r.info) return { skip: `商品稿还缺：${now.r.problems.join("；")}` };
-		if (now.r.hash !== p.hash) return { skip: "商品稿在批准以后改过了：重新批准" };
+		if (now.r.hash !== p.hash) return { skip: "商品稿刚改过：给人重新看过再 x2 listing publish" };
 		const freight = Number(now.l.pricing?.freightRmb ?? 0);
 		for (const v of now.r.product!.variants) {
 			const min = minPrice(v.costRmb, freight, v.weightKg!, now.s.params, now.s.preOrder);

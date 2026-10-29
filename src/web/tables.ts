@@ -90,30 +90,23 @@ function specsRows(l: Row) {
 
 const shops = async (sql: Sql) => (await sql`select shop from shop_settings order by shop`).map((r) => r.shop as string);
 
-/** 侧栏从上到下的顺序；每张表的第一个视图是默认的。要人做的都在收件箱里 */
+/** 侧栏从上到下的顺序；每张表的第一个视图是默认的 */
 export const TABLES: Table[] = [
-	{
-		name: "inbox", title: "收件箱", key: ["key"], links: ["link"],
-		columns: { kind: "类别", title: "事项", detail: "详情", approve: "批准", done: "已处理", due: "期限", shop: "店铺", link: "链接", snooze_until: "推迟至", note: "备注" },
-		edit: { approve: { when: "key like 'approve:%'" }, done: {}, snooze_until: {}, note: {} },
-		views: [{ title: "待处理", where: "open and (snooze_until is null or snooze_until < now())", order: "due nulls last", group: { col: "kind" }, empty: "没有要你做的" }],
-	},
 	{
 		name: "listings", title: "商品稿", key: ["id"],
 		columns: {
-			nickname: "简称", approve: "批准上架", step: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", pics: "图", specs: "规格和价格",
+			nickname: "简称", step: "当前步骤", step_detail: "说明", note: "备注", shop: "店铺", pics: "图", specs: "规格和价格",
 			title: "标题", description: "描述", category_name: "类目", attributes_text: "属性", problems: "待补充", weight_kg: "重量（kg，1688 没给时用）", freight_rmb: "国内运费（元/件，读不到时用）",
-			days_to_ship: "备货天数", cancelled: "放弃", strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", offer_id: "货源", product_id: "Shopee 商品 id", approved_at: "批准时间", listed_at: "上架时间", id: "编号",
+			days_to_ship: "备货天数", cancelled: "放弃", strategy: "策略", pick_why: "选品理由", pick_evidence: "依据", offer_id: "货源", product_id: "Shopee 商品 id", listed_at: "上架时间", id: "编号",
 		},
 		computed: { pics: { type: "pics", of: picsOf }, specs: { type: "specs", of: specsRows } },
 		edit: {
 			nickname: {}, note: {}, title: {}, description: {}, weight_kg: {}, freight_rmb: {},
-			// 勾：待批准、待上架的才能勾；去掉勾随时能。放弃：建了商品的是下架，不是放弃
-			approve: { when: "approve or step in ('待批准', '待上架')" },
+			// 放弃：建了商品的是下架，不是放弃
 			cancelled: { when: "product_id is null and listed_at is null" },
 			pics: { set: setPic },
 		},
-		// 和 x2 listing approve 一样：先重算（内容的 hash 是最新的），勾上时触发器记下这一刻的内容；改完再重算当前步骤（重量、国内运费改了重新核价）
+		// 改完重算当前步骤（重量、国内运费改了重新核价）
 		recheck: (sql, key) => listingsCheck(sql, [key.id!]),
 		views: [
 			{ title: "审稿", where: "step in ('待批准', '待补充')", order: "id", cards: true, empty: "没有等你看的商品稿" },
@@ -155,9 +148,9 @@ export const TABLES: Table[] = [
 	},
 	{
 		name: "writes", title: "写入", key: ["id"],
-		columns: { id: "编号", batch: "批次", op: "操作", display: "内容", include: "执行", status: "状态", error: "原因", host: "执行电脑", created_at: "准备时间", finished_at: "结束时间", cost: "费用" },
+		columns: { id: "编号", batch: "批次", op: "操作", display: "内容", status: "状态", error: "原因", host: "执行电脑", created_at: "准备时间", finished_at: "结束时间", cost: "费用" },
 		// 结果未知、不一致的：人到站点上看过，改成已核对（做成了）或被拒（没做成）
-		edit: { include: { when: "status = '待批准'" }, status: { options: ["已核对", "被拒"], when: "status in ('结果未知', '不一致')" } },
+		edit: { status: { options: ["已核对", "被拒"], when: "status in ('结果未知', '不一致')" } },
 		views: [{ title: "全部", order: "id desc" }],
 	},
 	{
@@ -178,10 +171,10 @@ export const TABLES: Table[] = [
 	{
 		name: "order_settings", title: "订单设置", key: ["id"],
 		columns: {
-			buy_account: "采购账号（1688 会员名）", late_days: "快到期提醒（天）", ship_wait_hours: "未发货提醒（付款后小时数）", forecast_needs_approval: "预报要批准",
+			buy_account: "采购账号（1688 会员名）", late_days: "快到期提醒（天）", ship_wait_hours: "未发货提醒（付款后小时数）",
 			channel: "发货线路", sendway_id: "发货线路代码", line_id: "线路 id", warehouse_id: "仓库 id",
 		},
-		edit: Object.fromEntries(["buy_account", "late_days", "ship_wait_hours", "forecast_needs_approval", "channel", "sendway_id", "line_id", "warehouse_id"].map((c) => [c, {}])),
+		edit: Object.fromEntries(["buy_account", "late_days", "ship_wait_hours", "channel", "sendway_id", "line_id", "warehouse_id"].map((c) => [c, {}])),
 		views: [{ title: "设置", order: "id", cards: true }],
 	},
 	{

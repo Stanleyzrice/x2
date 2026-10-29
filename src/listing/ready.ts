@@ -1,4 +1,4 @@
-// 商品稿 → 要建的商品（product_info），和还缺什么。检查、x2 propose、x2 run 都用它：批准时的 product_info 和执行时现组的一样，才算人看过的就是要建的
+// 商品稿 → 要建的商品（product_info），和还缺什么。检查、x2 listing publish、建商品都用它：交给 x2 时的 product_info 和执行时现组的一样，才算人看过的就是要建的
 import { createHash } from "node:crypto";
 import type { Pics } from "./images.ts";
 import { estimateNeeds, pricingProblems, type Settings } from "./make.ts";

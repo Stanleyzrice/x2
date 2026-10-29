@@ -2,7 +2,7 @@
 // 每个操作：说明、参数（zod，命令行的 --名字 值 经它校验、转换）、怎么读。两种：
 // - get：读一个东西，回一个值
 // - list：读一列行，一次一页；回这一页的行和下一页的 cursor（null 是到底了）。入口按 --pages 翻，输出 { rows, next }
-// 只收读：写（加购、预报……）声明在 writes.ts，只经 x2 propose → 人批准 → x2 run，不进通用入口
+// 只收读：写（加购、预报……）声明在 writes.ts，只经 x2 do（人在终端里同意了），不进通用入口
 import { z } from "zod";
 
 export type Page = { rows: unknown[]; next: string | null };

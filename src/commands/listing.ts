@@ -21,7 +21,7 @@
 // x2 listing category <商品稿> <叶子类目 id>
 //                                                    人在终端里定了类目：写成人定的类目（要是叶子、在本店允许的类目里；建了商品的不改），属性、备货天数清掉，
 //                                                    再 x2 listing make（有类目就不再问 Shopee 推荐）
-// x2 listing approve <商品稿…>                        人在终端里说「批准」：替人勾「批准上架」（只勾待批准、待上架的；有一份不行就都不勾），x2 run 建商品、上架
+// x2 listing publish <商品稿…>                        人在终端里说「批准」：建商品、上架（只收待批准、待上架的；有一份不行就都不做）
 // x2 listing cancel <商品稿…> [--why "原因"]
 //                                                    人在终端里说「放弃」：替人勾「放弃」（建了商品的要下架，不是放弃；建商品还没核清的先核清；有一份不行就都不勾），
 //                                                    马上是已放弃。原因只回显，不存
@@ -30,6 +30,7 @@
 // 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
 import { z } from "zod";
 import { inShop } from "../accounts.ts";
+import { addWrites } from "../batch.ts";
 import { listingsCheck } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
@@ -43,8 +44,11 @@ import { productOf } from "../listing/ready.ts";
 import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
+import { type Outcome, run } from "../run.ts";
 import { offerIdOf } from "../site/1688.ts";
 import { type Category, categoryTree } from "../site/shopee/products.ts";
+import { WRITES, type WriteOp } from "../site/writes.ts";
+import { report } from "./loop.ts";
 
 const readStdin = async () => {
 	const chunks: Buffer[] = [];
@@ -321,29 +325,15 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(r, [`${r.name}：类目定为「${r.category}」，属性、备货天数清掉了${notes.length ? `（${notes.join("；")}）` : ""}`, `下一步：x2 listing make ${r.id}（照新的类目做属性、备货天数）`].join("\n"));
 	}
 
-	if (sub === "approve") {
-		// 和人在网页上勾是同一个勾：先重算（内容的 hash 是最新的），勾上时触发器记下这一刻的内容；再重算一次，当前步骤变成已批准
+	if (sub === "publish") {
 		const ids = z.array(z.string().regex(/^\d+$/)).min(1).safeParse(plain(rest));
-		if (!ids.success) throw new Usage("x2 listing approve <商品稿…>（人在终端里说了「批准」才用）");
-		const want = [...new Set(ids.data)];
-		const name = await namesOf(sql, want);
-		await listingsCheck(sql, want);
-		const rows = await sql`select id::text, step, approve from listings where id in ${sql(want)}`;
-		const bad = want.flatMap((id) => {
-			const r = rows.find((x) => x.id === id);
-			if (!r) return [`没有商品稿 ${id}`];
-			return r.approve || r.step === "待批准" || r.step === "待上架" ? [] : [`${name(id)}是「${r.step ?? "还没检查"}」，不是待批准`];
-		});
-		if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没勾`);
-		await sql`update listings set approve = true where id in ${sql(want)} and not approve`;
-		const r = await listingsCheck(sql, want);
-		const done = want.map((id) => ({ id, name: name(id), step: r.steps.get(id)?.step ?? null, detail: r.steps.get(id)?.detail ?? null }));
-		return out(done, [...done.map((x) => `${x.name}：${x.step}`), "下一步：x2 run"].join("\n"));
+		if (!ids.success) throw new Usage("x2 listing publish <商品稿…>（人在终端里说了「批准」才用）");
+		return report(await publish(sql, [...new Set(ids.data)]), json);
 	}
 
 	if (sub === "cancel") {
 		// 和人在网页上勾「放弃」是同一个勾。已经建了商品的不是放弃，是下架；建商品提交了、还没核清的可能已经建了，先核清。
-		// 原因不存：「备注」是人写的，也没有放原因的列，只回显。勾完马上重算当前步骤（已放弃）；还没提交的建商品、上架 x2 run 标成未执行
+		// 原因不存：「备注」是人写的，也没有放原因的列，只回显。勾完马上重算当前步骤（已放弃）
 		const usage = `x2 listing cancel <商品稿…> [--why "原因"]（人在终端里说了「放弃」才用）`;
 		const a = z.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1), why: z.string().trim().min(1).optional() })
 			.safeParse({ ids: plain(rest, "--why"), why: rest.includes("--why") ? flag(rest, "--why") ?? "" : undefined });
@@ -352,27 +342,23 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const name = await namesOf(sql, want);
 		const rows = await sql`select id::text, cancelled, product_id, listed_at from listings where id in ${sql(want)}`;
 		const writes = await sql`select id::text, params->>'listingId' as listing, op, status from writes
-			where op in ('建商品', '上架') and include and status in ('已批准', '已提交', '结果未知', '不一致') and params->>'listingId' in ${sql(want)} order by id`;
+			where op in ('建商品', '上架') and status in ('待执行', '已提交', '结果未知', '不一致') and params->>'listingId' in ${sql(want)} order by id`;
 		const bad = want.flatMap((id) => {
 			const r = rows.find((x) => x.id === id);
 			if (!r) return [`没有商品稿 ${id}`];
 			if (r.cancelled) return [];
 			if (r.listed_at) return [`${name(id)}已上架（商品 ${r.product_id ?? "—"}）：不卖了是下架，不是放弃`];
-			if (r.product_id) return [`${name(id)}已经建了商品（商品 ${r.product_id}，下架）：不上架就别勾「批准上架」，不是放弃`];
-			const unsure = writes.filter((w) => w.listing === id && w.status !== "已批准");
-			return unsure.length ? [`${name(id)}在建商品中（${unsure.map((w) => `${w.op}：${w.status}`).join("；")}）：可能已经建了，先核清（x2 run 读回来）`] : [];
+			if (r.product_id) return [`${name(id)}已经建了商品（商品 ${r.product_id}，下架）：不上架就不 publish，不是放弃`];
+			const unsure = writes.filter((w) => w.listing === id);
+			return unsure.length ? [`${name(id)}在建商品中（${unsure.map((w) => `${w.op}：${w.status}`).join("；")}）：可能已经建了，先核清（x2 verify）`] : [];
 		});
 		if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没放弃`);
 		const already = new Set(rows.filter((r) => r.cancelled).map((r) => r.id as string));
 		await sql`update listings set cancelled = true, updated_at = now() where id in ${sql(want)} and not cancelled and product_id is null and listed_at is null`;
 		const r = await listingsCheck(sql, want);
-		const done = want.map((id) => ({
-			id, name: name(id), step: r.steps.get(id)?.step ?? null, already: already.has(id), why: a.data.why ?? null,
-			// 还没提交的建商品、上架（已批准）：x2 run 不执行
-			pending: writes.filter((w) => w.listing === id && w.status === "已批准").map((w) => w.id as string),
-		}));
+		const done = want.map((id) => ({ id, name: name(id), step: r.steps.get(id)?.step ?? null, already: already.has(id), why: a.data.why ?? null }));
 		return out(done, [
-			...done.map((x) => `${x.name}：${x.already ? "已经放弃了" : x.step}${x.pending.length ? "（还没提交的建商品、上架 x2 run 不执行）" : ""}`),
+			...done.map((x) => `${x.name}：${x.already ? "已经放弃了" : x.step}`),
 			...(a.data.why ? [`原因：${a.data.why}`] : []),
 		].join("\n"));
 	}
@@ -396,7 +382,33 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | approve | cancel | noted | list（见 docs/listing.md）");
+	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | publish | cancel | noted | list（见 docs/listing.md）");
+}
+
+
+/** x2 listing publish：人同意了，照检查算出来的写入（建商品、上架）一份商品稿一批记进库，马上执行。有一份不是待批准、待上架就都不做。ops：写操作的声明（测试换成假的） */
+export async function publish(sql: Sql, want: string[], ops: Record<string, WriteOp> = WRITES): Promise<Outcome> {
+	const name = await namesOf(sql, want);
+	const r = await listingsCheck(sql, want);
+	const bad = want.flatMap((id) => {
+		if (r.ready.some((x) => x.id === id)) return [];
+		const step = r.steps.get(id);
+		return [step ? `${name(id)}是「${step.step}」，不是待批准、待上架` : `没有商品稿 ${id}`];
+	});
+	if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没做`);
+	const outcomes: Outcome[] = [];
+	for (const l of r.ready.filter((x) => want.includes(x.id))) {
+		const rows = l.writes.map((w) => {
+			const op = ops[w.op]!;
+			const params = op.params.parse(w.params);
+			return { op: w.op, params, target: op.target(params), key: op.key(params), display: op.display(params) };
+		});
+		const batch = await sql.begin((tx) => addWrites(tx, rows));
+		const o = await run(sql, { batch }, ops);
+		outcomes.push(o);
+		if (o.blocked) break;
+	}
+	return { ran: outcomes.flatMap((o) => o.ran), unknown: outcomes.some((o) => o.unknown), blocked: outcomes.find((o) => o.blocked)?.blocked ?? null };
 }
 
 /** 人定的类目（x2 listing category）：要是 Shopee 类目树里的叶子（tree 读这家店的类目树），在本店允许的类目里；已经建了商品的不改。

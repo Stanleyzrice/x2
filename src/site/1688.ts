@@ -347,7 +347,7 @@ export async function traces(orders: { orderId: string; trackingNos?: string[] }
 	});
 }
 
-// ── x2 1688 <操作>：读操作（加购是写，声明在 writes.ts，只经 x2 run） ──
+// ── x2 1688 <操作>：读操作（加购是写，声明在 writes.ts，只经 x2 do） ──
 
 export const ops: Ops = {
 	account: get("登录着的 1688 账号", undefined, () => account()),

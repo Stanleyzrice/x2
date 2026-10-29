@@ -153,7 +153,7 @@ export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promi
 	return inspect(new Uint8Array(row.bytes), "译图");
 }
 
-/** 把要译的交象寄：一批 5 张记成写入「译图」（不用批准），马上执行。同一批图交过、核清了还没有结果的（人核对成已核对，象寄的地址没拿到），
+/** 把要译的交象寄：一批 5 张记成写入「译图」，马上执行（不用问人）。同一批图交过、核清了还没有结果的（人核对成已核对，象寄的地址没拿到），
  * 防重复的 key 后面加次数，重交 */
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
 	const [{ batch }] = await sql`select nextval('batch_seq')::text as batch` as any;
@@ -162,9 +162,9 @@ async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Pr
 		const base = `xiangji:${chunk.map((x) => x.sha).sort().join(",")}`;
 		const [{ n }] = await sql`select count(*)::int as n from writes where key = ${base} or key like ${`${base}#%`}` as any;
 		const key = n > 0 ? `${base}#${n + 1}` : base;
-		await sql`insert into writes (batch, op, target, params, display, key, status) values (${batch}, '译图', ${`xiangji:${chunk.map((x) => x.sha.slice(0, 12)).join(",")}`}, ${sql.json({ items: chunk })}, ${`译图 ${chunk.length} 张`}, ${key}, '已批准')`;
+		await sql`insert into writes (batch, op, target, params, display, key, status) values (${batch}, '译图', ${`xiangji:${chunk.map((x) => x.sha.slice(0, 12)).join(",")}`}, ${sql.json({ items: chunk })}, ${`译图 ${chunk.length} 张`}, ${key}, '待执行')`;
 	}
-	await run(sql, { batch });
+	await run(sql, { batch, only: true });
 }
 
 /** 同一个进程里正在交象寄的图（原图 sha → 那一次交的，交完了才去掉）：几份商品稿同时做、有同一张图时，后来的等它，不重交 */
@@ -203,7 +203,7 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 		let job = null as Promise<void> | null;
 		const { fresh, others } = await deciding(async () => {
 			const state = await translationState(sql, shas);
-			const flying = new Set((await sql`select params from writes where op = '译图' and status in ('已批准', '已提交', '结果未知', '不一致')`).flatMap((w) => (w.params.items as { sha: string }[]).map((i) => i.sha)));
+			const flying = new Set((await sql`select params from writes where op = '译图' and status in ('待执行', '已提交', '结果未知', '不一致')`).flatMap((w) => (w.params.items as { sha: string }[]).map((i) => i.sha)));
 			const others = [...new Set(shas.flatMap((s) => (translating.has(s) ? [translating.get(s)!] : [])))];
 			const fresh = shas.filter((s) => !state.has(s) && !flying.has(s) && !translating.has(s));
 			if (fresh.length) {

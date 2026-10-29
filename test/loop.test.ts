@@ -1,20 +1,20 @@
-// 连库的测试：propose → 批准 → run → 结果未知停下 → 人核清 → 接着做。用 X2_TEST_DATABASE_URL 指的库（会清空它的 public schema），没设就跳过
+// 连库的测试：x2 do → 执行 → 结果未知停下 → 核清；商品稿 publish、提醒、网页。用 X2_TEST_DATABASE_URL 指的库（会清空它的 public schema），没设就跳过
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import postgres from "postgres";
 import { z } from "zod";
 import { check, listingsCheck } from "../src/check/index.ts";
-import { UNAPPROVED } from "../src/check/listings.ts";
 import { auditKey } from "../src/listing/audit.ts";
 import { settingsOf } from "../src/listing/make.ts";
 import { productOf } from "../src/listing/ready.ts";
 import type { Reads } from "../src/read.ts";
-import { listingCommand, setCategory } from "../src/commands/listing.ts";
+import { listingCommand, publish, setCategory } from "../src/commands/listing.ts";
+import { handledCommand, resolveCommand } from "../src/commands/loop.ts";
 import { ruleCommand } from "../src/commands/rule.ts";
 import { strategyCommand } from "../src/commands/strategy.ts";
 import { close, migrate } from "../src/db/index.ts";
-import { NeedsHuman, Usage } from "../src/errors.ts";
-import { approve, propose } from "../src/propose.ts";
+import { Usage } from "../src/errors.ts";
+import { addBatch } from "../src/batch.ts";
 import { serve } from "../src/web/server.ts";
 import { run } from "../src/run.ts";
 import { setException } from "../src/source.ts";
@@ -46,55 +46,43 @@ before(async () => {
 });
 after(async () => { await sql?.end(); await close(); });
 
-test("写入：批准了才做；结果未知停下这一批，不重发；人核清以后接着做", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("写入：x2 do 交的一批马上做；结果未知停下这一批（剩下的未执行），不重发；没核清的同一个对象不再做；x2 verify 核清", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
-	const p = await propose(db, { title: "试两项", writes: [{ op: "试写", params: { n: 1 } }, { op: "试写", params: { n: 2 } }] }, ops);
-	assert.deepEqual(p.writes.map((w) => w.status), ["待批准", "待批准"]);
-	const [inbox] = await db`select kind, open, approve from inbox where key = ${`approve:${p.batch}`}`;
-	assert.deepEqual({ ...inbox }, { kind: "批准", open: true, approve: null });
-
-	// 没批准：不做
-	assert.equal((await run(db, {}, ops)).ran.length, 0);
-	assert.equal(submitted.length, 0);
-
-	// 同一个对象还在等批准：不再准备
-	await assert.rejects(propose(db, { title: "再来", writes: [{ op: "试写", params: { n: 1 } }] }, ops), Usage);
-
-	// 批准；第 1 项提交后读回来看不出：结果未知，第 2 项不做
-	await approve(db, p.batch);
 	outcome.set(1, { sent: { kind: "unknown", why: "超时" }, done: null });
-	const r1 = await run(db, {}, ops);
+	const batch = await addBatch(db, { title: "试两项", writes: [{ op: "试写", params: { n: 1 } }, { op: "试写", params: { n: 2 } }] }, ops);
+	const r1 = await run(db, { batch }, ops);
 	assert.equal(r1.unknown, true);
-	assert.deepEqual(r1.ran.map((x) => [x.display, x.status]), [["第 1 项", "结果未知"], ["第 2 项", "已批准"]]);
+	assert.deepEqual(r1.ran.map((x) => [x.display, x.status]), [["第 1 项", "结果未知"], ["第 2 项", "未执行"]]);
 	assert.deepEqual(submitted, [1]);
 
-	// 再跑：先核清，还看不出就还是停着，也不重发
-	const r2 = await run(db, {}, ops);
-	assert.deepEqual(submitted, [1]);
-	assert.equal(r2.ran[0]!.status, "结果未知");
+	// 同一个对象还没核清：不再做
+	await assert.rejects(addBatch(db, { title: "再来", writes: [{ op: "试写", params: { n: 1 } }] }, ops), (e: Error) => e instanceof Usage && /还没核清/.test(e.message));
 
-	// 读回来看到做成了：已核对，第 2 项接着做
+	// 核清：还看不出就还是结果未知，也不重发；提醒人去看
+	assert.equal((await run(db, {}, ops)).ran[0]!.status, "结果未知");
+	assert.deepEqual(submitted, [1]);
+	const unknown = (await check(db, reads())).reminders.filter((x) => x.kind === "结果未知");
+	assert.equal(unknown.length, 1);
+
+	// 读回来看到做成了：已核对；没做的第 2 项再交一次
 	outcome.set(1, { sent: { kind: "unknown", why: "超时" }, done: true });
-	const r3 = await run(db, {}, ops);
-	assert.deepEqual(r3.ran.map((x) => [x.display, x.status]), [["第 1 项", "已核对"], ["第 2 项", "已核对"]]);
+	assert.deepEqual((await run(db, {}, ops)).ran.map((x) => [x.display, x.status]), [["第 1 项", "已核对"]]);
+	const again = await addBatch(db, { title: "第 2 项", writes: [{ op: "试写", params: { n: 2 } }] }, ops);
+	assert.deepEqual((await run(db, { batch: again }, ops)).ran.map((x) => [x.display, x.status]), [["第 2 项", "已核对"]]);
 	assert.deepEqual(submitted, [1, 2]);
-
-	// 这一批没有待批准的了：检查关掉「批准」那一行
-	await check(db, reads());
-	const [closed] = await db`select open from inbox where key = ${`approve:${p.batch}`}`;
-	assert.equal(closed!.open, false);
+	assert.deepEqual((await check(db, reads())).reminders.filter((x) => x.kind === "结果未知"), []);
 });
 
-test("写入：取消勾的不做；被拒的记下原因", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("写入：被拒的记下原因；同一个 key 被拒过的再交加次数", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
-	const p = await propose(db, { title: "再试两项", writes: [{ op: "试写", params: { n: 3 } }, { op: "试写", params: { n: 4 } }] }, ops);
-	await db`update writes set include = false where batch = ${p.batch} and params->>'n' = '3'`;
 	outcome.set(4, { sent: { kind: "refused", why: "库存不够" }, done: false });
-	await approve(db, p.batch);
-	const r = await run(db, {}, ops);
+	const batch = await addBatch(db, { title: "再试", writes: [{ op: "试写", params: { n: 4 } }] }, ops);
+	const r = await run(db, { batch }, ops);
 	assert.deepEqual(r.ran.map((x) => [x.display, x.status, x.why]), [["第 4 项", "被拒", "库存不够"]]);
-	const rows = await db`select params->>'n' as n, status from writes where batch = ${p.batch} order by id`;
-	assert.deepEqual(rows.map((x) => [x.n, x.status]), [["3", "未执行"], ["4", "被拒"]]);
+	outcome.delete(4);
+	await run(db, { batch: await addBatch(db, { title: "再试", writes: [{ op: "试写", params: { n: 4 } }] }, ops) }, ops);
+	const rows = await db`select key, status from writes where params->>'n' = '4' order by id`;
+	assert.deepEqual(rows.map((x) => [x.key, x.status]), [["k:4", "被拒"], ["k:4#2", "已核对"]]);
 });
 
 /** 一份走到待批准的商品稿（单层两个颜色，1688 给了重量、包邮），文案写好、Gemini 查过 */
@@ -134,89 +122,51 @@ function listingOps(result: Map<string, { sent: Submitted; done: boolean | null 
 	};
 }
 
-test("批准上架：人勾了、内容没变的 x2 run 建商品、上架（马上重算当前步骤）；结果未知不重发；建商品、上架不经 x2 propose", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("x2 listing publish：只收待批准、待上架的，马上建商品、上架、重算当前步骤；结果未知不重发；建商品、上架不经 x2 do", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const id = await readyListing(db, "80");
-	const now = async () => ({ ...(await db`select step, step_detail, approve, approved_hash, content_hash from listings where id = ${id}`)[0] });
-	const before = await now();
-	assert.equal(before.step, "待批准");
-	assert.ok(before.content_hash);
+	const now = async () => ({ ...(await db`select step, step_detail from listings where id = ${id}`)[0] });
+	assert.equal((await now()).step, "待批准");
 	const result = new Map<string, { sent: Submitted; done: boolean | null }>(), sent: string[] = [];
 	const ops = listingOps(result, sent);
-	await assert.rejects(propose(db, { title: "上架", writes: [{ op: "建商品", params: { listingId: id } }] }, ops), (e: Error) => e instanceof Usage && /批准上架/.test(e.message));
-	// 没勾：不做
-	assert.equal((await run(db, {}, ops)).ran.length, 0);
-	// 人在网页上勾上：记下这一刻的内容
-	await db`update listings set approve = true where id = ${id}`;
-	assert.equal((await now()).approved_hash, before.content_hash);
-	// 建商品结果未知：马上是建商品中，上架不做；再跑先核清，不重发
+	await assert.rejects(addBatch(db, { title: "上架", writes: [{ op: "建商品", params: { listingId: id } }] }, ops), (e: Error) => e instanceof Usage && /x2 listing publish/.test(e.message));
+	await assert.rejects(publish(db, [id, "999999"], ops), (e: Error) => e instanceof Usage && /没有商品稿 999999\n一份都没做/.test(e.message));
+	assert.deepEqual(sent, []);
+	// 建商品结果未知：马上是建商品中，上架不做；再 publish 不收，x2 verify 核清，不重发
 	result.set("建商品", { sent: { kind: "unknown", why: "超时" }, done: null });
-	const r1 = await run(db, {}, ops);
-	assert.deepEqual(r1.ran.map((x) => [x.op, x.status]), [["建商品", "结果未知"], ["上架", "已批准"]]);
+	const r1 = await publish(db, [id], ops);
+	assert.deepEqual(r1.ran.map((x) => [x.op, x.status]), [["建商品", "结果未知"], ["上架", "未执行"]]);
 	assert.deepEqual(sent, [`建商品 ${id}`]);
 	const unknown = await now();
 	assert.equal(unknown.step, "建商品中");
 	assert.match(unknown.step_detail, /建商品：结果未知/);
+	await assert.rejects(publish(db, [id], ops), (e: Error) => e instanceof Usage && /建商品中/.test(e.message));
 	assert.equal((await run(db, {}, ops)).ran[0]!.status, "结果未知");
-	assert.equal((await db`select count(*)::int as n from writes where params->>'listingId' = ${id}`)[0]!.n, 2);
-	// 读回来做成了，接着上架：马上是已上架
+	// 读回来做成了：建好了没上架，是待上架；publish 接着上架
 	result.delete("建商品");
 	await run(db, {}, ops);
+	assert.equal((await now()).step, "待上架");
+	await publish(db, [id], ops);
 	assert.deepEqual([(await now()).step, sent], ["已上架", [`建商品 ${id}`, `上架 ${id}`]]);
 });
 
-test("批准上架：勾了以后内容变了去掉勾（说明写为什么），x2 run 不做；被拒的去掉勾；以前待批准的建商品、上架写入不再执行", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("x2 listing publish：被拒的原因写进说明，改好了再 publish 照样交（防重复的 key 加次数）；商品稿在交之后改了不建", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const id = await readyListing(db, "81");
 	const result = new Map<string, { sent: Submitted; done: boolean | null }>(), sent: string[] = [];
 	const ops = listingOps(result, sent);
-	const now = async () => ({ ...(await db`select step, step_detail, approve, approved_hash, unapproved_why from listings where id = ${id}`)[0] });
-	// 勾了以后人改了标题：x2 run 先重算，内容对不上，去掉勾，不做
-	await db`update listings set approve = true where id = ${id}`;
-	await db`update listings set title = '輕便雨衣 成人連身 防水透氣 騎車通勤 加厚' where id = ${id}`;
-	assert.equal((await run(db, {}, ops)).ran.length, 0);
-	const changed = await now();
-	assert.deepEqual([changed.approve, changed.unapproved_why, changed.step], [false, UNAPPROVED.changed, "待 Gemini 文字检查"]);
-	assert.match(changed.step_detail, /去掉了勾/);
-	// 刚改过内容（hash 还没重算）就勾：认下勾的那一刻；勾着的时候又改了：认不上，去掉勾
-	await db`update listings set title = '輕便雨衣 成人連身 防水透氣 騎車通勤' where id = ${id}`;
-	await listingsCheck(db, [id]);
-	assert.equal((await now()).step, "待批准");
-	await db`update listings set description = '防水雨衣，騎車、通勤都好用' where id = ${id}`;
-	const [audit] = await db`select * from listings where id = ${id}`;
-	const [s] = await db`select * from shop_settings where shop = 'cheeroutdoor'`;
-	await db`update listings set audit = ${db.json({ key: auditKey(productOf(audit, settingsOf(s)).product!), textIssues: [], images: [] })} where id = ${id}`;
-	await db`update listings set approve = true where id = ${id}`;
-	assert.equal((await now()).approved_hash, null);
-	await listingsCheck(db, [id]);
-	const captured = await now();
-	assert.deepEqual([captured.step, captured.approve, Boolean(captured.approved_hash)], ["已批准", true, true]);
-	// 人去掉勾：批准时的内容跟着清掉；终端里说批准：x2 listing approve 勾同一个勾
-	await db`update listings set approve = false where id = ${id}`;
-	assert.equal((await now()).approved_hash, null);
-	await assert.rejects(listing(["approve", id, "999999"]), Usage);
-	assert.equal((await now()).approve, false);
-	const ok = await listing(["approve", id]);
-	assert.deepEqual(ok.map((x: any) => [x.id, x.step]), [[id, "已批准"]]);
-	// 建商品被拒：去掉勾，原因写进说明，下一次 x2 run 不再交
+	const now = async () => ({ ...(await db`select step, step_detail from listings where id = ${id}`)[0] });
 	result.set("建商品", { sent: { kind: "refused", why: "10004 校验失败" }, done: false });
-	const r = await run(db, {}, ops);
+	const r = await publish(db, [id], ops);
 	assert.deepEqual(r.ran.map((x) => [x.op, x.status]), [["建商品", "被拒"], ["上架", "未执行"]]);
 	const refused = await now();
-	assert.deepEqual([refused.approve, refused.step], [false, "待批准"]);
-	assert.match(refused.step_detail, /^建商品被拒：10004 校验失败。去掉了勾/);
-	assert.equal((await run(db, {}, ops)).ran.length, 0);
-	// 改好了再勾：防重复的 key 加次数，照样交
+	assert.equal(refused.step, "待批准");
+	assert.match(refused.step_detail, /^上次建商品被拒：10004 校验失败/);
 	result.delete("建商品");
-	await listing(["approve", id]);
-	await run(db, {}, ops);
+	await publish(db, [id], ops);
 	assert.equal((await now()).step, "已上架");
 	const keys = (await db`select key, status from writes where params->>'listingId' = ${id} order by id`).map((x) => [x.key, x.status]);
 	assert.deepEqual(keys, [[`建商品:${id}`, "被拒"], [`上架:${id}`, "未执行"], [`建商品:${id}#2`, "已核对"], [`上架:${id}#2`, "已核对"]]);
-	// 以前经 x2 propose 准备、还待批准的：x2 run 标成未执行
-	const [old] = await db`insert into writes (batch, op, target, params, display, key, status) values (999, '上架', 't', ${db.json({ listingId: id })}, '上架', 'live:old', '待批准') returning id::text`;
-	await run(db, {}, ops);
-	assert.equal((await db`select status from writes where id = ${old!.id}`)[0]!.status, "未执行");
 });
 
 test("备注：x2 status 的 todo 给出人新写、改过的备注；x2 listing noted 记下看过的，备注再改又出来；人写的备注不改", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
@@ -233,71 +183,57 @@ test("备注：x2 status 的 todo 给出人新写、改过的备注；x2 listing
 	assert.equal((await notes()).length, 1);
 	assert.equal((await db`select note from listings where id = ${id}`)[0]!.note, "标题别写「成人」，也别写「連身」");
 	await assert.rejects(listing(["noted", "999999"]), Usage);
-	// 收件箱：待批准的一家店一行，没有待批准的就关
-	const [row] = await db`select open, title from inbox where key = 'listing-approve:cheeroutdoor'`;
-	assert.equal(row!.open, true);
+	// 提醒：待批准的一家店一行，没有待批准的就不提醒
+	const review = async () => (await check(db, reads())).reminders.filter((x) => x.key === "listing-review:cheeroutdoor");
+	assert.equal((await review()).length, 1);
 	await db`update listings set cancelled = true where step = '待批准'`;
-	await check(db, reads());
-	assert.equal((await db`select open from inbox where key = 'listing-approve:cheeroutdoor'`)[0]!.open, false);
+	assert.deepEqual(await review(), []);
 });
 
-test("x2 listing cancel：替人勾「放弃」，马上是已放弃；建了商品的要下架、建商品还没核清的先核清，有一份不行就都不勾；x2 run 不给放弃了的建商品，还没提交的标成未执行", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("x2 listing cancel：替人勾「放弃」，马上是已放弃；建了商品的要下架、建商品还没核清的先核清，有一份不行就都不勾；放弃了的不 publish", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
-	const [a, b, c, d] = [await readyListing(db, "83"), await readyListing(db, "84"), await readyListing(db, "85"), await readyListing(db, "86")];
+	const [a, b, d] = [await readyListing(db, "83"), await readyListing(db, "84"), await readyListing(db, "86")];
 	const now = async (id: string) => ({ ...(await db`select step, cancelled from listings where id = ${id}`)[0] });
 	await assert.rejects(listing(["cancel"]), Usage);
 	await assert.rejects(listing(["cancel", a, "--why"]), Usage);
 	// 建了商品的：要下架，不是放弃；有一份不行就都不勾
 	await db`update listings set product_id = '9002' where id = ${b}`;
-	await assert.rejects(listing(["cancel", a, b]), (e: Error) => e instanceof Usage && /（商品 9002，下架）：不上架就别勾「批准上架」，不是放弃\n一份都没放弃$/.test(e.message));
+	await assert.rejects(listing(["cancel", a, b]), (e: Error) => e instanceof Usage && /（商品 9002，下架）：不上架就不 publish，不是放弃\n一份都没放弃$/.test(e.message));
 	await db`update listings set listed_at = now() where id = ${b}`;
 	await assert.rejects(listing(["cancel", b]), (e: Error) => e instanceof Usage && /已上架（商品 9002）：不卖了是下架，不是放弃/.test(e.message));
 	await assert.rejects(listing(["cancel", a, "999999"]), (e: Error) => e instanceof Usage && /没有商品稿 999999/.test(e.message));
 	assert.equal((await now(a)).cancelled, false);
-	// 勾了「批准上架」、还没 x2 run 就放弃：马上是已放弃，x2 run 不建商品；原因只回显
-	const result = new Map<string, { sent: Submitted; done: boolean | null }>(), sent: string[] = [];
-	const ops = listingOps(result, sent);
-	await listing(["approve", a]);
+	// 放弃：马上是已放弃，publish 不收；原因只回显
 	const r = await listing(["cancel", a, "--why", "和 ni1206 撞货"]);
-	assert.deepEqual(r.map((x: any) => [x.id, x.step, x.already, x.why, x.pending]), [[a, "已放弃", false, "和 ni1206 撞货", []]]);
+	assert.deepEqual(r.map((x: any) => [x.id, x.step, x.already, x.why]), [[a, "已放弃", false, "和 ni1206 撞货"]]);
 	assert.deepEqual(await now(a), { step: "已放弃", cancelled: true });
-	assert.equal((await run(db, {}, ops)).ran.length, 0);
+	await assert.rejects(publish(db, [a], listingOps(new Map(), [])), (e: Error) => e instanceof Usage && /已放弃/.test(e.message));
 	// 再放弃一次：说一声，不算错
 	assert.deepEqual((await listing(["cancel", a])).map((x: any) => x.already), [true]);
-	// x2 run 生成了建商品、上架，没提交（浏览器没连上）就放弃：下一次 x2 run 标成未执行，不提交、不用等浏览器
-	await listing(["approve", c]);
-	const blocked = await run(db, {}, { ...ops, 建商品: { ...ops.建商品, where: async () => { throw new NeedsHuman("没有登录着店铺的浏览器"); } } });
-	assert.ok(blocked.blocked);
-	const pending = await db`select id::text, status from writes where params->>'listingId' = ${c} order by id`;
-	assert.deepEqual(pending.map((w) => w.status), ["已批准", "已批准"]);
-	assert.deepEqual((await listing(["cancel", c])).map((x: any) => [x.step, x.pending]), [["已放弃", pending.map((w) => w.id)]]);
-	const ran = await run(db, {}, { ...ops, 建商品: { ...ops.建商品, where: async () => { throw new NeedsHuman("没有登录着店铺的浏览器"); } } });
-	assert.deepEqual([ran.blocked, ran.ran.map((x) => [x.op, x.status, x.why])], [null, [["建商品", "未执行", "商品稿已放弃"], ["上架", "未执行", "商品稿已放弃"]]]);
-	assert.deepEqual([sent, (await now(c)).step], [[], "已放弃"]);
 	// 建商品提交了、还没核清：可能已经建了，先核清；人核清了（没建成）才放弃得了
 	const [w] = await db`insert into writes (batch, op, target, params, display, key, status) values (997, '建商品', 't:86', ${db.json({ listingId: d })}, '建商品', 'create:86', '结果未知') returning id::text`;
 	await assert.rejects(listing(["cancel", d]), (e: Error) => e instanceof Usage && /在建商品中（建商品：结果未知）：可能已经建了，先核清/.test(e.message));
-	await db`update writes set status = '被拒' where id = ${w!.id}`;
+	await resolve(["999999", "被拒"]).then(() => assert.fail("没有这个写入也收了"), (e: Error) => assert.ok(e instanceof Usage));
+	await resolve([w!.id, "被拒"]);
 	assert.deepEqual((await listing(["cancel", d])).map((x: any) => x.step), ["已放弃"]);
 });
 
-test("x2 listing category：人定的类目要是叶子、在本店允许的类目里；写路径、名字，清掉属性、备货天数和类目的问题，马上是待做商品稿（勾了「批准上架」的去掉勾）；建了商品的不改", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("x2 listing category：人定的类目要是叶子、在本店允许的类目里；写路径、名字，清掉属性、备货天数和类目的问题，马上是待做商品稿；建了商品的不改", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const id = await readyListing(db, "87");
 	const tree = async () => [{ id: "100630", name: "居家生活", children: [{ id: "100721", name: "浴室用品", children: [{ id: "101324", name: "地墊", children: [] }, { id: "101325", name: "浴簾", children: [] }] }] }];
-	const now = async () => ({ ...(await db`select category_path, category_id::text, category_name, attributes, attributes_text, days_to_ship, problems, step, approve from listings where id = ${id}`)[0] });
+	const now = async () => ({ ...(await db`select category_path, category_id::text, category_name, attributes, attributes_text, days_to_ship, problems, step from listings where id = ${id}`)[0] });
 	await assert.rejects(setCategory(db, "999999", "101324", tree), (e: Error) => e instanceof Usage && /没有商品稿 999999/.test(e.message));
 	await assert.rejects(setCategory(db, id, "100721", tree), (e: Error) => e instanceof Usage && /不是叶子类目，选它下面的：地墊（101324）、浴簾（101325）/.test(e.message));
 	await assert.rejects(setCategory(db, id, "1", tree), (e: Error) => e instanceof Usage && /类目树里没有类目 1/.test(e.message));
 	await db`update shop_settings set categories = ${db.json(["101324"])} where shop = 'cheeroutdoor'`;
 	await assert.rejects(setCategory(db, id, "101325", tree), (e: Error) => e instanceof Usage && /「居家生活 > 浴室用品 > 浴簾」不在 cheeroutdoor 允许的类目里/.test(e.message));
 	assert.equal((await now()).category_name, null);
-	// 勾了「批准上架」以后人定了类目：内容变了，去掉勾；做商品稿记的类目、属性的问题不算了，照新的类目重做商品稿
-	await listing(["approve", id]);
+	// 做商品稿记的类目、属性的问题不算了，照新的类目重做商品稿
 	await db`update listings set problems = ${"类目：推荐的「雨衣」不在本店允许的类目里\n属性：必填的「材質」待人工填写"} where id = ${id}`;
 	const r = await setCategory(db, id, "101324", tree);
 	assert.deepEqual([r.category, r.categoryPath, r.step], ["居家生活 > 浴室用品 > 地墊", [100630, 100721, 101324], "待做商品稿"]);
-	assert.deepEqual(await now(), { category_path: [100630, 100721, 101324], category_id: "101324", category_name: "居家生活 > 浴室用品 > 地墊", attributes: null, attributes_text: null, days_to_ship: null, problems: null, step: "待做商品稿", approve: false });
+	assert.deepEqual(await now(), { category_path: [100630, 100721, 101324], category_id: "101324", category_name: "居家生活 > 浴室用品 > 地墊", attributes: null, attributes_text: null, days_to_ship: null, problems: null, step: "待做商品稿" });
 	// 别的问题照旧：还是待补充
 	await db`update shop_settings set categories = null where shop = 'cheeroutdoor'`;
 	await db`update listings set problems = ${"货源：起订量 2，无法单件购买\n备货天数：无法读取这个类目的备货天数规则"} where id = ${id}`;
@@ -309,36 +245,16 @@ test("x2 listing category：人定的类目要是叶子、在本店允许的类�
 	assert.equal((await now()).category_name, "居家生活 > 浴室用品 > 浴簾");
 });
 
-test("收件箱：每轮重算，只更新不重复；这一轮读成功了才关", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
+test("提醒：每次 x2 status 现算；人说做完了（x2 handled）就不再提醒", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
 	const db = sql!;
 	const soon = new Date(Date.now() + 86400_000);
 	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
 		values ('S1', 'ni1206', ${soon}, '待出货', '已预报', 'c1', 1, ${db.json([{ itemId: "I", modelId: "M", chanbossModelId: "cM", name: "红T", spec: "L", qty: 1, image: "" }])}, now())`;
-	await check(db, reads());
-	await check(db, reads());
-	const open = await db`select key, open from inbox where key = 'late:S1'`;
-	assert.deepEqual(open.map((x) => ({ ...x })), [{ key: "late:S1", open: true }]);
-
-	// 订单打包了，但这一轮 chanboss 没读成：不关
-	await db`update orders set chanboss_status = '已打包' where sn = 'S1'`;
-	await check(db, reads(false));
-	assert.equal((await db`select open from inbox where key = 'late:S1'`)[0]!.open, true);
-	// 读成了：关
-	await check(db, reads(true));
-	assert.equal((await db`select open from inbox where key = 'late:S1'`)[0]!.open, false);
-});
-
-test("收件箱：人勾「已处理」就关，以后不再开", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
-	const db = sql!;
-	const soon = new Date(Date.now() + 86400_000);
-	await db`insert into orders (sn, shop, ship_by, platform_status, chanboss_status, chanboss_id, chanboss_time, items, created_at)
-		values ('S2', 'ni1206', ${soon}, '待出货', '已预报', 'c2', 1, ${db.json([{ itemId: "I", modelId: "M", chanbossModelId: "cM", name: "白T", spec: "L", qty: 1, image: "" }])}, now())`;
-	await check(db, reads());
-	assert.deepEqual({ ...(await db`select open, role from inbox where key = 'late:S2'`)[0] }, { open: true, role: "运营" });
-	await db`update inbox set done = true where key = 'late:S2'`;
-	await check(db, reads());
-	await check(db, reads());
-	assert.equal((await db`select open from inbox where key = 'late:S2'`)[0]!.open, false);
+	const late = async () => (await check(db, reads())).reminders.filter((x) => x.key === "late:S1").map((x) => x.kind);
+	assert.deepEqual(await late(), ["快到期"]);
+	await handled(["late:S1", "--note", "跟买家说好了晚两天"]);
+	assert.deepEqual(await late(), []);
+	assert.equal((await db`select note from handled where key = 'late:S1'`)[0]!.note, "跟买家说好了晚两天");
 });
 
 test("规格例外：x2 source --spec 写进选用的货源那一行；两边都要对得上，同一个规格写过的换掉", { skip: !sql && "没设 X2_TEST_DATABASE_URL" }, async () => {
@@ -369,6 +285,8 @@ async function command(fn: (args: string[], json: boolean) => Promise<void>, arg
 const listing = (args: string[]) => command(listingCommand, args);
 const strategy = (args: string[]) => command(strategyCommand, args);
 const rule = (args: string[]) => command(ruleCommand, args);
+const resolve = (args: string[]) => command(resolveCommand, args);
+const handled = (args: string[]) => command(handledCommand, args);
 
 /** 一份做好了的商品稿：顏色（黑貓、黃狗、定製）× 尺寸（40*60、60*90），货号 LT<货源>-<各层下标> */
 async function madeListing(db: postgres.Sql, offerId: string) {
@@ -553,8 +471,8 @@ test("网页：只收人能改的格，照类型和条件收；删图记进已�
 	try {
 		const meta = (await call("GET", undefined, "/api/meta")).body as any[];
 		const listing = meta.find((m) => m.name === "listings");
-		assert.deepEqual(listing.columns.filter((c: any) => ["approve", "pics", "step"].includes(c.name)).map((c: any) => [c.name, c.type, Boolean(c.edit)]),
-			[["approve", "bool", true], ["step", "text", false], ["pics", "pics", true]]);
+		assert.deepEqual(listing.columns.filter((c: any) => ["cancelled", "pics", "step"].includes(c.name)).map((c: any) => [c.name, c.type, Boolean(c.edit)]),
+			[["step", "text", false], ["pics", "pics", true], ["cancelled", "bool", true]]);
 
 		// 不是人改的列、条件不成立的行：不收
 		const [l] = await db`insert into listings (shop, offer_id, images, step) values ('cheeroutdoor', '777901', ${db.json({ main: [{ from: "a.jpg", imageId: "m1", width: 800, height: 800 }, { from: "b.jpg", imageId: "m2", width: 800, height: 800 }], detail: [], options: [] })}, '待写文案') returning id::text`;
@@ -573,13 +491,10 @@ test("网页：只收人能改的格，照类型和条件收；删图记进已�
 		await set("listings", key, "pics", { id: "m1", removed: false });
 		assert.deepEqual((await db`select removed_images from listings where id = ${key.id}`)[0]!.removed_images, []);
 
-		// 收件箱：「批准」只在批准的那一行能勾
-		await db`insert into inbox (key, kind, title) values ('approve:77', '批准', '批准：试'), ('late:S9', '快到期', '快到期：S9')`;
-		const late = await set("inbox", { key: "late:S9" }, "approve", true);
-		assert.match(late.body.error, /现在不能改「批准」/);
-		const ok = await set("inbox", { key: "approve:77" }, "approve", true);
-		assert.deepEqual([ok.body.approve, ok.body._readonly], [true, []]);
-		assert.deepEqual((await set("inbox", { key: "late:S9" }, "note", "明天发")).body._readonly, ["approve"]);
+		// 条件不成立的行：建了商品的不能勾「放弃」
+		await db`update listings set product_id = '9009' where id = ${key.id}`;
+		assert.match((await set("listings", key, "cancelled", true)).body.error, /现在不能改「放弃」/);
+		assert.deepEqual((await set("listings", key, "note", "明天再看")).body._readonly.includes("cancelled"), true);
 
 		// 库里的约束：说原话
 		assert.match((await set("shop_settings", { shop: "cheeroutdoor" }, "fx", -1)).body.error, /fx_check/);

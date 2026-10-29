@@ -12,11 +12,10 @@ create table if not exists order_settings (
 	id int primary key default 1 check (id = 1),
 	-- 采购账号（1688 会员名）：只有一个账号做采购，x2 只往它加购，别的 1688 账号只读。换账号改这一格
 	buy_account text,
-	-- 离出货期限不到几天、还没打包，就进收件箱给人
+	-- 离出货期限不到几天、还没打包，x2 status 就提醒人
 	late_days int not null default 6,
-	-- 未发货提醒：1688 付款后多少小时还没发货，就进收件箱给人
+	-- 未发货提醒：1688 付款后多少小时还没发货，x2 status 就提醒人
 	ship_wait_hours int not null default 48,
-	forecast_needs_approval boolean not null default true,
 	-- 发货线路：海快（chanboss 的 sendway_id 752）。line_id、warehouse_id 是 chanboss 上这条线路的线路和仓库（2026-10-09 读已预报的订单：1111、5176）
 	channel text not null default '海快',
 	sendway_id int not null default 752,
@@ -49,7 +48,7 @@ create table if not exists sources (
 	missing text,
 	-- 来源：以图搜图、人工添加、原有
 	origin text,
-	-- 明显匹配：x2 认为明显对得上（卖过的规格都对得上，而且只有它对得上），随加购一起批准，不进收件箱
+	-- 明显匹配：x2 认为明显对得上（卖过的规格都对得上，而且只有它对得上），人同意加购时一起定下，不用人另外选
 	sure boolean not null default false,
 	chosen boolean not null default false,
 	-- 不可用：选用的货源下架时 x2 现读发现，写原因；检查当成缺货源
@@ -61,7 +60,7 @@ create table if not exists sources (
 create unique index if not exists sources_chosen on sources (item_id) where chosen;
 
 -- 到货问题：错货、少件、损坏。x2 看不到，人在网页的表单里上报（订单号、商品和规格、问题类型、件数），处理完勾「已处理」。
--- 未处理的：订单停在「有到货问题」，不提醒打包；收件箱一行一个问题
+-- 未处理的：订单停在「有到货问题」，不提醒打包；x2 status 一个问题提醒一行
 create table if not exists arrival_issues (
 	id bigserial primary key,
 	sn text not null,
@@ -76,33 +75,19 @@ create table if not exists arrival_issues (
 	done_at timestamptz
 );
 
--- ── 收件箱和写入 ──
+-- ── 已处理和写入 ──
 
--- 收件箱：一件要人做的事。key 是「类别:对象」，每轮重算，只更新不重复；条件不成立就关。
--- 人只改 approve（批准）、done（已处理：x2 看不到结果的事，勾了就关、不再开）、snooze_until（推迟至）、note。role 是负责人（现在都是运营）
-create table if not exists inbox (
+-- 已处理：x2 status 提醒人做的事里，x2 看不到结果的（例 取消的订单货在 chanboss，给了新订单还是退回卖家），人做完记一行，不再提醒（x2 handled）
+create table if not exists handled (
 	key text primary key,
-	kind text not null,
-	title text not null,
-	detail text,
-	role text not null default '运营',
-	shop text,
-	due timestamptz,
-	link text,
-	approve boolean,
-	done boolean not null default false,
-	open boolean not null default true,
-	snooze_until timestamptz,
 	note text,
-	opened_at timestamptz not null default now(),
-	closed_at timestamptz,
-	updated_at timestamptz not null default now()
+	at timestamptz not null default now()
 );
 
 create sequence if not exists batch_seq;
 
--- 写入：做了一次写操作。先记意图（已提交），再提交一次，再读回来
--- status：待批准、已批准、已提交、成功、被拒、结果未知、已核对、不一致、未执行
+-- 写入：做了一次写操作。人在终端里同意了，agent 用 x2 do 交一批（待执行），x2 先记意图（已提交），再提交一次，再读回来
+-- status：待执行、已提交、成功、被拒、结果未知、已核对、不一致、未执行
 create table if not exists writes (
 	id bigserial primary key,
 	batch bigint not null,
@@ -112,9 +97,7 @@ create table if not exists writes (
 	display text,
 	-- 防重复：同一个 key 已有成功、结果未知……的写入，不再提交
 	key text not null,
-	-- 执行（include）：人在批准前取消勾，这一项不做
-	include boolean not null default true,
-	status text not null default '待批准',
+	status text not null default '待执行',
 	response jsonb,
 	readback jsonb,
 	error text,
@@ -355,42 +338,24 @@ alter table listings add column if not exists pick_why text;
 alter table listings add column if not exists pick_evidence text;
 alter table listings add column if not exists pick_snapshot jsonb;
 
--- ── 批准上架、备注（docs/listing.md「审稿、批准」） ──
+-- ── 备注（docs/listing.md「审稿」） ──
 
--- 批准上架：人在网页上一份一份勾（agent 替人勾用 x2 listing approve），勾了 x2 run 建商品、上架。
--- 内容（content_hash）：检查算出来的、要建的商品（product_info）的 hash，只在待批准、已批准时有；内容一变（标题、规格、图……）先清掉，等下一次检查重算。
--- 勾的时候记下内容（approved_hash）和批准时间；检查、x2 run 时内容和勾的时候对不上就去掉勾，原因写在 unapproved_why（说明里给人看）
-alter table listings add column if not exists approve boolean not null default false;
-alter table listings add column if not exists approved_at timestamptz;
-alter table listings add column if not exists approved_hash text;
-alter table listings add column if not exists content_hash text;
-alter table listings add column if not exists unapproved_why text;
 -- 看过的备注：agent 照人写的「备注」做完，记下当时的备注原文（x2 listing noted）；备注再改，x2 status 的 todo 又给出来
 alter table listings add column if not exists noted text;
 
--- 勾「批准上架」、内容变了：在库里记，人在网页上勾的也记得到。
--- 勾的时候内容的 hash 还没重算（刚改过），approved_hash 先空着，下一次检查认作勾的那一刻的内容；空着的时候内容又变了，记成 changed，检查去掉勾
-create or replace function listings_approve() returns trigger language plpgsql as $$
-declare
-	changed boolean := row(new.offer_id, new.title, new.description, new.variants, new.images, new.removed_images, new.removed_variants, new.category_path,
-		new.attributes, new.days_to_ship, new.problems, new.weight_kg, new.freight_rmb)
-		is distinct from row(old.offer_id, old.title, old.description, old.variants, old.images, old.removed_images, old.removed_variants, old.category_path,
-		old.attributes, old.days_to_ship, old.problems, old.weight_kg, old.freight_rmb);
-begin
-	if changed and new.content_hash is not distinct from old.content_hash then new.content_hash := null; end if;
-	if new.approve and not old.approve then
-		new.approved_at := now();
-		new.unapproved_why := null;
-		if new.approved_hash is not distinct from old.approved_hash then new.approved_hash := new.content_hash; end if;
-	elsif old.approve and not new.approve then
-		new.approved_at := null;
-		new.approved_hash := null;
-	elsif new.approve and changed and new.approved_hash is null then
-		new.approved_hash := 'changed';
-	end if;
-	return new;
-end $$;
-create or replace trigger listings_approve before update on listings for each row execute function listings_approve();
-
 -- images 不存 shown（放在建触发器之后）
 update listings set images = images - 'shown' where images ? 'shown';
+
+-- 收件箱、批准去掉了：人在终端里跟 agent 说同意，agent 用 x2 do、x2 listing publish 直接做
+drop table if exists inbox;
+alter table writes alter column status set default '待执行';
+update writes set status = '未执行', error = coalesce(error, '没有批准就没执行：批准的流程去掉了'), finished_at = coalesce(finished_at, now()) where status in ('待批准', '已批准');
+alter table writes drop column if exists include;
+alter table order_settings drop column if exists forecast_needs_approval;
+drop trigger if exists listings_approve on listings;
+drop function if exists listings_approve();
+alter table listings drop column if exists approve;
+alter table listings drop column if exists approved_at;
+alter table listings drop column if exists approved_hash;
+alter table listings drop column if exists content_hash;
+alter table listings drop column if exists unapproved_why;

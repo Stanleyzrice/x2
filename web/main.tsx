@@ -1,4 +1,4 @@
-// 网页（x2 web）：侧栏是表（照 src/web/tables.ts 的顺序，第一个是收件箱），地址 #表/视图
+// 网页（x2 web）：侧栏是表（照 src/web/tables.ts 的顺序），地址 #表/视图
 import { Loader, Sidebar, Toasty, useSidebar } from "@cloudflare/kumo";
 import { ListIcon } from "@phosphor-icons/react/dist/csr/List";
 import { StrictMode, useEffect, useState } from "react";

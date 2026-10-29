@@ -42,40 +42,40 @@ test("货源齐了、待加购：agent 准备一行加购，同一个货源的�
 	const r = checkOrders(snap());
 	const t = r.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	const p = t.propose.writes[0]!.params as CartParams;
+	const p = t.batch.writes[0]!.params as CartParams;
 	assert.equal(p.qty, 3);
 	assert.deepEqual(p.lines.map((l) => l.sn), ["1", "2"]);
 	assert.equal(r.orders.get("1")!.step, "待加购");
-	assert.equal(r.inbox.length, 0);
+	assert.equal(r.reminders.length, 0);
 });
 
-test("加购了在购物车里：收件箱「付款」，订单停在待 1688 付款", () => {
+test("加购了在购物车里：提醒「付款」，订单停在待 1688 付款", () => {
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }] }));
-	const pay = r.inbox.find((i) => i.key === "pay:A");
+	const pay = r.reminders.find((i) => i.key === "pay:A");
 	assert.ok(pay);
 	assert.match(pay.title, /「采购员」的购物车里 2 张订单的货 ¥30\.00/);
 	assert.equal(r.orders.get("2")!.step, "待 1688 付款");
 	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
 });
 
-test("加购待批准：不再准备，订单停在加购待批准", () => {
-	const r = checkOrders(snap({ writes: [cartWrite("待批准")] }));
+test("加购还没核清：不再准备，订单停在待加购，说明写还没核清", () => {
+	const r = checkOrders(snap({ writes: [cartWrite("结果未知")] }));
 	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
-	assert.equal(r.orders.get("1")!.step, "加购待批准");
+	assert.deepEqual(r.orders.get("1"), { ...r.orders.get("1")!, step: "待加购", stepDetail: "加购的结果还没核清" });
 });
 
-test("付了款寄到我们这里：预报无单号；报过、到齐了：收件箱「打包」", () => {
+test("付了款寄到我们这里：预报无单号；报过、到齐了：提醒「打包」", () => {
 	const paid = checkOrders(snap({ writes: [cartWrite()], purchases: [purchase(3)] }));
 	const f = paid.todo.find((x) => x.kind === "预报");
 	assert.ok(f && f.kind === "预报");
-	assert.deepEqual((f.propose.writes as { params: ForecastParams }[]).map((w) => [w.params.sn, w.params.lines[0]!.trackingNo]), [["1", null], ["2", null]]);
+	assert.deepEqual((f.batch.writes as { params: ForecastParams }[]).map((w) => [w.params.sn, w.params.lines[0]!.trackingNo]), [["1", null], ["2", null]]);
 	assert.equal(paid.orders.get("1")!.step, "待预报");
 
 	const reported = [order("1", 1, { chanbossStatus: "已预报" }), order("2", 2, { chanbossStatus: "已预报" })];
 	const waiting = checkOrders(snap({ orders: reported, writes: [cartWrite()], purchases: [purchase(3)] }));
 	assert.match(waiting.orders.get("2")!.step, /待到齐/);
 	const arrived = checkOrders(snap({ orders: reported, writes: [cartWrite()], purchases: [purchase(3, { signed: true })] }));
-	assert.deepEqual(arrived.inbox.filter((i) => i.kind === "打包").map((i) => i.key), ["pack:1", "pack:2"]);
+	assert.deepEqual(arrived.reminders.filter((i) => i.kind === "打包").map((i) => i.key), ["pack:1", "pack:2"]);
 	assert.equal(arrived.orders.get("1")!.step, "待打包");
 });
 
@@ -85,37 +85,37 @@ test("寄到 chanboss：有了快递单号才预报，填快递单号", () => {
 	const shipped = checkOrders(snap({ writes: [cartWrite()], purchases: [purchase(3, { toChanboss: true, trackingNo: "YT123" })] }));
 	const f = shipped.todo.find((x) => x.kind === "预报");
 	assert.ok(f && f.kind === "预报");
-	assert.equal((f.propose.writes[0]!.params as ForecastParams).lines[0]!.trackingNo, "YT123");
+	assert.equal((f.batch.writes[0]!.params as ForecastParams).lines[0]!.trackingNo, "YT123");
 });
 
 test("快到期：写出当前步骤", () => {
 	const r = checkOrders(snap({ orders: [order("1", 1, { shipBy: hours(24) })] }));
-	const late = r.inbox.find((i) => i.key === "late:1");
+	const late = r.reminders.find((i) => i.key === "late:1");
 	assert.ok(late);
 	assert.match(late.title, /剩余 0 天，未打包（当前步骤：待加购/);
 });
 
-test("取消的订单：货还在购物车里，收件箱「取消」，购物车那一行不该买", () => {
+test("取消的订单：货还在购物车里，提醒「取消」，购物车那一行不该买", () => {
 	const r = checkOrders(snap({
 		orders: [order("1", 1, { platformStatus: "不成立", cancelledAt: hours(1) }), order("2", 2)],
 		writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }],
 	}));
-	const c = r.inbox.find((i) => i.key === "cancel:1");
+	const c = r.reminders.find((i) => i.key === "cancel:1");
 	assert.ok(c);
 	assert.match(c.title, /订单 1 已取消，购物车里还有 1 件待删除/);
 	assert.match(r.cart.get("A|O1|S1")!.shouldBuy, /不该买：订单 1 已取消/);
 	// 订单 2 还该买：付款那一行提醒先删掉不该买的
-	assert.match(r.inbox.find((i) => i.key === "pay:A")!.detail, /付款前先删除/);
+	assert.match(r.reminders.find((i) => i.key === "pay:A")!.detail, /付款前先删除/);
 });
 
-test("选货源：只有一个明显匹配的随加购一起批准；几个候选拿不准的进收件箱", () => {
+test("选货源：只有一个明显匹配的随加购一起定下；几个候选拿不准的提醒人", () => {
 	const sure = checkOrders(snap({ sources: [source({ sure: true })] }));
 	const t = sure.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.deepEqual((t.propose.writes[0]!.params as CartParams).newSources, ["I1"]);
+	assert.deepEqual((t.batch.writes[0]!.params as CartParams).newSources, ["I1"]);
 
 	const unsure = checkOrders(snap({ sources: [source(), source({ offerId: "O2" })] }));
-	assert.ok(unsure.inbox.find((i) => i.key === "source:I1"));
+	assert.ok(unsure.reminders.find((i) => i.key === "source:I1"));
 	assert.equal(unsure.todo.find((x) => x.kind === "加购"), undefined);
 	assert.match(unsure.orders.get("1")!.step, /缺货源/);
 
@@ -143,7 +143,7 @@ test("外部采购：采购单按货源的规格分给订单（先下单的先�
 	assert.equal(r.orders.get("1")!.step, "待预报");
 	const cart = r.todo.find((x) => x.kind === "加购");
 	assert.ok(cart && cart.kind === "加购");
-	assert.deepEqual((cart.propose.writes[0]!.params as CartParams).lines.map((l) => l.sn), ["2"]);
+	assert.deepEqual((cart.batch.writes[0]!.params as CartParams).lines.map((l) => l.sn), ["2"]);
 	assert.ok(r.covered.has("1:M1"));
 	assert.ok(!r.covered.has("2:M1"));
 });
@@ -152,46 +152,46 @@ test("x2 加了购、人又外部采购了：购物车那一行不该买", () =>
 	const early = { ...purchase(3), createdAt: hours(-20) };
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }], purchases: [early] }));
 	assert.match(r.cart.get("A|O1|S1")!.shouldBuy, /已有外部采购/);
-	assert.equal(r.inbox.find((i) => i.kind === "付款"), undefined);
+	assert.equal(r.reminders.find((i) => i.kind === "付款"), undefined);
 });
 
 test("买家取消：看货走到哪", () => {
 	const cancelled = (o: Partial<Order>) => order("1", 1, { platformStatus: "不成立", cancelledAt: hours(1), ...o });
-	const goods = (r: ReturnType<typeof checkOrders>) => r.inbox.find((i) => i.key === "cancel-goods:1")?.title ?? "";
+	const goods = (r: ReturnType<typeof checkOrders>) => r.reminders.find((i) => i.key === "cancel-goods:1")?.title ?? "";
 	assert.equal(goods(checkOrders(snap({ orders: [cancelled({})] }))), "", "还没买：不用做");
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({})], purchases: [{ ...purchase(1), status: "waitsellersend" }] }))), /申请退款/);
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({})], purchases: [{ ...purchase(1), status: "success" }] }))), /退回 1688 卖家/);
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已到齐" })] }))), /chanboss 仓库/);
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已打包" })] }))), /货已到台湾/);
-	// 只挂着预报：不进收件箱，agent 去取消预报
+	// 只挂着预报：不进提醒，agent 去取消预报
 	const r = checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已预报" })] }));
-	assert.equal(r.inbox.length, 0);
+	assert.equal(r.reminders.length, 0);
 	assert.ok(r.todo.find((t) => t.kind === "取消预报"));
 });
 
 test("快到期：不到 6 天、还没打包就给人", () => {
 	const r = checkOrders(snap({ orders: [order("1", 1, { shipBy: hours(24 * 5.9) }), order("2", 1, { shipBy: hours(24 * 6.5) })] }));
-	assert.deepEqual(r.inbox.filter((i) => i.kind === "快到期").map((i) => i.key), ["late:1"]);
+	assert.deepEqual(r.reminders.filter((i) => i.kind === "快到期").map((i) => i.key), ["late:1"]);
 });
 
-test("到货问题：人上报以后订单停在有到货问题，不提醒打包；收件箱一个问题一行", () => {
+test("到货问题：人上报以后订单停在有到货问题，不提醒打包；提醒一个问题一行", () => {
 	const reported = [order("1", 1, { chanbossStatus: "已预报" }), order("2", 2, { chanbossStatus: "已预报" })];
 	const r = checkOrders(snap({ orders: reported, writes: [cartWrite()], purchases: [purchase(3, { signed: true })], issues: [{ id: "9", sn: "1", item: "红T", kind: "损坏", qty: 1, note: null, resolution: null }] }));
 	assert.equal(r.orders.get("1")!.step, "有到货问题");
-	assert.deepEqual(r.inbox.filter((i) => i.kind === "打包").map((i) => i.key), ["pack:2"]);
-	assert.match(r.inbox.find((i) => i.key === "issue:9")!.title, /订单 1 红T 损坏 1 件/);
+	assert.deepEqual(r.reminders.filter((i) => i.kind === "打包").map((i) => i.key), ["pack:2"]);
+	assert.match(r.reminders.find((i) => i.key === "issue:9")!.title, /订单 1 红T 损坏 1 件/);
 });
 
 test("取消的货到了台湾：过了 30 天就不再提醒", () => {
 	const o = order("1", 1, { platformStatus: "不成立", chanbossStatus: "已打包", cancelledAt: hours(-24 * 31) });
-	assert.equal(checkOrders(snap({ orders: [o] })).inbox.find((i) => i.key === "cancel-goods:1"), undefined);
+	assert.equal(checkOrders(snap({ orders: [o] })).reminders.find((i) => i.key === "cancel-goods:1"), undefined);
 	const fresh = { ...o, cancelledAt: hours(-24 * 3) };
-	assert.ok(checkOrders(snap({ orders: [fresh] })).inbox.find((i) => i.key === "cancel-goods:1"));
+	assert.ok(checkOrders(snap({ orders: [fresh] })).reminders.find((i) => i.key === "cancel-goods:1"));
 });
 
 test("买家取消、货已经买了：退款进度 x2 读得到，退成了就不再提醒", () => {
 	const o = order("1", 1, { platformStatus: "不成立", cancelledAt: hours(1) });
-	const bought = (refund: any) => checkOrders(snap({ orders: [o], purchases: [{ ...purchase(1), status: "waitbuyerreceive", refund }] })).inbox.find((i) => i.key === "cancel-goods:1")?.title ?? "";
+	const bought = (refund: any) => checkOrders(snap({ orders: [o], purchases: [{ ...purchase(1), status: "waitbuyerreceive", refund }] })).reminders.find((i) => i.key === "cancel-goods:1")?.title ?? "";
 	assert.match(bought(null), /退回 1688 卖家/);
 	assert.match(bought({ status: "waitbuyersend", label: "退款协议达成，等待买家退货", kind: "退货退款" }), /退货退款进行中，退款协议达成，等待买家退货/);
 	assert.match(bought({ status: "refundclose", label: "退款关闭", kind: "退货退款" }), /退款已关闭（未退成）/);
@@ -201,42 +201,42 @@ test("买家取消、货已经买了：退款进度 x2 读得到，退成了就�
 test("1688 付了款，过了 48 小时还没发货：给人催", () => {
 	const waiting = { ...purchase(3), status: "waitsellersend", paidAt: hours(-50) };
 	const r = checkOrders(snap({ writes: [cartWrite()], purchases: [waiting] }));
-	assert.match(r.inbox.find((i) => i.key === "unshipped:P1")!.title, /未发货：1688 采购单 P1 付款已 52 小时仍未发货（订单 1、2）/);
-	assert.equal(checkOrders(snap({ purchases: [{ ...waiting, paidAt: hours(-10) }] })).inbox.find((i) => i.kind === "未发货"), undefined);
+	assert.match(r.reminders.find((i) => i.key === "unshipped:P1")!.title, /未发货：1688 采购单 P1 付款已 52 小时仍未发货（订单 1、2）/);
+	assert.equal(checkOrders(snap({ purchases: [{ ...waiting, paidAt: hours(-10) }] })).reminders.find((i) => i.kind === "未发货"), undefined);
 });
 
-test("一个商品一个货源：店里的规格按名字在货源的规格里配；配不上进收件箱「规格不匹配」，不加购", () => {
+test("一个商品一个货源：店里的规格按名字在货源的规格里配；配不上进提醒「规格不匹配」，不加购", () => {
 	const r = checkOrders(snap({ sources: [source({ chosen: true, skus: [sku("S9", "蓝色 XL")] })] }));
 	assert.equal(r.orders.get("1")!.step, "规格不匹配");
-	assert.ok(r.inbox.find((i) => i.key === "sku:M1"));
+	assert.ok(r.reminders.find((i) => i.key === "sku:M1"));
 	assert.equal(r.todo.find((x) => x.kind === "加购"), undefined);
 	// 配上了：加购用配上的货源规格
 	const ok = checkOrders(snap());
 	const t = ok.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.equal((t.propose.writes[0]!.params as CartParams).skuId, "S1");
+	assert.equal((t.batch.writes[0]!.params as CartParams).skuId, "S1");
 });
 
 test("取消的订单只分到取消以前下的采购单", () => {
 	const o = order("1", 1, { platformStatus: "不成立", createdAt: hours(-48), cancelledAt: hours(-24) });
 	const after = { ...purchase(1), createdAt: hours(-10), status: "waitbuyerreceive" };
-	assert.equal(checkOrders(snap({ orders: [o], purchases: [after] })).inbox.find((i) => i.key === "cancel-goods:1"), undefined);
+	assert.equal(checkOrders(snap({ orders: [o], purchases: [after] })).reminders.find((i) => i.key === "cancel-goods:1"), undefined);
 	const before = { ...after, createdAt: hours(-30) };
-	assert.ok(checkOrders(snap({ orders: [o], purchases: [before] })).inbox.find((i) => i.key === "cancel-goods:1"));
+	assert.ok(checkOrders(snap({ orders: [o], purchases: [before] })).reminders.find((i) => i.key === "cancel-goods:1"));
 });
 
-test("规格不匹配：收件箱写出照抄的一行和最像的几个；人写了规格例外就照它加购", () => {
+test("规格不匹配：提醒写出照抄的一行和最像的几个；人写了规格例外就照它加购", () => {
 	const skus = [sku("S8", "大红 L 加长"), sku("S9", "蓝色 XL")];
 	const r = checkOrders(snap({ sources: [source({ chosen: true, skus })] }));
-	const detail = r.inbox.find((i) => i.key === "sku:M1")!.detail;
+	const detail = r.reminders.find((i) => i.key === "sku:M1")!.detail;
 	assert.match(detail, /\n红色 L = .+\n/);
 	assert.match(detail, /· 大红 L 加长/);
 	const ok = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 大红 L 加长" })] }));
-	assert.equal(ok.inbox.find((i) => i.kind === "规格不匹配"), undefined);
+	assert.equal(ok.reminders.find((i) => i.kind === "规格不匹配"), undefined);
 	const t = ok.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.equal((t.propose.writes[0]!.params as CartParams).skuId, "S8");
+	assert.equal((t.batch.writes[0]!.params as CartParams).skuId, "S8");
 	// 写的那个货源里没有了（卖家改了规格名）：还是规格不匹配，写出原因
 	const gone = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 粉色 L" })] }));
-	assert.match(gone.inbox.find((i) => i.key === "sku:M1")!.detail, /规格例外中的「粉色 L」在货源「红T 货源」里已不存在/);
+	assert.match(gone.reminders.find((i) => i.key === "sku:M1")!.detail, /规格例外中的「粉色 L」在货源「红T 货源」里已不存在/);
 });
