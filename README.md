@@ -4,13 +4,14 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 
 只为运营真实的需求做事，抽象是这些需求用到的东西的最大公约数。现在做的两件事：订单（Shopee 上有人下单，要在出货期限前从 1688 买到对的货、预报给 chanboss、打包，不重买、不漏买）和上品（把 1688 的货源做成店里在售的商品）。
 
-## 四个概念
+## 五个概念
 
 | 概念 | 是什么 | 例 |
 |---|---|---|
 | **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `src/loop/writes.ts`，只经 `x2 do`、`x2 listing publish` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
-| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、到货问题、商品稿、已处理的提醒）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在网页上（`x2 web`）看和填 | 写入、货源、订单、商品稿 |
+| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、到货问题、商品稿、已处理的提醒）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在会话里看和填 | 写入、货源、订单、商品稿 |
 | **循环** | 现读站点 → 检查（算出要人做的和 agent 要做的）→ agent 准备写入给人看、人做和同意 → `x2 do` 执行、读回来 → 下一轮。做完 = `x2 status` 里没有要做的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 do`、`x2 verify` |
+| **会话** | 网页（`x2 web`）的侧栏是会话列表。agent 开会话，往里放组件：generative（markdown、table、chart、images）是快照，进中间的流，只给人看；interactive（datagrid）是引用（`web/tables.ts` 的表和视图），数据现读，人改的格写回库，进右边的 tab | `x2 session create`、`x2 session push` |
 | **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步等人 | `.claude/skills/orders/SKILL.md`、`.claude/skills/listing/SKILL.md` |
 
 人和 agent 用同一套命令：`x2 <命令>`，加 `--json` 给 agent 读。改站点上的东西（加购、预报、建商品、上架）只有一条路：agent 给人看，人在终端里同意了（加购、预报：`x2 do`；建商品、上架：`x2 listing publish`），x2 先记意图、提交一次、再读回来。agent 开起来做什么在 [AGENTS.md](AGENTS.md)。
@@ -25,7 +26,9 @@ x2 do < 一批.json               # 人在终端里同意了：执行一批写�
 x2 verify                      # 读回来核清结果未知的写入
 x2 resolve 12 已核对            # 人到站点上看过结果未知的写入（或 被拒）
 x2 handled cancel-goods:<订单号>  # x2 看不到结果的事，人说做完了：不再提醒
-x2 web                         # 开网页：商品稿（审稿、删图）、订单、货源、写入、设置（默认 127.0.0.1:5170；--host 0.0.0.0 给同一个网络里别的电脑）
+x2 session create 今天的商品稿    # 开会话：回编号和网页地址；x2 session list | show <会话> | delete <会话>
+x2 session push 3 < 组件.json    # 往会话里放组件：{ component, props } 或几个组成的数组；x2 session components 看有哪些、参数
+x2 web                         # 开网页：侧栏是会话，中间是 generative 组件，右边是 interactive 组件（默认 127.0.0.1:5170；--host 0.0.0.0 给同一个网络里别的电脑）
 ```
 
 上品（[docs/listing.md](docs/listing.md)）：
@@ -48,7 +51,7 @@ x2 rule add "<规矩>" --why …              # 选品规矩（所有策略共�
 x2 listing add cheeroutdoor <1688 链接> --strategy 搜索缺口 --why … --evidence …   # 按策略选的：记下选品理由、依据、当时的策略和规矩
 ```
 
-建商品、上架是写入：人在网页「商品稿」里看过、在终端里说批准 → `x2 listing publish`（交给 x2 以后内容又变了就不建）。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
+建商品、上架是写入：人在会话里看过商品稿的审稿视图、在终端里说批准 → `x2 listing publish`（交给 x2 以后内容又变了就不建）。外部服务的 key（Gemini、象寄）在 `.env`；同时问 Gemini 几个、取几张图：`X2_GEMINI_CONCURRENCY`（默认 8）、`X2_DOWNLOAD_CONCURRENCY`（默认 6）。
 
 两家店各开一个浏览器（Chrome 的不同用户），1688、知虾、chanboss 登录在其中一个里。x2 按登录选浏览器（每个进程现读一次，不存库）：Shopee 按店，1688、知虾、chanboss 用登录着的那个；要强制指定，设 `X2_BROWSER`（浏览器在 cdp-relay 里的 id）。几个 x2 同时跑：同一个浏览器的同一个站点一次只让一个进程用，别的排队（stderr 写着在等谁）；1688 的页面两次加载之间隔 3 秒，跳了滑块验证就停下（退出码 3，说在哪个浏览器里拉）。
 
@@ -113,7 +116,7 @@ x2/
 ├ web/                    网页：server.ts 服务；tables.ts 表给人看哪些列、人能改哪几格；sessions.ts 会话和组件；ui/ 界面（React、shadcn、Base UI），x2 web 打包进 web/ui/dist
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
 ├ biome.json              lint 和格式（Biome）；.githooks/ 提交前跑 pnpm check；.github/workflows/ 推送后 CI 跑 pnpm check、pnpm test
-├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）；网页的（React、Kumo、Vite、Tailwind）是 devDependencies
+├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）；网页的（React、shadcn（Base UI）、Tailwind、Recharts、Vite）是 devDependencies
 └ tsconfig.json           只做类型检查（TypeScript 7，严格）：Node 24 直接运行 .ts
 ```
 
