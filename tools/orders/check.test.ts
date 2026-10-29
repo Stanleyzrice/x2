@@ -1,8 +1,8 @@
 // 订单的检查（纯函数）：当前步骤、提醒人的、agent 要做的一批加购和预报；采购单分给订单
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { allocate } from "./allocate.ts";
 import { checkOrders, type Order, type Snapshot, type Source } from "./check.ts";
-import { reconcile } from "./reconcile.ts";
 
 const T0 = new Date("2026-10-09T02:00:00Z");
 const hours = (h: number) => new Date(T0.getTime() + h * 3600_000);
@@ -96,7 +96,7 @@ test("采购单分给订单：采购单的件数按加购的先后分给订单�
 			{ sn: "2", modelId: "M1", qty: 2 },
 		],
 	};
-	const all = reconcile([w], [purchase(3, { signed: true })], []);
+	const all = allocate([w], [purchase(3, { signed: true })], []);
 	assert.deepEqual(
 		all.map((l) => [l.sn, l.state]),
 		[
@@ -104,7 +104,7 @@ test("采购单分给订单：采购单的件数按加购的先后分给订单�
 			["2", "已付款"],
 		],
 	);
-	const part = reconcile([w], [purchase(2)], [{ account: "A", offerId: "O1", skuId: "S1", qty: 1 }]);
+	const part = allocate([w], [purchase(2)], [{ account: "A", offerId: "O1", skuId: "S1", qty: 1 }]);
 	assert.deepEqual(
 		part.map((l) => [l.sn, l.state, l.paidQty, l.cartQty]),
 		[
@@ -113,11 +113,11 @@ test("采购单分给订单：采购单的件数按加购的先后分给订单�
 		],
 	);
 	assert.deepEqual(
-		reconcile([w], [], []).map((l) => l.state),
+		allocate([w], [], []).map((l) => l.state),
 		["不见了", "不见了"],
 	);
 	assert.deepEqual(
-		reconcile([w], [{ ...purchase(3), createdAt: hours(-48) }], []).map((l) => l.state),
+		allocate([w], [{ ...purchase(3), createdAt: hours(-48) }], []).map((l) => l.state),
 		["不见了", "不见了"],
 	);
 });

@@ -9,7 +9,7 @@ import { challengeIn, inAccount, logins } from "../../platform/browser/accounts.
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import type { Read } from "../../platform/tool.ts";
-import type { CartLine, Purchase } from "./reconcile.ts";
+import type { CartLine, Purchase } from "./allocate.ts";
 import { refreshChosen } from "./source.ts";
 
 /** chanboss 状态：站上的代码 → chanboss 的词。paid、arrive 是推断的（2026-10-09 没有这两种状态的订单可核对） */

@@ -54,7 +54,7 @@ const SKEW_MS = 3600_000;
 const keyOf = (account: string, offerId: string, skuId: string) => `${account}|${offerId}|${skuId}`;
 type Slot = { p: Purchase; left: number };
 
-export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: CartLine[], needs: Need[] = []): Line[] {
+export function allocate(writes: CartWrite[], purchases: Purchase[], cart: CartLine[], needs: Need[] = []): Line[] {
 	const pool = new Map<string, Slot[]>();
 	for (const p of purchases) {
 		if (closed(p) || !p.offerSkuId) continue;

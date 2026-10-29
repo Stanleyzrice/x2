@@ -3,7 +3,7 @@
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
 
 import type { Reminder } from "../../platform/tool.ts";
-import { type CartLine, type CartWrite, type Line, type Need, type Purchase, reconcile } from "./reconcile.ts";
+import { allocate, type CartLine, type CartWrite, type Line, type Need, type Purchase } from "./allocate.ts";
 import { exceptionFor, matchSku, rank as nearest } from "./similar.ts";
 
 export type Item = { itemId: string; modelId: string; chanbossModelId: string; name: string; spec: string; qty: number; image: string };
@@ -132,7 +132,7 @@ export function checkOrders(s: Snapshot): Result {
 				: [];
 		}),
 	);
-	const lines = reconcile(cartWrites, s.purchases, s.cart, needs);
+	const lines = allocate(cartWrites, s.purchases, s.cart, needs);
 	const rank = { 已付款: 0, 在购物车: 1, 不见了: 2 } as const;
 	const lineOf = new Map<string, Line>();
 	for (const l of lines) {
