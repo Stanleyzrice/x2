@@ -881,6 +881,11 @@ test("会话：push 照组件的参数校验，说哪一格不对；interactive 
 	const a = await push(db, s.id, { component: "datagrid", props: ref });
 	const b = await push(db, s.id, { component: "datagrid", props: { ...ref, title: "ni1206 的商品稿" } });
 	assert.deepEqual([a.replaced, b.replaced, b.id], [false, true, a.id]);
+	// 筛几列：键的先后、一个值写不写成数组都算同一个引用（jsonb 会重排键）
+	const c = await push(db, s.id, { component: "datagrid", props: { table: "listings", filter: { step: "待批准", shop: ["ni1206"] } } });
+	const d = await push(db, s.id, { component: "datagrid", props: { table: "listings", filter: { shop: "ni1206", step: ["待批准"] } } });
+	assert.deepEqual([c.replaced, d.replaced, d.id], [false, true, c.id]);
+	await db`delete from session_items where id = ${c.id}`;
 	const shown = await showSession(db, s.id);
 	assert.deepEqual(
 		shown.items.map((i) => i.component),

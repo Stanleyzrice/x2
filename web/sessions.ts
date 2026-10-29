@@ -150,10 +150,7 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 		if (COMPONENTS[component].kind === "interactive") {
 			const ref = props as Props<"datagrid">;
 			const same = (await tx`select id, props from session_items where session_id = ${sid} and component = ${component}`).find(
-				(r) =>
-					r.props.table === ref.table &&
-					(r.props.view ?? null) === (ref.view ?? null) &&
-					JSON.stringify(r.props.filter ?? {}) === JSON.stringify(ref.filter ?? {}),
+				(r) => refKey(r.props) === refKey(ref),
 			);
 			if (same) {
 				await tx`update session_items set props = ${tx.json(props as any)}, created_at = now() where id = ${same.id}`;
@@ -170,6 +167,16 @@ export async function closeItem(sql: Sql, item: string): Promise<void> {
 	if (!/^\d+$/.test(item)) throw new Usage(`没有这个组件：${item}`);
 	await sql`delete from session_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactive"))}`;
 }
+
+/** 一个 datagrid 引用的样子：表、视图、按列名排好的筛选（jsonb 存进去会重排对象的键，不能直接比 JSON） */
+const refKey = (p: Props<"datagrid">) =>
+	JSON.stringify([
+		p.table,
+		p.view ?? null,
+		Object.entries(p.filter ?? {})
+			.map(([k, v]) => [k, Array.isArray(v) ? v : [v]] as const)
+			.sort(([a], [b]) => a.localeCompare(b)),
+	]);
 
 function sessionId(id: string): string {
 	if (!/^\d+$/.test(id)) throw new Usage(`会话是数字编号：${id}`);
