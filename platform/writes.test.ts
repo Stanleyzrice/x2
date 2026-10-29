@@ -1,7 +1,7 @@
 // 写入引擎的判断：没核清的同一个对象不再做；结果未知停下这一批、不重发；被拒的记下原因，同一个 key 再交加次数
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { admit, failed, gate, held, LOOK, type Stuck, settle, stuck } from "./writes.ts";
+import { admit, failed, gate, held, LOOK, orphaned, type Stuck, settle, stuck } from "./writes.ts";
 
 const none = (): Stuck => ({ batches: new Set(), targets: new Set() });
 const w = { op: "试写", batch: "1", target: "t:1" };
@@ -67,4 +67,17 @@ test("写入：记意图之前再看库里（别的批、别的进程的也算�
 	assert.equal(held(me, [row("3", "k:1", "t:2", "结果未知")]), "同一个对象有没核清的写入 #3：先核清再做");
 	assert.equal(held(me, [row("3", "k:1", "t:1", "已核对")]), "重复：写入 #3 已经做过");
 	assert.equal(held(me, [row("3", "k:2", "t:1", "已核对")]), null);
+});
+
+test("写入：交了以后进程退出了（Ctrl-C、kill）留下的待执行，这台电脑上下一个 x2 清掉；进程还在的、自己的不动", () => {
+	const rows = [
+		{ id: "1", pid: 100 },
+		{ id: "2", pid: 200 },
+		{ id: "3", pid: null },
+		{ id: "4", pid: 300 },
+	];
+	assert.deepEqual(
+		orphaned(rows, 300, (pid) => pid === 200),
+		["1", "3"],
+	);
 });

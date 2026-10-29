@@ -11,6 +11,7 @@
 // 不花钱、能重来的写不经它（业务工具直接调连接器的写）
 import type postgres from "postgres";
 import { z } from "zod";
+import { alive } from "./browser/lock.ts";
 import { host, type Json, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
 import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
@@ -127,6 +128,12 @@ export function failed(now: string | undefined): "未执行" | "结果未知" | 
 	return null;
 }
 
+/** 这台电脑上交了以后进程没执行完就退出了（Ctrl-C、kill、断电）的待执行：没提交过，记成未执行。不清的话同一个 key 一直「还没核清」，再也交不了。
+ * 进程还在的不动（可能正要执行）；没记进程号的（加这一列以前交的）算退出了。别的电脑交的看不出，等那台的 x2 清 */
+export function orphaned(rows: { id: string; pid: number | null }[], self: number, isAlive: (pid: number) => boolean): string[] {
+	return rows.filter((r) => r.pid === null || (r.pid !== self && !isAlive(r.pid))).map((r) => r.id);
+}
+
 /** 这个状态要停下同一批、同一个对象上的写入 */
 export const stuck = (status: string) => status === "结果未知" || status === "不一致";
 
@@ -146,7 +153,7 @@ export async function addWrites(tx: postgres.TransactionSql, rows: NewRow[]): Pr
 		const a = admit(r.key, same);
 		if ("busy" in a) throw new Usage(`${r.display}：写入 #${a.busy} 还没核清（x2 verify），不再做新的`);
 		const key = a.key;
-		await tx`insert into writes (batch, op, target, params, display, key, status, host) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as Json)}, ${r.display}, ${key}, '待执行', ${host})`;
+		await tx`insert into writes (batch, op, target, params, display, key, status, host, pid) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as Json)}, ${r.display}, ${key}, '待执行', ${host}, ${process.pid})`;
 	}
 	return batch;
 }
@@ -176,6 +183,14 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 	const ran: Ran[] = [];
 	const halted: Stuck = { batches: new Set(), targets: new Set() };
 	let blocked: string | null = null;
+
+	const left = await sql<{ id: string; pid: number | null }[]>`select id::text, pid from writes where status = '待执行' and host = ${host}`;
+	const gone = orphaned(left, process.pid, alive);
+	if (gone.length) {
+		const cleared = await sql<Ran[]>`update writes set status = '未执行', error = '交了以后进程没执行就退出了', finished_at = now()
+			where id in ${sql(gone)} and status = '待执行' returning id::text, batch::text, op, display, status`;
+		for (const w of cleared) ran.push({ ...w, why: "交了以后进程没执行就退出了：没提交过，要做再交一次" });
+	}
 
 	const unsure =
 		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') order by writes.id`) as unknown as Row[];
