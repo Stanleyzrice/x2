@@ -1,0 +1,9 @@
+{
+	"tradeModel": { "offerId": "720000000001", "unit": "件", "beginAmount": "2", "minPrice": "3.50", "canBookedAmount": "120" },
+	"offerDetail": {
+		"subject": "登山扣磁铁挂钩",
+		"mainImageList": [{ "fullPathImageURI": "https://cbu01.alicdn.com/img/ibank/single-1.jpg" }]
+	},
+	"freightInfo": { "totalCost": 5 },
+	"tags": { "onePsale": false, "freeShipping": true, "ship48h": false, "deliveryDays": null }
+}

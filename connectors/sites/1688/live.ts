@@ -1,13 +1,14 @@
 // 对真站点跑一遍 1688 的读操作（手动跑：node connectors/sites/1688/live.ts），看回来的形状
 import * as a from "./api.ts";
 
-const run = async (name: string, f: () => Promise<any>) => {
+const run = async <T>(name: string, f: () => Promise<T>): Promise<T | undefined> => {
 	try {
 		const v = await f();
 		console.log("OK ", name, "→", JSON.stringify(v, (_k, x) => (typeof x === "string" && x.length > 40 ? `${x.slice(0, 40)}…` : x)).slice(0, 400));
 		return v;
 	} catch (e) {
 		console.log("ERR", name, (e as Error).message);
+		return undefined;
 	}
 };
 await run("account", async () => {
@@ -32,9 +33,9 @@ const bo = await run("buyerOrders", async () => {
 		_rows: b.rows,
 	};
 });
-const withNo = (bo?._rows ?? []).filter((o: any) => o.items.some((i: any) => i.trackingNo)).slice(0, 2);
+const withNo = (bo?._rows ?? []).filter((o) => o.items.some((i) => i.trackingNo)).slice(0, 2);
 await run("traces", async () =>
-	(await a.traces(withNo.map((o: any) => ({ orderId: o.orderId, trackingNos: o.items.map((i: any) => i.trackingNo).filter(Boolean) })))).map((t) => ({
+	(await a.traces(withNo.map((o) => ({ orderId: o.orderId, trackingNos: o.items.map((i) => i.trackingNo).filter(Boolean) })))).map((t) => ({
 		n: t.traces.length,
 		status: t.traces[0]?.status,
 	})),

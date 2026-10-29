@@ -4,8 +4,10 @@
 // 2026-10-10 核对过：mainImageList 是 { fullPathImageURI }；detailDescription.freightInfo.skuWeight 按 skuId 记运费重量（kg），没有的用 unitWeight；
 // 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee；
 // freightInfo.totalCost 是寄到账号默认地址（recieveAddress）买 1 件的运费（页面上的「运费¥8起」）
+import { z } from "zod";
 import { challenge, page } from "../../../platform/browser/browser.ts";
 import { Challenge, NeedsHuman } from "../../../platform/errors.ts";
+import { idText, numeric, reply } from "../../../platform/reply.ts";
 
 export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
 export type Prop = { name: string; values: { name: string; image: string }[] };
@@ -33,102 +35,164 @@ export function offerIdOf(linkOrId: string): string | null {
 
 export class Gone extends Error {}
 
-export async function offer(offerId: string): Promise<Offer> {
+const image = z.union([z.looseObject({ fullPathImageURI: z.string().nullish() }), z.string()]);
+/** 商品页上要用的几块（页面里只取这几块原样带回来，在这边解析）：model 的 tradeModel、offerDetail、detailDescription.freightInfo，data 的主图和详情地址 */
+export const offerPage = z.object({
+	tradeModel: z.looseObject({
+		offerId: idText,
+		unit: z.string().nullish(),
+		beginAmount: numeric.nullish(),
+		minPrice: numeric.nullish(),
+		canBookedAmount: numeric.nullish(),
+		skuMap: z
+			.array(
+				z.looseObject({
+					skuId: idText,
+					specId: z.string().nullish(),
+					specAttrs: z.string().nullish(),
+					price: numeric.nullish(),
+					discountPrice: numeric.nullish(),
+					canBookCount: numeric.nullish(),
+				}),
+			)
+			.nullish(),
+	}),
+	offerDetail: z.looseObject({
+		subject: z.string(),
+		detailUrl: z.string().nullish(),
+		mainImageList: z.array(image).nullish(),
+		skuProps: z
+			.array(z.looseObject({ prop: z.string().nullish(), value: z.array(z.looseObject({ name: z.string(), imageUrl: z.string().nullish() })).nullish() }))
+			.nullish(),
+	}),
+	freightInfo: z
+		.looseObject({
+			skuWeight: z.record(z.string(), numeric.nullish()).nullish(),
+			unitWeight: numeric.nullish(),
+			totalCost: numeric.nullish(),
+			recieveAddress: z.string().nullish(),
+		})
+		.nullish(),
+	gallery: z.array(z.unknown()).nullish(),
+	descriptionUrl: z.string().nullish(),
+	tags: z.object({ onePsale: z.boolean(), freeShipping: z.boolean(), ship48h: z.boolean(), deliveryDays: z.number().nullable() }),
+});
+export type OfferPage = z.input<typeof offerPage>;
+
+const https = (u: unknown) => (typeof u === "string" ? u.replace(/^\/\//, "https://") : "");
+const unescapeHtml = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+
+/** 商品页上的几块 → Offer（纯函数） */
+export function offerOf(raw: unknown, offerId: string): Offer {
+	const { tradeModel: t, offerDetail: d, freightInfo, gallery, descriptionUrl, tags } = reply(offerPage, raw, `1688 商品 ${offerId}`);
 	const url = `https://detail.1688.com/offer/${offerId}.html`;
+	const freight = freightInfo ?? {};
+	// 规格自己的重量，没有的用整个商品的（unitWeight）；都没有是 null。kg，照 1688 填的原样回
+	const weightOf = (skuId: string) => Number(freight.skuWeight?.[skuId]) || Number(freight.unitWeight) || null;
+	const images = [
+		...new Set(
+			[...(d.mainImageList ?? []).map((i) => https(typeof i === "string" ? i : (i.fullPathImageURI ?? i))), ...(gallery ?? []).map(https)].filter(Boolean),
+		),
+	];
+	const cost = Number(freight.totalCost);
+	const freightOut = {
+		costRmb: tags.freeShipping ? 0 : Number.isFinite(cost) && freight.totalCost !== undefined && freight.totalCost !== null ? cost : null,
+		to: String(freight.recieveAddress ?? ""),
+	};
+	const skuMap = t.skuMap ?? [];
+	const props = skuMap.length
+		? (d.skuProps ?? []).map((p) => ({
+				name: p.prop ?? "",
+				values: (p.value ?? []).map((v) => ({ name: unescapeHtml(v.name), image: v.imageUrl ?? "" })),
+			}))
+		: [];
+	const valueImages = new Map<string, string>((props[0]?.values ?? []).map((v) => [v.name, https(v.image)]));
+	const first = d.mainImageList?.[0];
+	const skus: Sku[] = skuMap.length
+		? skuMap.map((s) => {
+				const attrs = unescapeHtml(s.specAttrs ?? "").split(">");
+				return {
+					skuId: s.skuId,
+					specId: s.specId ?? "",
+					name: attrs.join(" / "),
+					attrs,
+					price: Number(s.price || s.discountPrice || t.minPrice),
+					stock: Number(s.canBookCount ?? 0),
+					image: valueImages.get(attrs[0]!) ?? "",
+					weightKg: weightOf(s.skuId),
+				};
+			})
+		: [
+				{
+					skuId: t.offerId,
+					specId: "",
+					name: "",
+					attrs: [],
+					price: Number(t.minPrice),
+					stock: Number(t.canBookedAmount ?? 0),
+					image: (typeof first === "object" ? first.fullPathImageURI : undefined) ?? "",
+					weightKg: weightOf(t.offerId),
+				},
+			];
+	return {
+		offerId: t.offerId,
+		url,
+		title: d.subject,
+		image: images[0] ?? "",
+		unit: t.unit ?? "",
+		minQty: Number(t.beginAmount ?? 1),
+		props,
+		skus,
+		images,
+		detailUrl: https(d.detailUrl ?? descriptionUrl) || null,
+		tags,
+		freight: freightOut,
+	};
+}
+
+type OfferWindow = {
+	context?: {
+		result?: { global?: { globalData?: { model?: Record<string, unknown> & { detailDescription?: { freightInfo?: unknown } } } }; data?: OfferData };
+	};
+};
+type OfferData = { gallery?: { fields?: { mainImage?: unknown[] } }; description?: { fields?: { detailUrl?: string } } };
+
+export async function offer(offerId: string): Promise<Offer> {
 	const p = await page("https://detail.1688.com");
-	await p.goto(url);
-	const got = await p.run((url: string) => {
-		const m = (window as any).context?.result?.global?.globalData?.model;
+	await p.goto(`https://detail.1688.com/offer/${offerId}.html`);
+	// 页面里只取要用的几块原样带回来（解析在 offerOf）；包邮、48 小时发货这几个标记是在整个 model 的 JSON 和页面的字里找的，在页面里算
+	const got = await p.run(() => {
+		const ctx = (window as unknown as OfferWindow).context?.result;
+		const m = ctx?.global?.globalData?.model;
 		if (!m?.tradeModel)
 			return location.href.includes("login") || location.href.includes("punish")
 				? { error: "1688 要登录或要过滑块：在浏览器里处理一下" }
 				: { gone: true as const };
-		const t = m.tradeModel,
-			d = m.offerDetail;
-		const data = (window as any).context?.result?.data;
-		const https = (u: unknown) => (typeof u === "string" ? u.replace(/^\/\//, "https://") : "");
-		const unescapeHtml = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-		const freight = m.detailDescription?.freightInfo ?? {};
-		// 规格自己的重量，没有的用整个商品的（unitWeight）；都没有是 null。kg，照 1688 填的原样回
-		const weightOf = (skuId: unknown) => Number(freight.skuWeight?.[String(skuId)]) || Number(freight.unitWeight) || null;
 		let json = "";
 		try {
 			json = JSON.stringify(m);
 		} catch {}
 		const text = String(document.body?.innerText ?? "");
 		const days = /"deliveryLimit":(\d+)/.exec(json);
-		const tags = {
-			onePsale: /"isOnePsale":true/.test(json) || /一件代发/.test(json + text),
-			freeShipping: /"freeDeliverFee":true/.test(json),
-			ship48h: (days !== null && Number(days[1]) <= 2) || /"serviceName":"(?:24|48)小时发货"/.test(json),
-			deliveryDays: days ? Number(days[1]) : null,
-		};
-		const images = [
-			...new Set(
-				[
-					...((d.mainImageList ?? []) as any[]).map((i) => https(i?.fullPathImageURI ?? i)),
-					...((data?.gallery?.fields?.mainImage ?? []) as unknown[]).map(https),
-				].filter(Boolean),
-			),
-		];
-		const detailUrl = https(d.detailUrl ?? data?.description?.fields?.detailUrl) || null;
-		const cost = Number(freight.totalCost);
-		const freightOut = {
-			costRmb: tags.freeShipping ? 0 : Number.isFinite(cost) && freight.totalCost !== undefined && freight.totalCost !== null ? cost : null,
-			to: String(freight.recieveAddress ?? ""),
-		};
-		const hasSkus = (t.skuMap ?? []).length > 0;
-		const props = hasSkus
-			? ((d.skuProps ?? []) as { prop?: string; value?: { name: string; imageUrl?: string }[] }[]).map((p) => ({
-					name: p.prop ?? "",
-					values: (p.value ?? []).map((v) => ({ name: unescapeHtml(v.name), image: v.imageUrl ?? "" })),
-				}))
-			: [];
-		const valueImages = new Map<string, string>((props[0]?.values ?? []).map((v) => [v.name, https(v.image)]));
-		const skus = hasSkus
-			? (t.skuMap as any[]).map((s) => {
-					const attrs = unescapeHtml(s.specAttrs ?? "").split(">");
-					return {
-						skuId: String(s.skuId),
-						specId: s.specId ?? "",
-						name: attrs.join(" / "),
-						attrs,
-						price: Number(s.price || s.discountPrice || t.minPrice),
-						stock: Number(s.canBookCount ?? 0),
-						image: valueImages.get(attrs[0]!) ?? "",
-						weightKg: weightOf(s.skuId),
-					};
-				})
-			: [
-					{
-						skuId: String(t.offerId),
-						specId: "",
-						name: "",
-						attrs: [],
-						price: Number(t.minPrice),
-						stock: Number(t.canBookedAmount ?? 0),
-						image: d.mainImageList?.[0]?.fullPathImageURI ?? "",
-						weightKg: weightOf(t.offerId),
-					},
-				];
 		return {
-			offerId: String(t.offerId),
-			url,
-			title: d.subject,
-			image: images[0] ?? "",
-			unit: t.unit ?? "",
-			minQty: Number(t.beginAmount ?? 1),
-			props,
-			skus,
-			images,
-			detailUrl,
-			tags,
-			freight: freightOut,
+			page: {
+				tradeModel: m.tradeModel,
+				offerDetail: m.offerDetail,
+				freightInfo: m.detailDescription?.freightInfo,
+				gallery: ctx?.data?.gallery?.fields?.mainImage,
+				descriptionUrl: ctx?.data?.description?.fields?.detailUrl,
+				tags: {
+					onePsale: /"isOnePsale":true/.test(json) || /一件代发/.test(json + text),
+					freeShipping: /"freeDeliverFee":true/.test(json),
+					ship48h: (days !== null && Number(days[1]) <= 2) || /"serviceName":"(?:24|48)小时发货"/.test(json),
+					deliveryDays: days ? Number(days[1]) : null,
+				},
+			},
 		};
-	}, url);
+	});
 	if ("error" in got) throw new NeedsHuman(`读 1688 商品 ${offerId}：${got.error}`);
 	if ("gone" in got) throw new Gone(`1688 商品 ${offerId} 不存在或已下架`);
-	return got;
+	return offerOf(got.page, offerId);
 }
 
 /** 详情图：detailUrl 回的是 `var offer_details={"content":"<html>"};`（浏览器跨域拿不到，在这边取）。按出现的顺序取 <img src>，去重，最多 40 张 */
@@ -152,9 +216,10 @@ export async function detailImages(detailUrl: string): Promise<string[]> {
 
 // 购物车、加购、采购单、物流都在页面里用页面自己的 lib.mtop.request 发（签名由它算）。依据 lilto 的 packages/presets/src/1688.ts（2026-09-24 读的 mtop.js 源码）：
 // 站点回 SUCCESS 时 resolve；站点回别的 ret 时 reject 整个响应（带 api）；库自己超时、解析失败时 reject 的对象没有 api，这时请求可能已经到了站点
+type MtopWindow = { lib?: { mtop?: { request: (o: Record<string, unknown>) => Promise<{ data: unknown }> } } };
 
 type Mtop =
-	| { kind: "ok"; data: any }
+	| { kind: "ok"; data: unknown }
 	| { kind: "site"; ret: string }
 	| { kind: "unknown"; ret: string }
 	| { kind: "blocked"; ret: string; challenge?: boolean };
@@ -163,7 +228,7 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 	const u = new URL(url);
 	const p = await page(u.origin);
 	try {
-		if (!(await p.run((path: string) => location.pathname === path && Boolean((window as any).lib?.mtop), u.pathname))) await p.goto(url);
+		if (!(await p.run((path: string) => location.pathname === path && Boolean((window as unknown as MtopWindow).lib?.mtop), u.pathname))) await p.goto(url);
 	} catch (e) {
 		if (e instanceof Challenge) return { kind: "blocked", ret: e.message, challenge: true };
 		throw e;
@@ -171,13 +236,14 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 	const r = await p.run(
 		async (api: string, data: Record<string, string>) => {
 			if (/login|passport|punish/.test(location.href)) return { kind: "blocked" as const, ret: "1688 要登录：在浏览器里登录 1688" };
-			const lib = (window as any).lib;
+			const lib = (window as unknown as MtopWindow).lib;
 			if (!lib?.mtop) return { kind: "site" as const, ret: "页面没加载好（没有 lib.mtop），没有发请求" };
 			try {
 				const res = await lib.mtop.request({ api, v: "1.0", type: "post", dataType: "json", H5Request: true, timeout: 20000, data });
 				return { kind: "ok" as const, data: res.data };
-			} catch (e: any) {
-				const ret = ((e?.ret ?? []) as string[]).join("，") || String(e);
+			} catch (err) {
+				const e = err as { ret?: string[]; api?: string } | null;
+				const ret = (e?.ret ?? []).join("，") || String(err);
 				if (!e?.api) return { kind: "unknown" as const, ret };
 				// 网关要过滑块（阿里系风控）：站点没受理
 				if (/FAIL_SYS_USER_VALIDATE|RGV587_ERROR/.test(ret)) return { kind: "challenge" as const, ret };
@@ -191,7 +257,8 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser, "1688")).message, challenge: true } : r;
 }
 
-async function read(url: string, api: string, data: Record<string, string>, what: string): Promise<any> {
+/** 发一个读的 mtop 请求，回原样的 data（各接口的 …Of 解析） */
+async function read(url: string, api: string, data: Record<string, string>, what: string): Promise<unknown> {
 	const r = await mtop(url, api, data);
 	if (r.kind === "blocked" && r.challenge) throw new Challenge(r.ret);
 	if (r.kind === "blocked") throw new NeedsHuman(`${what}：${r.ret}`);
@@ -206,12 +273,21 @@ export function alibabaCookie(jar: Map<string, string> | null): boolean | null {
 	return v === "true" ? true : v === "false" ? false : null;
 }
 
+const loginStore = z.looseObject({ isLogin: z.boolean().nullish(), userId: idText.nullish(), loginId: idText.nullish() }).nullable();
+type HomeWindow = { __ICE_APP_CONTEXT__?: { loaderData?: Record<string, { data?: { loginStore?: unknown } } | undefined> } };
+
+/** 首页的 loginStore → 账号（纯函数）；没登录是 null */
+export function accountOf(raw: unknown): { userId: string; loginId: string } | null {
+	const u = reply(loginStore, raw, "1688 首页的 loginStore");
+	return u?.isLogin === true && u.userId ? { userId: u.userId, loginId: u.loginId ?? "" } : null;
+}
+
 export async function account(): Promise<{ userId: string; loginId: string }> {
 	const p = await page("https://www.1688.com");
 	await p.goto("https://www.1688.com/");
-	const u = await p.run(() => (window as any).__ICE_APP_CONTEXT__?.loaderData?.["/"]?.data?.loginStore ?? null);
-	if (u?.isLogin !== true || !u.userId) throw new NeedsHuman("1688 没有登录：在浏览器里登录 1688");
-	return { userId: String(u.userId), loginId: String(u.loginId ?? "") };
+	const a = accountOf(await p.run(() => (window as unknown as HomeWindow).__ICE_APP_CONTEXT__?.loaderData?.["/"]?.data?.loginStore ?? null));
+	if (!a) throw new NeedsHuman("1688 没有登录：在浏览器里登录 1688");
+	return a;
 }
 
 export type SearchHit = { offerId: string; url: string; title: string; price: number; minQty: number; sold: string; shop: string; image: string };
@@ -295,20 +371,35 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 
 export type CartLine = { offerId: string; skuId: string; quantity: number };
 
-export async function cart(): Promise<CartLine[]> {
-	const data = await read(
-		"https://cart.1688.com/cart.htm",
-		"mtop.1688.buycenter.MtopPurchaseAstoreService.render",
-		{ fromkv: "", purchaseType: "main_purchase_type", platformType: "PC" },
-		"读 1688 购物车",
-	);
-	const parts = Object.values(JSON.parse(data.model).data) as { type: string; fields: any }[];
-	const items = parts
-		.filter((x) => x.type === "item")
-		.map((x) => ({ offerId: String(x.fields.offerId), skuId: String(x.fields.skuId ?? x.fields.offerId), quantity: Number(x.fields.quantity) }));
-	const total = Number(parts.find((x) => x.type === "root")?.fields?.totalSkuCount ?? items.length);
+/** 购物车：data.model 是一串 JSON，里面 data 的每一块有 type（item 是一个规格，root 是汇总） */
+const cartModel = z.object({ data: z.record(z.string(), z.looseObject({ type: z.string().nullish(), fields: z.unknown().optional() })) });
+const cartItem = z.object({ offerId: idText, skuId: idText.nullish(), quantity: numeric });
+const cartRoot = z.looseObject({ totalSkuCount: numeric.nullish() }).nullish();
+
+/** 购物车 render 的回包 → 每个规格和件数（纯函数） */
+export function cartOf(data: unknown): CartLine[] {
+	const { model } = reply(z.looseObject({ model: z.string() }), data, "1688 购物车（MtopPurchaseAstoreService.render）");
+	const parts = Object.values(reply(cartModel, JSON.parse(model), "1688 购物车（render 的 model）").data);
+	const items = reply(
+		z.array(cartItem),
+		parts.filter((x) => x.type === "item").map((x) => x.fields),
+		"1688 购物车的规格（render 的 model 里 type 是 item 的 fields）",
+	).map((f) => ({ offerId: f.offerId, skuId: f.skuId ?? f.offerId, quantity: f.quantity }));
+	const root = reply(cartRoot, parts.find((x) => x.type === "root")?.fields, "1688 购物车的汇总（type 是 root 的 fields）");
+	const total = Number(root?.totalSkuCount ?? items.length);
 	if (items.length < total) throw new Error(`购物车有 ${total} 个规格，只读到 ${items.length} 个（没有做翻页）`);
 	return items;
+}
+
+export async function cart(): Promise<CartLine[]> {
+	return cartOf(
+		await read(
+			"https://cart.1688.com/cart.htm",
+			"mtop.1688.buycenter.MtopPurchaseAstoreService.render",
+			{ fromkv: "", purchaseType: "main_purchase_type", platformType: "PC" },
+			"读 1688 购物车",
+		),
+	);
 }
 
 export type AddResult = { kind: "sent" } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
@@ -361,9 +452,9 @@ export type BuyerOrder = {
 	raw: unknown;
 };
 
-export function addressOf(o: any): string {
+export function addressOf(o: unknown): string {
 	const found: string[] = [];
-	const walk = (v: any, key: string, depth: number) => {
+	const walk = (v: unknown, key: string, depth: number) => {
 		if (depth > 4 || v === null || v === undefined) return;
 		if (typeof v === "string") {
 			if (/address|addr/i.test(key) && v.trim()) found.push(v.trim());
@@ -377,6 +468,98 @@ export function addressOf(o: any): string {
 
 const BUYER_ORDERS = "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html";
 
+const text = z.union([z.string(), z.number()]).nullish();
+const entry = z.looseObject({
+	sourceId: text,
+	specId: text,
+	skuId: text,
+	productName: text,
+	specInfo: z.looseObject({ specItems: z.array(z.looseObject({ specValue: z.unknown().optional() })).nullish() }).nullish(),
+	quantity: z.union([z.looseObject({ realAmount: numeric.nullish(), calAmount: numeric.nullish() }), numeric]).nullish(),
+	price: numeric.nullish(),
+	entryStatus: text,
+	entryStatusLabel: text,
+	entryExtension: z
+		.looseObject({
+			receivedQuantity: numeric.nullish(),
+			refundId: text,
+			refundStatus: text,
+			refundIdForAs: text,
+			refundStatusForAs: text,
+			trackingNo: text,
+			sendgt: text,
+		})
+		.nullish(),
+});
+/** 一张采购单（金额是分；采购单号用 idStr） */
+const buyerOrder = z.looseObject({
+	idStr: z.string().nullish(),
+	id: z.union([z.string(), z.number()]).nullish(),
+	status: text,
+	statusLabel: text,
+	gmtCreate: text,
+	gmtPayment: text,
+	sumProductPayment: numeric.nullish(),
+	carriage: numeric.nullish(),
+	allPromotionFee: numeric.nullish(),
+	sumPayment: numeric.nullish(),
+	orderEntries: z.array(entry).nullish(),
+});
+/** 采购单列表：data.result 是一串 JSON，里面 data.data 是采购单 */
+const buyerOrderList = z.looseObject({
+	data: z.looseObject({ total: numeric.nullish(), pages: numeric.nullish(), data: z.array(z.unknown()).nullish() }).nullish(),
+});
+
+const str = (v: string | number | null | undefined) => String(v ?? "");
+
+/** 采购单列表的回包 → 采购单（纯函数）。raw 是这张采购单原样的一行 */
+export function buyerOrdersOf(data: unknown): { total: number; pages: number; rows: BuyerOrder[] } {
+	const { data: d } = reply(z.looseObject({ data: z.looseObject({ result: z.string().nullish() }).nullish() }), data, "1688 采购单列表（dataline.service）");
+	const payload = reply(buyerOrderList, JSON.parse(d?.result ?? "null"), "1688 采购单列表（result）")?.data;
+	const yuan = (v: number | null | undefined) => Number(v ?? 0) / 100;
+	const rows = (payload?.data ?? []).map((raw, n): BuyerOrder => {
+		const o = reply(buyerOrder, raw, `1688 采购单列表的第 ${n + 1} 张`);
+		return {
+			orderId: String(o.idStr ?? o.id),
+			status: str(o.status),
+			statusLabel: str(o.statusLabel),
+			createdAt: str(o.gmtCreate),
+			paidAt: o.gmtPayment ? Number(o.gmtPayment) : null,
+			goods: yuan(o.sumProductPayment),
+			freight: yuan(o.carriage),
+			discount: yuan(o.allPromotionFee),
+			paid: yuan(o.sumPayment),
+			address: addressOf(raw),
+			raw,
+			items: (o.orderEntries ?? []).map((e) => {
+				const x = e.entryExtension;
+				const q = e.quantity;
+				return {
+					offerId: str(e.sourceId),
+					specId: str(e.specId),
+					skuId: str(e.skuId),
+					name: str(e.productName),
+					spec: (e.specInfo?.specItems ?? []).map((i) => i.specValue).join(" / "),
+					quantity: Number((typeof q === "object" && q !== null ? (q.realAmount ?? q.calAmount ?? q) : q) ?? 0),
+					price: yuan(e.price),
+					status: str(e.entryStatus),
+					statusLabel: str(e.entryStatusLabel),
+					received: Number(x?.receivedQuantity ?? 0),
+					// 售中退款在 refundId / refundStatus，售后（确认收货以后申请的）在 refundIdForAs / refundStatusForAs（2026-10-09 读页面的 JS、对真退款单核对过，见同目录的 NOTES.md）
+					refund: x?.refundIdForAs
+						? { id: String(x.refundIdForAs), stage: "售后", status: str(x.refundStatusForAs) }
+						: x?.refundId
+							? { id: String(x.refundId), stage: "售中", status: str(x.refundStatus) }
+							: null,
+					trackingNo: str(x?.trackingNo),
+					shippedAt: x?.sendgt ? Number(x.sendgt) : null,
+				};
+			}),
+		};
+	});
+	return { total: Number(payload?.total ?? rows.length), pages: Number(payload?.pages ?? 1), rows };
+}
+
 /** 采购单（在 1688 买的订单），一页最多 50 张，新的在前。金额是元（接口是分）。
  * orderId 用 idStr：19 位订单号当数字会丢精度 */
 export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): Promise<{ total: number; pages: number; rows: BuyerOrder[] }> {
@@ -389,44 +572,7 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 		},
 		"读 1688 采购单",
 	);
-	const payload = JSON.parse(String(data?.data?.result ?? "null"))?.data;
-	const yuan = (v: unknown) => Number(v ?? 0) / 100;
-	const rows = ((payload?.data ?? []) as any[]).map(
-		(o): BuyerOrder => ({
-			orderId: String(o.idStr ?? o.id),
-			status: String(o.status ?? ""),
-			statusLabel: String(o.statusLabel ?? ""),
-			createdAt: String(o.gmtCreate ?? ""),
-			paidAt: o.gmtPayment ? Number(o.gmtPayment) : null,
-			goods: yuan(o.sumProductPayment),
-			freight: yuan(o.carriage),
-			discount: yuan(o.allPromotionFee),
-			paid: yuan(o.sumPayment),
-			address: addressOf(o),
-			raw: o,
-			items: ((o.orderEntries ?? []) as any[]).map((e) => ({
-				offerId: String(e.sourceId ?? ""),
-				specId: String(e.specId ?? ""),
-				skuId: String(e.skuId ?? ""),
-				name: String(e.productName ?? ""),
-				spec: ((e.specInfo?.specItems ?? []) as any[]).map((x) => x.specValue).join(" / "),
-				quantity: Number(e.quantity?.realAmount ?? e.quantity?.calAmount ?? e.quantity ?? 0),
-				price: yuan(e.price),
-				status: String(e.entryStatus ?? ""),
-				statusLabel: String(e.entryStatusLabel ?? ""),
-				received: Number(e.entryExtension?.receivedQuantity ?? 0),
-				// 售中退款在 refundId / refundStatus，售后（确认收货以后申请的）在 refundIdForAs / refundStatusForAs（2026-10-09 读页面的 JS、对真退款单核对过，见同目录的 NOTES.md）
-				refund: e.entryExtension?.refundIdForAs
-					? { id: String(e.entryExtension.refundIdForAs), stage: "售后", status: String(e.entryExtension.refundStatusForAs ?? "") }
-					: e.entryExtension?.refundId
-						? { id: String(e.entryExtension.refundId), stage: "售中", status: String(e.entryExtension.refundStatus ?? "") }
-						: null,
-				trackingNo: String(e.entryExtension?.trackingNo ?? ""),
-				shippedAt: e.entryExtension?.sendgt ? Number(e.entryExtension.sendgt) : null,
-			})),
-		}),
-	);
-	return { total: Number(payload?.total ?? rows.length), pages: Number(payload?.pages ?? 1), rows };
+	return buyerOrdersOf(data);
 }
 
 /** 一张退款单的状态。status：waitselleragree 等卖家同意、waitbuyermodify 卖家拒绝等买家修改、waitbuyersend 等买家寄回、
@@ -443,6 +589,38 @@ export type Refund = {
 	updatedAt: string;
 };
 
+const refundDetail = z.looseObject({
+	model: z.looseObject({
+		status: z.string().min(1),
+		statusLabel: text,
+		refundSceneModel: z.looseObject({ replaceNew: z.unknown().optional(), reshipping: z.unknown().optional() }).nullish(),
+		needReturnGoods: z.unknown().optional(),
+		refundPayment: numeric.nullish(),
+		refundCarriage: numeric.nullish(),
+		selfReturnGoodsLogisticModel: z.looseObject({ freightBill: text, logisticsStatus: text }).nullish(),
+		gmtCreate: text,
+		gmtModified: text,
+	}),
+});
+
+/** 退款单详情的回包 → Refund（纯函数） */
+export function refundOf(refundId: string, data: unknown): Refund {
+	const m = reply(refundDetail, data, `1688 退款单 ${refundId}（viewRefundDetail）`).model;
+	const scene = m.refundSceneModel;
+	const back = m.selfReturnGoodsLogisticModel;
+	return {
+		refundId,
+		status: m.status,
+		statusLabel: str(m.statusLabel),
+		kind: scene?.replaceNew ? "换货" : scene?.reshipping ? "补寄" : m.needReturnGoods ? "退货退款" : "仅退款",
+		amount: (Number(m.refundPayment ?? 0) + Number(m.refundCarriage ?? 0)) / 100,
+		returnTrackingNo: back?.freightBill ? String(back.freightBill) : null,
+		returnLogistics: back?.logisticsStatus ? String(back.logisticsStatus) : null,
+		createdAt: str(m.gmtCreate),
+		updatedAt: str(m.gmtModified),
+	};
+}
+
 export async function refund(refundId: string, stage: "售中" | "售后"): Promise<Refund> {
 	const d = await read(
 		BUYER_ORDERS,
@@ -450,44 +628,42 @@ export async function refund(refundId: string, stage: "售中" | "售后"): Prom
 		{ refundId, disputeType: stage === "售中" ? "1" : "2" },
 		`读 1688 退款单 ${refundId}`,
 	);
-	const m = d?.model;
-	if (!m?.status) throw new Error(`1688 退款单 ${refundId} 没有回状态`);
-	const scene = m.refundSceneModel ?? {};
-	const back = m.selfReturnGoodsLogisticModel;
-	return {
-		refundId,
-		status: String(m.status),
-		statusLabel: String(m.statusLabel ?? ""),
-		kind: scene.replaceNew ? "换货" : scene.reshipping ? "补寄" : m.needReturnGoods ? "退货退款" : "仅退款",
-		amount: (Number(m.refundPayment ?? 0) + Number(m.refundCarriage ?? 0)) / 100,
-		returnTrackingNo: back?.freightBill ? String(back.freightBill) : null,
-		returnLogistics: back?.logisticsStatus ? String(back.logisticsStatus) : null,
-		createdAt: String(m.gmtCreate ?? ""),
-		updatedAt: String(m.gmtModified ?? ""),
-	};
+	return refundOf(refundId, d);
 }
 
 export type Trace = { orderId: string; traces: { status: string; trackingNo: string; logisticsId: string; remark: string }[] };
 
-/** 采购单的物流轨迹。回包里的订单号会被当成数字丢精度、顺序也不稳：订单号对不上时只用运单号反查唯一的一条，不按位置猜 */
-export async function traces(orders: { orderId: string; trackingNos?: string[] }[]): Promise<Trace[]> {
-	if (orders.length === 0) return [];
-	const data = await read(BUYER_ORDERS, "mtop.1688.mtoplgttraceservice.querytrace", { orderIds: orders.map((o) => o.orderId).join(",") }, "读 1688 物流");
-	const raw = (data?.result ?? []) as any[];
+const traceReply = z.looseObject({
+	result: z
+		.array(
+			z.looseObject({
+				orderId: text,
+				trace: z.array(z.looseObject({ mailNo: text, currentStatus: text, logisticsId: text, remark: text })).nullish(),
+			}),
+		)
+		.nullish(),
+});
+
+/** 物流轨迹的回包对回采购单（纯函数）。回包里的订单号会被当成数字丢精度、顺序也不稳：订单号对不上时只用运单号反查唯一的一条，不按位置猜 */
+export function tracesOf(orders: { orderId: string; trackingNos?: string[] }[], data: unknown): Trace[] {
+	const raw = reply(traceReply, data, "1688 物流（querytrace）").result ?? [];
 	return orders.map(({ orderId, trackingNos = [] }) => {
-		const exact = raw.find((c) => String(c.orderId ?? "") === orderId);
-		const byNo = trackingNos.length ? raw.filter((c) => (c.trace ?? []).some((t: any) => trackingNos.includes(String(t.mailNo ?? "")))) : [];
+		const exact = raw.find((c) => str(c.orderId) === orderId);
+		const byNo = trackingNos.length ? raw.filter((c) => (c.trace ?? []).some((t) => trackingNos.includes(str(t.mailNo)))) : [];
 		const found = exact ?? (byNo.length === 1 ? byNo[0] : undefined);
 		return {
 			orderId,
-			traces: ((found?.trace ?? []) as any[])
+			traces: (found?.trace ?? [])
 				.filter((t) => t.mailNo)
-				.map((t) => ({
-					status: String(t.currentStatus ?? ""),
-					trackingNo: String(t.mailNo),
-					logisticsId: String(t.logisticsId ?? ""),
-					remark: String(t.remark ?? ""),
-				})),
+				.map((t) => ({ status: str(t.currentStatus), trackingNo: String(t.mailNo), logisticsId: str(t.logisticsId), remark: str(t.remark) })),
 		};
 	});
+}
+
+export async function traces(orders: { orderId: string; trackingNos?: string[] }[]): Promise<Trace[]> {
+	if (orders.length === 0) return [];
+	return tracesOf(
+		orders,
+		await read(BUYER_ORDERS, "mtop.1688.mtoplgttraceservice.querytrace", { orderIds: orders.map((o) => o.orderId).join(",") }, "读 1688 物流"),
+	);
 }
