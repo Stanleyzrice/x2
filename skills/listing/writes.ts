@@ -16,13 +16,11 @@ import { productOf } from "./ready.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）、{ failed }（象寄说译不成）或 { unknown }（结果未定，不重交） */
-export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; unknown?: string; saved: boolean }>> {
+/** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）或 { failed }（象寄说译不成）。没有记录的是还没译过 */
+export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; saved: boolean }>> {
 	const rows =
 		await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
-	return new Map(
-		rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, unknown: r.t?.unknown, saved: Boolean(r.saved) }]),
-	);
+	return new Map(rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, saved: Boolean(r.saved) }]));
 }
 
 /** 象寄的地址大约 80 天失效：拿到就取回来存进库 */
@@ -31,24 +29,19 @@ export async function saveTranslation(sql: Sql, origin: string, url: string): Pr
 	await sql`insert into images ${sql({ sha256: b.sha256, kind: "译图", source: url, from_sha: origin, mime: b.mime, width: b.width, height: b.height, bytes: Buffer.from(b.bytes) })} on conflict (sha256) do nothing`;
 }
 
-/** 译图：交象寄把一批（最多 5 张）图上的简体字译成繁体。不经至多一次写入（钱少、能重来），但不白重交：
- * 答复了的照原图记下结果（象寄给的地址：付过钱了，记下了再取图；译不成的原因）；答复里没有的、没拿到答复的记成结果未定，这张不再自动交
- * （人在网页上看过、在库里去掉这条记录才重交）。象寄明说这批没做的不记，下次照常交 */
+/** 译图：交象寄把一批（最多 5 张）图上的简体字译成繁体。不经至多一次写入：一张约 0.025 元，重交一次的钱比管重复的代码便宜。
+ * 答复了的照原图记下结果（象寄给的地址：付过钱了，记下了再取图；译不成的原因）；没拿到答复、答复里没有的不记，下次做商品稿照常重交 */
 export async function translate(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
 	const w = await translateImages.submit({ urls: items.map((i) => i.url) });
 	const at = new Date().toISOString();
 	const mark = async (sha: string, v: Record<string, string>) =>
 		sql`update images set checks = checks || ${sql.json({ 译图: { ...v, at } })} where sha256 = ${sha}`;
 	if (w.kind === "refused") throw new Error(`象寄没译：${w.why}`);
-	if (w.kind !== "done") {
-		for (const i of items) await mark(i.sha, { unknown: w.why });
-		throw new Error(`象寄没答复，这 ${items.length} 张记成结果未定、不重交：${w.why}`);
-	}
+	if (w.kind !== "done") throw new Error(`象寄没答复，这 ${items.length} 张下次重交：${w.why}`);
 	const r = w.data as Extract<Outcome, { kind: "done" }>;
 	const shaOf = new Map(items.map((i) => [i.url, i.sha]));
 	for (const t of r.results) await mark(shaOf.get(t.origin)!, { url: t.url });
 	for (const f of r.failed) await mark(shaOf.get(f.origin)!, { failed: f.why });
-	for (const m of r.missing) await mark(shaOf.get(m)!, { unknown: "象寄的答复里没有这张（不知道扣没扣钱）" });
 	// 记下了地址再取图：取不回来下次照地址再取，不用再付钱
 	for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
 }

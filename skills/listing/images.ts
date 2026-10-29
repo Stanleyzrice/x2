@@ -157,7 +157,7 @@ export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promi
 	return inspect(new Uint8Array(row.bytes), "译图");
 }
 
-/** 把要译的交象寄，一批 5 张（translate：答复了的记下结果，没答复的记成结果未定、不再交）。交不成的那几张这次不用，不挡商品稿 */
+/** 把要译的交象寄，一批 5 张（translate：答复了的记下结果，没答复的下次重交）。交不成的那几张这次不用，不挡商品稿 */
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
 	for (let i = 0; i < items.length; i += 5) await translate(sql, items.slice(i, i + 5)).catch((e: Error) => console.error(`译图：${e.message}`));
 }
@@ -212,7 +212,7 @@ export async function makeImages(
 		}),
 	);
 
-	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；结果未定的这张先不用（不挡商品稿），不重交
+	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；这次没译成的先不用（不挡商品稿），下次重交
 	const toTranslate = all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
 	const shas = [...new Set(toTranslate.map((p) => p.sha!))];
 	if (shas.length) {
@@ -258,7 +258,6 @@ export async function makeImages(
 					const [row] = await sql`select sha256 from images where kind = '译图' and from_sha = ${p.sha!} limit 1`;
 					p.translated = row!.sha256;
 				} else if (t?.failed) p.drop = `象寄译不成：${t.failed}`;
-				else if (t?.unknown) p.drop = `译图结果未定（${t.unknown}）：先不用，不重交`;
 				else p.drop = "还没译好";
 			}),
 		);
