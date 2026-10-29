@@ -1,6 +1,6 @@
 // 网页（x2 web）：侧栏是页列表（agent 开的，每 5 秒重读），地址 #页编号；打开一页见 page.tsx。深浅色跟系统
 import "./app.css";
-import { MessageSquareIcon } from "lucide-react";
+import { FileTextIcon } from "lucide-react";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -73,7 +73,7 @@ function Nav({ pages, active }: { pages: PageSummary[]; active: string }) {
 						{pages.map((s) => (
 							<SidebarMenuItem key={s.id}>
 								<SidebarMenuButton isActive={s.id === active} render={<a href={`#${s.id}`} />} onClick={() => setOpenMobile(false)}>
-									<MessageSquareIcon />
+									<FileTextIcon />
 									<span className="truncate">{s.title}</span>
 								</SidebarMenuButton>
 							</SidebarMenuItem>

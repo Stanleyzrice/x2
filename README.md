@@ -11,7 +11,7 @@ x2 帮我们经营 Shopee 台湾的两家店（ni1206、cheeroutdoor）：一个
 
 ## 开始
 
-在仓库里开 Claude Code 或 Codex，它读 `AGENTS.md`，第一件事是 `node x2.ts status`。人看网页：`node x2.ts web`，打开 http://127.0.0.1:5170。全部命令：`node x2.ts --help`（每件事是一个工具：`x2 <toolkit> <工具> --参数 值`）。
+在仓库里开 Claude Code 或 Codex，它读 `AGENTS.md`，第一件事是 `node x2.ts status`。人看网页：`node x2.ts web`，打开 http://127.0.0.1:5170：侧栏是 agent 开的页，中间是给人看的，右边是要人改、要人选的。全部命令：`node x2.ts --help`（每件事是一个工具：`x2 <toolkit> <工具> --参数 值`）。
 
 ## 输出约定
 
