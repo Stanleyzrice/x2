@@ -15,7 +15,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, fail, keyOf, type Meta, type Props, type Row, meta as readMeta, usePoll, type View } from "../api.ts";
 import { Edit, type Save, Show } from "./cells.tsx";
 
-/** 按分组列排好组：给了组的顺序照它，没给的照行的顺序 */
 function groups(rows: Row[], g: View["group"]): [string | null, Row[]][] {
 	if (!g) return [[null, rows]];
 	const by = new Map<string, Row[]>();
@@ -94,7 +93,6 @@ export function DataGrid({ props }: { props: Props<"datagrid"> }) {
 	);
 }
 
-/** 表格：分组的那一列不再列出来；点一行开整行 */
 function Rows({ meta, rows, group, open }: { meta: Meta; rows: Row[]; group: string | undefined; open: (r: Row) => void }) {
 	const cols = meta.columns.filter((c) => c.name !== group);
 	return (
@@ -125,7 +123,6 @@ function Rows({ meta, rows, group, open }: { meta: Meta; rows: Row[]; group: str
 	);
 }
 
-/** 一行的每一格：人能改、这一行现在能改的给控件，别的只看 */
 function Fields({ meta, row, save }: { meta: Meta; row: Row; save: (col: string) => Save }) {
 	return (
 		<dl className="grid gap-x-4 gap-y-3 p-4 sm:grid-cols-[8rem_1fr]">
@@ -158,7 +155,6 @@ function RowCard({ meta, row, save }: { meta: Meta; row: Row; save: (col: string
 	);
 }
 
-/** 表单：添一行（例 添加货源、上报到货问题） */
 function AddForm({ meta, onAdded }: { meta: Meta; onAdded: () => void }) {
 	const form = meta.form!;
 	const [open, setOpen] = useState(false);

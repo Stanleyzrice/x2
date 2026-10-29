@@ -13,7 +13,6 @@ export const IMAGE = "https://down-tw.img.susercontent.com/file/";
 
 export type Req = { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown };
 
-/** 发一个请求，回原样的结果。signin：跳到了登录页；unknown：没拿到响应（网络、超时），请求可能已经到了站点 */
 export type Raw = { kind: "signin" } | { kind: "unknown"; why: string } | { kind: "http"; status: number; json: any; text: string };
 
 export async function call(path: string, req: Req = {}): Promise<Raw> {
@@ -43,9 +42,7 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 				let json: unknown = null;
 				try {
 					json = JSON.parse(text);
-				} catch {
-					/* 不是 JSON：留下前 300 字给人看 */
-				}
+				} catch {}
 				return { kind: "http" as const, status: r.status, json, text: json === null ? text.slice(0, 300) : "" };
 			} catch (e) {
 				return { kind: "unknown" as const, why: String((e as Error)?.message ?? e) };
@@ -58,14 +55,12 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 	);
 }
 
-/** 站点的业务码：code，或财务、售后接口的 error；没有这两个字段是 undefined */
 const codeOf = (json: any): number | undefined => ((json?.code ?? json?.error) === undefined ? undefined : Number(json.code ?? json.error));
 const messageOf = (json: any) => String(json?.user_message ?? json?.message ?? json?.msg ?? json?.error_msg ?? "");
 
 /** 出错的回应里，哪些要人处理：401、403（没登录、token 失效，页面不一定跳登录页），或要再输一次密码、验证（财务区） */
 export const needsHuman = (status: number, json: any) => status === 401 || status === 403 || /密碼|驗證/.test(messageOf(json));
 
-/** 读：回 JSON，业务码不是 0、HTTP 出错、没登录都抛错 */
 export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
 	const r = await call(path, req);
 	if (r.kind === "signin") throw new NeedsHuman("Shopee 卖家中心没有登录：在浏览器里登录");
@@ -79,10 +74,8 @@ export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
 	throw new Error(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}`);
 }
 
-/** 写的结果。done：站点回成功；refused：站点回了失败（确定没做）；unknown：没拿到站点的答复，可能已经做了，调用方不许重发，先回读 */
 export type Write = { kind: "done"; data: any } | { kind: "refused"; code: number | undefined; why: string } | { kind: "unknown"; why: string };
 
-/** 写：不抛错，回三态。没登录算 refused（请求没发出去） */
 export async function write(path: string, req: Req): Promise<Write> {
 	const r = await call(path, req);
 	if (r.kind === "signin") return { kind: "refused", code: undefined, why: "Shopee 卖家中心没有登录" };

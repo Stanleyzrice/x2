@@ -129,7 +129,6 @@
 	}
 }
 
-/* generative 的 markdown：没有 typography 插件，照主题写几样 */
 .markdown > * + * {
 	margin-top: 0.75em;
 }

@@ -9,7 +9,6 @@ const ORIGIN = "https://c.chanboss.com";
 const API = "/api/v2/common/cangboss";
 
 let last = 0;
-/** 发一个请求，回原样的外壳；没拿到响应（网络断了、超时）回 { unknown }，这时请求可能已经到了站点 */
 async function call(path: string, req: { query?: Record<string, string | number | boolean>; body?: unknown } = {}): Promise<any> {
 	const wait = last + 2000 - Date.now();
 	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -40,7 +39,6 @@ async function call(path: string, req: { query?: Record<string, string | number 
 
 const signedOut = (b: any) => Number(b?.code) === 90000 || /失效|session/i.test(String(b?.message ?? ""));
 
-/** 读：code 不是 10000 都抛错 */
 async function api<T = any>(path: string, req: { query?: Record<string, string | number | boolean>; body?: unknown } = {}): Promise<T> {
 	const b = await call(path, req);
 	if (b?.unknown) throw new Error(`chanboss ${path}：${b.unknown}`);
@@ -97,11 +95,9 @@ export async function orders(from: number, to: number, pageIndex = 1, orderSns: 
 const paged = async (path: string, pageIndex: number, extra: Record<string, string | number | boolean>) =>
 	list(await api(path, { query: { page_index: pageIndex, page_size: 50, is_paging: true, seller_id: await me(), ...extra } }));
 
-/** 库存的一页（含库存是 0 的） */
 export const stock = (pageIndex = 1) =>
 	paged("/stock/list_stock", pageIndex, { seller_key: "", shop_key: "", search_key: "", stock_key: "", show_empty: true, is_analyse: false });
 
-/** 平台退回 chanboss 的退件的一页 */
 export const returns = (pageIndex = 1) =>
 	paged("/return_v2/list", pageIndex, { return_status: "", time_type: "get_report_time", ignore_not_match_lose: "1", is_simple: false });
 
@@ -118,10 +114,8 @@ export const putaway = (status: "shelf" | "sorting" | "sort_out", from: number, 
 		sort_order: "",
 	});
 
-/** 退件换货的一页 */
 export const returnChanges = (pageIndex = 1) => paged("/return_change/list", pageIndex, {});
 
-/** 扣款流水的一页，按时间（秒）筛 */
 export async function balance(from: number, to: number, pageIndex = 1) {
 	const id = await me();
 	return list(
@@ -131,15 +125,11 @@ export async function balance(from: number, to: number, pageIndex = 1) {
 	);
 }
 
-// ── 写：预报 ──
-
-/** 写的结果。done：站点回成功；refused：站点回了失败（确定没做）；blocked：没登录，请求没发；unknown：没拿到站点的答复，可能已经做了，不许重发，先回读 */
 export type Write = { kind: "done"; data: any } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
 
 /** 「无单号」预报的快递单号：chanboss 页面上的常量（打拣货单时的自动预报就填它），站上存成 reserved 开头的一串 */
 export const NO_TRACKING = "reserved";
 
-/** 现读这几张订单（最近 90 天里按 Shopee 订单号找） */
 export async function ordersBySn(sns: string[]): Promise<Map<string, any>> {
 	const now = Math.floor(Date.now() / 1000);
 	const r = await orders(now - 90 * 86400, now, 1, sns, 100);
@@ -147,7 +137,6 @@ export async function ordersBySn(sns: string[]): Promise<Map<string, any>> {
 }
 
 export type Forecast = {
-	/** chanboss 上这张订单的 id、下单时间（秒）：订单列表的 id、platform_create_time */
 	orderId: string;
 	orderTime: number;
 	/** 发货线路（海快 752）、线路、仓库：已预报的订单上是 752、1111、5176 */
@@ -158,8 +147,7 @@ export type Forecast = {
 	lines: { platformModelId: string; modelId: string; count: number; trackNum: string }[];
 };
 
-/** 预报一张订单（/pack/add_report_new）。请求体照 chanboss 页面的 JS 拼（2026-10-09 读的：打拣货单时的「自动预报」和批量预报对话框，见同目录的 NOTES.md）；
- * 还没在真订单上跑过：第一次要和运营约好一张单一起跑 */
+/** 预报一张订单（/pack/add_report_new）。请求体照 chanboss 页面的 JS 拼（2026-10-09 读的：打拣货单时的「自动预报」和批量预报对话框，见同目录的 NOTES.md） */
 export async function forecast(f: Forecast): Promise<Write> {
 	const b = await call("/pack/add_report_new", {
 		body: {

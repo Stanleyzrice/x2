@@ -5,7 +5,6 @@ import { all, byPage, get, type SubmitTool, str, strs, type Toolkit } from "../.
 import { account, addToCart, alibabaCookie, buyerOrders, cart, offer, offerIdOf, refund, search, traces } from "./api.ts";
 import { SLIDER } from "./challenge.ts";
 
-/** 加购：把货源的一个规格加进这个浏览器登录着的账号的购物车，发一次、回结果（同一个规格加两次，车里是两倍：经订单的写操作「加购」保护） */
 export const cartAdd: SubmitTool = {
 	kind: "write",
 	description: "加购：把货源的一个规格加进购物车（只经订单的写工具 orders.cart）",

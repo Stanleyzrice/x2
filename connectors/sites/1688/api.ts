@@ -7,12 +7,9 @@
 import { challenge, page } from "../../../platform/browser/browser.ts";
 import { Challenge, NeedsHuman } from "../../../platform/errors.ts";
 
-/** attrs：每个属性的取值，顺序同 Offer.props */
 export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
 export type Prop = { name: string; values: { name: string; image: string }[] };
-/** 货源的服务：一件代发、包邮、48 小时发货（deliveryDays 是卖家承诺几天内发货） */
 export type Tags = { onePsale: boolean; freeShipping: boolean; ship48h: boolean; deliveryDays: number | null };
-/** 国内运费：寄到 1688 账号的默认地址（就是我们这里）买 1 件要多少（元）；包邮是 0，读不到是 null */
 export type Freight = { costRmb: number | null; to: string };
 export type Offer = {
 	offerId: string;
@@ -29,13 +26,11 @@ export type Offer = {
 	freight?: Freight;
 };
 
-/** 1688 链接或货源 id → 货源 id（纯数字）；认不出是 null */
 export function offerIdOf(linkOrId: string): string | null {
 	const m = /offer\/(\d+)\.html/.exec(linkOrId) ?? /^(\d+)$/.exec(linkOrId.trim());
 	return m ? m[1]! : null;
 }
 
-/** 货源下架了或不存在：采购单上算货源失效。要登录、要过滑块是别的错，要人处理 */
 export class Gone extends Error {}
 
 export async function offer(offerId: string): Promise<Offer> {
@@ -62,9 +57,7 @@ export async function offer(offerId: string): Promise<Offer> {
 		let json = "";
 		try {
 			json = JSON.stringify(m);
-		} catch {
-			/* 有循环引用就只看页面的字 */
-		}
+		} catch {}
 		const text = String(document.body?.innerText ?? "");
 		const days = /"deliveryLimit":(\d+)/.exec(json);
 		const tags = {
@@ -94,7 +87,6 @@ export async function offer(offerId: string): Promise<Offer> {
 					values: (p.value ?? []).map((v) => ({ name: unescapeHtml(v.name), image: v.imageUrl ?? "" })),
 				}))
 			: [];
-		// 第一个属性的取值 → 图片
 		const valueImages = new Map<string, string>((props[0]?.values ?? []).map((v) => [v.name, https(v.image)]));
 		const skus = hasSkus
 			? (t.skuMap as any[]).map((s) => {
@@ -156,27 +148,20 @@ export async function detailImages(detailUrl: string): Promise<string[]> {
 	let html = text;
 	try {
 		html = String(JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)).content ?? "");
-	} catch {
-		/* 不是 JSON 外壳：当成 HTML */
-	}
+	} catch {}
 	const urls = [...html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi)].map((m) => m[1]!.replace(/^\/\//, "https://")).filter((u) => /^https:\/\//.test(u));
 	return [...new Set(urls)].slice(0, 40);
 }
 
-// ── mtop ──
 // 购物车、加购、采购单、物流都在页面里用页面自己的 lib.mtop.request 发（签名由它算）。依据 lilto 的 packages/presets/src/1688.ts（2026-09-24 读的 mtop.js 源码）：
 // 站点回 SUCCESS 时 resolve；站点回别的 ret 时 reject 整个响应（带 api）；库自己超时、解析失败时 reject 的对象没有 api，这时请求可能已经到了站点
 
-/** ok：站点回 SUCCESS；site：站点回了别的 ret（确定是站点的答复）；unknown：没有站点的答复（超时、解析失败），请求可能已经到了站点；
- * blocked：要登录，或要过滑块验证（challenge），请求没发出去或站点没受理 */
 type Mtop =
 	| { kind: "ok"; data: any }
 	| { kind: "site"; ret: string }
 	| { kind: "unknown"; ret: string }
 	| { kind: "blocked"; ret: string; challenge?: boolean };
 
-/** 在 url 这一页（它要有 lib.mtop）里调一个 mtop 接口。标签页已经在这一页、lib.mtop 也在的，不再加载（同一页上发几个请求，少加载几次 1688）。
- * 发之前就跳了滑块验证的算没发（blocked）；发了以后页面弹出验证框的，browser.ts 抛 Challenge（请求可能在人拉过滑块以后才到站点） */
 async function mtop(url: string, api: string, data: Record<string, string>): Promise<Mtop> {
 	const u = new URL(url);
 	const p = await page(u.origin);
@@ -209,7 +194,6 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser, "1688")).message, challenge: true } : r;
 }
 
-/** 读的接口：不是 ok 就抛错 */
 async function read(url: string, api: string, data: Record<string, string>, what: string): Promise<any> {
 	const r = await mtop(url, api, data);
 	if (r.kind === "blocked" && r.challenge) throw new Challenge(r.ret);
@@ -217,8 +201,6 @@ async function read(url: string, api: string, data: Record<string, string>, what
 	if (r.kind !== "ok") throw new Error(`${what}：${r.ret}`);
 	return r.data;
 }
-
-// ── 账号 ──
 
 /** 登录着的 1688 账号：userId 唯一且不变；loginId 是会员名（能改，只给人看）。首页服务端渲染的 loginStore */
 /** cookie __cn_logon__ 说登录着没有（纯函数）：true、false；没有这个 cookie（读不了、没去过 1688）是 null */
@@ -235,13 +217,9 @@ export async function account(): Promise<{ userId: string; loginId: string }> {
 	return { userId: String(u.userId), loginId: String(u.loginId ?? "") };
 }
 
-// ── 搜索 ──
-
 export type SearchHit = { offerId: string; url: string; title: string; price: number; minQty: number; sold: string; shop: string; image: string };
 
-/** 在 1688 上按关键词搜货源（第一页）。搜索页的关键词是 GBK 编码，照 lilto 的做法在搜索框里填、提交表单，不自己拼地址。
- * 读的是页面上的卡片（2026-08-29 的页面结构），改版了会读不到，报错。
- * 2026-10-09 查过：一页 60 个，先只出 10 来个，往下滚才一批批加载；价格拆成几段（¥、0、.03），要读整个 .price-item；
+/** 2026-10-09 查过：一页 60 个，先只出 10 来个，往下滚才一批批加载；价格拆成几段（¥、0、.03），要读整个 .price-item；
  * 起订量（≥N 个）多数卡片上没有，没有时 minQty 是 0 */
 export async function search(keyword: string): Promise<SearchHit[]> {
 	const p = await page("https://s.1688.com");
@@ -262,7 +240,6 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 				),
 			];
 			if (!cards.length) return /空空如也|没有找到/.test(document.body.innerText) ? { hits: [] } : null;
-			// 滚到底，让页面接着加载这一页后面的卡片
 			window.scrollTo(0, document.body.scrollHeight);
 			const text = (el: Element | null) => ((el as HTMLElement | null)?.innerText ?? "").trim();
 			return {
@@ -273,7 +250,6 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 						const descs = [...card.querySelectorAll('[class*="descText--"], .desc-text')].map(text);
 						const min = descs.find((v) => /^[≥>]\s*\d/.test(v) || /\d+\s*件起批/.test(v)) || text(card.querySelector('[class*="hoverPriceQty--"]'));
 						const sold = descs.find((v) => /^(?:全网)?\d[\d.+万]*件$/.test(v)) || "";
-						// 标题：卡片里第一段长文字（不在描述、价格、店铺那几块里）
 						const titleEl =
 							card.querySelector('[class*="title--"], .title-text, [class*="titleText--"]') ??
 							[...card.querySelectorAll<HTMLElement>("div, span")].find((el) => {
@@ -309,7 +285,6 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 		if (got && "error" in got) throw new NeedsHuman(got.error);
 		if (!got) continue;
 		last = got.hits;
-		// 卡片数连着两次不再变多，才算这一页加载完
 		if (got.hits.length > seen) {
 			seen = got.hits.length;
 			still = 0;
@@ -321,12 +296,8 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 	throw new Error("1688 搜索结果 30 秒没出来：页面可能改版了");
 }
 
-// ── 购物车 ──
-
 export type CartLine = { offerId: string; skuId: string; quantity: number };
 
-/** 购物车里的全部规格。超过一页读不全时报错（没有做翻页），免得把读了一半当成全部。
- * 删购物车没有做：lilto 旧工作台是点页面上的删除确认框（「确认将 N 个商品删除？」），不是接口 */
 export async function cart(): Promise<CartLine[]> {
 	const data = await read(
 		"https://cart.1688.com/cart.htm",
@@ -343,12 +314,10 @@ export async function cart(): Promise<CartLine[]> {
 	return items;
 }
 
-/** 加购的结果。sent：站点收下了（到底加没加上由调用方回读购物车判断）；refused：站点确定没加；unknown：请求可能到了站点，不知道加没加 */
 export type AddResult = { kind: "sent" } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
 
 /** 把一个规格加进购物车（addCargo，在这个货源的商品页里发）。只有一个规格的货源 specId 是空字符串。
- * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发。
- * 还没做（lilto 旧工作台做过）：加之前查起订量（混批时看 mixModel）、价格比上次读到的涨了 10% 以上就停 */
+ * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发。 */
 export async function addToCart(offerId: string, specId: string, quantity: number): Promise<AddResult> {
 	const r = await mtop(`https://detail.1688.com/offer/${offerId}.html`, "com.alibaba.china.buy.service.purchase.MtopPurchaseService.addCargo", {
 		client: "pc",
@@ -364,8 +333,6 @@ export async function addToCart(offerId: string, specId: string, quantity: numbe
 	return { kind: "unknown", why: r.ret };
 }
 
-// ── 采购单 ──
-
 export type BuyerOrder = {
 	orderId: string;
 	status: string;
@@ -378,7 +345,6 @@ export type BuyerOrder = {
 	paid: number;
 	/** 收货地址：采购单列表里没有（2026-10-09 对 50 张真采购单核对过），从名字带 address、addr、receiver 的字段里找；找不到是空字符串。要的话得读采购单详情 */
 	address: string;
-	/** 每一行（货源的一个规格）：skuId（只有一个规格的货源是空的）、这一行的状态（已发货、已收货……）、已收件数 */
 	items: {
 		offerId: string;
 		specId: string;
@@ -395,11 +361,9 @@ export type BuyerOrder = {
 		/** 这一行的退款：单号、售中还是售后、粗状态（waitselleragree 进行中、refundsuccess 成功、refundclose 关闭）。没有退款是 null */
 		refund: { id: string; stage: "售中" | "售后"; status: string } | null;
 	}[];
-	/** 原样的一行：字段核对过以前留着查 */
 	raw: unknown;
 };
 
-/** 在一行采购单里找收货地址：先找名字像地址的字符串字段，再找收货人对象里的 */
 export function addressOf(o: any): string {
 	const found: string[] = [];
 	const walk = (v: any, key: string, depth: number) => {
@@ -468,27 +432,20 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 	return { total: Number(payload?.total ?? rows.length), pages: Number(payload?.pages ?? 1), rows };
 }
 
-// ── 退款 ──
-
 /** 一张退款单的状态。status：waitselleragree 等卖家同意、waitbuyermodify 卖家拒绝等买家修改、waitbuyersend 等买家寄回、
  * waitsellerreceive 等卖家收货、refundsuccess 成功、refundclose 关闭（后两个是终态）。同一个状态码中文会变（退款成功、极速退款成功），判断用状态码 */
 export type Refund = {
 	refundId: string;
 	status: string;
 	statusLabel: string;
-	/** 仅退款、退货退款、换货、补寄 */
 	kind: string;
-	/** 退的钱（元）：货款 + 运费 */
 	amount: number;
-	/** 退货寄回的运单号、物流状态（还没寄是 null） */
 	returnTrackingNo: string | null;
 	returnLogistics: string | null;
 	createdAt: string;
 	updatedAt: string;
 };
 
-/** 读一张退款单的详情（viewRefundDetail）。stage：售中（行上的 refundId）还是售后（refundIdForAs）。
- * 回包里有卖家的电话、姓名、退货地址：只取上面这些，不留 */
 export async function refund(refundId: string, stage: "售中" | "售后"): Promise<Refund> {
 	const d = await read(
 		BUYER_ORDERS,

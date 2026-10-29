@@ -31,7 +31,6 @@ function picsOf(l: Row): Pic[] {
 	return out;
 }
 
-/** 删图、放回人删的图（主图、详情图）：记进、移出已删除的图，再做商品稿也不用它。x2 去掉的图要用，告诉 agent（x2 listing keep） */
 async function setPic(sql: Sql, key: Key, value: unknown): Promise<void> {
 	const v = value as { id?: unknown; removed?: unknown };
 	if (typeof v?.id !== "string" || typeof v.removed !== "boolean") throw new Usage("图：要 { id, removed }");
@@ -44,7 +43,6 @@ async function setPic(sql: Sql, key: Key, value: unknown): Promise<void> {
 	await sql`update listings set removed_images = ${sql.json([...removed])}, updated_at = now() where id = ${key.id!}`;
 }
 
-/** 商品稿的规格和价格（算出来的「规格和价格」）：规格表，规格图传好了用 Shopee 的地址；还没做商品稿的是 null */
 function specsRows(l: Row) {
 	const s = specsOf(l.variants);
 	if (!s) return null;
@@ -92,11 +90,9 @@ export const LISTING_TABLES: Table[] = [
 			description: {},
 			weight_kg: {},
 			freight_rmb: {},
-			// 放弃：建了商品的是下架，不是放弃
 			cancelled: { when: "product_id is null and listed_at is null" },
 			pics: { set: setPic },
 		},
-		// 改完重算当前步骤（重量、国内运费改了重新核价）
 		recheck: (sql, key) => listingsCheck(sql, [key.id!]),
 		views: [
 			{ title: "审稿", where: "step in ('待批准', '待补充')", order: "id", cards: true, empty: "没有等你看的商品稿" },

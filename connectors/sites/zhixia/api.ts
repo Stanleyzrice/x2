@@ -19,7 +19,6 @@ const GAP_MS = 6000,
 
 type Usage = { calls: string[] };
 
-// 次数记在本机的文件里（不进库：这是本机这个浏览器的限流，不是店里的数据）。X2_HOME 可以改目录
 const USAGE = join(process.env.X2_HOME ?? join(homedir(), "x2"), "zhixia-usage.json");
 
 async function readUsage(): Promise<Usage> {
@@ -30,14 +29,12 @@ async function readUsage(): Promise<Usage> {
 	return text === null ? { calls: [] } : (JSON.parse(text) as Usage);
 }
 
-/** 先写临时文件再改名：写到一半进程挂了，原来的文件还在 */
 async function writeUsage(u: Usage): Promise<void> {
 	await mkdir(join(USAGE, ".."), { recursive: true });
 	await writeFile(`${USAGE}.tmp`, `${JSON.stringify(u)}\n`);
 	await rename(`${USAGE}.tmp`, USAGE);
 }
 
-/** 等到可以再发一次：离上一次够 6～10 秒、这一小时没满 200 次；记下这一次 */
 async function throttle(): Promise<void> {
 	const usage = await readUsage();
 	const now = Date.now();
@@ -107,8 +104,6 @@ type Row = Record<string, any>;
 /** 类目路径：一级、二级、三级类目 id，例 [100629, 100630]；接口要最后一级的 id 和层数 */
 const at = (path: number[]) => (path.length ? { catId: path.at(-1), level: path.length } : {});
 
-// ── 类目 ──
-
 export type Category = { id: string; name: string; children: Category[] };
 
 /** 类目树（三级）。读页面 store 里登录时就载入的 state.user.catList，不发请求 */
@@ -139,12 +134,10 @@ export async function sellWell(path: number[] = [], pageNum = 1, pageSize = 100)
 	return { total: Number(b.total ?? 0), rows: b.data ?? [] };
 }
 
-/** 一个类目最近 30 天每天的数据（销量、销售额、商品数……） */
 export async function categoryDaily(path: number[]): Promise<Row> {
 	return (await api<{ data: Row }>("/industryAnalysis/industryInfoOverview", at(path))).data;
 }
 
-// ── 热搜词 ──
 // 口径（lilto 记下的）：searchVal 是全站的搜索量，sales30day 是本类目 30 天的销量；标题里的片段不等于搜索词
 
 /** 一个类目的热搜词，最多 1000 个；updateTime 是数据的日期 */
@@ -177,7 +170,6 @@ export async function hotWordItems(hotWordId: number, path: number[]): Promise<{
 	return { total: Number(b.total ?? 0), rows: bySales30Day(b.itemListInfo ?? []) };
 }
 
-/** 按 30 天销量从高到低排（没有的排最后） */
 export const bySales30Day = (rows: Row[]): Row[] => {
 	const sales = (r: Row) => Number(r.itemDataList?.[0]?.sales30Day ?? -1) || 0;
 	return [...rows].sort((a, b) => sales(b) - sales(a));
@@ -187,26 +179,19 @@ const word = (hotWordId: number) => ({ hotWordId, updateKey: 1 });
 /** 一个词最近 30 天每天的搜索量、销量（charts；顺序不保证，按 timest 排） */
 export const demandChange = async (hotWordId: number): Promise<Row> =>
 	(await api<{ data: Row }>("/hotWordChopeeProduct/getDemandChange", word(hotWordId))).data;
-/** 一个词的竞争环境：商品数、店铺数、集中度…… */
 export const competition = async (hotWordId: number): Promise<Row> =>
 	(await api<{ data: Row }>("/hotWordChopeeProduct/getCompetitiveEnvironment", word(hotWordId))).data;
-/** 一个词的价格带：各价格区间的商品数、销量 */
 export const priceLine = async (hotWordId: number): Promise<Row> => (await api<{ data: Row }>("/hotWordChopeeProduct/getPriceLine", word(hotWordId))).data;
-/** 买家对这类商品的吐槽点（差评里说得多的） */
 export const complaints = async (hotWordId: number): Promise<Row[]> =>
 	(await api<{ data: Row[] }>("/hotWordChopeeProduct/tucaoPoint", word(hotWordId))).data ?? [];
-/** 买家偏好的规格（颜色、尺寸……） */
 export const preferences = async (hotWordId: number): Promise<Row[]> =>
 	(await api<{ data: Row[] }>("/hotWordChopeeProduct/preference", word(hotWordId))).data ?? [];
 /** 长尾词（参数是小写 w 的 hotwordId，列表在 payload） */
 export const longTail = async (hotWordId: number): Promise<Row[]> =>
 	(await api<{ payload: Row[] }>("/drainageWords/longTailWords", { hotwordId: hotWordId })).payload ?? [];
 
-// ── 1688 同款 ──
-
 export type Candidate = { offerId: string; url: string; title: string; price: number; monthSold: number; image: string };
 
-/** 用一张图在 1688 上找同款，最多 n 个 */
 export async function similar1688(imageUrl: string, n = 4): Promise<Candidate[]> {
 	const b = await api<{ data?: any[] }>("/similarProduct/query1688", { imgUrl: imageUrl, beginPage: 1, pageSize: n });
 	if (!Array.isArray(b.data)) throw new Error("知虾的 1688 同款没有回列表");

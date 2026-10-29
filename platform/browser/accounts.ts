@@ -6,12 +6,10 @@
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { type Account, allSites, type Browser, browsers, cookies, hasTab, probe, siteDef, using } from "./browser.ts";
 
-/** 认一次的结果：登录着的账号（没登录是 null）；没认出来的原因 */
 type Login = { value: Account | null; error: Error | null };
 
 const memo = new Map<string, Promise<Login>>();
 
-/** 这个浏览器里登录着这个站点的哪个账号（一个进程认一次） */
 function loginIn(site: string, b: Browser): Promise<Login> {
 	const key = `${site} ${b.id}`;
 	let p = memo.get(key);
@@ -29,7 +27,6 @@ function loginIn(site: string, b: Browser): Promise<Login> {
 	return p;
 }
 
-/** 给人看的浏览器名字：要人选的站点（例 Shopee）登录着的账号名（例 cheeroutdoor）；没有的用扩展里起的名字，或 id 的前 8 位 */
 export async function browserName(id: string): Promise<string> {
 	const b = (await browsers()).find((x) => x.id === id);
 	for (const d of allSites().filter((x) => x.login.each)) {
@@ -39,18 +36,14 @@ export async function browserName(id: string): Promise<string> {
 	return b?.label || id.slice(0, 8);
 }
 
-/** 每个连着的浏览器里登录着这个站点的哪个账号（没登录的不列） */
 export async function logins(site: string): Promise<{ browser: string; account: Account }[]> {
 	const all = await browsers();
 	const found = await Promise.all(all.map((b) => loginIn(site, b)));
 	return all.flatMap((b, i) => (found[i]!.value ? [{ browser: b.id, account: found[i]!.value! }] : []));
 }
 
-/** 一个浏览器认出来的样子（给 choose 选）：给人看的名字、登录着没有、没认出来的原因 */
 export type Found = { id: string; name: string; login: boolean; error?: Error | null };
 
-/** 按登录选浏览器（纯函数，站点要注册过）：只有一个登录着的就用它；几个都登录着：要人选的站点要人用 --flag 选一个，别的用第一个；
- * 一个都没有：有跳了滑块验证的说它，不然要人登录 */
 export function choose(site: string, found: Found[]): string {
 	const d = siteDef(site);
 	const logged = found.filter((f) => f.login);
@@ -63,7 +56,6 @@ export function choose(site: string, found: Found[]): string {
 	);
 }
 
-/** 浏览器排个序：开着这个 origin 的标签页的在前（多半就是登录着的那个，认它不用开新标签页） */
 async function openFirst(all: Browser[], origin: string): Promise<Browser[]> {
 	const open = await Promise.all(all.map((b) => hasTab(b, origin)));
 	return [...all.filter((_, i) => open[i]), ...all.filter((_, i) => !open[i])];
@@ -75,13 +67,11 @@ async function route(site: string): Promise<string> {
 	const found: Found[] = [];
 	const name = (b: Browser, a: Account | null) => a?.name || a?.id || b.label || b.id.slice(0, 8);
 	if (d.login.each) {
-		// 要人选的：每个都认，几个都登录着就要人选
 		for (const [i, r] of (await Promise.all(all.map((b) => loginIn(site, b)))).entries())
 			found.push({ id: all[i]!.id, name: name(all[i]!, r.value), login: r.value !== null, error: r.error });
 		return choose(site, found);
 	}
 	if (d.login.cookie) {
-		// 这个进程认过的照认过的；没认过的先看 cookie：说登录着的直接用（不开页面），说没登录的跳过，看不出的再开页面认
 		const sure: Browser[] = [],
 			unsure: Browser[] = [];
 		for (const b of all) {
@@ -105,7 +95,6 @@ async function route(site: string): Promise<string> {
 		}
 		return choose(site, found);
 	}
-	// 别的：认到一个登录着的就用
 	for (const b of await openFirst(all, d.origin)) {
 		const r = await loginIn(site, b);
 		found.push({ id: b.id, name: b.label, login: r.value !== null, error: r.error });
@@ -116,7 +105,6 @@ async function route(site: string): Promise<string> {
 
 const routes = new Map<string, Promise<string>>();
 
-/** 没指定浏览器时这个站点用哪个浏览器（一个进程认一次，见 choose） */
 export function browserFor(site: string): Promise<string> {
 	let p = routes.get(site);
 	if (!p) {
@@ -127,13 +115,11 @@ export function browserFor(site: string): Promise<string> {
 	return p;
 }
 
-/** 认这个站点时出的错里，有跳了滑块验证的就是它（没认出账号的原因，比「没有登录」准） */
 export async function challengeIn(site: string): Promise<Challenge | undefined> {
 	const all = await Promise.all((await browsers()).map((b) => loginIn(site, b)));
 	return all.map((r) => r.error).find((e): e is Challenge => e instanceof Challenge);
 }
 
-/** 在登录着这个站点这个账号的浏览器里做 fn：account 是账号的 id 或名字（例 店铺 id 或账号名 ni1206；1688 的 userId） */
 export async function inAccount<T>(site: string, account: string, fn: () => Promise<T>): Promise<T> {
 	const d = siteDef(site);
 	const errors: (Error | null)[] = [];

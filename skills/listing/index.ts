@@ -25,7 +25,6 @@ import { textCheck } from "./textcheck.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "./variants.ts";
 import { LISTING_WRITES } from "./writes.ts";
 
-/** 命令输出里商品稿的叫法：简称（店铺，#编号）；没有的编号照原样写 */
 async function namesOf(sql: Sql, ids: string[]): Promise<(id: string) => string> {
 	const valid = [...new Set(ids.filter((id) => /^\d+$/.test(id)))];
 	const rows = valid.length ? await sql`select id::text, shop, nickname, offer_id, offer->>'title' as title from listings where id in ${sql(valid)}` : [];
@@ -50,7 +49,6 @@ const ids = z
 	.meta({ description: "商品稿编号，逗号分隔", placeholder: "1,2,…" });
 const text = z.string().trim().min(1);
 
-/** publish：人同意了，照检查算出来的写入（建商品、上架）一份商品稿一批；有一份不是待批准、待上架就都不做 */
 export async function publishPlan(sql: Sql, want: string[]) {
 	const name = await namesOf(sql, want);
 	const r = await listingsCheck(sql, want);
@@ -63,7 +61,6 @@ export async function publishPlan(sql: Sql, want: string[]) {
 	return r.ready.filter((x) => want.includes(x.id)).map((l) => l.writes);
 }
 
-/** 这一次碰过的商品稿（建商品、上架的写入）马上重算当前步骤，网页上不用等下一次 x2 status */
 async function written(sql: Sql, ran: Ran[]): Promise<void> {
 	const ids = [...new Set(ran.map((x) => x.id))];
 	const rows = await sql`select params->>'listingId' as id from writes where id in ${sql(ids)} and op in ('建商品', '上架') and params ? 'listingId'`;
@@ -176,7 +173,6 @@ export const listing: Toolkit = {
 				z.object({ ids: ids.optional(), jobs: z.coerce.number().int().min(1).max(10).default(3).describe("几份同时做") }),
 				async (p) => {
 					const sql = await db();
-					// 不给就做：还没做的、待补充的、规格是旧格式的、换了类目还没照它做属性和备货天数的
 					const want =
 						p.ids ??
 						(
@@ -186,14 +182,12 @@ export const listing: Toolkit = {
 					const before = await namesOf(sql, want);
 					const settled = await each(want, p.jobs, async (id) => {
 						const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`));
-						// 缺重量、国内运费的告诉 agent 估，定不了价的、超过上限的现算
 						const [l] = await sql`select * from listings where id = ${id}`;
 						const specs = l ? specsOf(l.variants) : null;
 						const needs = l ? estimateNeeds(l) : [];
 						return { ...r, name: l ? listingName(l) : `商品稿 ${id}`, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] };
 					});
 					const results = settled.flatMap((x) => (x.ok ? [x.value] : []));
-					// 有出错的：做完的照样记在库里；要人处理的（登录、滑块）在前面，没开始的等处理好了再跑
 					const rank = (f: { error: Error; started: boolean }) => (!f.started ? 2 : f.error instanceof NeedsHuman ? 0 : 1);
 					const failed = settled
 						.flatMap((x, i) => (x.ok ? [] : [{ id: want[i]!, error: x.error as Error, started: x.started }]))
@@ -254,7 +248,6 @@ export const listing: Toolkit = {
 							notes.push(`国内运费：记为 ${p.freight} 元/件`);
 						}
 					}
-					// 只写还空着的（两个 x2 同时估，先写的算）
 					if (set.weight_kg !== undefined)
 						await sql`update listings set weight_kg = ${set.weight_kg}, updated_at = now() where id = ${p.id} and weight_kg is null`;
 					if (set.freight_rmb !== undefined)
@@ -286,7 +279,6 @@ export const listing: Toolkit = {
 			async (p) => {
 				const [l] = await (await db())`select * from listings where id = ${p.id}`;
 				if (!l) throw new Usage(`没有商品稿 ${p.id}`);
-				// 规格：每层（第几层、1688 的层名、现在的名字）、每个选项（第几个、1688 的原值、现在的名字、这个选项的售价范围）。单规格的不写规格名，tiers 是空的
 				const specs = specsOf(l.variants);
 				const tiers =
 					specs && !isSingle(specs)
@@ -354,7 +346,6 @@ export const listing: Toolkit = {
 						: [{ id: p.id!, title: p.title ?? "", description: p.description ?? "", tiers: p.tiers, nickname: p.nickname }];
 					const results: { id: string; saved: boolean; problems: string[]; notes?: string[] }[] = [];
 					for (const it of items) {
-						// 标题、描述的硬规矩；规格名（交了的话）照 show 的层和选项一个一个改，过一遍规格的规矩；简称（交了的话）简体中文、最多 12 字。有一样不对就什么都不存
 						const problems = [...textProblems(it.title.trim(), it.description.trim()), ...(it.nickname === undefined ? [] : nicknameProblems(it.nickname))];
 						const [l] = await sql`select variants, offer, removed_variants, nickname from listings where id = ${it.id}`;
 						if (!l) {
@@ -377,7 +368,6 @@ export const listing: Toolkit = {
 							continue;
 						}
 						const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs) } : {};
-						// 简称只在空着、还是自动填的那个值时写：人在网页上改过的不改
 						const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
 						await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() } as any)} where id = ${it.id}`;
 						results.push({
@@ -489,7 +479,6 @@ export const listing: Toolkit = {
 				"人在终端里说「放弃」：替人勾「放弃」，马上是已放弃。建了商品的要下架，不是放弃；建商品还没核清的先核清；有一份不行就都不勾。原因只回显，不存",
 				z.object({ ids, why: text.optional().describe("原因") }),
 				async (p) => {
-					// 和人在网页上勾「放弃」是同一个勾。原因不存：「备注」是人写的，也没有放原因的列，只回显。勾完马上重算当前步骤（已放弃）
 					const sql = await db();
 					const want = [...new Set(p.ids as string[])];
 					const name = await namesOf(sql, want);
@@ -554,9 +543,6 @@ export const listing: Toolkit = {
 	schema: new URL("./schema.sql", import.meta.url),
 };
 
-/** 人定的类目（x2 listing category）：要是 Shopee 类目树里的叶子（tree 读这家店的类目树），在本店允许的类目里；已经建了商品的不改。
- * 写类目的路径、id、名字；属性、备货天数跟着类目变，清掉，做商品稿第 4 步记的问题（类目、属性、备货天数）也不算了；马上重算当前步骤（待做商品稿）。
- * 以后做商品稿照用这个类目，不再问 Shopee 推荐 */
 export async function setCategory(sql: Sql, id: string, category: string, tree: (shopId: string) => Promise<Category[]>) {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) throw new Usage(`没有商品稿 ${id}`);
@@ -590,7 +576,6 @@ export async function setCategory(sql: Sql, id: string, category: string, tree: 
 	};
 }
 
-/** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写图的名字） */
 type CheckResult = { id: string; name: string; checked: boolean; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
 const checkLine = (c: CheckResult) => {
 	if (!c.checked) return `${c.name} Gemini 文字检查：查不了：${(c.problems ?? []).join("；")}`;
@@ -602,7 +587,6 @@ const checkLine = (c: CheckResult) => {
 	].join("\n");
 };
 
-/** 现在这份商品稿组成的商品（人删的图不查） */
 async function productNow(sql: Sql, id: string) {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) return null;
@@ -610,11 +594,8 @@ async function productNow(sql: Sql, id: string) {
 	return { l, kept: (l.kept_images ?? []) as string[], r: productOf(l, settingsOf(row)) };
 }
 
-/** 挑出后加文案的详情图、不是封面的主图：x2 去掉以后最多再查几轮 */
 const MAX_RECHECK = 2;
 
-/** Gemini 文字检查：内容没变的不重查（检查键记在商品稿的 audit 里）。看的是加水印之前的图（unmarked）。
- * 挑出的图 x2 能去掉的去掉（不进已删除的图），重组商品再查 */
 async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 	const out: CheckResult[] = [];
 	for (const id of ids) {
@@ -644,7 +625,6 @@ async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 				out.push({ id, name, checked: false, problems: c.r.problems, issues: [] });
 				continue;
 			}
-			// x2 去掉的图（这一次的、以前的）也记进检查结果：人看得到，要用可以保留
 			a = { ...a!, images: [...auditDropped(c.l.images), ...a!.images] };
 			await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;
 		}

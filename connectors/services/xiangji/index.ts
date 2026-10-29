@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { SubmitTool, Toolkit } from "../../../platform/tool.ts";
 import { BATCH, type Outcome, translate } from "./api.ts";
 
-/** 交一批图译字：答复了是 done（data 是译好的、没译成的、答复里没有的）；没拿到答复是结果未知，不许重交 */
 export const translateImages: SubmitTool = {
 	kind: "write",
 	description: `把图上的简体字译成繁体（收费，一张约 0.025 元；一批最多 ${BATCH} 张；只经上品的写操作「译图」）`,

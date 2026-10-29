@@ -10,12 +10,10 @@ import { SELECTION_TABLES } from "./tables.ts";
 export { type Added, addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
 
 const STATUS = ["试验中", "使用中", "已停用"] as const;
-/** 变更记录里的列 → 中文 */
 const FIELD = { status: "状态", bet: "假设", how: "选品方法", note: "备注" } as const;
 type Field = keyof typeof FIELD;
 const text = z.string().trim().min(1);
 
-/** 改了什么：「假设：旧 → 新」 */
 const changeLines = (before: Record<string, unknown> | null, after: Record<string, unknown>) =>
 	Object.entries(after).map(([k, v]) => `${FIELD[k as Field] ?? k}：${before && k in before ? `${before[k] ?? "（空）"} → ` : ""}${v ?? "（空）"}`);
 
@@ -67,7 +65,6 @@ export const selection: Toolkit = {
 					})
 					.refine((a) => a.status !== undefined || a.bet !== undefined || a.how !== undefined || a.note !== undefined, { message: "至少改一样" }),
 				async ({ why, ...wanted }) => {
-					// 锁住这一行：几个 x2 同时改，版本号不重
 					const r = await (await db()).begin(async (tx) => {
 						const [old] = await tx`select status, bet, how, note, version from strategies where name = ${wanted.name} for update`;
 						if (!old) return null;
@@ -134,7 +131,6 @@ export const selection: Toolkit = {
 			text: (r) =>
 				[
 					`策略「${r.name}」现在是第 ${r.version} 版`,
-					// 加版本号之前记的策略没有第 1 版的记录
 					...(r.changes[0]?.version === 1 ? [] : ["第 1 版：加版本号之前记的，没有记录"]),
 					...r.changes.map(
 						(c: any) =>
@@ -161,7 +157,6 @@ export const selection: Toolkit = {
 				z.object({ id: z.string().regex(/^\d+$/).describe("规矩编号（x2 selection rule-list）"), why: text.describe("为什么停用") }),
 				async (p) => {
 					const sql = await db();
-					// 只停用在用的：已经停用的不改结束时间
 					const [r] = await sql<Rule[]>`update selection_rules set ended_at = now(), retire_why = ${p.why} where id = ${p.id} and ended_at is null
 						returning id::text, rule, why, started_at, ended_at, retire_why`;
 					if (!r) {

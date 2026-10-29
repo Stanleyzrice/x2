@@ -20,7 +20,6 @@ const table = (rows: [string, string][]) => {
 const schemaOf = (t: Tool) => z.toJSONSchema(t.params, { io: "input", unrepresentable: "any" }) as { properties?: Record<string, any>; required?: string[] };
 const isWrite = (t: Tool) => t.kind === "write" && "plan" in t;
 const paged = (t: Tool) => t.kind === "read" && "page" in t;
-/** 命令行上怎么叫：平台的工具是 x2 <工具>，别的是 x2 <toolkit> <工具> */
 const call = (kit: Toolkit, name: string) => (kit.name ? `x2 ${kit.name} ${name}` : `x2 ${name}`);
 
 const readStdin = async () => {
@@ -29,7 +28,6 @@ const readStdin = async () => {
 	return Buffer.concat(chunks).toString("utf8");
 };
 
-/** --名字 值、--名字=值、单独的 --名字（开关）；值是 - 的从 stdin 读 */
 async function parseFlags(args: string[]): Promise<{ flags: Record<string, string>; bare: Set<string> }> {
 	const out: Record<string, string> = {};
 	const bare = new Set<string>();
@@ -105,13 +103,11 @@ function help(): string {
 	].join("\n");
 }
 
-/** x2 schema：全部工具的说明和参数（JSON Schema），给 agent 读 */
 export function schema(): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	for (const kit of toolkits()) {
 		for (const [name, t] of Object.entries(kit.tools)) {
 			const params = schemaOf(t);
-			// --shop 这类选浏览器的参数不是工具的参数：也写进来，agent 才知道
 			if (kit.scope) params.properties = { ...params.properties, [kit.scope.flag]: { type: "string", description: kit.scope.description } };
 			out[kit.name ? `${kit.name}.${name}` : name] = {
 				description: t.description,
@@ -125,7 +121,6 @@ export function schema(): Record<string, unknown> {
 	return out;
 }
 
-/** 跑一个 toolkit 的一个工具，回要输出的值；是帮助时回帮助文本 */
 export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: string } | { value: unknown; tool: Tool }> {
 	const [name, ...rest] = args;
 	if (!name || name === "--help" || name === "-h") return { help: kitHelp(kit) };
@@ -146,7 +141,6 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	const raw: Record<string, string> = {};
 	for (const [k, v] of Object.entries(given)) {
 		if (!known.has(camel(k))) throw new Usage(`${name} 没有参数 --${k}\n${usage()}`);
-		// 单独的 --名字 只给开关：别的参数后面要写值（不然 --why 会被当成字的 true）
 		if (bare.has(k) && !(t.params.shape[camel(k)] as z.ZodType).safeParse(true).success) throw new Usage(`--${k} 后面要写值\n${usage()}`);
 		raw[camel(k)] = v;
 	}
@@ -179,7 +173,6 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	});
 }
 
-/** 写入的结果，一行一项 */
 export function outcomeText(r: Outcome): string {
 	return [
 		r.ran.length ? r.ran.map((x) => `[${x.status}] #${x.id} ${x.op} ${x.display}${x.why ? `：${x.why}` : ""}`).join("\n") : "没有要核清、要执行的写入",
@@ -188,7 +181,6 @@ export function outcomeText(r: Outcome): string {
 	].join("\n");
 }
 
-/** 命令行的入口：argv 是 x2 后面的 */
 export async function main(argv: string[]): Promise<void> {
 	const json = argv.includes("--json");
 	const [first, ...args] = argv.filter((a) => a !== "--json");

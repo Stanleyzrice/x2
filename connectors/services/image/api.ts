@@ -9,7 +9,6 @@ export type Bytes = { bytes: Uint8Array; mime: string; sha256: string; width: nu
 
 export const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-/** 文件头 → mime：只认 JPEG、PNG、WebP */
 export function mimeOf(b: Uint8Array): string | null {
 	if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
 	if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
@@ -17,7 +16,6 @@ export function mimeOf(b: Uint8Array): string | null {
 	return null;
 }
 
-/** 宽高：PNG 读 IHDR，JPEG 找 SOF 段，WebP 看 VP8 / VP8L / VP8X。认不出回 null */
 export function sizeOf(b: Uint8Array): { width: number; height: number } | null {
 	const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
 	const mime = mimeOf(b);
@@ -51,7 +49,6 @@ export function sizeOf(b: Uint8Array): { width: number; height: number } | null 
 	return null;
 }
 
-/** 字节 → 认过格式、量过宽高、算过哈希的一张图；不是图、太大、量不出宽高都抛 */
 export function inspect(bytes: Uint8Array, from = "图片"): Bytes {
 	if (bytes.length > MAX_BYTES) throw new Error(`${from} 太大（${Math.round(bytes.length / 1048576)}MB，最多 15MB）`);
 	const mime = mimeOf(bytes);

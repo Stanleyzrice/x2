@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { compare, matchSku, rank } from "./similar.ts";
 
-// 例子都是 2026-09-30 真实订单里的规格名和它们的 1688 货源
 const rack = [
 	"特厚25管全钢-双杆150黑+万向轮",
 	"特厚25管全钢-双层置物架+双杆150黑+万向轮",
@@ -43,7 +42,6 @@ test("规格例外：按名字配不上时照人写的配（繁简、空格不�
 	const ex = "别的规格 = 特厚25管全钢-双杆150黑+万向轮\n特粗26管双层侧三网150金+轮 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮";
 	assert.equal(matchSku(spec, rack, ex)?.name, "顶配侧三层置物网+双层置物架+双杆150金+万向轮");
 	assert.equal(matchSku(spec, rack, `${spec} = 顶配侧三层置物网+双层置物架+双杆150银+万向轮`), null);
-	// 店里是单规格、货源有几个：写「（单规格）」
 	assert.equal(matchSku("", [{ name: "红" }, { name: "蓝" }]), null);
 	assert.equal(matchSku("", [{ name: "红" }, { name: "蓝" }], "（单规格） = 蓝")?.name, "蓝");
 });

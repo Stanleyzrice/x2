@@ -12,43 +12,31 @@ import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { acquire, type Lock, spaced } from "./lock.ts";
 
 const MARK = "x2";
-/** 一个站点用完多久没再用就放锁（让别的进程用） */
 const GRACE_MS = 2000;
 
 export type Page = {
-	/** 这个标签页在哪个浏览器里（cdp-relay 里的 id） */
 	readonly browser: string;
 	/** 在页面里调用一个函数：fn 要自给自足（不引用外面的变量），参数经 JSON 传进去 */
 	run<A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>>;
-	/** 导航到一个地址，等到页面加载完 */
 	goto(url: string): Promise<void>;
 };
 
-/** 连着的浏览器：id、名字（cdp-relay 扩展里起的，可能是空的）、已经 attach 的标签页 */
 export type Browser = { id: string; label: string; attached: number[] };
 
 /** 认人机验证：look、seen 要自给自足（整个放进页面里跑） */
 export type Challenger = { look: () => unknown; seen: (l: any) => boolean; url: (url: string) => boolean };
 
-/** 登录着的账号：id（例 店铺 id、会员 id），给人看的名字（例 账号名） */
 export type Account = { id: string; name: string };
 
-/** 站点（经浏览器、用人的登录）：连接器声明（toolkit 的 site），注册进来。没指定浏览器时按登录着它选浏览器；几个进程按「浏览器 × 站点」排队 */
 export type SiteDef = {
 	key: string;
-	/** 给人看的名字（例 Shopee 卖家中心） */
 	title: string;
-	/** 首页（认登录、看浏览器里有没有开着它） */
 	origin: string;
-	/** 网址的主机名是不是这个站点 */
 	hosts: (host: string) => boolean;
-	/** 页面两次加载之间至少隔多久（几个进程一起算），例 读得太密会跳人机验证的站点 */
 	paceMs?: number;
 	/** 人机验证（例 滑块）：在页面里跑的时候一直看着，认出来就停（Challenge），不等到超时。
 	 * look 在页面里收集要看的，seen 判（两个都整个放进页面里跑：不引用外面的东西）；落地的地址就看得出的，url 判 */
 	challenge?: Challenger;
-	/** 认登录：identify 在这个浏览器的页面里读登录着的账号（没登录是 null）。
-	 * cookie：先看 cookie 说登录着没有（看不出是 null，再开页面认）；each：几个浏览器都登录着时要人选一个（例 Shopee 一家店一个浏览器，--shop 选） */
 	login: {
 		identify: () => Promise<Account | null>;
 		cookie?: { url: string; signedIn: (jar: Map<string, string> | null) => boolean | null };
@@ -67,13 +55,11 @@ export function siteDef(key: string): SiteDef {
 }
 export const allSites = (): SiteDef[] => [...sites.values()];
 
-/** 网址是哪个站点（注册了的）；不认识的回 null */
 export function siteOf(url: string): string | null {
 	const host = new URL(url).hostname;
 	return allSites().find((d) => d.hosts(host))?.key ?? null;
 }
 
-/** 站点没登录时跳去的登录页（纯函数）：主机名是 login.、passport.、signin.、account(s). 开头的，或路径里有 login、signin、passport */
 export function loginPage(url: string): boolean {
 	const u = new URL(url);
 	return /^(login|passport|signin|accounts?)\./i.test(u.hostname) || /\/(login|signin|passport)/i.test(u.pathname);
@@ -83,10 +69,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const chosen = new AsyncLocalStorage<string>();
 
-/** 在这个浏览器（cdp-relay 里的 id）里做 fn：fn 里的 page() 都开在它里面 */
 export const using = <T>(browser: string, fn: () => Promise<T>): Promise<T> => chosen.run(browser, fn);
 
-/** 连着的浏览器 */
 export async function browsers(): Promise<Browser[]> {
 	const all = await new RelayClient({}).browsers().catch(() => {
 		throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？");
@@ -94,10 +78,8 @@ export async function browsers(): Promise<Browser[]> {
 	return all.map((b) => ({ id: b.id, label: b.label, attached: b.attached ?? [] }));
 }
 
-/** 给人看的浏览器（扩展里没起名字的用 id 的前 8 位） */
 const short = (b: Browser) => b.label || b.id.slice(0, 8);
 
-/** 这个 origin 在哪个浏览器里做：using() 指定的 → X2_BROWSER → 只连着一个就是它 → 按登录选 */
 async function pick(origin: string): Promise<Browser> {
 	const all = await browsers();
 	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 cdp-relay 扩展已连接");
@@ -110,7 +92,6 @@ async function pick(origin: string): Promise<Browser> {
 	if (all.length === 1) return all[0]!;
 	const site = siteOf(origin);
 	if (!site) throw new Usage(`连着 ${all.length} 个浏览器，用 X2_BROWSER 选一个：${all.map(short).join("、")}`);
-	// 按登录选：accounts.ts 认每个浏览器里登录着什么（它也用这个文件：互相引，所以到用时才 import）
 	const { browserFor } = await import("./accounts.ts");
 	const id = await browserFor(site);
 	const b = all.find((x) => x.id === id);
@@ -118,13 +99,9 @@ async function pick(origin: string): Promise<Browser> {
 	return b;
 }
 
-// ── 排队：同一个浏览器的同一个站点，一次一个进程 ──
-// 一个进程里同时用的（几件事一起做）共用这个进程拿到的锁；都用完了 2 秒没人再用就放
-
 type Lease = { lock: Lock | null; active: number; idle: NodeJS.Timeout | null; wait: Promise<void> | null };
 const leases = new Map<string, Lease>();
 
-/** 开始用这个浏览器的这个站点：这个进程还没拿着锁就去拿（别的进程在用就等）；回「用完了」 */
 async function enter(b: Browser, site: string): Promise<() => void> {
 	const key = `${b.id}-${site}`;
 	let l = leases.get(key);
@@ -169,17 +146,14 @@ async function enter(b: Browser, site: string): Promise<() => void> {
 	};
 }
 
-/** 页面里认出了滑块验证（只在这个文件里用：放开锁以后再换成说清楚是哪个浏览器的 Challenge） */
 class Hit extends Error {}
 
-/** 站点跳了滑块验证：说清楚在哪个浏览器里拉（按登录着的店叫它，例 cheeroutdoor） */
 export async function challenge(browser: string, site: string): Promise<Challenge> {
 	const { browserName } = await import("./accounts.ts");
 	const name = await browserName(browser).catch(() => browser.slice(0, 8));
 	return new Challenge(`${sites.get(site)?.title ?? site} 要过滑块验证：在 ${name} 的浏览器里拉一下再重试`);
 }
 
-/** 拿着这个浏览器这个站点的锁做 fn；认出人机验证的，放开锁以后再说是哪个浏览器（叫它的名字要认登录） */
 async function within<T>(b: Browser, site: string, fn: () => Promise<T>): Promise<T> {
 	const exit = await enter(b, site);
 	try {
@@ -192,20 +166,16 @@ async function within<T>(b: Browser, site: string, fn: () => Promise<T>): Promis
 	throw await challenge(b.id, site);
 }
 
-/** 在这个站点一口气做完 fn（按 origin 选浏览器）：做的时候一直拿着锁，别的 x2 进程等着（例 知虾的限流要在锁里算）；fn 里的 page() 都在这个浏览器里 */
 export async function hold<T>(origin: string, fn: () => Promise<T>): Promise<T> {
 	const b = await pick(origin);
 	return within(b, siteOf(origin) ?? new URL(origin).host, () => chosen.run(b.id, fn));
 }
 
-/** 页面加载前：这个站点要隔开的，离上一次加载（几个进程一起算）不够就等 */
 async function pace(b: Browser, site: string): Promise<void> {
 	const gap = sites.get(site)?.paceMs;
 	if (gap) await spaced(`${b.id}-${site}`, gap);
 }
 
-/** 等页面加载完（加载完、地址也不再变）。落到人机验证页就停（Hit）；
- * 跳到了别的网站的登录页（没登录）：这个标签页 x2 以后按网址找不回来，关掉，要人登录 */
 async function settle(c: RelayClient, tabId: number, origin: string, site: string, timeoutMs = 30_000): Promise<void> {
 	const until = Date.now() + timeoutMs;
 	let last = "";
@@ -224,8 +194,6 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	}
 }
 
-/** 注册了人机验证的站点，页面里跑 fn 的表达式：先看有没有验证（有就不跑），跑的时候每 0.5 秒再看（验证框弹出来就不等 fn 了）。
- * 回 { x2: "challenge" } 或 { x2: "ok", value } */
 export function guarded(fn: (...args: any[]) => unknown, args: readonly unknown[], challenge: Challenger): string {
 	const call = `(${fn.toString()})(${args.map((a) => JSON.stringify(a) ?? "undefined").join(",")})`;
 	return `(async () => {
@@ -242,12 +210,9 @@ export function guarded(fn: (...args: any[]) => unknown, args: readonly unknown[
 	})()`;
 }
 
-/** 认登录时开的标签页（probe 里）：没认出就关掉 */
 const opened = new AsyncLocalStorage<number[]>();
-/** 同一个进程里同时找同一个标签页的，等同一次（别开两个） */
 const finding = new Map<string, Promise<number>>();
 
-/** 这个 origin 的 x2 标签页：有就用，没有就在后台开一个（不抢前台） */
 async function tabFor(c: RelayClient, b: Browser, origin: string, site: string): Promise<number> {
 	for (const t of (await c.tabs()).filter((t) => t.url.startsWith(origin))) {
 		await c.attach(t.tabId);
@@ -262,7 +227,6 @@ async function tabFor(c: RelayClient, b: Browser, origin: string, site: string):
 	return tab.tabId;
 }
 
-/** 这个 origin 的 x2 标签页 */
 export async function page(origin: string): Promise<Page> {
 	const b = await pick(origin);
 	const site = siteOf(origin) ?? new URL(origin).host;
@@ -300,8 +264,6 @@ export async function page(origin: string): Promise<Page> {
 	};
 }
 
-/** 认登录：在这个浏览器里做 fn；fn 里开的标签页，fn 没成（没登录、出错）就关掉，不留下。
- * 跳了滑块验证的不关：人要在那个标签页里拉（它还在这个站点上，下次 x2 找得回来，不会越开越多） */
 export async function probe<T>(browser: string, fn: () => Promise<T>): Promise<T> {
 	const tabs: number[] = [];
 	try {
@@ -322,14 +284,11 @@ export async function cookies(b: Browser, url: string): Promise<Map<string, stri
 		try {
 			const r = await c.send<{ cookies: { name: string; value: string }[] }>(tab, "Network.getCookies", { urls: [url] });
 			return new Map(r.cookies.map((k) => [k.name, k.value]));
-		} catch {
-			/* 这个标签页不行了（关了、换了页），换一个 */
-		}
+		} catch {}
 	}
 	return null;
 }
 
-/** 这个浏览器里开着这个 origin 的标签页没有（谁开的都算） */
 export async function hasTab(b: Browser, origin: string): Promise<boolean> {
 	const tabs = await new RelayClient({ browser: b.id }).tabs({ fresh: false }).catch(() => []);
 	return tabs.some((t) => t.url.startsWith(origin));

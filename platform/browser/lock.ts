@@ -8,20 +8,17 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, uti
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
-/** 锁文件里写的：谁拿着 */
 export type Owner = { pid: number; host: string; cmd: string; at: string; token: string };
 export type Lock = { release(): void };
 
 const HEARTBEAT_MS = 10_000;
 export const EXPIRE_MS = 60_000;
-/** 刚建好、还没写进内容的锁文件，这么久以内不算坏的 */
 const FRESH_MS = 5_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const lockDir = () => join(process.env.X2_HOME ?? join(homedir(), "x2"), "locks");
 
-/** 文件名里只留字母、数字和 . _ -（浏览器 id 是 uuid，站点是注册的 key） */
 const file = (name: string, ext: string) => join(lockDir(), `${name.replace(/[^\w.-]/g, "_")}.${ext}`);
 
 /** 这个进程还在不在（kill 0 只看不杀；EPERM 是在、只是不归我们管） */
@@ -34,23 +31,19 @@ export function alive(pid: number): boolean {
 	}
 }
 
-/** 一个锁还算不算数（纯函数）：超过 expireMs 没摸过的不算；同一台电脑上、进程已经不在了的不算；读不出是谁的，刚建的（几秒内）还算 */
 export function stale(owner: Owner | null, ageMs: number, isAlive: (pid: number) => boolean, host = hostname(), expireMs = EXPIRE_MS): boolean {
 	if (ageMs > expireMs) return true;
 	if (!owner) return ageMs > FRESH_MS;
 	return owner.host === host && !isAlive(owner.pid);
 }
 
-/** 读一个锁文件：谁的、多久没摸了；没有这个文件回 null */
 function peek(path: string): { owner: Owner | null; ageMs: number } | null {
 	try {
 		const ageMs = Date.now() - statSync(path).mtimeMs;
 		let owner: Owner | null = null;
 		try {
 			owner = JSON.parse(readFileSync(path, "utf8")) as Owner;
-		} catch {
-			/* 刚建好还没写，或写坏了 */
-		}
+		} catch {}
 		return { owner, ageMs };
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -58,19 +51,14 @@ function peek(path: string): { owner: Owner | null; ageMs: number } | null {
 	}
 }
 
-/** 清掉不算数的锁：删之前再读一次，内容变了（别的进程刚拿到）就不删 */
 function clear(path: string, seen: Owner | null): void {
 	try {
 		const now = JSON.parse(readFileSync(path, "utf8")) as Owner;
 		if (!seen || now.token !== seen.token) return;
-	} catch {
-		/* 读不出：还是坏的，删 */
-	}
+	} catch {}
 	try {
 		unlinkSync(path);
-	} catch {
-		/* 已经被删了 */
-	}
+	} catch {}
 }
 
 const held = new Map<string, { token: string; beat: NodeJS.Timeout }>();
@@ -82,13 +70,10 @@ function release(path: string): void {
 	held.delete(path);
 	try {
 		if ((JSON.parse(readFileSync(path, "utf8")) as Owner).token === h.token) unlinkSync(path);
-	} catch {
-		/* 没了，或已经不是我们的 */
-	}
+	} catch {}
 }
 
 let hooked = false;
-/** 进程退出、被 Ctrl-C、被 kill 时删掉自己拿着的锁（kill -9 删不了：靠别的进程看 pid 不在了清掉） */
 function hookExit(): void {
 	if (hooked) return;
 	hooked = true;
@@ -107,7 +92,6 @@ function hookExit(): void {
 
 const cmdline = () => `x2 ${process.argv.slice(2).join(" ")}`.slice(0, 120);
 
-/** 拿锁：拿不到就等（每 0.2 秒看一次），不算数的清掉再拿；等的时候调一次 onWait（告诉人在等谁）。等超过 timeoutMs 抛错 */
 export async function acquire(name: string, opts: { onWait?: (owner: Owner) => void; timeoutMs?: number } = {}): Promise<Lock> {
 	mkdirSync(lockDir(), { recursive: true });
 	const path = file(name, "lock");
@@ -127,9 +111,7 @@ export async function acquire(name: string, opts: { onWait?: (owner: Owner) => v
 			const beat = setInterval(() => {
 				try {
 					utimesSync(path, new Date(), new Date());
-				} catch {
-					/* 被人删了：下一个拿锁的会看到 */
-				}
+				} catch {}
 			}, HEARTBEAT_MS);
 			beat.unref();
 			held.set(path, { token: me.token, beat });
@@ -155,16 +137,13 @@ export async function acquire(name: string, opts: { onWait?: (owner: Owner) => v
 	}
 }
 
-/** 两次之间至少隔 gapMs：离上一次（几个进程共用）不够就等，再记下这一次。要在拿着 name 的锁时调 */
 export async function spaced(name: string, gapMs: number): Promise<void> {
 	mkdirSync(lockDir(), { recursive: true });
 	const path = file(name, "last");
 	let last = 0;
 	try {
 		last = statSync(path).mtimeMs;
-	} catch {
-		/* 第一次 */
-	}
+	} catch {}
 	const wait = last + gapMs - Date.now();
 	if (wait > 0) await sleep(wait);
 	const now = new Date();

@@ -2,7 +2,6 @@
 // 中文没有空格，按相邻两个字（bigram）比，不按词。数字和颜色是区分规格的关键（150 和 120、金和白），店里有、对方没有的列出来并扣分。
 // Shopee 台湾的规格名是繁体，1688 是简体：先转成简体再比
 
-// 繁体 → 简体：只收规格名里常见的字，不求全
 const T2S: Record<string, string> = {
 	貓: "猫",
 	藍: "蓝",
@@ -74,13 +73,11 @@ function bigrams(s: string): Set<string> {
 	return new Set([...t].slice(1).map((c, i) => t[i] + c));
 }
 
-/** 数字连同单位（例 26管、69kg、150）；比较只看数字 */
 const numbers = (s: string) => [...simple(s).matchAll(new RegExp(`(\\d+(?:\\.\\d+)?)(${UNITS})?`, "g"))].map((m) => ({ n: m[1]!, text: m[0] }));
 const colors = (s: string) => [...new Set([...simple(s)].filter((c) => COLORS.includes(c)))];
 
 export type Compared = { score: number; missing: string[] };
 
-/** mine：店里的规格名；theirs：1688 的规格名。分数越高越像；missing 是店里的数字、颜色里对方没有的 */
 export function compare(mine: string, theirs: string): Compared {
 	const a = bigrams(mine),
 		b = bigrams(theirs);
@@ -98,16 +95,12 @@ export function compare(mine: string, theirs: string): Compared {
 	return { score: (a.size ? shared / a.size : 0) - 0.25 * missing.length, missing };
 }
 
-/** 按和 mine 像不像排序，最像的在前 */
 export function rank<T extends { name: string }>(mine: string, items: readonly T[]): (T & Compared)[] {
 	return items.map((it) => ({ ...it, ...compare(mine, it.name) })).sort((x, y) => y.score - x.score);
 }
 
-/** 两个规格名是不是同一个：繁简、大小写、空格和标点不算 */
 export const sameName = (a: string, b: string) => squash(a) === squash(b);
 
-/** 规格例外：按名字配不上时人定的，写在货源那一行，一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）。
- * 回店里这个规格写的货源规格名；没写是 undefined */
 export function exceptionFor(spec: string, exceptions: string | null | undefined): string | undefined {
 	for (const line of (exceptions ?? "").split("\n")) {
 		const i = line.indexOf("=");
@@ -116,9 +109,6 @@ export function exceptionFor(spec: string, exceptions: string | null | undefined
 	return undefined;
 }
 
-/** 店里的规格名，在货源的规格里配一个。人写了规格例外的照它（写的那个货源里没有了回 null）；
- * 没写的按名字配：数字、颜色都对上、一半以上的字对上，而且只有一个这样的（明显比别的像也算）。
- * 只有一个规格的货源（店里也没有规格名）直接用它。配不上、或者几个都一样像，回 null：要人看 */
 export function matchSku<T extends { name: string }>(spec: string, skus: readonly T[], exceptions?: string | null): T | null {
 	const named = exceptionFor(spec, exceptions);
 	if (named !== undefined) return skus.find((s) => sameName(s.name, named)) ?? null;

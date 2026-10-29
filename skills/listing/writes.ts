@@ -16,7 +16,6 @@ import { productOf } from "./ready.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）或 { failed }（象寄说译不成）。没有记录的是还没译过 */
 export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; saved: boolean }>> {
 	const rows =
 		await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
@@ -29,8 +28,6 @@ export async function saveTranslation(sql: Sql, origin: string, url: string): Pr
 	await sql`insert into images ${sql({ sha256: b.sha256, kind: "译图", source: url, from_sha: origin, mime: b.mime, width: b.width, height: b.height, bytes: Buffer.from(b.bytes) })} on conflict (sha256) do nothing`;
 }
 
-/** 译图：交象寄把一批（最多 5 张）图上的简体字译成繁体。不经至多一次写入：一张约 0.025 元，重交一次的钱比管重复的代码便宜。
- * 答复了的照原图记下结果（象寄给的地址：付过钱了，记下了再取图；译不成的原因）；没拿到答复、答复里没有的不记，下次做商品稿照常重交 */
 export async function translate(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
 	const w = await translateImages.submit({ urls: items.map((i) => i.url) });
 	const at = new Date().toISOString();
@@ -42,13 +39,9 @@ export async function translate(sql: Sql, items: { sha: string; url: string }[])
 	const shaOf = new Map(items.map((i) => [i.url, i.sha]));
 	for (const t of r.results) await mark(shaOf.get(t.origin)!, { url: t.url });
 	for (const f of r.failed) await mark(shaOf.get(f.origin)!, { failed: f.why });
-	// 记下了地址再取图：取不回来下次照地址再取，不用再付钱
 	for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
 }
 
-// ── 上品：建商品、上架 ──
-
-/** 现在的商品稿：库里的一行、店铺设置、现组的 product_info */
 async function listingNow(sql: Sql, id: string) {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) return null;
@@ -57,7 +50,6 @@ async function listingNow(sql: Sql, id: string) {
 	return { l, s, r: productOf(l, s) };
 }
 
-// name：商品稿的叫法「简称（店铺）」，只给人看（x2 status、写入的输出）
 const createParams = z.object({
 	listingId: z.string(),
 	shop: z.string(),
@@ -69,8 +61,6 @@ const createParams = z.object({
 });
 type CreateP = z.infer<typeof createParams>;
 
-/** 建商品：在这家店的卖家中心页面里发 create_product_info，先建成下架，读回来逐项核对。
- * 人同意以后商品稿又改过（现组的 product_info 和交给 x2 的不一样）就不建；用现在的店铺设置再核一次价 */
 const createOp: WriteOp<CreateP> = {
 	describe: "在 Shopee 上建商品（先建成下架）",
 	params: createParams,
@@ -100,7 +90,6 @@ const createOp: WriteOp<CreateP> = {
 		return w;
 	},
 	async check(p) {
-		// 商品 id 记在商品稿上；结果未知的（没回 id）按货号找
 		const sql = await db();
 		let [{ product_id: id }] = (await sql`select product_id from listings where id = ${p.listingId}`) as any;
 		if (!id) {
@@ -132,7 +121,6 @@ const liveParams = z.object({
 });
 type LiveP = z.infer<typeof liveParams>;
 
-/** 上架：建好的商品从下架翻成在售（update_product_info 的 unlisted: false），读回来确认在售 */
 const liveOp: WriteOp<LiveP> = {
 	describe: "把建好的商品上架（下架 → 在售）",
 	params: liveParams,
@@ -164,5 +152,4 @@ const liveOp: WriteOp<LiveP> = {
 	},
 };
 
-/** 上品的写操作（写入表的 op → 声明） */
 export const LISTING_WRITES: Record<string, WriteOp> = { 建商品: createOp, 上架: liveOp };

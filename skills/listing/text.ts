@@ -5,20 +5,16 @@ import * as OpenCC from "opencc-js";
 export const MAX_NICKNAME = 12;
 const chars = (s: string) => [...s].length;
 
-/** 简称还没人写时，x2 先填 1688 标题的前 12 个字（去掉空白） */
 export const autoNickname = (title: string | null | undefined): string | null =>
 	[...String(title ?? "").replace(/\s+/g, "")].slice(0, MAX_NICKNAME).join("") || null;
 
-/** 做商品稿时的简称：空着的、还是上一版自动填的（prevTitle 是上一版货源快照的标题），换成这一版 1688 标题的前 12 个字；人改过、agent 写过的不动 */
 export const nicknameFor = (current: string | null | undefined, prevTitle: string | null | undefined, title: string): string | null =>
 	current?.trim() && current !== autoNickname(prevTitle) ? current : autoNickname(title);
 
-/** agent 能不能写简称：空着的、还是自动填的那个值才写（人在网页上改过的不改） */
 export const nicknameOpen = (l: { nickname?: string | null; offer?: { title?: string } | null }) =>
 	!l.nickname?.trim() || l.nickname === autoNickname(l.offer?.title);
 
 let toCn: ((s: string) => string) | null = null;
-/** 简称的规矩：简体中文，1–12 字；回问题 */
 export function nicknameProblems(nickname: string): string[] {
 	const n = nickname.trim();
 	if (!n) return ["简称是空的"];
@@ -31,7 +27,6 @@ export function nicknameProblems(nickname: string): string[] {
 	return p;
 }
 
-/** 商品稿在提醒、命令输出里的叫法：简称（店铺），命令要用编号的跟在后面，例 浴水生财猫狗地垫（cheeroutdoor，#2）。还没有简称的用 1688 标题的前 12 个字、货源 id */
 export function listingName(
 	l: { id?: unknown; shop?: string | null; nickname?: string | null; offer?: { title?: string } | null; offer_id?: string | null },
 	withId = true,
@@ -40,7 +35,6 @@ export function listingName(
 	return `${name}（${[l.shop, withId && l.id !== undefined ? `#${l.id}` : ""].filter(Boolean).join("，")}）`;
 }
 
-/** 标题、描述的硬规矩；回问题 */
 export function textProblems(title: string, description: string): string[] {
 	const p: string[] = [];
 	if (title.length < 10 || title.length > 60) p.push(`标题 ${title.length} 字，要 10–60 字`);

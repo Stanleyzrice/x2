@@ -1,7 +1,6 @@
 // 1688（阿里系风控）的滑块验证：怎么认（注册进浏览器：browser.ts 在页面里跑的时候一直看着，认出来就停，不等到超时）
 import type { Challenger } from "../../../platform/browser/browser.ts";
 
-/** 页面上看得到的（在页面里收集，给 challengeOf 判） */
 export type Look = { url: string; frames: string[]; slider: boolean; text: string };
 
 /** 阿里系风控的滑块验证（纯函数，也整个放进页面里跑：不引用外面的东西）。认这几样：
@@ -15,7 +14,6 @@ export function challengeOf(p: Look): boolean {
 	return p.text.length > 0 && p.text.length <= 2000 && /拖动.{0,8}滑块|滑块验证|通过验证以确保正常访问/.test(p.text) && !/登录|登陆|密码/.test(p.text);
 }
 
-/** 在页面里收集 challengeOf 要看的（整个放进页面里跑）：地址、看得见的 iframe 的地址、看得见的滑块、整页的字（页面小才取） */
 export function look(): Look {
 	const shown = (el: Element) => {
 		const r = el.getBoundingClientRect();

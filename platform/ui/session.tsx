@@ -81,7 +81,6 @@ export function SessionView({ id, onDeleted }: { id: string; onDeleted: () => vo
 	);
 }
 
-/** 右边：一个 interactive 组件一个 tab。新放进来的（或换过的）那个打开 */
 function Panel({ items, onClosed }: { items: InteractiveItem[]; onClosed: () => void }) {
 	const newest = [...items].sort((a, b) => b.at.localeCompare(a.at))[0]!;
 	const [active, setActive] = useState(newest.id);

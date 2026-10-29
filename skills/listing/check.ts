@@ -8,14 +8,11 @@ import { productOf } from "./ready.ts";
 import { listingName, textProblems } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
-/** 当前步骤。网页上商品稿按它分组，组也是这个顺序（要人看的在前） */
 export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待 Gemini 文字检查", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
 
-/** 建商品、上架的写入（库里的一行） */
 export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null; error?: string | null };
 
-/** agent 估重量、国内运费的一份商品稿：缺什么（needs），和估要用的事实（1688 的标题、每个规格、运费） */
 export type EstimateItem = {
 	id: string;
 	name: string;
@@ -27,7 +24,6 @@ export type EstimateItem = {
 	freeShipping: boolean;
 };
 
-/** agent 能做的：tool、params 是照着调的工具；估重量、写文案要 agent 先定值、写字（why 里写着怎么调），备注照做完再调 */
 export type Todo =
 	| { kind: "做商品稿"; why: string; tool: "listing.make"; params: { ids: string[] } }
 	| { kind: "Gemini 文字检查"; why: string; tool: "listing.audit"; params: { ids: string[] } }
@@ -35,10 +31,8 @@ export type Todo =
 	| { kind: "写文案"; why: string; ids: string[] }
 	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; tool: "listing.noted"; params: { ids: string[] } };
 
-// 建商品、上架的写入：x2 listing publish 照 ready 记进库、马上执行
 const IN_FLIGHT = new Set(["待执行", "已提交", "结果未知", "不一致"]);
 
-/** agent 估重量、国内运费要用的事实：1688 的标题，每个规格的 1688 原文、进价、1688 给的重量（没给是 null），1688 的运费和包邮 */
 function estimateItem(l: any, needs: EstimateItem["needs"]): EstimateItem {
 	const skus = new Map(((l.offer?.skus ?? []) as any[]).map((k) => [String(k.skuId), k]));
 	return {
@@ -64,7 +58,6 @@ export type ListingsChecked = {
 	reminders: Reminder[];
 	todo: Todo[];
 	steps: Map<string, { step: ListingStep; detail: string | null }>;
-	/** 待批准、待上架的：人同意了 x2 listing publish 照它建商品、上架 */
 	ready: { id: string; writes: { op: string; params: Record<string, unknown> }[] }[];
 };
 
@@ -74,7 +67,6 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 	const ready: ListingsChecked["ready"] = [];
 	const waiting: { id: string; shop: string }[] = [],
 		notes: { id: string; name: string; note: string }[] = [];
-	// 商品稿都用「简称（店铺）」叫，agent 要跑命令的带上编号（listingName）
 	const toMake: string[] = [],
 		stale: string[] = [],
 		recategorized: string[] = [],
@@ -90,11 +82,9 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 		const name = listingName(l, false);
 		names.set(id, listingName(l));
 		plainNames.set(id, name);
-		// 人写的备注：上次 agent 看过以后又改了（x2 listing noted 记下看过的）
 		const note = String(l.note ?? "").trim();
 		if (!l.cancelled && note && l.note !== l.noted) notes.push({ id, name: listingName(l), note: String(l.note) });
 		const set = (step: ListingStep, detail: string | null = null) => steps.set(id, { step, detail });
-		// Gemini 文字检查挑出的问题（只提示）：带编号写进说明，图写图的名字
 		const auditLines = () => (l.audit ? auditNotes(auditIssues(l.audit, l.kept_images ?? [], imageNames(l.images ?? {}, specsOf(l.variants)))) : null);
 		if (l.cancelled) {
 			set("已放弃");
@@ -110,7 +100,6 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 		}
 		const ours = writes.filter((w) => (w.op === "建商品" || w.op === "上架") && String(w.params?.listingId) === id);
 		const mine = ours.filter((w) => IN_FLIGHT.has(w.status));
-		// 上一次被拒（Shopee 的原因）：没在做的时候写进说明，改好了再给人看
 		const last = ours.filter((w) => w.status !== "未执行").sort((a, b) => Number(b.id) - Number(a.id))[0];
 		const refused = last?.status === "被拒" ? `上次${last.op}被拒：${last.error ?? ""}` : null;
 		if (mine.length) {
@@ -118,7 +107,6 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			continue;
 		}
 		if (l.product_id) {
-			// 建好了还没上架（上架被拒、没执行）：人同意了 x2 listing publish 接着上架
 			set("待上架", lines(`商品 ${l.product_id}（下架）`, refused, "人同意了 x2 listing publish 上架"));
 			ready.push({
 				id,
@@ -130,13 +118,11 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			set("已暂停", s.paused);
 			continue;
 		}
-		// 规格是旧格式（选项名每次现算的那种）：重做商品稿
 		if (!l.offer || !specsOf(l.variants)) {
 			set("待做商品稿", l.offer ? "规格为旧格式，待重做商品稿" : null);
 			(l.offer ? stale : toMake).push(id);
 			continue;
 		}
-		// 1688 没给的重量、读不到的国内运费：agent 估（人的问题没处理完也可以先估）
 		const needs = estimateNeeds(l);
 		if (needs.length) toEstimate.push(estimateItem(l, needs));
 		if (l.problems) {
@@ -152,7 +138,6 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			});
 			continue;
 		}
-		// 人换了类目（x2 listing category 清掉了属性、备货天数）：照新的类目重做商品稿
 		if (l.category_path?.length && !l.days_to_ship) {
 			set("待做商品稿", "换了类目，待照新的类目做属性、备货天数");
 			recategorized.push(id);
@@ -192,7 +177,6 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			toCheck.push(id);
 			continue;
 		}
-		// Gemini 文字检查只提示、不挡：查过了，别的都齐了就待批准，挑出的问题写在说明里，人审稿时看。人同意了 x2 listing publish 建商品、上架
 		set("待批准", lines(refused, auditLines()));
 		waiting.push({ id, shop: l.shop });
 		ready.push({
@@ -203,7 +187,6 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			],
 		});
 	}
-	// 提醒：一家店一行，去网页「商品稿」里看
 	for (const shop of [...new Set(waiting.map((x) => x.shop))]) {
 		const ids = waiting.filter((x) => x.shop === shop).map((x) => x.id);
 		reminders.push({

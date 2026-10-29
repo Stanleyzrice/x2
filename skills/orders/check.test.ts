@@ -4,7 +4,6 @@ import { test } from "node:test";
 import { checkOrders, type Order, type Snapshot, type Source } from "./check.ts";
 import { reconcile } from "./reconcile.ts";
 
-// 例子：订单 1 买红T ×1，订单 2 买红T ×2；红T 的货源是 1688 的 O1 / S1
 const T0 = new Date("2026-10-09T02:00:00Z");
 const hours = (h: number) => new Date(T0.getTime() + h * 3600_000);
 const item = (modelId: string, qty: number) => ({
@@ -117,7 +116,6 @@ test("采购单分给订单：采购单的件数按加购的先后分给订单�
 		reconcile([w], [], []).map((l) => l.state),
 		["不见了", "不见了"],
 	);
-	// 加购以前就有的采购单不算
 	assert.deepEqual(
 		reconcile([w], [{ ...purchase(3), createdAt: hours(-48) }], []).map((l) => l.state),
 		["不见了", "不见了"],
@@ -214,7 +212,6 @@ test("取消的订单：货还在购物车里，提醒「取消」，购物车�
 	assert.ok(c);
 	assert.match(c.title, /订单 1 已取消，购物车里还有 1 件待删除/);
 	assert.match(r.cart.get("A|O1|S1")!.shouldBuy, /不该买：订单 1 已取消/);
-	// 订单 2 还该买：付款那一行提醒先删掉不该买的
 	assert.match(r.reminders.find((i) => i.key === "pay:A")!.detail, /付款前先删除/);
 });
 
@@ -235,7 +232,6 @@ test("选货源：只有一个明显匹配的随加购一起定下；几个候�
 	const none = checkOrders(snap({ sources: [] }));
 	assert.ok(none.todo.find((x) => x.kind === "找货源"));
 
-	// 选用的货源不可用（加购前现读发现下架）：当成缺货源，agent 重新找
 	const broken = checkOrders(snap({ sources: [source({ chosen: true, broken: "货源已在 1688 下架" })] }));
 	assert.match(broken.todo.find((x) => x.kind === "找货源")!.why, /缺货源或货源不可用/);
 	assert.equal(
@@ -252,7 +248,6 @@ test("不是经 x2 加购、chanboss 上已经预报、采购单也对不上的�
 });
 
 test("外部采购：采购单按货源的规格分给订单（先下单的先分），不再加购，接着预报", () => {
-	// 只买了 1 件：分给先下单的订单 1；订单 2 要 2 件，分不到，照常加购
 	const o1 = order("1", 1, { createdAt: hours(-48) }),
 		o2 = order("2", 2, { createdAt: hours(-24) });
 	const r = checkOrders(snap({ orders: [o1, o2], purchases: [purchase(1)] }));
@@ -286,7 +281,6 @@ test("买家取消：看货走到哪", () => {
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({})], purchases: [{ ...purchase(1), status: "success" }] }))), /退回 1688 卖家/);
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已到齐" })] }))), /chanboss 仓库/);
 	assert.match(goods(checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已打包" })] }))), /货已到台湾/);
-	// 只挂着预报：不进提醒，agent 去取消预报
 	const r = checkOrders(snap({ orders: [cancelled({ chanbossStatus: "已预报" })] }));
 	assert.equal(r.reminders.length, 0);
 	assert.ok(r.todo.find((t) => t.kind === "取消预报"));
@@ -357,7 +351,6 @@ test("一个商品一个货源：店里的规格按名字在货源的规格里�
 		r.todo.find((x) => x.kind === "加购"),
 		undefined,
 	);
-	// 配上了：加购用配上的货源规格
 	const ok = checkOrders(snap());
 	const t = ok.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
@@ -389,7 +382,6 @@ test("规格不匹配：提醒写出照抄的一行和最像的几个；人写�
 	const t = ok.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
 	assert.equal(t.params.items[0]!.skuId, "S8");
-	// 写的那个货源里没有了（卖家改了规格名）：还是规格不匹配，写出原因
 	const gone = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 粉色 L" })] }));
 	assert.match(gone.reminders.find((i) => i.key === "sku:M1")!.detail, /规格例外中的「粉色 L」在货源「红T 货源」里已不存在/);
 });

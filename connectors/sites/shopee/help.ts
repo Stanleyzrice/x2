@@ -37,5 +37,4 @@ export async function articles(
 	};
 }
 
-/** 一篇文章：原样的 data（title、content 是 HTML；分节的在 content_list） */
 export const article = (articleId: string) => help("/help/api/v3/article/detail/", { article_id: articleId });

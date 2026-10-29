@@ -3,10 +3,8 @@ import { z } from "zod";
 import { byPage, day, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
 import { balance, forecast, identity, orders, putaway, returnChanges, returns, stock } from "./api.ts";
 
-// 和 shopee 一样叫 --start、--end
 const range = { start: day("开始"), end: day("结束", true) };
 
-/** 预报一张订单：发一次、回结果（经订单的写操作「预报」保护；读回对账用订单的读） */
 export const forecastOrder: SubmitTool = {
 	kind: "write",
 	description: "预报一张订单（只经订单的写工具 orders.forecast）",

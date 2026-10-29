@@ -9,7 +9,6 @@ import { tables } from "./tables.ts";
 const title = z.string().trim().min(1).max(60).optional().describe("标题，短的一句；不给就不写");
 const cell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
-/** datagrid：引用 tables.ts 里的一张表（view 是它的一个视图，filter 是按列筛，值是一个或几个），只存引用，不存行 */
 const datagrid = z
 	.object({
 		title,
@@ -37,14 +36,12 @@ const datagrid = z
 				ctx.addIssue({ code: "custom", path: ["filter", col], message: `${t.title}不能按「${col}」筛（能：${[...filterable(t.name)].join("、")}）` });
 	});
 
-/** 一张表能筛的列：主键和给人看的库里的列（算出来的不算） */
 export function filterable(table: string): Set<string> {
 	const t = tables().find((x) => x.name === table);
 	if (!t) return new Set();
 	return new Set([...t.key, ...Object.keys(t.columns).filter((c) => !t.computed?.[c])]);
 }
 
-/** 组件：kind 是放哪（generative 进流，interactive 进右边），description 给 agent 看 */
 export const COMPONENTS = {
 	markdown: {
 		kind: "generative",
@@ -108,12 +105,10 @@ export type ComponentName = keyof typeof COMPONENTS;
 export type Props<C extends ComponentName> = z.infer<(typeof COMPONENTS)[C]["props"]>;
 export type GenerativeName = { [C in ComponentName]: (typeof COMPONENTS)[C]["kind"] extends "generative" ? C : never }[ComponentName];
 export type InteractiveName = Exclude<ComponentName, GenerativeName>;
-/** 会话里的一个组件 */
 export type Item = { [C in ComponentName]: { id: string; component: C; props: Props<C>; at: string } }[ComponentName];
 export type Session = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
 export type SessionSummary = Omit<Session, "items">;
 
-/** 校验一个组件：{ component, props }；不对说哪一格 */
 export function parseItem(input: unknown): { component: ComponentName; props: unknown } {
 	const spec = z.object({ component: z.string(), props: z.unknown() }).safeParse(input);
 	if (!spec.success) throw new Usage(`组件要写成 { "component": 名字, "props": {…} }（有：${Object.keys(COMPONENTS).join("、")}）`);
@@ -124,7 +119,6 @@ export function parseItem(input: unknown): { component: ComponentName; props: un
 	return { component: spec.data.component as ComponentName, props: r.data };
 }
 
-/** 给 agent 看的：每个组件的放哪、说明、参数（JSON Schema） */
 export const catalog = () =>
 	Object.entries(COMPONENTS).map(([name, c]) => ({
 		name,
@@ -163,7 +157,6 @@ export async function showSession(sql: Sql, id: string): Promise<Session> {
 	return { ...summary(s), items: items.map((i) => ({ id: String(i.id), component: i.component, props: i.props, at: i.created_at.toISOString() }) as Item) };
 }
 
-/** 往会话里放一个组件。interactive 的同一个引用已经开着：换成新的（回原来那个的 id），不另开 */
 export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: string; component: ComponentName; replaced: boolean }> {
 	const { component, props } = parseItem(input);
 	const sid = sessionId(id);
@@ -186,7 +179,6 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 	});
 }
 
-/** 人在网页上关掉右边的一个 tab */
 export async function closeItem(sql: Sql, item: string): Promise<void> {
 	if (!/^\d+$/.test(item)) throw new Usage(`没有这个组件：${item}`);
 	await sql`delete from session_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactive"))}`;

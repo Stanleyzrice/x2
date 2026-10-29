@@ -2,7 +2,6 @@
 // 财务区可能要求再输入一次登录密码：回 401、403，或消息里有密碼、驗證——请人在浏览器里验证，不代输密码
 import { seller } from "./seller.ts";
 
-/** 金额换成新台币 */
 export const twd = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v) / 100000);
 
 /** 已拨款的订单收入的一页（income_category 2 = 已拨款），按拨款日期（YYYY-MM-DD，台湾时间）筛。

@@ -17,7 +17,6 @@ import { listing } from "./skills/listing/index.ts";
 import { orders } from "./skills/orders/index.ts";
 import { selection } from "./skills/selection/index.ts";
 
-/** 全部 toolkit：平台的命令和会话、skill、站点、服务 */
 export const TOOLKITS: Toolkit[] = [platform, session, orders, listing, selection, shopee, alibaba, chanboss, zhixia, market, gemini, xiangji, image];
 
 if (import.meta.main) {

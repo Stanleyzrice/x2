@@ -25,7 +25,6 @@ test("x2 selection strategy-*：add 是第 1 版；set 要 --why，每次改版�
 	await assert.rejects(strategy(["set", "--name", "搜索缺口", "--why", "没说改什么"]), Usage);
 	const set = await strategy(["set", "--name", "搜索缺口", "--how", "热搜词，剔掉 NT$1 的", "--status", "使用中", "--why", "NT$1 的是客製化链接"]);
 	assert.deepEqual([set.version, set.before, set.after], [2, { status: "试验中", how: "知虾热搜词" }, { status: "使用中", how: "热搜词，剔掉 NT$1 的" }]);
-	// 和现在一样：不加版本号、不记
 	assert.deepEqual(await strategy(["set", "--name", "搜索缺口", "--status", "使用中", "--why", "再说一遍"]), { name: "搜索缺口", version: 2, changed: false });
 	const log = await strategy(["log", "--name", "搜索缺口"]);
 	assert.deepEqual(
@@ -106,18 +105,14 @@ test("x2 listing add：按策略选的要 --why；记下选品理由、依据和
 		strategy: { name: "季节", version: 2, bet: "换季前一个月", how: "看月份", status: "试验中" },
 		rules: [{ id: r1!.id, rule: "起订量 1" }],
 	});
-	// 以后策略改了：加进来时的快照不变
 	await strategy(["set", "--name", "季节", "--how", "看节气", "--why", "更准"]);
 	const [same] = await db`select pick_snapshot from listings where id = ${added[0].id}`;
 	assert.equal(same!.pick_snapshot.strategy.version, 2);
-	// 已经有的再加：理由、快照不改
 	const again = await listing(["add", "--shop", "cheeroutdoor", "--links", "901", "--strategy", "季节", "--why", "另一个理由"]);
 	assert.deepEqual([again[0].isNew, again[0].why], [false, "冬天到了"]);
-	// 人选的不用 --why
 	const human = await listing(["add", "--shop", "cheeroutdoor", "--links", "903"]);
 	assert.deepEqual([human[0].why, human[0].snapshot.strategy.name], [null, "人选"]);
 
-	// 补记：没有快照的照现在补一份，标明补记；已有理由的要 --force
 	const [old] = await db`insert into listings (shop, offer_id, strategy) values ('cheeroutdoor', '904', '季节') returning id::text`;
 	await assert.rejects(listing(["why", "--id", old!.id]), Usage);
 	const w = await listing(["why", "--id", old!.id, "--why", "补的理由", "--evidence", "当时的数据"]);
@@ -128,7 +123,6 @@ test("x2 listing add：按策略选的要 --why；记下选品理由、依据和
 	await assert.rejects(listing(["why", "--id", old!.id, "--why", "改一下"]), (e: Error) => e instanceof Usage && /--force/.test(e.message));
 	const forced = await listing(["why", "--id", old!.id, "--why", "改一下", "--force"]);
 	assert.deepEqual([forced.why, forced.evidence, forced.replaced, forced.backfilled, forced.snapshot.at], ["改一下", "当时的数据", true, false, w.snapshot.at]);
-	// 人选的、加进来时有快照的：补理由，快照不动
 	const h = await listing(["why", "--id", human[0].id, "--why", "运营贴的"]);
 	assert.deepEqual([h.backfilled, h.snapshot.backfilled, h.snapshot.at], [false, false, human[0].snapshot.at]);
 });

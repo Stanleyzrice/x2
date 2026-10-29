@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { margin, minPrice, type PriceParams, payout } from "./price.ts";
 
-// 两家店的参数：lilto 的 landed-cost.json（2026-09-02 依账单和结算截图定）
 const base = {
 	fx: 4.4,
 	pricePerKgRmb: 10.8,
@@ -22,25 +21,24 @@ const ni1206: PriceParams = { ...base, coinRate: 0, freeShippingMinTwd: 60 };
 const cheer: PriceParams = { ...base, coinRate: 0.015, freeShippingMinTwd: 0 };
 
 test("平台进账：费用逐项四舍五入，免运方案费有每单最低（对过真结算）", () => {
-	assert.equal(payout(199, ni1206, true).payoutTwd, 116); // 12+6+5+60=83
+	assert.equal(payout(199, ni1206, true).payoutTwd, 116);
 	assert.equal(payout(199, ni1206, false).payoutTwd, 122);
 	assert.deepEqual([payout(1000, ni1206, true).feeTwd, payout(1000, ni1206, true).payoutTwd], [175, 825]);
-	assert.equal(payout(617, cheer, true).payoutTwd, 500); // 37+19+15+9+37=117
+	assert.equal(payout(617, cheer, true).payoutTwd, 500);
 });
 
 test("核价：两道门都过的最小整数售价（和 lilto 的验算、真站在售价一致）", () => {
-	assert.equal(minPrice(19.9, 0, 1.6, cheer, true), 295); // cheeroutdoor 的雨衣，就是在售价
+	assert.equal(minPrice(19.9, 0, 1.6, cheer, true), 295);
 	assert.equal(minPrice(6.9, 0, 3.4, cheer, true), 345);
 	assert.equal(minPrice(14.9, 0, 3.4, cheer, true), 404);
 	assert.equal(minPrice(2.0, 0, 0.4, cheer, true), 89);
 	assert.equal(minPrice(6.9, 0, 3.4, ni1206, true), 386);
 	assert.equal(minPrice(14.9, 0, 3.4, ni1206, true), 440);
-	assert.equal(minPrice(2.0, 0, 0.4, ni1206, true), 153); // 便宜的货是 ¥8 那道门起作用
+	assert.equal(minPrice(2.0, 0, 0.4, ni1206, true), 153);
 	const m = margin(386, 6.9, 0, 3.4, ni1206, true);
 	assert.equal(m.payoutTwd, 281);
 	assert.equal(Math.round(m.profitRmb * 100) / 100, 16.11);
 	assert.equal(Math.round(m.rate * 1000) / 10, 25.2);
-	// 国内运费照算进成本
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
@@ -60,7 +58,6 @@ import {
 	structureProblems,
 } from "./variants.ts";
 
-/** 一个货源：props 是 [层名, 取值…]（第一层的取值带图「<取值>.jpg」），skus 是 [各层的取值, 库存]，规格 id 是 s<第几个> */
 const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offer => ({
 	offerId: "1",
 	url: "",
@@ -80,14 +77,11 @@ const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offe
 		weightKg: 0.3,
 	})),
 });
-/** 每层的层名和选项名 */
 const names = (s: Specs) => s.tiers.map((t) => [t.name, t.options.map((o) => o.name)]);
-/** 换上名字（每层 [层名, 选项名…]，不核规矩） */
 const named = (s: Specs, tiers: [string, string[]][]): Specs => ({
 	...s,
 	tiers: s.tiers.map((t, a) => ({ ...t, name: tiers[a]![0], options: t.options.map((o, k) => ({ ...o, name: tiers[a]![1][k]! })) })),
 });
-/** 规格：每层 [层名, 选项名…]（原值和名字一样，第一层的选项带图「<名字>.jpg」），每个组合一个规格（货号 LT1-<各层下标>），售价、重量照给的 */
 const grid = (tiers: [string, string[]][], price: (c: number[]) => number | null = () => 295, weight: (c: number[]) => number | null = () => 1.6): Specs => {
 	const cells = tiers.reduce<number[][]>((all, [, opts]) => all.flatMap((c) => opts.map((_, k) => [...c, k])), [[]]);
 	return {
@@ -155,7 +149,6 @@ test("规格：只要有货的、没移除的，只留取值不一样的层；�
 		],
 	);
 	assert.deepEqual(structureProblems(specs), []);
-	// 缺一个组合（移除了，或没货了）：合成一层「款式」，一个组合一个选项，原值是各层的原值连起来
 	const merged = specsFrom(o, ["LT1-s0"]).specs;
 	assert.deepEqual(names(merged), [["款式", ["卡其色 M", "卡其色 L", "黑色 M"]]]);
 	assert.equal(merged.tiers[0]!.source, "颜色 / 尺码");
@@ -172,7 +165,6 @@ test("规格：只要有货的、没移除的，只留取值不一样的层；�
 		[[0], [1], [2]],
 	);
 	assert.deepEqual(structureProblems(merged), []);
-	// 同一个选项下 1688 的图不一样：定不了，要人处理
 	const twoImages = offerOf(
 		[
 			["颜色", ["红", "蓝"]],
@@ -183,7 +175,6 @@ test("规格：只要有货的、没移除的，只留取值不一样的层；�
 	twoImages.skus[1]!.image = "b.jpg";
 	const t = specsFrom(twoImages);
 	assert.deepEqual([t.problems, t.specs.tiers[0]!.options[0]!.image], [["规格：「紅」下的规格图不一样，定不了这个选项用哪张图"], null]);
-	// 只有一个规格：单层、空名字
 	assert.deepEqual(specsFrom(offerOf([], [[[]]])).specs, {
 		tiers: [{ source: "", name: "", options: [{ source: "", name: "", image: null }] }],
 		variants: [{ sku: "LT1-s0", skuId: "k0", specId: "s0", options: [0], costRmb: 10, stock: 9, weightKg: 0.3, priceTwd: null }],
@@ -229,7 +220,6 @@ test("规格：重做商品稿时按 1688 层名、原值把名字对回去；�
 		["款式", ["奶茶卡其", "黑色"]],
 		["尺寸", ["40×60cm", "60×90cm"]],
 	]);
-	// 1688 上卡其色没货了，多了「黑色」
 	const again = offerOf(
 		[
 			["颜色", ["卡其色", "黑色（加厚款）", "黑色"]],
@@ -246,7 +236,6 @@ test("规格：重做商品稿时按 1688 层名、原值把名字对回去；�
 		next.tiers[0]!.options.map((x) => x.source),
 		["黑色（加厚款）", "黑色"],
 	);
-	// 上一版是旧格式的：名字都自动起
 	assert.deepEqual(names(specsFrom(o, [], specsOf([{ sku: "x", specs: [] }])).specs), names(first));
 });
 
@@ -347,13 +336,10 @@ test("规格的规矩：错在哪层哪个选项写清楚；上限在核价以�
 		}),
 		/无有货的规格/,
 	);
-	// 只有一个规格：单层、空名字是对的；多个规格的不能空着名字
 	assert.deepEqual(structureProblems(specsFrom(offerOf([], [[[]]])).specs), []);
-	// 上限：最多 50 个、最高价不超过最低价 5 倍
 	assert.deepEqual(limitProblems(grid([["款式", [...Array(51).keys()].map(String)]])), ["规格：有货的规格 51 个，最多 50 个"]);
 	assert.match(limitProblems(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 600 : 100))).join(), /最高价超过最低价的 5 倍/);
 	assert.deepEqual(limitProblems(ok), []);
-	// 旧格式（规格的数组，选项名每次现算）：认不出，要重做商品稿
 	assert.equal(specsOf([{ sku: "LT1-1", specs: [{ label: "顏色", value: "黑" }] }]), null);
 	assert.deepEqual(specsOf(ok), ok);
 });
@@ -361,7 +347,6 @@ test("规格的规矩：错在哪层哪个选项写清楚；上限在核价以�
 test("去掉规格：整个选项；两层都有的写层名；单个规格让组合不齐时不做，--merge 才合成一层；重做商品稿照样认得", () => {
 	const colors = ["斑点狗", "定制", "标准"],
 		sizes = ["40*60*0.25", "标准"];
-	// 规格 id：s0 斑点狗 40*60、s1 斑点狗 标准、s2 定制 40*60、s3 定制 标准、s4 标准 40*60、s5 标准 标准
 	const o = offerOf(
 		[
 			["颜色", colors],
@@ -392,7 +377,6 @@ test("去掉规格：整个选项；两层都有的写层名；单个规格让�
 			["LT1-s5", [1, 1]],
 		],
 	);
-	// 两层都有「標準」：要写层名
 	assert.deepEqual(dropSpecs(s, ["標準"]), { error: "两层都有「標準」：写成「层名:选项名」（顏色:標準 或 尺寸:標準）" });
 	const size = ok(dropSpecs(s, ["尺寸:標準"]));
 	assert.deepEqual(
@@ -405,7 +389,6 @@ test("去掉规格：整个选项；两层都有的写层名；单个规格让�
 			],
 		],
 	);
-	// 单个规格（货号）：组合会不齐，不做；一个选项的规格都写了，就是去掉这个选项
 	assert.match(
 		(dropSpecs(s, ["LT1-s0"]) as { error: string }).error,
 		/^去掉以后两层的组合不齐（缺「斑點狗 × 40×60cm」）：要么去掉整个选项（例 顏色:斑點狗、尺寸:40×60cm），要么人说了加 --merge 合成一层「款式」$/,
@@ -418,10 +401,8 @@ test("去掉规格：整个选项；两层都有的写层名；单个规格让�
 	);
 	assert.deepEqual(merged.specs.tiers[0]!.options[1], { source: "定制 / 40*60*0.25", name: "定製 40×60cm", image: "定制.jpg" });
 	assert.deepEqual(structureProblems(merged.specs), []);
-	// 重做商品稿：去掉的不要，合成的「款式」和名字照旧
 	assert.deepEqual(specsFrom(o, merged.skus, merged.specs).specs, merged.specs);
 	assert.deepEqual(specsFrom(o, option.skus, option.specs).specs, option.specs);
-	// 没有的、全去掉的
 	assert.match((dropSpecs(s, ["藍色", "定製"]) as { error: string }).error, /^规格里没有：藍色/);
 	assert.match((dropSpecs(s, ["斑點狗", "定製", "顏色:標準"]) as { error: string }).error, /规格都去掉了/);
 });
@@ -429,7 +410,6 @@ test("去掉规格：整个选项；两层都有的写层名；单个规格让�
 test("规格和价格：按层写，价格、重量跟着哪层变就写在哪层；两层都影响的第一层每个选项一行；都一样的写「各」；最后写已移除的", () => {
 	const price = (c: number[]) => [133, 155][c[1]!]!,
 		weight = (c: number[]) => [0.216, 0.36][c[1]!]!;
-	// 价格、重量都跟着尺寸变（商品稿 2 的样子）
 	assert.equal(
 		specsText(
 			grid(
@@ -443,7 +423,6 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 		),
 		["款式（2）：水生財黑貓咪、洗洗睡吧梅棕狗", "尺寸（2）：40×60cm NT$133 0.216 kg · 50×80cm NT$155 0.36 kg", "共 4 个规格，库存各 9"].join("\n"),
 	);
-	// 重量都一样，有移除的（商品稿 3 的样子）
 	assert.equal(
 		specsText(
 			grid(
@@ -457,7 +436,6 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 		),
 		["款式（2）：斑點狗、香蕉狗", "尺寸（2）：40×60cm NT$133 · 50×80cm NT$155", "共 4 个规格，库存各 9，重量各 1.6 kg", "已移除：定製（3 个规格）"].join("\n"),
 	);
-	// 两层都影响价格：第一层每个选项一行
 	assert.equal(
 		specsText(
 			grid(
@@ -470,13 +448,11 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 		),
 		["顏色（2）× 尺碼（2）：", "卡其色：M NT$295 · L NT$305", "黑色：M NT$299 · L NT$309", "共 4 个规格，库存各 9，重量各 1.6 kg"].join("\n"),
 	);
-	// 一层：每个选项后面写价格；库存不一样写范围；价格都一样写「售价各」
 	const one = grid([["規格", ["L20", "L25"]]], (c) => [70, 74][c[0]!]!);
 	one.variants[1]!.stock = 50;
 	assert.equal(specsText(one), "規格（2）：L20 NT$70 · L25 NT$74\n共 2 个规格，库存 9–50，重量各 1.6 kg");
 	assert.equal(specsText(grid([["規格", ["L20", "L25"]]], () => null)), "規格（2）：L20、L25\n共 2 个规格，售价各 未定价，库存各 9，重量各 1.6 kg");
 	assert.equal(specsText({ ...specsFrom(offerOf([], [[[]]])).specs }), "单规格：未定价，库存 9，0.3 kg");
-	// 已移除的：整个取值都移除了的写这个取值（照 1688 转繁体），别的写各层的取值
 	const sizes = ["40*60*0.25", "50*80*0.25", "60*90*0.25"];
 	const o = offerOf(
 		[
@@ -566,7 +542,6 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 			["LT952803717616-4", [1, 1], "299", false],
 		],
 	);
-	// tier_index 就是规格存着的下标，跟规格的先后无关
 	const reversed = productInfo({ ...draft(), variants: draft().variants.reverse() }) as any;
 	assert.deepEqual(
 		reversed.model_list.map((m: any) => [m.sku, m.tier_index]),
@@ -586,7 +561,6 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 		[30006, 30005],
 	);
 	assert.equal(p.logistics_channels.find((c: any) => c.channelid === 30020).sizeid, 1);
-	// 只有一个规格：单层、空名字
 	const single = productInfo({
 		...draft(),
 		tiers: [{ source: "", name: "", options: [{ source: "", name: "", image: null }] }],
@@ -596,11 +570,9 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 		[single.std_tier_variation_list, single.model_list[0].tier_index],
 		[[{ id: 0, custom_value: "", value_list: [{ id: 0, custom_value: "" }] }], [0]],
 	);
-	// 规格不对、缺图、详情图太窄：不缺着交
 	assert.throws(() => productInfo({ ...draft(), variants: draft().variants.map((v) => ({ ...v, options: [0, 0] })) }), /同一格/);
 	assert.throws(() => productInfo({ ...draft(), optionImages: {} }), /未传/);
 	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 1, height: 1 }] }), /尺寸不合/);
-	// 太长的详情图（宽高比 < 0.5）Shopee 回 1000100256：不交
 	assert.throws(() => productInfo({ ...draft(), detail: [{ id: "x", width: 790, height: 1714 }] }), /宽高比 0\.5–32/);
 });
 
@@ -740,7 +712,6 @@ const shopRow = {
 	paused: null,
 };
 const pic = (id: string, from = `${id}.jpg`) => ({ from, imageId: id, width: 800, height: 800 });
-/** 一层「顏色」两个选项：黑色带规格图 k.jpg，綠色没有 */
 const colors = (): Specs => ({
 	tiers: [
 		{
@@ -763,7 +734,6 @@ const colors = (): Specs => ({
 		priceTwd: 295,
 	})),
 });
-/** 一份做好、写好文案的商品稿：1688 给了每个规格的重量（货源快照照规格来）、包邮 */
 const ready = (o: Record<string, unknown> = {}) => {
 	const variants = o.variants ?? colors();
 	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({ skuId: v.skuId, attrs: [v.sku], weightKg: v.weightKg }));
@@ -795,7 +765,6 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const run = (l: any, writes: any[] = []) => checkListings([l], s, writes);
 	assert.equal(run(ready({ offer: null })).steps.get("7")!.step, "待做商品稿");
-	// 规格是旧格式（选项名每次现算的那种）：重做商品稿
 	const old = run(ready({ variants: [{ sku: "LT952803717616-1", specs: [{ label: "顏色", value: "黑色" }] }] }));
 	assert.deepEqual(old.steps.get("7"), { step: "待做商品稿", detail: "规格为旧格式，待重做商品稿" });
 	assert.deepEqual(
@@ -809,7 +778,6 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
 	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
 	assert.deepEqual([run(ready()).steps.get("7")!.step, run(ready()).todo[0]!.kind], ["待 Gemini 文字检查", "Gemini 文字检查"]);
-	// 查过了：待批准，提醒人去看；人同意了 x2 listing publish 照 ready 建商品、上架
 	const l = ready();
 	const p = productOf(l, s.get("cheeroutdoor")!);
 	const key = auditKey(p.product!);
@@ -827,7 +795,6 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 		],
 	);
 	assert.equal((ok.ready[0]!.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
-	// 上次被拒的原因写在说明里
 	assert.equal(
 		run({ ...l, audit: { key } }, [
 			{ id: "3", op: "建商品", status: "被拒", error: "10004", params: { listingId: "7" } },
@@ -835,13 +802,10 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 		]).steps.get("7")!.detail,
 		"上次建商品被拒：10004",
 	);
-	// 查过以后改了标题：要再查
 	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待 Gemini 文字检查");
-	// 还没核清的算在做（建商品中），不在 ready 里
 	const flying = run({ ...l, audit: { key } }, [{ op: "建商品", status: "结果未知", params: { listingId: "7" } }]);
 	assert.deepEqual(flying.ready, []);
 	assert.equal(run({ ...l, audit: { key } }, [{ op: "建商品", status: "结果未知", params: { listingId: "7" } }]).steps.get("7")!.step, "建商品中");
-	// 建好了还没上架：待上架，人同意了 publish 接着上架
 	const built = run({ ...l, product_id: "51567712845" });
 	assert.deepEqual([built.steps.get("7")!.step, built.ready[0]!.writes.map((w) => w.op)], ["待上架", ["上架"]]);
 	assert.equal(run({ ...l, listed_at: new Date() }).steps.get("7")!.step, "已上架");
@@ -856,7 +820,6 @@ test("检查：人换了类目（属性、备货天数清掉了）、没有别�
 		[r.steps.get("7"), r.reminders, r.todo[0]!.why, (r.todo[0] as any).params],
 		[{ step: "待做商品稿", detail: "换了类目，待照新的类目做属性、备货天数" }, [], "换了类目，要照新的类目重做：雨衣（cheeroutdoor，#7）", { ids: ["7"] }],
 	);
-	// 还有别的问题：照旧待补充
 	assert.equal(checkListings([ready({ days_to_ship: null, problems: "货源：起订量 2，无法单件购买" })], s, []).steps.get("7")!.step, "待补充");
 });
 
@@ -878,9 +841,7 @@ test("去掉规格以后：去掉的不上，规格图只挂还在的选项，�
 	);
 	assert.deepEqual(kept.optionImages, { "黑貓.jpg": "o1" });
 	assert.notEqual(auditKey(kept), auditKey(all));
-	// 规格里还有已移除的货号（没跟着改）：要重做商品稿
 	assert.match(productOf(ready({ variants: specs, images, removed_variants: r.skus }), s).problems.join(), /已移除的规格还在/);
-	// 规格名改了：审核键跟着变，要再审；名字一样就不用
 	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), s).product!);
 	assert.notEqual(
 		key(
@@ -935,11 +896,9 @@ test("交规格名：个数、顺序照 show，按第几层第几个选项改；
 		r.specs!.tiers.map((t) => t.options.map((o) => o.source)),
 		s.tiers.map((t) => t.options.map((o) => o.source)),
 	);
-	// 单规格不写规格名
 	const single = specsFrom(offerOf([], [[[]]])).specs;
 	assert.deepEqual(renameSpecs(single, []), { specs: single, problems: [] });
 	assert.deepEqual(renameSpecs(single, [{ name: "款式", options: ["一般"] }]).problems, ["规格名：单规格的商品不写规格名（tiers 交 []）"]);
-	// 交了新的规格名：审核键跟着变
 	const images = { main: [pic("m1")], detail: [], options: [] };
 	const key = (x: Specs) => auditKey(productOf(ready({ variants: x, images }), settingsOf(shopRow)).product!);
 	assert.notEqual(key(r.specs!), key(s));
@@ -985,7 +944,6 @@ test("Gemini 文字检查挑出的问题：编号先文案、后图，不算问�
 		].join("\n"),
 	);
 	assert.equal(issueLine(issues[3]!), "4. 规格图：黑貓・浴水生財：地墊上的「浴水生财」（印在商品上，不算问题）");
-	// 没有要人看的：说明是空的
 	assert.equal(auditNotes(auditIssues({ ...a, textIssues: [], images: [a.images[0]!] }, [], names)), null);
 	assert.equal(auditNotes(auditIssues({ key: "k", textIssues: [], images: [], at: "t0" })), null);
 });
@@ -998,9 +956,7 @@ test("Gemini 文字检查挑出的图：后加的文案，详情图和不是封�
 	assert.equal(shouldDrop("后加的文案", "封面", false, true), false);
 	assert.equal(shouldDrop("后加的文案", "规格图", false, true), false);
 	assert.equal(shouldDrop(null, "详情图", false, true), false);
-	// 已经再查了两轮：不再去掉
 	assert.equal(shouldDrop("后加的文案", "详情图", false, false), false);
-	// 图在商品里是什么：同一张图在几处的，封面 > 规格图 > 主图 > 详情图
 	const p = productOf(
 		ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("o1", "o1b.jpg")], options: [pic("o1", "k.jpg")] } }),
 		settingsOf(shopRow),
@@ -1050,7 +1006,6 @@ test("图的名字：传好的图排号，人删了的、x2 去掉的也占着�
 			["m3", 3],
 		],
 	);
-	// 详情图尺寸不合 Shopee 要求的不排号（商品里也不用）
 	assert.deepEqual(
 		numbered(pics, "detail").map((x) => [x.pic.imageId, x.n]),
 		[
@@ -1059,14 +1014,12 @@ test("图的名字：传好的图排号，人删了的、x2 去掉的也占着�
 			["d2", 3],
 		],
 	);
-	// 人删了 m1：m3 还是「主图 3」
 	assert.deepEqual(
 		usedPics(pics, "main", new Set(["m1"])).map((x) => [x.pic.imageId, x.n]),
 		[["m3", 3]],
 	);
 	const names = imageNames(pics, colors());
 	assert.deepEqual(Object.fromEntries(names), { m1: "主图 1", m2: "主图 2", m3: "主图 3、详情图 2", d1: "详情图 1", d2: "详情图 3", o1: "规格图：黑色" });
-	// 网页和组商品用的是同一套
 	assert.deepEqual(productOf(ready({ images: pics, removed_images: ["m1"] }), settingsOf(shopRow)).product!.images, ["m3"]);
 });
 
@@ -1108,7 +1061,6 @@ test("估重量、国内运费：1688 有的用 1688 的；1688 没给、「重�
 	});
 	assert.deepEqual(estimateNeeds(l()), ["重量", "国内运费"]);
 	assert.deepEqual(estimateNeeds(l({ weight_kg: "0.8", freight_rmb: "0" })), []);
-	// 1688 都给了重量；包邮、读得到运费：不用估
 	const all = [
 		{ skuId: "1", weightKg: 0.3 },
 		{ skuId: "2", weightKg: 0.5 },
@@ -1117,7 +1069,6 @@ test("估重量、国内运费：1688 有的用 1688 的；1688 没给、「重�
 	assert.deepEqual(estimateNeeds(l({ offer: { skus: all, freight: { costRmb: 8 } } })), []);
 	assert.equal(freightOf({ freight: { costRmb: 8 } } as any, "12"), 12);
 	assert.equal(freightOf({ tags: { freeShipping: true } } as any, null), 0);
-	// 还没做商品稿：不估
 	assert.deepEqual(estimateNeeds({ offer: null, variants: null }), []);
 });
 
@@ -1136,7 +1087,6 @@ test("重新核价（不读 1688）：1688 给的重量照用，没给的用「�
 	};
 	assert.equal(reprice(l, s)!.changed, false);
 	assert.deepEqual(pricingProblems(specs, estimateNeeds(l)), ["缺重量：agent 估（x2 listing estimate）"]);
-	// agent 估了 1 kg：1688 给了的规格照用 1688 的
 	const r = reprice({ ...l, weight_kg: "1" }, s)!;
 	assert.deepEqual(
 		[r.changed, r.specs.variants.map((v) => [v.weightKg, v.priceTwd])],
@@ -1149,7 +1099,6 @@ test("重新核价（不读 1688）：1688 给的重量照用，没给的用「�
 		],
 	);
 	assert.deepEqual(pricingProblems(r.specs, []), []);
-	// 存了以后再算：不用再存；人把「重量」改成 2、填了国内运费：要存
 	const saved = { ...l, weight_kg: "1", variants: r.specs, pricing: { freightRmb: r.freightRmb } };
 	assert.equal(reprice(saved, s)!.changed, false);
 	assert.deepEqual(
@@ -1157,7 +1106,6 @@ test("重新核价（不读 1688）：1688 给的重量照用，没给的用「�
 		[1.6, 2],
 	);
 	assert.deepEqual([reprice({ ...saved, freight_rmb: "5" }, s)!.freightRmb, reprice({ ...saved, freight_rmb: "5" }, s)!.changed], [5, true]);
-	// 都有了还定不了价的给人
 	assert.deepEqual(pricingProblems({ ...r.specs, variants: r.specs.variants.map((v) => ({ ...v, priceTwd: null })) }, []), [
 		"核价：有规格怎么定价都过不了毛利的两道门",
 	]);
@@ -1199,11 +1147,9 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 		},
 	]);
 	assert.match(productOf(l, s.get("cheeroutdoor")!).problems.join(), /缺重量、国内运费：agent 估/);
-	// 人的问题还没处理：待补充、提醒人（不再叫人填重量、国内运费），agent 照样可以先估
 	const both = checkListings([{ ...l, problems: "类目：推荐的「地垫」不在本店允许的类目里" }], s, []);
 	assert.deepEqual([both.steps.get("7")!.step, both.todo.map((x) => x.kind)], ["待补充", ["估重量、国内运费"]]);
 	assert.doesNotMatch(both.reminders[0]!.detail, /重量|国内运费/);
-	// 估了：往下走
 	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待 Gemini 文字检查");
 });
 
@@ -1215,11 +1161,9 @@ test("简称：x2 先填 1688 标题的前 12 个字；空着的、还是自动�
 	assert.equal(autoNickname(title), "浴水生财猫咪浴室地垫硅藻");
 	assert.equal(autoNickname(" 外贸 爆款 "), "外贸爆款");
 	assert.equal(autoNickname(null), null);
-	// 做商品稿：空着的填上；1688 标题变了，还是上一版自动填的就跟着换；人改过的不动
 	assert.equal(nicknameFor(null, null, title), "浴水生财猫咪浴室地垫硅藻");
 	assert.equal(nicknameFor("浴水生财猫咪浴室地垫硅藻", title, "新款猫咪地垫"), "新款猫咪地垫");
 	assert.equal(nicknameFor("浴水生财猫狗地垫", title, "新款猫咪地垫"), "浴水生财猫狗地垫");
-	// agent 写：空着的、还是自动填的才写
 	assert.equal(nicknameOpen({ nickname: null, offer: { title } }), true);
 	assert.equal(nicknameOpen({ nickname: "浴水生财猫咪浴室地垫硅藻", offer: { title } }), true);
 	assert.equal(nicknameOpen({ nickname: "浴水生财猫狗地垫", offer: { title } }), false);
@@ -1228,7 +1172,6 @@ test("简称：x2 先填 1688 标题的前 12 个字；空着的、还是自动�
 	assert.deepEqual(nicknameProblems("浴水生財貓狗地墊"), ["简称「浴水生財貓狗地墊」有繁体字，要用简体中文（浴水生财猫狗地垫）"]);
 	assert.deepEqual(nicknameProblems("一二三四五六七八九十一二三"), ["简称「一二三四五六七八九十一二三」 13 字，最多 12 字"]);
 	assert.deepEqual(nicknameProblems(" "), ["简称是空的"]);
-	// 叫法：简称（店铺），命令要用的编号跟在后面；还没有简称的用 1688 标题的前 12 个字、货源 id
 	assert.equal(listingName({ id: "2", shop: "cheeroutdoor", nickname: "浴水生财猫狗地垫" }), "浴水生财猫狗地垫（cheeroutdoor，#2）");
 	assert.equal(listingName({ id: "2", shop: "cheeroutdoor", nickname: "浴水生财猫狗地垫" }, false), "浴水生财猫狗地垫（cheeroutdoor）");
 	assert.equal(listingName({ id: "5", shop: "ni1206", offer: { title } }), "浴水生财猫咪浴室地垫硅藻（ni1206，#5）");
@@ -1257,11 +1200,9 @@ test("译图检查：象寄改了商品上的字、还有简体字、转错的�
 	const c = (o: Partial<TranslatedCheck>): TranslatedCheck => ({ text: [], simplified: [], wrong: [], productText: [], ...o });
 	assert.equal(translatedDrop(c({ text: ["一衝即淨"] })), null);
 	assert.equal(translatedDrop(c({ productText: ["生财！ → 生財！"] })), "象寄改了商品上印的字：生财！ → 生財！");
-	// 简体字：模型把原图的字当成译图的、把繁体当成简体的不算；台湾也用的「台」不算
 	assert.equal(translatedDrop(c({ text: ["雙面防滑", "矩阵防滑纹理"], simplified: ["矩阵", "纹理"] })), "译图还有简体字：矩阵、纹理");
 	assert.equal(translatedDrop(c({ text: ["賦予空間自然流暢氣質"], simplified: ["赋予", "空间"] })), null);
 	assert.equal(translatedDrop(c({ text: ["科技絨浴室地墊", "台灣出貨"], simplified: ["科技絨浴室地墊", "台灣"] })), null);
-	// 转错的字：同一个简体字选错了繁体（干 → 幹，应为乾）；异体字、换说法、英文不算，它没抄到的不算
 	assert.equal(translatedDrop(c({ text: ["至好の方式快速吸水易幹"], wrong: ["易幹 → 易乾"] })), "译图有转错的字：易幹 → 易乾");
 	assert.equal(
 		translatedDrop(c({ text: ["較頑固汙漬", "質量問題", "防滑 S", "瞬吸快乾"], wrong: ["汙 → 污", "質量 → 品質", "防滑 S → 防滑 vs", "瞬吸快幹 → 瞬吸快乾"] })),
@@ -1306,7 +1247,6 @@ test("同时做的上限：最多 n 件一起跑，多的排队、先来先做�
 		),
 	);
 	assert.deepEqual([most, results, started], [3, [...Array(10).keys()].map((i) => i * 2), [...Array(10).keys()]]);
-	// 出错的照样放出位子
 	const one = limiter(1);
 	await assert.rejects(
 		one(async () => {
@@ -1329,10 +1269,8 @@ test("按浏览器排队：同一个浏览器一次只做一件、先来先做�
 		});
 	const r = await Promise.all([job("浏览器 A", "a1", 20), job("浏览器 A", "a2", 1), job("浏览器 B", "b1", 1)]);
 	assert.deepEqual(r, ["a1", "a2", "b1"]);
-	// a2 等 a1 做完才开始；b1 不用等 a1
 	assert.ok(log.indexOf("a2开始") > log.indexOf("a1结束"));
 	assert.ok(log.indexOf("b1结束") < log.indexOf("a1结束"));
-	// 出错了也放下一件
 	await assert.rejects(
 		lane("浏览器 A", async () => {
 			throw new Error("页面没开");
@@ -1340,7 +1278,6 @@ test("按浏览器排队：同一个浏览器一次只做一件、先来先做�
 		/页面没开/,
 	);
 	assert.equal(await lane("浏览器 A", async () => "接着做"), "接着做");
-	// 隔开：上一件做完到下一件开始至少 gap
 	const at: number[] = [];
 	await Promise.all(
 		[0, 1, 2].map(() =>
@@ -1354,7 +1291,6 @@ test("按浏览器排队：同一个浏览器一次只做一件、先来先做�
 		),
 	);
 	assert.ok(at[1]! - at[0]! >= 38 && at[2]! - at[1]! >= 38, `隔了 ${at[1]! - at[0]!}、${at[2]! - at[1]!} ms`);
-	// 哪个队：登录着店和 1688 的是同一个浏览器就是同一个队；找不到浏览器的按店、按账号各一个
 	const seen = [
 		{ site: "shopee", browser: "b1", account: { id: "1554182542" } },
 		{ site: "1688", browser: "b1", account: { id: "2221" } },
@@ -1376,7 +1312,6 @@ test("同一件事同时要的只做一次；几份一起做：结果照顺序�
 	assert.deepEqual([await Promise.all([work(), work(), work()]), calls], [["m", "m", "m"], 1]);
 	await work();
 	assert.equal(calls, 2);
-	// 一次两份：第 2 份要人处理（滑块），第 3、4 份就不开始
 	const r = await each(["1", "2", "3", "4"], 2, async (id) => {
 		await tick(id === "1" ? 20 : 1);
 		if (id === "2") throw new NeedsHuman("1688 要过滑块");
@@ -1411,7 +1346,6 @@ test("报价：照做商品稿排规格、按店铺设置核价，不做图、�
 	);
 	assert.match(q.specs, /^尺寸（2）：/);
 	assert.deepEqual(q.problems, []);
-	// 读得到国内运费、1688 都给了重量的不估；起订量大于 1、定不了价的写进问题
 	const read = { ...o, minQty: 3, freight: { costRmb: 8, to: "" }, skus: o.skus.map((k) => ({ ...k, weightKg: 0.5 })) };
 	const r = quote(read, s, { weightKg: 1, freightRmb: 10 });
 	assert.deepEqual([r.freightRmb, r.freightAssumed, r.weightAssumed, r.problems], [8, false, null, ["货源：起订量 3，无法单件购买"]]);

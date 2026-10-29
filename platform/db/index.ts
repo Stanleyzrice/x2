@@ -10,12 +10,10 @@ export type Sql = postgres.Sql;
 let conn: Sql | null = null;
 let ready: Promise<void> | null = null;
 
-/** 哪台电脑：写进写入，换一台电脑接着做时看得出是谁做的 */
 export const host = hostname();
 
 const schemas: URL[] = [new URL("./schema.sql", import.meta.url)];
 
-/** 注册一个 skill 的表结构（tool.ts 的 register 调） */
 export function addSchema(file: URL): void {
 	if (!schemas.some((s) => s.href === file.href)) schemas.push(file);
 }

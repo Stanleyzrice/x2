@@ -22,7 +22,6 @@ export const CHANBOSS_STATUS: Record<string, string> = {
 	other: "其他",
 };
 
-/** 平台状态：chanboss 转来的 Shopee 订单状态 → Shopee 的词 */
 export const PLATFORM_STATUS: Record<string, string> = {
 	UNPAID: "待付款",
 	READY_TO_SHIP: "待出货",
@@ -76,10 +75,8 @@ export function orderRow(r: any) {
 	};
 }
 
-/** 1688 的物流状态里有「签收」就算签收了 */
 export const signedOf = (status: string) => /签收/.test(status);
 
-/** 一个 1688 账号的采购单（最近 pages 页 + 「退款售后」里更早的）→ 采购单分给订单用的行。有进行中退款的行再读退款详情 */
 export async function readPurchases(account: string, pages = 3): Promise<Purchase[]> {
 	return inAccount("1688", account, async () => {
 		const byId = new Map<string, BuyerOrder>();
@@ -114,10 +111,8 @@ export async function readPurchases(account: string, pages = 3): Promise<Purchas
 					createdAt: date(o.createdAt),
 					paidAt: date(o.paidAt),
 					status: i.status || o.status,
-					// 采购单都寄到 1688 的默认地址，就是我们这里
 					toChanboss: false,
 					trackingNo: i.trackingNo || null,
-					// 签收了：这一行 1688 上是「已收货」、收够了件，或者物流里有「签收」
 					signed: i.status === "success" || i.received >= i.quantity || (logistics !== null && signedOf(logistics)),
 					refund: i.refund
 						? {
@@ -132,7 +127,6 @@ export async function readPurchases(account: string, pages = 3): Promise<Purchas
 	});
 }
 
-/** 采购账号（订单设置里写的 1688 会员名）现在登录着的 userId；没设是 null，设了没登录要人处理 */
 export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: string } | null> {
 	const [s] = await sql`select buy_account from order_settings where id = 1`;
 	const name = s?.buy_account as string | null;
@@ -145,9 +139,7 @@ export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: s
 export type Reads = {
 	cart: CartLine[];
 	purchases: Purchase[];
-	/** 登录着的 1688 账号：userId → 会员名 */
 	accounts: Map<string, string>;
-	/** 采购账号的 userId（没设是 null） */
 	buyAccount: string | null;
 	results: Read[];
 };
@@ -159,7 +151,6 @@ const fresh = (key: string, maxAge: number) => {
 	return m && Date.now() - m.at < maxAge ? m : null;
 };
 
-/** 同一个进程里 maxAge 以内读过的（key 一样）复用，不再发请求；读失败的不留，下次再读 */
 export function reuse<T>(key: string, fn: () => Promise<T>, maxAge = REUSE_MS): Promise<T> {
 	const m = fresh(key, maxAge);
 	if (m) return m.value as Promise<T>;
@@ -183,7 +174,6 @@ async function attempt<T>(results: Read[], what: string, who: string, fn: () => 
 	}
 }
 
-/** 现读一遍：chanboss 订单写回 orders（网页上看进度），要买的商品的货源更新快照，1688 的购物车、采购单留在内存里 */
 export async function readAll(sql: Sql, log: (s: string) => void = console.error): Promise<Reads> {
 	const results: Read[] = [];
 	log(`读 chanboss 订单${again("订单")}`);
@@ -194,7 +184,6 @@ export async function readAll(sql: Sql, log: (s: string) => void = console.error
 		() => reuse("订单", () => writeOrders(sql)),
 		(n) => n,
 	);
-	// 要买的商品（chanboss 上待处理的订单里的）：现读它选用的货源，更新快照，规格才配得准、下架了才知道
 	const toBuy = (
 		await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.platform_status = '待出货' and o.chanboss_status = '待处理'`
 	).map((r) => r.id as string);
@@ -212,7 +201,6 @@ export async function readAll(sql: Sql, log: (s: string) => void = console.error
 	return read1688(sql, log, results);
 }
 
-/** 1688：每个登录着的账号的购物车、采购单（带物流、进行中的退款）。加购前只读这些：订单、货源用库里的 */
 export async function read1688(sql: Sql, log: (s: string) => void = console.error, results: Read[] = []): Promise<Reads> {
 	const accounts = new Map((await logins("1688").catch(() => [])).map((l) => [l.account.id, l.account.name]));
 	const buy = await attempt(
@@ -246,7 +234,6 @@ export async function read1688(sql: Sql, log: (s: string) => void = console.erro
 	return { cart, purchases, accounts, buyAccount: buy?.userId ?? null, results };
 }
 
-/** chanboss 最近 60 天下单的订单，读全了才整份写进 orders（读到一半出错就不写）。店铺用账号名（登录着的店读得到），读不到用 chanboss 上的店名 */
 async function writeOrders(sql: Sql): Promise<number> {
 	const to = Math.floor(Date.now() / 1000),
 		from = to - 60 * 86400;

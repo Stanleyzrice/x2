@@ -18,13 +18,11 @@ const live = (id: string) =>
 		throw e;
 	});
 
-/** 现读的货源写进这个商品这一行的快照 */
 export async function snapshot(sql: Sql, itemId: string, o: Offer): Promise<void> {
 	await sql`update sources set url = ${o.url}, title = ${o.title}, image = ${o.image}, skus = ${sql.json(o.skus as any)}, read_at = now(), broken = null
 		where item_id = ${itemId} and offer_id = ${o.offerId}`;
 }
 
-/** 选用的货源不可用（下架）：写原因，检查当成缺货源，agent 重新找 */
 export async function markBroken(sql: Sql, itemId: string, offerId: string, why: string): Promise<void> {
 	await sql`update sources set broken = ${why}, read_at = now() where item_id = ${itemId} and offer_id = ${offerId} and chosen`;
 }
@@ -45,7 +43,6 @@ export async function refreshChosen(sql: Sql, itemIds: string[]): Promise<number
 type Scored = { offer: Offer; matched: number; total: number; missing: string[]; origin: string };
 export type Found = { itemId: string; name: string; chosen: string | null; sure: string | null; options: number; why: string };
 
-/** 一个货源的相似度：店里卖过的规格，有几个能在它的规格里配上（这一行原来有人定的规格例外的，照它配） */
 const score = (specs: string[], o: Offer, origin: string, exceptions?: string | null): Scored => {
 	const missing = specs.filter((s) => !matchSku(s, o.skus, exceptions));
 	return { offer: o, matched: specs.length - missing.length, total: specs.length, missing, origin };
@@ -56,7 +53,6 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 	if (url && !pasted) throw new Usage(`认不出 1688 链接：${url}`);
 	const out: Found[] = [];
 	for (const itemId of itemIds) {
-		// 店里的商品：从最近 60 天的订单里取名字、图、卖过的规格
 		const rows =
 			await sql`select distinct i->>'name' as name, i->>'image' as image, i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`;
 		if (!rows.length) throw new Usage(`最近 60 天的订单里没有商品 ${itemId}（先 x2 status）`);
@@ -85,7 +81,6 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 		const all = found.filter((f) => f.matched === f.total);
 		const sure = !pasted && all.length === 1 ? all[0]! : null;
 		await sql.begin(async (tx) => {
-			// 换货源：原来选用的（不可用，或者人贴了新链接）不再用
 			if (pasted) await tx`update sources set chosen = false where item_id = ${itemId} and chosen`;
 			else await tx`update sources set chosen = false where item_id = ${itemId} and chosen and broken is not null`;
 			await tx`delete from sources where item_id = ${itemId} and not chosen`;
@@ -134,8 +129,6 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 	return out;
 }
 
-/** 规格例外：人定的「店里的规格名 = 货源的规格名」，写进这个商品选用的货源那一行（还没定的，写进明显匹配的那一行）。
- * 两边都要对得上：店里的规格是最近 60 天卖过的，货源的规格在快照里有。同一个店里的规格写过的换掉 */
 export async function setException(sql: Sql, itemId: string, text: string): Promise<{ spec: string; sku: string; title: string }> {
 	const i = text.indexOf("=");
 	if (i <= 0) throw new Usage(`--spec 写成「店里的规格名 = 货源的规格名」：${text}`);

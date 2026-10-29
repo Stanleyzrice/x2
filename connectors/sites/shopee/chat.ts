@@ -25,7 +25,6 @@ async function refresh(): Promise<void> {
 	throw new NeedsHuman("聊聊页 20 秒还没登录完：在浏览器里打开聊聊看看");
 }
 
-/** 发一个聊聊的读请求。token 失效（401）时打开聊聊页刷新一次再发 */
 async function webchat<T = any>(
 	path: string,
 	req: { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown } = {},

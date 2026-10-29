@@ -5,7 +5,6 @@ import { estimateNeeds, pricingProblems, type Settings } from "./pricing.ts";
 import { type Product, productInfo, usedPics } from "./product.ts";
 import { OLD_SPECS, specsOf, structureProblems } from "./variants.ts";
 
-/** 商品稿（库里的一行）→ 要建的商品；缺的写成问题。规格只读存着的那一份（先核一遍规格的规矩）；已删除的图不用 */
 export function productOf(l: any, s: Settings): { product?: Product; info?: Record<string, unknown>; hash?: string; problems: string[] } {
 	const problems: string[] = [];
 	if (!l.offer) return { problems: ["未做商品稿"] };
@@ -21,7 +20,6 @@ export function productOf(l: any, s: Settings): { product?: Product; info?: Reco
 	if (problems.length) return { problems: [...new Set(problems)] };
 	const pics = (l.images ?? {}) as Pics;
 	const removed = new Set<string>([...((l.removed_images ?? []) as string[])]);
-	// 规格图：第一层的选项挂；图被筛掉、删掉的选项不挂图
 	const used = new Set(specs.tiers[0]!.options.map((o) => o.image));
 	const optionImages = Object.fromEntries(
 		(pics.options ?? []).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId) && used.has(p.from)).map((p) => [p.from, p.imageId!]),

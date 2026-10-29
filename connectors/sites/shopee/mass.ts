@@ -5,7 +5,6 @@
 import { page } from "../../../platform/browser/browser.ts";
 import { ORIGIN, seller, type Write, write } from "./seller.ts";
 
-/** 在页面里 GET 一个文件，回 base64 */
 async function download(path: string): Promise<string> {
 	const p = await page(ORIGIN);
 	const r = await p.run(async (path: string) => {
@@ -37,7 +36,6 @@ export const template = (categoryId?: number) =>
 			: `/api/tool/mass_product/download_basic_template/?timestamp=${Date.now()}`,
 	);
 
-/** 最近的批量上传记录（解析好没有、成功几行、失败几行、记录 id） */
 export async function records(pageSize = 30): Promise<any[]> {
 	const b = await seller("/api/tool/mass_product/get_mass_record_list/", {
 		query: { operation_type: 2, page_number: 1, page_size: Math.max(10, Math.min(100, pageSize)) },
@@ -62,8 +60,6 @@ export async function drafts(): Promise<Draft[]> {
 		imagesPending: Boolean(d.need_upload) || (d.images ?? []).some((x: any) => x?.need_upload) || (d.images ?? []).length === 0,
 	}));
 }
-
-// ── 写（没在 x2 里跑过） ──
 
 /** 写：传填好的模板。站点当场受理，解析是异步的：之后看 records() */
 export async function upload(base64: string, filename = "x2.xlsx"): Promise<Write> {

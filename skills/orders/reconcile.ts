@@ -19,11 +19,9 @@ export type Purchase = {
 	toChanboss: boolean | null;
 	trackingNo: string | null;
 	signed: boolean;
-	/** 这一行的退款：细状态（refundsuccess、refundclose、waitbuyersend……）、1688 的中文、类型（仅退款、退货退款……）；没有是 null */
 	refund?: { status: string; label: string; kind: string | null } | null;
 };
 export type CartLine = { account: string; offerId: string; skuId: string; qty: number };
-/** 还没经 x2 付款的订单行：拿剩下的采购单去对。createdAt 是订单的下单时间；until 是取消的时间（取消以后下的采购单不是给它买的） */
 export type Need = { sn: string; modelId: string; qty: number; offerId: string; skuId: string; createdAt: Date; until?: Date | null };
 
 export type Bought = {
@@ -43,18 +41,14 @@ export type Line = {
 	account: string;
 	offerId: string;
 	skuId: string;
-	/** 已付款：件数都在采购单里；在购物车：还没付完，差的购物车里有；不见了：采购单、购物车里都没有 */
 	state: "已付款" | "在购物车" | "不见了";
-	/** 外部采购（没有加购的写入对得上） */
 	outside: boolean;
 	paidQty: number;
 	cartQty: number;
 	purchases: Bought[];
 };
 
-/** 采购单关了、取消了的不算；这一行退款成功了（钱退回来了）也不算 */
 const closed = (p: Purchase) => /cancel|close|关闭|取消/i.test(p.status) || p.refund?.status === "refundsuccess";
-/** 加购和下单之间允许的时钟误差 */
 const SKEW_MS = 3600_000;
 
 const keyOf = (account: string, offerId: string, skuId: string) => `${account}|${offerId}|${skuId}`;
@@ -117,7 +111,6 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 		}
 	}
 
-	// 剩下的采购单：分给还没付款的订单行。只分够数的（分不够的不动，免得把一份货拆给两张订单）
 	const paid = new Set(out.filter((l) => l.state === "已付款").map((l) => `${l.sn}:${l.modelId}`));
 	for (const n of [...needs].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sn.localeCompare(b.sn))) {
 		if (paid.has(`${n.sn}:${n.modelId}`)) continue;

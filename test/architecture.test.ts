@@ -15,7 +15,6 @@ const files = (dir: string): string[] =>
 	);
 const rel = (f: string) => relative(ROOT, f).split(sep).join("/");
 
-/** 一个文件的 import：from 什么、是不是只 import type（连 export … from、动态 import） */
 function imports(file: string): { spec: string; typeOnly: boolean }[] {
 	const s = readFileSync(file, "utf8");
 	const out: { spec: string; typeOnly: boolean }[] = [];
@@ -35,7 +34,6 @@ function imports(file: string): { spec: string; typeOnly: boolean }[] {
 	for (const m of s.matchAll(/\bimport\(\s*"([^"]+)"\s*\)/g)) out.push({ spec: m[1]!, typeOnly: false });
 	return out;
 }
-/** 相对 import 指到的文件；@/ 是 platform/ui */
 const target = (file: string, spec: string) =>
 	spec.startsWith("@/") ? join(ROOT, "platform/ui", spec.slice(2)) : spec.startsWith(".") ? resolve(join(file, ".."), spec) : null;
 
@@ -45,14 +43,12 @@ const CODE = [join(ROOT, "x2.ts"), ...["platform", "connectors", "skills", "test
 );
 const UI = CODE.filter((f) => rel(f).startsWith("platform/ui/"));
 
-/** 顶层的哪一层，连接器、skill 是哪一个（例 connectors/sites/1688、skills/orders）；测试不算（测试像 x2.ts 一样装配） */
 const layerOf = (f: string) => rel(f).split("/")[0]!;
 const unitOf = (f: string) => {
 	const p = rel(f).split("/");
 	return p[0] === "connectors" ? p.slice(0, 3).join("/") : p[0] === "skills" ? p.slice(0, 2).join("/") : p[0]!;
 };
 const LAYERED = CODE.filter((f) => ["platform", "connectors", "skills"].includes(layerOf(f)) && !f.endsWith(".test.ts") && !rel(f).startsWith("platform/ui/"));
-/** 每个文件 import 的仓库里的文件（连 import type） */
 const edges = (fs: string[]) =>
 	fs.flatMap((f) =>
 		imports(f).flatMap(({ spec }) => {
@@ -124,13 +120,11 @@ test("每个文件开头一段注释说它做什么（#! 那行之后；shadcn �
 	assert.deepEqual(bare.map(rel), []);
 });
 
-/** git 管着的文件（连还没提交的新文件，不连忽略的） */
 const tracked = () =>
 	execFileSync("git", ["ls-files", "-co", "--exclude-standard"], { cwd: ROOT, encoding: "utf8" })
 		.split("\n")
 		.filter((f) => f && existsSync(join(ROOT, f)));
 
-/** 文档只放这几处：给人看的 README、给 agent 的 AGENTS.md（CLAUDE.md 引它）、skill、子 agent、连接器接口的坑（挨着它的代码） */
 const DOCS = [
 	/^README\.md$/,
 	/^AGENTS\.md$/,
@@ -151,10 +145,8 @@ test("代码、文档里提到的仓库里的文件都在（改名、删了文�
 	const bad: string[] = [];
 	for (const f of tracked().filter((x) => /\.(ts|tsx|md|sql)$/.test(x))) {
 		const text = readFileSync(join(ROOT, f), "utf8");
-		// 从仓库根写的路径，例 platform/writes.ts、skills/orders/SKILL.md
 		for (const m of text.matchAll(/(?<![\w./-])((?:platform|connectors|skills|test|bin|src|web|docs|\.claude)\/[\w./-]+\.(?:md|ts|tsx|sql|json))/g))
 			if (!existsSync(join(ROOT, m[1]!))) bad.push(`${f} → ${m[1]}`);
-		// markdown 的相对链接，例 [订单](skills/orders/SKILL.md)
 		if (f.endsWith(".md"))
 			for (const m of text.matchAll(/\]\(([^)#:\s]+)(?:#[^)]*)?\)/g)) if (!existsSync(resolve(ROOT, dirname(f), m[1]!))) bad.push(`${f} → ${m[1]}`);
 	}

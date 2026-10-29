@@ -4,7 +4,6 @@ import { offerIdOf } from "../../connectors/sites/1688/api.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 
-/** 选品快照：策略（名字、版本号、假设、选法）、在用的选品规矩、时间。补记的 backfilled 是 true，at 是补记的时间，不是加进来的时间 */
 export type PickSnapshot = {
 	at: string;
 	backfilled: boolean;
@@ -12,7 +11,6 @@ export type PickSnapshot = {
 	rules: { id: string; rule: string }[];
 };
 
-/** 现在的策略和在用的选品规矩 */
 export async function pickSnapshot(sql: Sql, strategy: string, backfilled = false): Promise<PickSnapshot> {
 	const [s] = await sql`select name, version, bet, how, status from strategies where name = ${strategy}`;
 	const rules = await sql`select id::text, rule from selection_rules where ended_at is null order by id`;
@@ -24,20 +22,16 @@ export async function pickSnapshot(sql: Sql, strategy: string, backfilled = fals
 	};
 }
 
-/** 给人看的一行：按「策略」第 N 版、选品规矩 #1 #3 */
 export function snapshotLine(s: PickSnapshot): string {
 	const st = "missing" in s.strategy ? `策略「${s.strategy.name}」（库里没有）` : `策略「${s.strategy.name}」第 ${s.strategy.version} 版`;
 	const rules = s.rules.length ? `选品规矩 ${s.rules.map((r) => `#${r.id}`).join(" ")}` : "没有在用的选品规矩";
 	return `${s.backfilled ? `补记于 ${when(s.at)}，按现在的` : `${when(s.at)}，按`}${st}、${rules}`;
 }
 
-/** 本机时间，到分钟：2026-10-10 14:03 */
 export const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
 
 export type Added = { id: string; offerId: string; isNew: boolean; why: string | null; evidence: string | null; snapshot: PickSnapshot | null };
 
-/** 添加货源（x2 listing add、网页的「添加货源」）：一个链接一份商品稿，记下选品理由、依据和这一刻的选品快照（几个链接一起加的是同一份）。
- * 已经有的商品稿不改（理由、快照照旧），回库里存着的 */
 export async function addListings(
 	sql: Sql,
 	a: { shop: string; links: string[]; strategy?: string; why?: string; evidence?: string },

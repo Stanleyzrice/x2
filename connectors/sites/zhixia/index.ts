@@ -28,7 +28,6 @@ const tools = {
 	}),
 	"category-daily": get("一个类目最近 30 天每天的数据（销量、销售额、商品数……）", z.object({ path }), (p) => categoryDaily(p.path)),
 	"hot-words": get("一个类目的热搜词（最多 1000 个）；searchVal 是全站搜索量，sales30day 是本类目 30 天销量", z.object({ path }), (p) => hotWords(p.path)),
-	// 站点每次回全部商品、不分页：一次读完（以前按页翻，每页都是同样的全部，翻到底会重复好几遍）
 	"hot-word-items": all(
 		"一个词在一个类目里的全部商品（竞品），按 30 天销量从高到低",
 		z.object({ word: num("热搜词 id"), path }),

@@ -4,7 +4,6 @@ import { Usage } from "../../platform/errors.ts";
 import type { Key, Table } from "../../platform/web/tables.ts";
 import { STEPS } from "./check.ts";
 
-/** 选用：一个商品只用一个货源，勾上这一个就去掉同一个商品别的货源的勾 */
 async function choose(sql: Sql, key: Key, value: unknown): Promise<void> {
 	if (typeof value !== "boolean") throw new Usage("选用：要 true 或 false");
 	await sql.begin(async (tx) => {
@@ -58,7 +57,6 @@ export const ORDER_TABLES: Table[] = [
 			chosen_at: "选定时间",
 		},
 		edit: { chosen: { set: choose }, sku_exceptions: {} },
-		// 一组里没勾「选用」的就是还没选
 		views: [{ title: "全部", order: "chosen desc, score desc nulls last", group: { col: "item_name" } }],
 	},
 	{

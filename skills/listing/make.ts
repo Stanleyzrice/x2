@@ -17,7 +17,6 @@ import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import { nicknameFor } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
-/** 重新核价，用的重量、国内运费变了才存（规格、核价参数）。l 跟着改；回存了没有 */
 export async function savePrices(sql: Sql, l: any, s: Settings): Promise<boolean> {
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
@@ -28,7 +27,6 @@ export async function savePrices(sql: Sql, l: any, s: Settings): Promise<boolean
 }
 
 let tree: Map<string, string> | null = null;
-/** 类目 id → 名字（类目树一个进程读一次） */
 async function categoryNames(): Promise<Map<string, string>> {
 	if (tree) return tree;
 	const walk = (list: Category[], out: Map<string, string>) => {
@@ -42,23 +40,23 @@ async function categoryNames(): Promise<Map<string, string>> {
 	return tree;
 }
 
-/** 读 1688 货源：在一个登录着 1688 的浏览器里（读货源不用采购账号），排在这个浏览器的队里，和上一次读 1688 隔几秒 */
 export async function readOffer1688(offerId: string): Promise<Offer> {
 	const a = (await logins("1688"))[0];
 	if (!a) throw new NeedsHuman("没有登录着 1688 的浏览器：读不了货源");
 	return on1688(a.account.id, () => readOffer(offerId));
 }
 
-/** 做一份商品稿。回这一轮的问题（给人看的） */
+/** 候选的图：最后用主图 9 张、详情图 12 张（product.ts），多看几张给筛掉的留余地，再多就白花筛字和译图的钱 */
+const CANDIDATE_MAIN = 12,
+	CANDIDATE_DETAIL = 16;
+
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
-	// 店铺有外键：一定有店铺设置
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
 	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
-	// 1. 货源（1688 的页面、详情图的地址：排队，和上一次读 1688 隔几秒）
 	log(`读货源 ${l.offer_id}`);
 	let o: Offer;
 	try {
@@ -74,7 +72,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 			})
 		: [];
 
-	// 2. 规格、核价。缺重量、缺国内运费的售价先空着（agent 估）；定不了价的、超过上限的现算（pricingProblems），不存
 	const freight = freightOf(o, l.freight_rmb);
 	const { specs, problems } = specsAndPrices(o, s, {
 		removed: l.removed_variants ?? [],
@@ -83,8 +80,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		freightRmb: freight,
 	});
 
-	// 3. 图：问 Gemini、交象寄、取图不排队；加水印、传图在这家店的浏览器里排队。
-	// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
 	const pics: Pics = await makeImages(
 		sql,
@@ -92,8 +87,8 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 			shop: s.shop,
 			mark: s.mark,
 			browser,
-			main: (o.images ?? [o.image]).slice(0, 12),
-			detail: detail.slice(0, 16),
+			main: (o.images ?? [o.image]).slice(0, CANDIDATE_MAIN),
+			detail: detail.slice(0, CANDIDATE_DETAIL),
 			options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)),
 		},
 		log,
@@ -101,13 +96,11 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	const done: Record<string, unknown> = { images: pics };
 	const cover = pics.main.find((p) => p.imageId);
 	if (!cover) problems.push("图：缺可用的主图");
-	// 4. 类目、属性、备货天数：卖家中心的接口，在这家店的浏览器里排队
 	else
 		Object.assign(
 			done,
 			await browser(async () => {
 				const out: Record<string, unknown> = {};
-				// 已经有类目的（上次推荐的，人定的：x2 listing category）不再问推荐，照用
 				let path: number[] = l.category_path ?? [];
 				const kept = path.length > 0;
 				if (!kept) {
@@ -121,7 +114,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 				}
 				const leaf = path[path.length - 1]!;
 				const names = await categoryNames().catch(() => new Map<string, string>());
-				// 类目树读不到：已经有的类目的名字照旧
 				const name = names.size || !kept ? path.map((c) => names.get(String(c)) ?? String(c)).join(" > ") : (l.category_name ?? path.join(" > "));
 				Object.assign(out, { category_path: path, category_id: leaf, category_name: name });
 				if (s.categories && !s.categories.has(String(leaf))) problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
@@ -140,7 +132,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		id,
 		{
 			...done,
-			// 简称：空着的、还是上一版自动填的，先填 1688 标题的前 12 个字；人改过、agent 写过的不动
 			nickname: nicknameFor(l.nickname, l.offer?.title, o.title),
 			offer: {
 				offerId: o.offerId,

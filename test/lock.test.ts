@@ -13,7 +13,6 @@ const LOCK = fileURLToPath(new URL("../platform/browser/lock.ts", import.meta.ur
 const path = (name: string) => join(lockDir(), `${name}.lock`);
 const owner = (o: Partial<Owner>): Owner => ({ pid: process.pid, host: hostname(), cmd: "x2 测试", at: new Date().toISOString(), token: "t", ...o });
 
-/** 写一个别人的锁文件，mtime 是 ageMs 以前 */
 function plant(name: string, content: string, ageMs = 0) {
 	mkdirSync(lockDir(), { recursive: true });
 	writeFileSync(path(name), content);
@@ -21,14 +20,12 @@ function plant(name: string, content: string, ageMs = 0) {
 	utimesSync(path(name), t, t);
 }
 
-/** 一个已经退出的进程的 pid */
 async function deadPid(): Promise<number> {
 	const c = spawn(process.execPath, ["-e", ""]);
 	await new Promise((r) => c.on("exit", r));
 	return c.pid!;
 }
 
-/** 起一个子进程拿着锁不放；回子进程（stdout 打出 held 才回） */
 async function holder(name: string): Promise<ChildProcess> {
 	const c = spawn(
 		process.execPath,
@@ -88,7 +85,6 @@ test("不算数的锁清掉再拿：进程不在了的、过期的、写坏了�
 	(await acquire("t-old", { timeoutMs: 1000 })).release();
 	plant("t-bad", "{", 10_000);
 	(await acquire("t-bad", { timeoutMs: 1000 })).release();
-	// 刚建、还没写进内容的不清
 	plant("t-fresh", "");
 	await assert.rejects(acquire("t-fresh", { timeoutMs: 500 }), /还没轮到/);
 });

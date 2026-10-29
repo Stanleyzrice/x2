@@ -52,9 +52,6 @@ export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 	};
 }
 
-/** 现在该做的（不写库）：加购、预报的写工具记进库前、加购前用它确认一项写入现在还该做。
- * 只现读 1688 的购物车、采购单（同一个进程 2 分钟内读过的复用）；订单、货源用库里的（上一次 x2 status 读的，要做的那几张订单预报前另外现读 chanboss）。
- * 1688 读不全就停：拿漏读的采购单去对，会把买过的当成没买、买重 */
 export async function current(sql: Sql): Promise<Result & { planned: ReturnType<typeof planned> }> {
 	const reads = await read1688(sql);
 	const bad = reads.results.find((r) => !r.ok);
@@ -66,7 +63,6 @@ export async function current(sql: Sql): Promise<Result & { planned: ReturnType<
 	return { ...r, planned: planned(r) };
 }
 
-/** 读不了要人处理的（没登录、浏览器没连上）：也提醒人 */
 function loginReminders(reads: Reads): Reminder[] {
 	return reads.results
 		.filter((r) => !r.ok && r.blocked)
@@ -87,11 +83,9 @@ function loginReminders(reads: Reads): Reminder[] {
 		);
 }
 
-/** 订单的检查：reads 是这一轮现读的（测试给假的） */
 export async function ordersCheck(sql: Sql, reads: Reads): Promise<Checked> {
 	const r = checkOrders(await snapshot(sql, reads));
 	await sql.begin(async (tx) => {
-		// 商品定了货源（人勾了「选用」、随加购定下）：它剩下的候选用完了，删掉（「货源」里一组没有勾「选用」的就是还没选）
 		await tx`delete from sources o where not o.chosen and exists (select 1 from sources c where c.item_id = o.item_id and c.chosen)`;
 		await tx`update sources set chosen_at = now() where chosen and chosen_at is null`;
 		await tx`update arrival_issues set done_at = now() where done and done_at is null`;

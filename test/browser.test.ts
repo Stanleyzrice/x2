@@ -12,7 +12,6 @@ import { Challenge, NeedsHuman, Usage } from "../platform/errors.ts";
 import { get, register, str, type Toolkit } from "../platform/tool.ts";
 import { TOOLKITS } from "../x2.ts";
 
-// 站点由连接器注册（认网址、认登录）
 register(...TOOLKITS);
 
 test("网址是哪个站点：1688 的各个子域都是 1688，不认识的是 null", () => {
@@ -40,7 +39,6 @@ const page = (p: Partial<{ url: string; frames: string[]; slider: boolean; text:
 });
 
 test("1688 的滑块验证：整页跳到验证页、页面上弹出验证框（iframe）、看得见的滑块都算", () => {
-	// 2026-10-10 三个 agent 同时搜 1688 时落到的两种（x5secdata 换成了 xxx）
 	assert.equal(challengeOf(page({ url: "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xxx" })), true);
 	assert.equal(
 		challengeOf(
@@ -100,7 +98,6 @@ test("按登录选浏览器：一个都没登录着要人处理；有跳了滑�
 	assert.throws(() => choose("shopee", []), NeedsHuman);
 });
 
-/** 假的页面：地址、iframe（宽 0 是看不见的），够 look() 用 */
 function fakePage(url: string, frames: { src: string; width: number }[] = []) {
 	return vm.createContext({
 		location: { href: url },
@@ -142,7 +139,6 @@ test("1688 页面里跑的表达式：没有验证照常跑；有验证（整页
 	});
 	assert.deepEqual(await run(guarded(never, [], SLIDER), fakePage("https://s.1688.com/x", [{ src: PUNISH, width: 300 }])), { x2: "challenge" });
 	assert.equal(ran, false);
-	// 请求挂着（lib.mtop 等人过验证）：0.2 秒后弹出验证框，1 秒内就回
 	const frames: { src: string; width: number }[] = [];
 	const t0 = Date.now();
 	setTimeout(() => frames.push({ src: PUNISH, width: 300 }), 200);

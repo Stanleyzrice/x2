@@ -1,20 +1,15 @@
 // 经营数据、评价、广告、优惠券、组合购、折扣。广告、折扣的金额是新台币乘 100000。时间是秒（台湾时间，没有夏令时）
 
 const DAY = 86400;
-/** 台湾时间某一天零点的秒数：daysAgo 0 是今天 */
 export const twMidnight = (daysAgo = 0) => Math.floor((Date.now() / 1000 + 8 * 3600) / DAY) * DAY - 8 * 3600 - daysAgo * DAY;
 
 import { seller, type Write, write } from "./seller.ts";
-
-// ── 经营数据 ──
 
 /** 数据中心的店铺关键指标（成交额 paid_gmv、订单 paid_orders、访客 shop_uv、点击 product_clicks、转化……，每个带 value 和逐日 points）。
  * period：past7days 或 real_time。访客是平台去重的，不能由商品相加 */
 export async function shopMetrics(start: number, end: number, period: "past7days" | "real_time"): Promise<any> {
 	return (await seller("/api/mydata/v3/dashboard/key-metrics/", { query: { start_time: start, end_time: end, period } })).result;
 }
-
-// ── 评价 ──
 
 /** 评价的一页（20 条）。cursor 是上一页最后一条的 comment_id，第一页是 "0"；给了订单号只找它的评价。
  * 回复评价要在「评价管理」页上点它的按钮、填表单（没有写成函数，见同目录的 NOTES.md） */
@@ -33,16 +28,13 @@ export async function reviews(pageNo = 1, cursor = "0", orderSn?: string): Promi
 	return { total: Number(b.data?.page_info?.total ?? 0), rows: b.data?.list ?? [] };
 }
 
-// ── 广告 ──
 // 顺序：账户和余额 → 各类广告能不能开（setup status）→ 计划列表（一页 20）→ 每个计划的详情（店铺广告 shop_auto、shop_manual 没有详情接口，用列表里的）
 // → 表现曲线（time graph）→ 自动选品广告（product_gms）里每个商品的表现（一页只能 10，多了被拒）
 
 const pas = (path: string, body: unknown) => seller(`/api/pas/v1/${path}/`, { body });
 
-/** 广告账户（ads_account）和广告余额（ads_credit） */
 export const adsAccount = async () => (await pas("meta/get_ads_data", { info_type_list: ["ads_account", "ads_credit"] })).data;
 
-/** 自动、自动选品、手动、多商品各类广告能不能开，已开的计划 id */
 export const adsSetup = async () => (await pas("product/get_setup_status", { reference_id: crypto.randomUUID() })).data;
 
 /** 广告计划列表的一页（20 个），带期间内的汇总表现 report。has_report_failure 是 true 时表现不完整。
@@ -61,7 +53,6 @@ export async function campaigns(start: number, end: number, offset = 0): Promise
 	return { total: Number(d?.total ?? 0), rows: d?.entry_list ?? [], reportFailed: d?.has_report_failure !== false };
 }
 
-/** 一个商品广告计划的详情：campaign（类型、预算、目标 ROAS、期间）和 ads_list */
 export const campaign = async (campaignId: string) => (await pas("product/get", { campaign_id: Number(campaignId) })).data;
 
 /** 一个计划在期间内的表现：report_aggregate 汇总、report_by_time 逐日（key 是那天零点的秒）。type 是计划的类型（例 product_gms）。
@@ -104,9 +95,6 @@ export async function gmsItems(
 	return { next: String(d?.next_page_token ?? ""), rows: d?.result_list ?? [] };
 }
 
-// ── 优惠券、组合购、折扣 ──
-
-/** 优惠券列表的一页（10 张）；voucher() 读一张的详情 */
 export async function vouchers(offset = 0): Promise<{ total: number; rows: any[] }> {
 	const b = await seller("/api/marketing/v3/voucher/list/", { query: { limit: 10, offset, promotion_type: 0 } });
 	return { total: Number(b.data?.total_count ?? 0), rows: b.data?.voucher_list ?? [] };

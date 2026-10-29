@@ -28,7 +28,6 @@ export const api = {
 	add: (table: string, values: Record<string, unknown>) => call<{ key: unknown }>("POST", "/api/rows", { table, values }),
 };
 
-/** 表的说明：一个网页只读一次 */
 let metas: Promise<Meta[]> | null = null;
 export const meta = (table: string) => {
 	metas ??= call<Meta[]>("GET", "/api/meta");
@@ -42,7 +41,6 @@ export const meta = (table: string) => {
 export const keyOf = (row: Row) => JSON.stringify(row._key);
 export const fail = (e: Error) => toast.error(e.message);
 
-/** 读一样东西：马上读，之后每 ms 毫秒、回到这个页面时再读；deps 变了清掉重来。回 [值, 出错的原话, 马上重读] */
 export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[]): [T | null, string | null, () => void] {
 	const [value, setValue] = useState<T | null>(null);
 	const [error, setError] = useState<string | null>(null);

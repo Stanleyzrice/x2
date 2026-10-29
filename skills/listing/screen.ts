@@ -25,14 +25,12 @@ export const SCREEN_FALLBACK_PROMPT =
 export const R_PROMPT =
 	"这是电商商品图。图上有没有后期叠加的简体中文文字（文案、标题、卖点、参数表、标签、角标等画上去的字，不算实物本身印的字和品牌商标）？有答 y，没有答 n。只输出 y 或 n。";
 
-/** 模型的回答 → 一个字母。去掉空白、反引号、标点，转小写，整个是同一个字母（可以重复）才算；「marketing」「m or p」都不算 */
 export function parseVerdict(text: string): Verdict | null {
 	const t = text.replace(/[\s`'"“”‘’.,，。:：;；!！?？()（）[\]【】-]/g, "").toLowerCase();
 	const m = /^([dmprn])\1*$/.exec(t);
 	return m ? (m[1] as Verdict) : null;
 }
 
-/** 筛一张图：先长提示，答不出换短提示；r 再问一次有没有后加的简体字。都答不出抛错 */
 export async function screen(img: Image): Promise<{ verdict: Verdict; raw: string; simplified?: boolean }> {
 	let raw = await gemini(SCREEN_PROMPT, [img]);
 	let verdict = parseVerdict(raw);

@@ -59,7 +59,6 @@ function App() {
 	);
 }
 
-/** 侧栏：一个会话一项，最近有动静的在上面。手机上点了一项就收 */
 function Nav({ sessions, active }: { sessions: SessionSummary[]; active: string }) {
 	const { setOpenMobile } = useSidebar();
 	return (

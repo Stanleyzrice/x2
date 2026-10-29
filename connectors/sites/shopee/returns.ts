@@ -1,7 +1,6 @@
 // 售后：退货、退款、不成立（卖家中心「退貨/退款/不成立」，2026-09-10 的列表）。外壳是 { error, error_msg, data }
 import { seller } from "./seller.ts";
 
-/** 售后列表的一页（40 个）。每个案件：entity_id_str、order_sn、状态 header.status_text、原因、要的解决方式、退款金额、商品 */
 export async function cases(pageNo = 1): Promise<{ total: number; hasMore: boolean; rows: any[] }> {
 	const b = await seller("/api/v4/seller_center/return/return_list/get_exceptional_case_list", {
 		body: {

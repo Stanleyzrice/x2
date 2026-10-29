@@ -8,7 +8,6 @@ import { runTool } from "../platform/cli.ts";
 import { Usage } from "../platform/errors.ts";
 import { byPage, day, flag, get, ints, parseJson, str, type Toolkit } from "../platform/tool.ts";
 
-// 一个假的站点：items 一页 2 行，共 5 行
 const seen: unknown[] = [];
 const fake: Toolkit = {
 	name: "fake",

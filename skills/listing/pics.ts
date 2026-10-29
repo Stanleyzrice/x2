@@ -1,7 +1,6 @@
 // 商品稿的图的类型（纯数据）：筛字的结论、一张图走到哪了、水印的设置
 export type Verdict = "d" | "r" | "m" | "p" | "n";
 
-/** 一张图走到哪了。drop 是不用它的原因（给人看） */
 export type Pic = {
 	from: string;
 	sha?: string;

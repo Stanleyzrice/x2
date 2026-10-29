@@ -9,7 +9,6 @@ import { z } from "zod";
 import type { Offer, Sku } from "../../connectors/sites/1688/api.ts";
 
 let converter: ((s: string) => string) | null = null;
-/** 简体 → 台湾繁体，带台湾用词（鼠标 → 滑鼠、软件 → 軟體） */
 export const toTw = (s: string) => {
 	const convert = converter ?? OpenCC.Converter({ from: "cn", to: "twp" });
 	converter = convert;
@@ -17,7 +16,6 @@ export const toTw = (s: string) => {
 };
 
 const EMOJI = /[☀-➿⬀-⯿\u{1F300}-\u{1FAFF}]|\u{FE0F}/gu;
-/** 去掉 emoji 和括号里 12 个字以内的说明（【爆款】、(新品)），压掉多余空白 */
 export const clean = (s: string) =>
 	s
 		.replace(EMOJI, "")
@@ -26,33 +24,31 @@ export const clean = (s: string) =>
 		.trim();
 
 const tierOption = z.object({
-	source: z.string(), // 1688 的原值（转繁体前的原文）；合成的「款式」是各层的原值连起来
+	source: z.string(),
 	name: z.string(),
-	image: z.string().nullable().optional(), // 规格图：1688 的图片地址，只第一层有
+	image: z.string().nullable().optional(),
 });
 const tier = z.object({
-	source: z.string(), // 1688 的层名；合成的「款式」是各层的层名连起来
+	source: z.string(),
 	name: z.string(),
 	options: z.array(tierOption),
 });
 const variant = z.object({
-	sku: z.string().min(1), // 货号：LT<货源 id>-<1688 规格 id>（最多 40 字），订单靠它连回 1688 的规格
+	sku: z.string().min(1),
 	skuId: z.string(),
 	specId: z.string(),
-	options: z.array(z.number().int()), // 每层一个选项的下标
+	options: z.array(z.number().int()),
 	costRmb: z.number(),
 	stock: z.number(),
 	weightKg: z.number().nullable(),
-	priceTwd: z.number().nullable(), // 核价出的售价（台币）；缺重量、缺国内运费的是 null
+	priceTwd: z.number().nullable(),
 });
-/** 商品稿的规格：层和规格一起存，就是 Shopee 的 std_tier_variation_list 和 model_list */
 export const specsSchema = z.object({ tiers: z.array(tier), variants: z.array(variant) });
 export type TierOption = z.infer<typeof tierOption>;
 export type Tier = z.infer<typeof tier>;
 export type Variant = z.infer<typeof variant>;
 export type Specs = z.infer<typeof specsSchema>;
 
-/** 存着的规格。旧的格式（规格的数组，选项名每次现算）认不出，回 null：要重做商品稿 */
 export const specsOf = (raw: unknown): Specs | null => specsSchema.safeParse(raw).data ?? null;
 export const OLD_SPECS = "规格：旧格式，待重做商品稿（x2 listing make）";
 
@@ -60,11 +56,9 @@ export const OLD_SPECS = "规格：旧格式，待重做商品稿（x2 listing m
 export const isSingle = (s: Specs) =>
 	s.variants.length === 1 && s.tiers.length === 1 && s.tiers[0]!.options.length === 1 && !s.tiers[0]!.name && !s.tiers[0]!.options[0]!.name;
 
-/** 货号：LT<货源 id>-<1688 规格 id>，最多 40 字 */
 export const skuOf = (offerId: string, s: Sku) => `LT${offerId}-${s.specId || s.skuId}`.slice(0, 40);
 
 export const MERGED = "款式";
-/** 合成「款式」时，各层的层名、原值用它连起来 */
 const JOIN = " / ";
 const MAX_TIER = 14,
 	MAX_OPTION = 20,
@@ -73,7 +67,6 @@ const MAX_TIER = 14,
 const SIZE_LABEL = /尺[寸码碼]|size/i;
 const SIZE_CODE = /(?<![A-Z])(?:[2-6]XL|X{1,4}[SL]|[SML])(?![A-Z])/g;
 
-/** 一个选项的自动名字（value 已转繁体）：尺寸类的层只留唯一的字母码（不然只去掉括号），别的去掉括号里的短说明 */
 function optionName(label: string, value: string): string {
 	const v = value.replace(EMOJI, "");
 	if (!SIZE_LABEL.test(label)) return clean(v) || v.trim();
@@ -86,7 +79,6 @@ function optionName(label: string, value: string): string {
 				.trim();
 }
 
-/** 一层的名字：上一版有的照用（kept），没有的用自动的（auto，截到 max 字），同一层撞名加「-2」「-3」；空的用 fallback */
 function uniqueNames(auto: string[], kept: (string | undefined)[], max: number, fallback: (k: number) => string): string[] {
 	const used = new Set<string>();
 	const out = auto.map((_, k) => {
@@ -106,14 +98,11 @@ function uniqueNames(auto: string[], kept: (string | undefined)[], max: number, 
 	});
 }
 
-/** 按每层的下标排，第一层优先 */
 const compare = (x: number[], y: number[]) => {
 	for (let a = 0; a < Math.max(x.length, y.length); a++) if ((x[a] ?? -1) !== (y[a] ?? -1)) return (x[a] ?? -1) - (y[a] ?? -1);
 	return 0;
 };
 
-/** 货源 → 商品稿的规格：有货的、没移除的（removed：货号）规格 → 只留取值不一样的层 → 两层而且组合齐全才留两层，否则合成一层「款式」
- * → 起名字：prev 是上一版，按（1688 层名，原值）把名字对回去，新的选项自动起。售价留给核价。problems：要人处理的（规格图定不了） */
 export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Specs | null = null): { specs: Specs; problems: string[] } {
 	const gone = new Set(removed);
 	const live = offer.skus.filter((s) => s.stock > 0 && !gone.has(skuOf(offer.offerId, s)));
@@ -139,7 +128,6 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 	const value = (s: Sku, i: number) => (s.attrs[i] ?? "").trim();
 	const layers = offer.props.map((_, i) => i).filter((i) => new Set(live.map((s) => value(s, i))).size > 1);
 	const props = layers.map((i) => ({ source: offer.props[i]!.name.trim(), label: clean(toTw(offer.props[i]!.name)) }));
-	// 每层的取值照 1688 列的顺序，没列出的排在后面
 	const values = layers.map((i) => {
 		const listed = (offer.props[i]!.values ?? []).map((v) => v.name.trim());
 		const seen = [...new Set(live.map((s) => value(s, i)))];
@@ -160,7 +148,6 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 	const problems: string[] = [];
 
 	if (!grid) {
-		// 合成一层「款式」：一个组合一个选项。每层先各自起名再连起来，不然尺寸会跟着括号一起洗掉（lilto 的雨衣上过「身高」「身高-2」）
 		const source = props.map((p) => p.source).join(JOIN);
 		const sources = sorted.map(
 			(s) =>
@@ -205,7 +192,6 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 			name: labels[a]!,
 			options: values[a]!.map((v, k): TierOption => {
 				if (a > 0) return { source: v, name: names[k]! };
-				// 规格图只挂第一层；同一个选项下 1688 的图不一样，定不了用哪张
 				const imgs = new Set(
 					sorted
 						.filter((s) => at(s)[0] === k)
@@ -220,7 +206,6 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 	return { specs: { tiers, variants: sorted.map((s) => variant(s, at(s))) }, problems };
 }
 
-/** 两层时缺的组合（第一层、第二层的下标） */
 const missingCells = (s: Specs): [number, number][] => {
 	if (s.tiers.length !== 2) return [];
 	const have = new Set(s.variants.map((v) => v.options.join(",")));
@@ -233,7 +218,6 @@ const cellsText = (s: Specs, cells: number[][]) =>
 		.map((c) => `「${cellName(s, c)}」`)
 		.join("、")}${cells.length > 3 ? ` 等 ${cells.length} 个` : ""}`;
 
-/** 规格的结构对不对（Shopee 的规矩、x2 认规格靠的规矩），错在哪层哪个选项写清楚。存之前、组 product_info 之前都核一遍 */
 export function structureProblems(s: Specs): string[] {
 	const { tiers, variants } = s;
 	if (!variants.length) return ["规格：无有货的规格"];
@@ -292,7 +276,6 @@ export function structureProblems(s: Specs): string[] {
 	return p;
 }
 
-/** 规格的上限（核价以后算，没过的写成问题给人）：最高价不超过最低价 5 倍，最多 50 个 */
 export function limitProblems(s: Specs): string[] {
 	const p: string[] = [];
 	const prices = s.variants.map((v) => v.priceTwd).filter((x): x is number => x !== null);
@@ -302,14 +285,11 @@ export function limitProblems(s: Specs): string[] {
 	return p;
 }
 
-/** 规格的全部问题：结构和上限 */
 export const specsProblems = (s: Specs) => [...structureProblems(s), ...limitProblems(s)];
 
-/** agent 交的规格名：每层的层名和选项名，个数、顺序照 x2 listing show */
 export const tierNames = z.array(z.object({ name: z.string(), options: z.array(z.string()) }));
 export type TierNames = z.infer<typeof tierNames>;
 
-/** 改规格名（第几层第几个选项，不按字配）：回改好名字的规格；交得不对回问题，规格不变 */
 export function renameSpecs(s: Specs, names: TierNames): { specs?: Specs; problems: string[] } {
 	if (isSingle(s)) return names.length ? { problems: ["规格名：单规格的商品不写规格名（tiers 交 []）"] } : { specs: s, problems: [] };
 	if (names.length !== s.tiers.length) return { problems: [`规格名：要 ${s.tiers.length} 层（照 x2 listing show），交了 ${names.length} 层`] };
@@ -328,7 +308,6 @@ export function renameSpecs(s: Specs, names: TierNames): { specs?: Specs; proble
 	return problems.length ? { problems } : { specs, problems };
 }
 
-/** 两层合成一层「款式」：一个组合一个选项，名字是两层的名字连起来（最多 20 字，撞名加「-2」），原值是两层的原值连起来，规格图照第一层的 */
 export function mergeTiers(s: Specs): Specs {
 	if (s.tiers.length !== 2) return s;
 	const [t0, t1] = s.tiers as [Tier, Tier];
@@ -362,8 +341,6 @@ export function mergeTiers(s: Specs): Specs {
 	};
 }
 
-/** 去掉人不要的：整个选项（选项名；两层有同名的写成「层名:选项名」）或一个规格（货号）。去掉单个规格让两层的组合不齐时不做，
- * 除非 merge（合成一层「款式」）。回去掉以后的规格、去掉的货号；做不了回 error */
 export function dropSpecs(s: Specs, args: string[], merge = false): { specs: Specs; skus: string[]; merged: boolean } | { error: string } {
 	const bySku = new Set<string>(),
 		picked: [number, number][] = [],
@@ -387,7 +364,6 @@ export function dropSpecs(s: Specs, args: string[], merge = false): { specs: Spe
 	const drop = new Set(s.variants.filter((v) => bySku.has(v.sku) || picked.some(([a, k]) => v.options[a] === k)).map((v) => v.sku));
 	const left = s.variants.filter((v) => !drop.has(v.sku));
 	if (!left.length) return { error: "规格都去掉了：不上这个货源就在「商品稿」里勾「放弃」" };
-	// 没有规格了的选项去掉，下标跟着重排
 	const keep = s.tiers.map((t, a) => t.options.map((_, k) => left.some((v) => v.options[a] === k)));
 	const index = keep.map((ks) => {
 		let n = 0;
@@ -413,7 +389,6 @@ export function dropSpecs(s: Specs, args: string[], merge = false): { specs: Spe
 const money = (p: number | null) => (p === null ? "未定价" : `NT$${p}`);
 const kg = (w: number | null) => (w === null ? "缺重量" : `${w} kg`);
 
-/** 一个数跟着哪层变：都一样（same）、只跟着第几层、两层都影响（both） */
 function follows(s: Specs, f: (v: Variant) => string): "same" | "both" | number {
 	if (new Set(s.variants.map(f)).size <= 1) return "same";
 	const a = s.tiers.findIndex((_, a) => {
@@ -428,8 +403,6 @@ function follows(s: Specs, f: (v: Variant) => string): "same" | "both" | number 
 	return a >= 0 ? a : "both";
 }
 
-/** 「规格和价格」（给人看）：按层写，数字由代码算。价格、重量只跟着一层变的，写在那一层的选项后面；两层都影响的，第一层每个选项一行；
- * 都一样的写「各 N」。removed：已移除的（removedOf） */
 export function specsText(s: Specs, removed: { name: string; count: number }[] = []): string {
 	const lines: string[] = [];
 	if (!s.variants.length) lines.push("无有货的规格");
@@ -440,7 +413,6 @@ export function specsText(s: Specs, removed: { name: string; count: number }[] =
 		const price = follows(s, (v) => money(v.priceTwd)),
 			weight = follows(s, (v) => kg(v.weightKg));
 		if (price === "both" || weight === "both") {
-			// 两层都影响：第一层每个选项一行，写第二层每个选项的价格、重量
 			const [t0, t1] = s.tiers as [Tier, Tier];
 			lines.push(`${t0.name}（${t0.options.length}）× ${t1.name}（${t1.options.length}）：`);
 			t0.options.forEach((o, i) => {
@@ -476,14 +448,12 @@ export function specsText(s: Specs, removed: { name: string; count: number }[] =
 	return lines.join("\n");
 }
 
-/** 规格表（网页上给人看）：每层的名字；一个规格一行（每层的选项、规格图、进价、售价、库存、重量、货号），按选项排；已移除的 */
 export type SpecsTable = {
 	tiers: string[];
 	rows: { options: string[]; image: string | null; costRmb: number; priceTwd: number | null; stock: number; weightKg: number | null; sku: string }[];
 	removed: { name: string; count: number }[];
 };
 
-/** image：第一层选项的 1688 图片地址 → 给人看的地址（传好了是 Shopee 的） */
 export function specsTable(s: Specs, removed: { name: string; count: number }[], image: (from: string) => string | null): SpecsTable {
 	const rows = [...s.variants]
 		.sort((x, y) => x.options.reduce((d, o, a) => d || o - (y.options[a] ?? 0), 0))
@@ -502,7 +472,6 @@ export function specsTable(s: Specs, removed: { name: string; count: number }[],
 	return { tiers: s.tiers.map((t) => t.name), rows, removed };
 }
 
-/** 已移除的规格（货号）→ 给人看的：整个取值都移除了的（例 定製 的每个尺寸）写这个取值，别的写各层的取值；名字照 1688 的转繁体 */
 export function removedOf(offer: Offer | null | undefined, removed: string[] | null | undefined): { name: string; count: number }[] {
 	if (!offer?.skus || !removed?.length) return [];
 	const gone = new Set(removed);
@@ -515,7 +484,6 @@ export function removedOf(offer: Offer | null | undefined, removed: string[] | n
 	offer.props.forEach((_, i) => {
 		for (const v of new Set(left.map((s) => value(s, i)).filter(Boolean))) {
 			const all = offer.skus.filter((s) => value(s, i) === v);
-			// 每个规格都有的取值（这一层只有它）不算；没移除的都没货了也算整个移除了
 			if (all.length === offer.skus.length || !all.every((s) => isGone(s) || s.stock <= 0)) continue;
 			const mine = left.filter((s) => value(s, i) === v);
 			add(tw(v), mine.length);
@@ -536,7 +504,6 @@ export function removedOf(offer: Offer | null | undefined, removed: string[] | n
 	return [...out].map(([name, count]) => ({ name, count }));
 }
 
-/** 一组规格的售价范围（x2 listing show 用）：NT$133、NT$133–253；没定价的写未定价 */
 export function priceRange(variants: Variant[]): string {
 	const prices = variants.map((v) => v.priceTwd);
 	if (!prices.length || prices.some((p) => p === null)) return "未定价";

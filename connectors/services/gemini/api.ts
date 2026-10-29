@@ -40,7 +40,6 @@ export async function gemini(prompt: string, images: Image[], schema?: object): 
 	}
 }
 
-/** 要 JSON 的：按 schema 回，解析不了就抛 */
 export async function geminiJson<T>(prompt: string, images: Image[], schema: object): Promise<T> {
 	const text = await gemini(prompt, images, schema);
 	try {

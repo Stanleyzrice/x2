@@ -10,7 +10,6 @@ import { current, ordersCheck, snapshot } from "./status.ts";
 import { ORDER_TABLES } from "./tables.ts";
 import { cartParams, forecastParams, ORDER_WRITES } from "./writes.ts";
 
-/** 加购只收检查算出来该加购的订单行（加过了、还没核清、货源不齐的不收），只往采购账号加 */
 async function planCart(sql: Sql, items: z.infer<typeof cartParams>[]) {
 	const ok = (await current(sql)).planned;
 	const [{ buy }] = (await sql`select buy_account as buy from order_settings where id = 1`) as any;
@@ -28,7 +27,6 @@ async function planCart(sql: Sql, items: z.infer<typeof cartParams>[]) {
 	];
 }
 
-/** 预报只收付完款、还没报的订单 */
 async function planForecast(sql: Sql, orders: z.infer<typeof forecastParams>[]) {
 	const ok = (await current(sql)).planned;
 	return [
@@ -60,7 +58,6 @@ export const orders: Toolkit = {
 					}
 					if (!ids.length) return { found: [] };
 					const found = await findSources(sql, ids, p.url);
-					// 找完再检查一遍（「选货源」的提醒）：2 分钟内读过的站点数据复用
 					await ordersCheck(sql, await readAll(sql));
 					return { found };
 				},

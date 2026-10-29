@@ -64,7 +64,6 @@ await run("campaigns", () => marketing.campaigns(marketing.twMidnight(7), market
 await run("vouchers", () => marketing.vouchers());
 await run("bundles", () => marketing.bundles());
 await run("discounts", () => marketing.discounts());
-// 帮助中心的分类 id 还不知道：先只确认接口通
 await run("help.articles", () => help.articles(1));
 await run("chat.unreplied", () => chat.unreplied());
 const conv = await run("chat.conversations", () => chat.conversations());

@@ -20,9 +20,7 @@ export type Order = {
 	orderSn: string;
 	shopId: string;
 	status: string;
-	/** 出货期限，ISO 时间 */
 	shipBy: string | null;
-	/** 买家付的总额（新台币） */
 	total: number;
 	items: OrderItem[];
 	packages: Package[];
@@ -32,7 +30,6 @@ export const TAB = { all: 100, unpaid: 200, toShip: 300, shipping: 400, complete
 
 type Ref = { order_id: number; shop_id: number; region_id?: string };
 
-/** 订单列表的一页：只有订单 id，按下单时间从新到旧 */
 export async function orderIndex(tab: number, pageNo = 1, pageSize = 40): Promise<{ total: number; refs: Ref[] }> {
 	const b = await seller("/api/v3/order/search_order_list_index", {
 		body: {
@@ -49,7 +46,6 @@ export async function orderIndex(tab: number, pageNo = 1, pageSize = 40): Promis
 
 const time = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Number(seconds) * 1000).toISOString() : null);
 
-/** 订单详情，最多 5 张 */
 export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {
 	if (refs.length > 5) throw new Error("订单详情一次最多 5 张");
 	if (refs.length === 0) return [];
@@ -99,7 +95,6 @@ export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {
 	});
 }
 
-/** 一个标签下的全部订单（列表翻到底，详情 5 张一批） */
 export async function orders(tab: number): Promise<Order[]> {
 	const refs: Ref[] = [];
 	for (let n = 1; ; n++) {
@@ -112,7 +107,6 @@ export async function orders(tab: number): Promise<Order[]> {
 	return out;
 }
 
-/** 当前登录的店铺里待出货的全部订单 */
 export const toShipOrders = () => orders(TAB.toShip);
 
 /** 一张订单的原样详情（get_one_order）：下单时间 create_time、买家付的 total_price、运费 shipping_fee、
@@ -123,7 +117,6 @@ export async function oneOrder(orderId: string): Promise<any> {
 	return b.data;
 }
 
-/** 写：蝦皮店到店安排出货（dropoff）。结果未知时不许重发，先回读订单 */
 export function arrangeDropoff(orderId: string, packageNumber: string): Promise<Write> {
 	return write("/api/v3/shipment/init_order", { body: { order_id: Number(orderId), package_number: packageNumber, shipping_mode: "dropoff" } });
 }

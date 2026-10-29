@@ -14,7 +14,6 @@ import { SCREEN_VERSION, screen } from "./screen.ts";
 import { markKey, watermark } from "./watermark.ts";
 import { saveTranslation, translate, translationState } from "./writes.ts";
 
-/** 原图：取字节，记一行（来源、宽高）；同一个进程里取过的不再取（取不到的下次再取） */
 const fetched = new Map<string, Promise<Bytes>>();
 async function original(sql: Sql, url: string): Promise<Bytes> {
 	let got = fetched.get(url);
@@ -28,7 +27,6 @@ async function original(sql: Sql, url: string): Promise<Bytes> {
 	return b;
 }
 
-/** 筛字，按「筛字:版本:模型」记在这张图上；同一张图同时要的只问一次 */
 function screened(sql: Sql, b: Bytes): Promise<{ verdict: Verdict; simplified?: boolean }> {
 	const key = `筛字:${SCREEN_VERSION}:${model()}`;
 	return once(`${key}:${b.sha256}`, async () => {
@@ -66,7 +64,6 @@ const strings = (keys: readonly string[]) => ({
 });
 const TEXT_FIELDS = ["text", "simplified", "wrong"] as const;
 const PRODUCT_FIELDS = [...TEXT_FIELDS, "productText"] as const;
-/** 译图检查的结果：text、simplified、wrong 来自第一问（只看译图），productText 来自第二问（比原图和译图） */
 export type TranslatedCheck = Record<(typeof PRODUCT_FIELDS)[number], string[]>;
 
 let cc: { traditional: ((s: string) => string)[]; simplified: (s: string) => string; variant: ((s: string) => string)[] } | null = null;
@@ -76,14 +73,11 @@ const opencc = () =>
 		simplified: OpenCC.Converter({ from: "t", to: "cn" }),
 		variant: [OpenCC.Converter({ from: "t", to: "tw" }), OpenCC.Converter({ from: "tw", to: "t" })],
 	});
-/** 词里有简体字：三种繁体（OpenCC 标准、台湾、香港）都要改它。台湾也用的字（台、群）、异体字不算 */
 const hasSimplified = (w: string) => opencc().traditional.every((f) => f(w) !== w);
-/** 两个字是简转繁选错：同一个简体字的两个繁体字（幹、乾 都是 干），又不是台湾的异体字（汙、污） */
 const misconverted = (a: string, b: string) =>
 	a !== b && opencc().simplified(a) === opencc().simplified(b) && !opencc().variant.some((f) => f(a) === b || f(b) === a);
 const han = (s: string) => [...s].filter((c) => /\p{Script=Han}/u.test(c));
 
-/** 译图检查的结果 → 不用这张的原因；没问题回 null。简体字、错字要在模型抄的字里，还要过 OpenCC 这一关 */
 export function translatedDrop(c: TranslatedCheck): string | null {
 	const bare = (s: string) => s.replace(/\s/g, "");
 	const seen = bare(c.text.join(""));
@@ -105,7 +99,6 @@ export function translatedDrop(c: TranslatedCheck): string | null {
 	return why.join("；") || null;
 }
 
-/** 译图检查：分两次问 Gemini（简体字、错字只给译图；商品上印的字给原图和译图） */
 export async function checkTranslated(original: Image, translated: Image): Promise<TranslatedCheck> {
 	const [t, p] = await Promise.all([
 		geminiJson<Pick<TranslatedCheck, (typeof TEXT_FIELDS)[number]>>(TRANSLATED_TEXT_PROMPT, [translated], strings(TEXT_FIELDS)),
@@ -114,7 +107,6 @@ export async function checkTranslated(original: Image, translated: Image): Promi
 	return { text: t.text, simplified: t.simplified, wrong: t.wrong, productText: p.productText };
 }
 
-/** 译图检查，按「译图检查:版本:模型」记在译图那一行；同一张译图同时要的只问一次 */
 function translatedChecked(sql: Sql, original: Bytes, translated: string): Promise<TranslatedCheck> {
 	const key = `译图检查:${TRANSLATED_VERSION}:${model()}`;
 	return once(`${key}:${translated}`, async () => {
@@ -127,8 +119,6 @@ function translatedChecked(sql: Sql, original: Bytes, translated: string): Promi
 	});
 }
 
-/** 一张要用的图：本店水印 → 传 Shopee。做过的（同一张底图、同一套水印、这家店传过）直接用；同一张同时要的只做一次。
- * 加水印、传图碰浏览器：在 browser 里做（这家店的浏览器，排队） */
 async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes, browser: Runner): Promise<void> {
 	const key = markKey(mark);
 	const done = await once(`成品:${shop}:${key}:${base.sha256}`, async () => {
@@ -147,7 +137,6 @@ async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes, b
 	Object.assign(p, done);
 }
 
-/** 一张图加水印之前的那张（Gemini 文字检查看它：水印会挡住字）：译过的是译图（库里存着字节），没译的是原图 */
 export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promise<Bytes> {
 	const p = [...(pics.main ?? []), ...(pics.detail ?? []), ...(pics.options ?? [])].find((x) => x.imageId === id);
 	if (!p) throw new Error(`图 ${id} 不在商品稿的图里：重做商品稿（x2 listing make）`);
@@ -157,17 +146,13 @@ export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promi
 	return inspect(new Uint8Array(row.bytes), "译图");
 }
 
-/** 把要译的交象寄，一批 5 张（translate：答复了的记下结果，没答复的下次重交）。交不成的那几张这次不用，不挡商品稿 */
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
 	for (let i = 0; i < items.length; i += 5) await translate(sql, items.slice(i, i + 5)).catch((e: Error) => console.error(`译图：${e.message}`));
 }
 
-/** 同一个进程里正在交象寄的图（原图 sha → 那一次交的，交完了才去掉）：几份商品稿同时做、有同一张图时，后来的等它，不重交 */
 const translating = new Map<string, Promise<void>>();
-/** 交哪几张一份一份地定（查库里的结果、登记 translating）；交象寄本身几份可以重叠 */
 const deciding = limiter(1);
 
-/** 做一份商品稿的图。browser：碰浏览器的步骤（加水印、传图）在哪做；log 写进度（stderr） */
 export async function makeImages(
 	sql: Sql,
 	c: { shop: string; mark: Mark; main: string[]; detail: string[]; options: string[]; browser: Runner },
@@ -181,7 +166,6 @@ export async function makeImages(
 	const bytes = new Map<string, Bytes>();
 	const all = [...pics.main, ...pics.detail, ...pics.options];
 
-	// 1. 取图、量尺寸、筛字：每张图单独判，同时做
 	log(`取图、筛字（${all.length} 张）`);
 	await Promise.all(
 		all.map(async (p) => {
@@ -201,7 +185,6 @@ export async function makeImages(
 				p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`;
 				return;
 			}
-			// 问 Gemini 出错（超时……）只丢这一张，不挡商品稿；没缓存，下次做商品稿再问
 			const s = await screened(sql, bytes.get(p.sha!)!).catch((e: Error) => {
 				p.drop = `筛字出错：${e.message}`;
 				return null;
@@ -212,11 +195,9 @@ export async function makeImages(
 		}),
 	);
 
-	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；这次没译成的先不用（不挡商品稿），下次重交
 	const toTranslate = all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
 	const shas = [...new Set(toTranslate.map((p) => p.sha!))];
 	if (shas.length) {
-		// 要交的：没译过、没在交的（库里的写入、这个进程里别的商品稿正在交的）；别的商品稿正在交的等它
 		let job = null as Promise<void> | null;
 		const { fresh, others } = await deciding(async () => {
 			const state = await translationState(sql, shas);
@@ -261,7 +242,6 @@ export async function makeImages(
 				else p.drop = "还没译好";
 			}),
 		);
-		// 译图检查：还有简体字、象寄改了商品上印的字，这张不用（主图、详情图的张数在下一步才截，后面的图补上来）。同时问
 		const check = toTranslate.filter((p) => p.translated && !p.drop);
 		if (check.length) log(`检查译图（${new Set(check.map((p) => p.translated)).size} 张）`);
 		await Promise.all(
@@ -276,7 +256,6 @@ export async function makeImages(
 		);
 	}
 
-	// 3. 水印、传图：主图最多 9 张、详情图最多 12 张、规格图都要；碰浏览器的在 browser 里排队
 	const use = (list: Pic[], max: number) => list.filter((p) => !p.drop).slice(0, max);
 	const keep = [...use(pics.main, MAX_MAIN), ...use(pics.detail, MAX_DETAIL), ...pics.options.filter((p) => !p.drop)];
 	log(`加水印、传图（${keep.length} 张）`);

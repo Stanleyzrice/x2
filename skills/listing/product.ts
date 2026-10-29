@@ -26,7 +26,6 @@ export const CHANNEL_NAMES: Record<string, string> = {
 	"30020": "新竹物流",
 };
 
-/** 要建的一个商品：商品稿的内容，图都已经传好（Shopee 的图片 id） */
 export type Product = {
 	parentSku: string;
 	title: string;
@@ -36,19 +35,12 @@ export type Product = {
 	preOrder: boolean;
 	daysToShip: number;
 	minPurchase: number;
-	/** 开的物流渠道 id */
 	channels: string[];
-	/** 规格的层：第一层的选项带规格图（1688 原图地址，没传上去的是 null） */
 	tiers: Tier[];
-	/** 每个规格：每层一个选项的下标，都有售价（台币整数）、库存、重量 */
 	variants: (Variant & { priceTwd: number })[];
-	/** 主图的图片 id（第一张是封面，最多 9 张） */
 	images: string[];
-	/** 详情图：图片 id 和真实宽高（见 detailFits） */
 	detail: { id: string; width: number; height: number }[];
-	/** 规格图：1688 原图地址 → 成品的图片 id */
 	optionImages: Record<string, string>;
-	/** 尺码表的图片 id（不要就是空） */
 	sizeChart: string | null;
 };
 
@@ -57,24 +49,19 @@ export const detailFits = (width: number, height: number) => width >= 700 && hei
 
 export const MAX_MAIN = 9,
 	MAX_DETAIL = 12;
-/** 图的名字：主图 N、详情图 N */
 export const LABEL = { main: "主图", detail: "详情图" } as const;
 
-/** 主图、详情图排上号（「主图 N」「详情图 N」）：传好的图（有图片 id；详情图的尺寸还要合 Shopee 的要求）按顺序排，
- * 人删了的、x2 去掉的也占着号，别的图的名字不跟着变 */
 export function numbered(pics: Partial<Pics>, role: "main" | "detail"): { pic: Pic; n: number }[] {
 	let n = 0;
 	return (pics[role] ?? []).flatMap((pic) => (pic.imageId && (role === "main" || detailFits(pic.width ?? 0, pic.height ?? 0)) ? [{ pic, n: ++n }] : []));
 }
 
-/** 商品里用的主图、详情图（网页、组商品都用它）：排上号的里面没去掉、没被人删的，主图最多 9 张、详情图最多 12 张 */
 export function usedPics(pics: Partial<Pics>, role: "main" | "detail", removed: Set<string>): { pic: Pic; n: number }[] {
 	return numbered(pics, role)
 		.filter(({ pic }) => !pic.drop && !removed.has(pic.imageId!))
 		.slice(0, role === "main" ? MAX_MAIN : MAX_DETAIL);
 }
 
-/** 图的名字（图片 id → 名字）：主图 N、详情图 N、规格图：选项名。一张图在几处就写几个 */
 export function imageNames(pics: Partial<Pics>, specs: Specs | null): Map<string, string> {
 	const names = new Map<string, string[]>();
 	const add = (id: string, name: string) => names.set(id, [...(names.get(id) ?? []), name]);
@@ -88,7 +75,6 @@ export function imageNames(pics: Partial<Pics>, specs: Specs | null): Map<string
 	return new Map([...names].map(([id, list]) => [id, list.join("、")]));
 }
 
-/** 商品稿 → product_info。规格（std_tier_variation_list、model_list 的 tier_index）照存着的结构；规格不对、缺图、详情图尺寸不够、渠道不认得都抛错，不缺着交 */
 export function productInfo(p: Product): Record<string, unknown> {
 	const bad = structureProblems({ tiers: p.tiers, variants: p.variants });
 	if (bad.length) throw new Error(bad.join("；"));
@@ -173,7 +159,6 @@ const imageId = (v: unknown) =>
 		.pop()!;
 const num = (v: unknown) => Number(v);
 
-/** 读回来的（get_product_info 的 product_info 和物流渠道列表）和提交的逐项比，回不一致的项。不比属性、品牌、尺寸、起购量 */
 export function readbackProblems(sent: any, got: any, channels: any[]): string[] {
 	const problems: string[] = [];
 	const check = (name: string, ok: boolean) => {
@@ -197,9 +182,7 @@ export function readbackProblems(sent: any, got: any, channels: any[]): string[]
 	let desc = false;
 	try {
 		desc = JSON.stringify(fieldsOf(got?.description_info)) === JSON.stringify(fieldsOf(sent.description_info));
-	} catch {
-		/* 读回来的描述不是 JSON */
-	}
+	} catch {}
 	check("描述（字和详情图）", desc);
 	const models = (got?.model_list ?? []) as any[];
 	const bySku = new Map(models.map((m) => [String(m.sku ?? ""), m]));

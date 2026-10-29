@@ -8,8 +8,6 @@ import { createHash } from "node:crypto";
 export const BATCH = 5;
 
 export type Translated = { origin: string; url: string };
-/** done：象寄答复了。results 译好的；failed 象寄说这张没译成（可以再交）；missing 答复里找不到这张、或出现两次（不知道扣没扣钱，不许重交）。
- * refused：象寄明确说这批没做；unknown：没拿到答复，可能已经扣钱，不许重交 */
 export type Outcome =
 	| { kind: "done"; results: Translated[]; failed: { origin: string; why: string }[]; missing: string[]; raw: unknown }
 	| { kind: "refused"; why: string; raw: unknown }
@@ -18,7 +16,6 @@ export type Outcome =
 export const sign = (commitTime: string, userKey: string, imgTransKey: string) =>
 	createHash("md5").update(`${commitTime}_${userKey}_${imgTransKey}`).digest("hex");
 
-/** 表单：Urls 先逐个编码再连起来，URLSearchParams 再编码一次 */
 export function form(urls: string[], keys: { userKey: string; imgTransKey: string }, now = Date.now(), engine?: string): URLSearchParams {
 	const commitTime = String(Math.floor(now / 1000));
 	return new URLSearchParams({
@@ -36,7 +33,6 @@ export function form(urls: string[], keys: { userKey: string; imgTransKey: strin
 	});
 }
 
-/** 象寄的答复 → 每张原图的结果 */
 export function parse(urls: string[], raw: any): Outcome {
 	if (Number(raw?.Code) !== 200) return { kind: "refused", why: `象寄没有翻译：Code=${raw?.Code} ${raw?.Message ?? ""}`.trim(), raw };
 	const rows = (raw?.Data?.Content ?? []) as any[];
@@ -60,7 +56,6 @@ export function parse(urls: string[], raw: any): Outcome {
 	return { kind: "done", results, failed, missing, raw };
 }
 
-/** 交一批（最多 5 张）给象寄。没拿到答复（超时、断网、回的不是 JSON）是 unknown：可能已经扣钱，不许重交 */
 export async function translate(urls: string[]): Promise<Outcome> {
 	if (urls.length === 0 || urls.length > BATCH) throw new Error(`一批交 1 到 ${BATCH} 张，这批 ${urls.length} 张`);
 	const userKey = process.env.XIANGJI_USER_KEY,

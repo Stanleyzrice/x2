@@ -41,7 +41,6 @@ import { seller, shop } from "./seller.ts";
 
 const TABS = { all: TAB.all, unpaid: TAB.unpaid, "to-ship": TAB.toShip, shipping: TAB.shipping, completed: TAB.completed } as const;
 
-/** 把 base64 写成本机文件（模板、坏行报告是 xlsx） */
 async function save(b64: string, out: string) {
 	const bytes = Buffer.from(b64, "base64");
 	await writeFile(out, bytes);
@@ -53,7 +52,6 @@ const tools = {
 	"list-product": listProduct,
 	shop: get("当前登录的店铺：shopId（店铺 id）、userId（卖家账号 id）、店名、账号名、评分", undefined, () => shop()),
 
-	// ── 订单 ──
 	orders: all(
 		"一个标签下的全部订单（订单号、出货期限、商品和规格、包裹）",
 		z.object({
@@ -66,7 +64,6 @@ const tools = {
 	),
 	order: get("一张订单的原样详情（下单时间、金额、运费、买家；地址电话也在里面）", z.object({ id: str("订单 id（不是订单号）") }), (p) => oneOrder(p.id)),
 
-	// ── 商品 ──
 	products: byPage("在售商品（每个带规格：价格、库存、销量）", undefined, async (_, n) => {
 		const r = await liveProducts(n);
 		return { rows: r.rows, more: n * 48 < r.total };
@@ -97,7 +94,6 @@ const tools = {
 		},
 	),
 
-	// ── 经营数据、评价、广告、营销 ──
 	"shop-metrics": get(
 		"店铺关键指标（成交额、订单、访客、点击、转化，每个带逐日 points）",
 		z.object({ start: day("开始"), end: day("结束", true), period: z.enum(["past7days", "real_time"]).describe("期间") }),
@@ -153,7 +149,6 @@ const tools = {
 		(p) => discountItems(p.id, p.offset),
 	),
 
-	// ── 钱、售后、聊聊 ──
 	income: list(
 		"已拨款的订单收入（金额是新台币乘 100000）",
 		z.object({ start: str("拨款日期起，YYYY-MM-DD"), end: str("拨款日期止，YYYY-MM-DD") }),
@@ -182,7 +177,6 @@ const tools = {
 		(p) => messages(p.conversation),
 	),
 
-	// ── 批量上架、帮助中心 ──
 	"mass-records": all("最近的批量上传记录", undefined, () => records()),
 	drafts: all("批量上架的草稿池（id 是 unpublished_product_id；imagesPending 时不能发布）", undefined, () => drafts()),
 	template: get(
@@ -227,7 +221,6 @@ export const shopee: Toolkit = {
 		title: "Shopee 卖家中心",
 		origin: "https://seller.shopee.tw",
 		hosts: (h) => h === "seller.shopee.tw",
-		// 一家店一个浏览器：认登录着哪家店（店铺 id、账号名）；几家都连着要 --shop 选
 		login: {
 			identify: async () => {
 				const s = await shop();
@@ -236,7 +229,6 @@ export const shopee: Toolkit = {
 			each: { flag: "shop" },
 		},
 	},
-	// 在登录着这家店的浏览器里读；没给的，按登录选（只有一个浏览器登录着 Shopee 时不用给）
 	scope: {
 		flag: "shop",
 		description: "在登录着这家店的浏览器里读（账号名，例 ni1206；也可以给店铺 id）；只有一个浏览器登录着 Shopee 时不用给",

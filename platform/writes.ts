@@ -15,30 +15,21 @@ import { host, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
 import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
 
-/** 一次提交的结果（连接器的写回的） */
 export type Submitted = Sent;
 export type Prepared<P> = { skip: string } | { params: P; before: unknown };
 
 export type WriteOp<P = any> = {
 	describe: string;
 	params: z.ZodType<P>;
-	/** 对象：同一个对象上有没核清的写入，先读回来，再准备新的 */
 	target: (p: P) => string;
-	/** 防重复的 key：同一个 key 已有成功、结果未知的写入，不再提交 */
 	key: (p: P) => string;
-	/** 给人看的一行 */
 	display: (p: P) => string;
-	/** 结果未知时人去哪里看 */
 	link?: string;
-	/** 还没在真站点上跑过：第一次要和运营约好一个对象，一起跑（写工具加 --try） */
 	untried?: string;
-	/** 在哪里做（例 在登录着这个账号的浏览器里） */
 	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
 	prepare: (sql: Sql, p: P) => Promise<Prepared<P>>;
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
-	/** fresh：刚提交完就读（这时没变化就是没做）；不是 fresh 时（过了一阵再核）没变化也可能是人动过，只认「做了」 */
 	check: (p: P, before: any, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
-	/** 做成了以后在库里记的（例 随加购一起定下的货源写进规格） */
 	after?: (sql: Sql, p: P) => Promise<void>;
 };
 
@@ -52,14 +43,11 @@ async function set(sql: Sql, id: string, fields: Record<string, unknown>) {
 	await sql`update writes set ${sql(fields as any)} where id = ${id}`;
 }
 
-/** batch：要执行的那一批（不给只对账）；tryOps：还没在真站点上跑过、和运营约好一起跑的写操作 */
 type Opts = { batch?: string; tryOps?: string[] };
 export type Outcome = { ran: Ran[]; unknown: boolean; blocked: string | null };
 
-/** ops：写操作的声明（不给是注册了的；测试换成假的） */
 export async function run(sql: Sql, opts: Opts = {}, ops: Record<string, WriteOp> = writeOps()): Promise<Outcome> {
 	const r = await execute(sql, opts, ops);
-	// 3. 出错只记在 stderr：写入的结果照样要报给人
 	if (r.ran.length)
 		for (const k of toolkits())
 			await k.written?.(sql, r.ran).catch((e: Error) => console.error(`${k.title}：执行完写入后更新没成功（下一次 x2 status 会再算）：${e.message}`));
@@ -70,13 +58,11 @@ const IN_FLIGHT = ["待执行", "已提交", "结果未知", "不一致"];
 
 type NewRow = { op: string; params: unknown; target: string; key: string; display: string };
 
-/** 一批写入记进库（新的批次，待执行）：同一个对象还有没核清的就不记 */
 export async function addWrites(tx: Sql | postgres.TransactionSql, rows: NewRow[]): Promise<string> {
 	const [{ batch }] = (await tx`select nextval('batch_seq')::text as batch`) as any;
 	for (const r of rows) {
 		const flying = await tx`select id from writes where (key = ${r.key} or key like ${`${r.key}#%`}) and status in ${tx(IN_FLIGHT)}`;
 		if (flying.length) throw new Usage(`${r.display}：写入 #${flying[0]!.id} 还没核清（x2 verify），不再做新的`);
-		// 同一个 key 做成过、被拒过（例 加购的货从购物车里不见了，要重新加）：key 后面加次数，免得当成重复
 		const [{ n }] = (await tx`select count(*)::int as n from writes where key = ${r.key} or key like ${`${r.key}#%`}`) as any;
 		const key = n > 0 ? `${r.key}#${n + 1}` : r.key;
 		await tx`insert into writes (batch, op, target, params, display, key, status, host) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as any)}, ${r.display}, ${key}, '待执行', ${host})`;
@@ -84,7 +70,6 @@ export async function addWrites(tx: Sql | postgres.TransactionSql, rows: NewRow[
 	return batch;
 }
 
-/** 写工具排好的几批：一批一批记进库、马上执行（参数照写操作的声明校验）；有一批要人处理就停下。try：跑还没在真站点上跑过的写操作 */
 export async function perform(sql: Sql, batches: Planned[][], opts: { try?: boolean } = {}, ops: Record<string, WriteOp> = writeOps()): Promise<Outcome> {
 	const outcomes: Outcome[] = [];
 	for (const b of batches) {
@@ -112,7 +97,6 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 		stuckTargets = new Set<string>();
 	let blocked: string | null = null;
 
-	// 1. 核清
 	const unsure =
 		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') order by writes.id`) as unknown as Row[];
 	for (const w of unsure) {
@@ -146,7 +130,6 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 		});
 	}
 
-	// 2. 执行这一批（按数字排：选出来的 id 是文本，按它排 10 会排在 9 前面）
 	const todo = opts.batch
 		? ((await sql`
 		select id::text, batch::text, op, target, key, params, display, status, readback from writes
@@ -189,7 +172,6 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 				const prepared = await op.prepare(sql, w.params);
 				if ("skip" in prepared) return { skip: prepared.skip };
 				const params = prepared.params;
-				// 记意图：从这一刻起，没有结果的都当结果未知
 				await set(sql, w.id, {
 					status: "已提交",
 					params: sql.json(params as any),
@@ -222,7 +204,6 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 				continue;
 			}
 			if ("blocked" in outcome) {
-				// 请求没发出去：没做，处理好登录再交一次
 				await set(sql, w.id, { started_at: null });
 				blocked = outcome.blocked!;
 				await skip(`没做：${blocked}`);
@@ -244,7 +225,6 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 		} catch (e) {
 			const [now] = await sql`select status from writes where id = ${w.id}`;
 			if (e instanceof NeedsHuman) {
-				// 现读时就要人处理（还没记意图）：没做；记了意图的留在已提交，下次当结果未知核
 				blocked = e.message;
 				if (now?.status !== "已提交") await skip(`没做：${blocked}`);
 				continue;

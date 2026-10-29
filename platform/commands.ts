@@ -106,7 +106,6 @@ export const platform: Toolkit = {
 	},
 };
 
-/** 网页上一个会话的地址（x2 web 默认的地址） */
 const link = (id: string) => `http://127.0.0.1:5170/#${id}`;
 const sessionId = z.object({ id: str("会话编号") });
 
@@ -146,7 +145,6 @@ export const session: Toolkit = {
 				}),
 				async (p) => {
 					const sql = await db();
-					// 几个一起放：先都校验过，一个不对就都不放
 					const items = Array.isArray(p.items) ? p.items : [p.items];
 					items.forEach((x, i) => {
 						try {

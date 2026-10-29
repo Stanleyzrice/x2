@@ -14,7 +14,6 @@ export async function findByParentSku(parentSku: string, name: string): Promise<
 	return null;
 }
 
-/** 建商品：在这家店的卖家中心页面里发 create_product_info（先建成下架），回商品 id */
 export const createListing: SubmitTool = {
 	kind: "write",
 	description: "建商品（先建成下架；只经上品的写工具 listing.publish）",
@@ -29,7 +28,6 @@ export const createListing: SubmitTool = {
 	},
 };
 
-/** 上架：建好的商品从下架翻成在售（update_product_info 的 unlisted: false） */
 export const listProduct: SubmitTool = {
 	kind: "write",
 	description: "上架：下架 → 在售（只经上品的写工具 listing.publish）",

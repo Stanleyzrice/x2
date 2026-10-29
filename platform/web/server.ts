@@ -12,7 +12,6 @@ import { Usage } from "../errors.ts";
 import { closeItem, deleteSession, filterable, listSessions, showSession } from "./sessions.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
 
-/** 一个视图最多给几行 */
 const LIMIT = 1000;
 const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
@@ -23,7 +22,6 @@ const MIME: Record<string, string> = {
 	".png": "image/png",
 };
 
-/** 库里的类型 → 网页的类型 */
 function typeOf(dataType: string): ColumnType {
 	if (dataType === "boolean") return "bool";
 	if (/int|numeric|double|real/.test(dataType)) return "number";
@@ -32,7 +30,6 @@ function typeOf(dataType: string): ColumnType {
 	return "text";
 }
 
-/** 每张表每一列的类型：库里的，图、链接、算出来的照 tables.ts */
 async function types(sql: Sql): Promise<Map<string, Map<string, ColumnType>>> {
 	const rows = await sql`select table_name, column_name, data_type from information_schema.columns where table_schema = current_schema()`;
 	const out = new Map<string, Map<string, ColumnType>>();
@@ -46,7 +43,6 @@ async function types(sql: Sql): Promise<Map<string, Map<string, ColumnType>>> {
 	return out;
 }
 
-/** 人填的一格 → 存进库的值（照类型；空的是 null） */
 function cellValue(type: ColumnType, options: readonly string[] | undefined, v: unknown): unknown {
 	const schema = options
 		? z.enum(options as [string, ...string[]]).nullable()
@@ -64,13 +60,11 @@ function cellValue(type: ColumnType, options: readonly string[] | undefined, v: 
 	return r.data;
 }
 
-/** 有条件才能改的列（tables.ts 的 when） */
 const guarded = (t: Table) =>
 	Object.entries(t.edit ?? {})
 		.filter(([, e]) => e.when)
 		.map(([c, e]) => [c, e.when!] as const);
 
-/** 一行给网页的样子：给人看的列、算出来的列；_key 是主键，_readonly 是这一行现在不能改的列 */
 function shape(t: Table, cols: Map<string, ColumnType>, row: Row): Row {
 	const out: Row = {
 		_key: Object.fromEntries(t.key.map((k) => [k, String(row[k])])),
@@ -86,7 +80,6 @@ function shape(t: Table, cols: Map<string, ColumnType>, row: Row): Row {
 	return out;
 }
 
-/** 开服务：回地址和关掉它的函数（port 0 是随便一个空着的口） */
 export async function serve(
 	sql: Sql,
 	{ host, port, dist }: { host: string; port: number; dist: string },
@@ -101,7 +94,6 @@ export async function serve(
 		if (!key || t.key.some((k) => typeof key[k] !== "string")) throw new Usage(`${t.title}：要主键 ${t.key.join("、")}`);
 		return t.key.map((k) => sql`${sql(k)} = ${key[k]!}`).reduce((a, b) => sql`${a} and ${b}`);
 	};
-	// 每一列，加上有条件的列这一行能不能改（_can_列名）
 	const select = (t: Table) =>
 		sql`select *${sql.unsafe(
 			guarded(t)
@@ -153,7 +145,6 @@ export async function serve(
 		"GET /api/rows": async (_, url) => {
 			const t = table(url.searchParams.get("table"));
 			const v = t.views.find((x) => x.title === url.searchParams.get("view")) ?? t.views[0]!;
-			// 按列筛（会话里的 datagrid 引用的）：只认能筛的列，值都当文字比
 			let filter: Record<string, string | string[]> = {};
 			try {
 				filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
@@ -239,14 +230,12 @@ export async function serve(
 				for await (const c of req) raw += c;
 				send(res, 200, "application/json", JSON.stringify(await route(raw ? JSON.parse(raw) : null, url)));
 			} catch (e) {
-				// 用法不对、库里的约束（例 比例在 0–1）：告诉人；别的是 x2 的错
 				const told = e instanceof Usage || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
 				if (!told) console.error(e);
 				send(res, told ? 400 : 500, "application/json", JSON.stringify({ error: (e as Error).message }));
 			}
 			return;
 		}
-		// 界面：打好的文件，别的地址都给 index.html
 		const file = normalize(join(dist, url.pathname)).startsWith(dist) && extname(url.pathname) ? join(dist, url.pathname) : join(dist, "index.html");
 		try {
 			send(res, 200, MIME[extname(file)] ?? "application/octet-stream", await readFile(file));

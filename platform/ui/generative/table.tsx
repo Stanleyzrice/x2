@@ -4,7 +4,6 @@ import type { Props } from "../../web/sessions.ts";
 import { Title } from "./title.tsx";
 
 export function SnapshotTable({ props }: { props: Props<"table"> }) {
-	// 一列都是数（空的不算）：靠右
 	const numeric = props.columns.map(
 		(_, j) => props.rows.some((r) => typeof r[j] === "number") && props.rows.every((r) => r[j] === null || typeof r[j] === "number"),
 	);

@@ -17,7 +17,6 @@ const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? Str
 export type Model = { modelId: string; sku: string; name: string; price: number | null; stock: number | null; sold: number | null; tierIndex: number[] };
 export type Product = { productId: string; parentSku: string; name: string; cover: string; createdAt: string | null; models: Model[] };
 
-/** 在售商品的一页（一页最多 48） */
 export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: number; rows: Product[] }> {
 	const b = await seller("/api/v3/opt/mpsku/list/v2/get_product_list", {
 		query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "live_all", need_ads: false },
@@ -47,7 +46,6 @@ export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: 
 
 export const STATUS: Record<number, string> = { 0: "删除", 1: "在售", 2: "审核中", 3: "禁卖", 8: "下架" };
 
-/** 全部商品（含下架、审核中）的一页：id、名字、状态码 */
 export async function allProducts(
 	pageNo = 1,
 	pageSize = 48,
@@ -66,7 +64,6 @@ export async function allProducts(
 	};
 }
 
-/** 一个商品的完整资料（原样的 product_info：名字、描述、图、类目路径、属性、规格、重量、尺寸……）。改商品前先读它 */
 export async function productInfo(productId: string): Promise<any> {
 	const b = await seller("/api/v3/product/get_product_info", { query: { product_id: productId, is_draft: false } });
 	if (!b.data?.product_info) throw new Error(`Shopee 没有回商品 ${productId} 的资料`);
@@ -81,14 +78,12 @@ export async function channels(productId: string, categoryId: number): Promise<a
 	return b.data?.list ?? [];
 }
 
-/** 商品额度：已发布、下架的、上限 */
 export async function countLimit(): Promise<{ used: number; unlisted: number; limit: number }> {
 	const b = await seller("/api/v3/opt/mpsku/list/get_product_count_limit");
 	const d = b.data ?? b;
 	return { used: Number(d.current_published), unlisted: Number(d.unlisted_count), limit: Number(d.publish_limit) };
 }
 
-/** 数据中心「商品表现」的一页（一页最多 50）：销售额、订单、件数、曝光、点击、访客、加购、转化。period 是 past7days 或 past30days，时间是秒 */
 export async function performance(
 	start: number,
 	end: number,
@@ -115,7 +110,6 @@ export async function performance(
 
 export type Category = { id: string; name: string; children: Category[] };
 
-/** Shopee 的类目树（台湾站，全店共用） */
 export async function categoryTree(): Promise<Category[]> {
 	const b = await seller("/api/v3/category/get_category_tree");
 	const conv = (n: any): Category => ({ id: String(n.id), name: String(n.display_name ?? n.name ?? n.id), children: (n.children ?? []).map(conv) });
@@ -138,14 +132,12 @@ export async function attributes(categoryId: number): Promise<Attribute[]> {
 	}));
 }
 
-/** Shopee 推荐的类目：商品名 + 一张已传的图的 id。原样回 data */
 export async function recommendedCategory(name: string, imageId = ""): Promise<any> {
 	return (
 		await seller("/api/v3/category/get_recommended_category", { body: { item_id: 0, name, image: imageId, description: "", description_type: "normal" } })
 	).data;
 }
 
-/** 各类目的备货天数范围（较长备货）和现货的备货天数 */
 export async function shippingDays(): Promise<{ inStock: number; rules: { categoryIds: string[]; min: number; max: number }[] }> {
 	const b = await seller("/api/v3/product/get_product_constraints/");
 	return {
@@ -158,8 +150,6 @@ export async function shippingDays(): Promise<{ inStock: number; rules: { catego
 	};
 }
 
-// ── 写（建商品、上下架在 x2 里跑过；改别的字段、删商品还没跑过：lilto 旧工作台跑通过的做法，第一次用时人确认后再跑） ──
-
 /** 写：建商品（create_product_info）。product_info 的样子照卖家中心新增商品页提交的（lilto 2026-09-01 的成功样本）；isDraft 为 true 存成草稿 */
 export function createProduct(productInfo: Record<string, unknown>, isDraft = false): Promise<Write> {
 	return write("/api/v3/product/create_product_info", { query: { _show_debug_info: 1 }, body: { is_draft: isDraft, product_info: productInfo } });
@@ -171,7 +161,6 @@ export function updateProduct(productId: string, productInfo: Record<string, unk
 	return write("/api/v3/product/update_product_info", { body: { product_id: Number(productId), product_info: productInfo, is_draft: false } });
 }
 
-/** 写：上架（unlisted false）或下架（true） */
 export const setUnlisted = (productId: string, unlisted: boolean) => updateProduct(productId, { unlisted });
 
 /** 写：删商品。真删，平台没有回收站 */
@@ -234,9 +223,7 @@ export async function uploadImages(files: { base64: string; mime: string }[], bi
 							if (u && /upload\./.test(String(u))) {
 								try {
 									await req.e(i);
-								} catch {
-									/* 没有这一块 */
-								}
+								} catch {}
 							}
 						}
 						for (const id in req.m ?? {}) {
@@ -278,7 +265,6 @@ export async function uploadImages(files: { base64: string; mime: string }[], bi
 	return ids;
 }
 
-/** 写：传一张商品图，回图片 id */
 export async function uploadImage(base64: string, filename = "x2.jpg", mime = "image/jpeg", biz = 4207): Promise<string> {
 	void filename;
 	return (await uploadImages([{ base64, mime }], biz))[0]!;

@@ -7,7 +7,6 @@ import { type Bytes, inspect } from "../../connectors/services/image/api.ts";
 import { page } from "../../platform/browser/browser.ts";
 import type { Mark } from "./pics.ts";
 
-/** 画法变了就加一：水印缓存按「原图 + 设置 + 版本」 */
 export const WATERMARK_VERSION = 1;
 export const markKey = (m: Mark) => `水印:${WATERMARK_VERSION}:${JSON.stringify([m.text, m.size, m.opacity, m.position])}`;
 

@@ -16,7 +16,6 @@ export const url = process.env.X2_TEST_DATABASE_URL;
 export const sql = url ? postgres(url, { onnotice: () => {}, max: 2 }) : null;
 export const skip = !sql && "没设 X2_TEST_DATABASE_URL";
 
-/** 这一轮现读的结果（假的）：只读了 chanboss 订单 */
 const reads = (): Reads => ({ cart: [], purchases: [], accounts: new Map(), buyAccount: null, results: [{ what: "订单", who: "chanboss", ok: true }] });
 register({ ...orders, check: (s) => ordersCheck(s, reads()) }, ...TOOLKITS);
 
@@ -30,13 +29,11 @@ after(async () => {
 	await close();
 });
 
-/** x2 status：问每个 skill 的检查 */
 export async function check(db: postgres.Sql) {
 	const r = await status(db);
 	return { reminders: r.human, todo: r.todo };
 }
 
-/** 跑一个工具（命令行的参数），回它的输出（照 --json 的样子） */
 export async function tool(kit: Toolkit, args: string[]): Promise<any> {
 	process.env.X2_DATABASE_URL = url!;
 	const r = await runTool(kit, args);

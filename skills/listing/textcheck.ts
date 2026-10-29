@@ -38,25 +38,21 @@ const schema = (n: number) => ({
 	required: ["textIssues", "images"],
 });
 
-/** 挑出的字在哪：印在商品本体上（不算问题，图保留原貌）还是后加的文案。照 R_PROMPT 的样子，只答一个字母 */
 export const WHERE_PROMPT = (issues: string[]) => `这是电商商品图。文字检查在这张图上挑出了这些字：${issues.join("；")}
 这些字是印在商品本体上的，还是后加的文案？
 p = 都印在商品本体上：印在实物表面、跟着实物的形状和材质走的字（地垫印花图案里的字、瓶身标签、包装印刷、表盘铭牌）
 m = 有后加的文案：画在图上的标题、卖点、说明、参数，后加的圆圈、方框、色块里的标签、角标
 只输出 p 或 m。`;
 
-/** 问 Gemini 挑出的字在哪；答不出回 null（只提示） */
 export async function textWhere(img: Image, issues: string[]): Promise<Where | null> {
 	const t = (await gemini(WHERE_PROMPT(issues), [img])).replace(/[\s`'"“”‘’.,，。:：;；!！?？()（）[\]【】-]/g, "").toLowerCase();
 	return /^p+$/.test(t) ? "印在商品上" : /^m+$/.test(t) ? "后加的文案" : null;
 }
 
-/** 查一份商品：image 取一张图加水印之前的那张（图片 id → 字节）；kept 是保留的图（不问、不去掉）；canDrop 是这一轮去掉了图还能再查 */
 export async function textCheck(p: Product, opts: { image: (id: string) => Promise<Image>; kept?: Iterable<string>; canDrop?: boolean }): Promise<Audit> {
 	const kept = new Set(opts.kept ?? []);
 	const ids = auditImages(p);
 	const content = { title: p.title, description: p.description, specs: specNames(p) };
-	// 一批 4 张（没图也问一次文案）
 	const batches = Array.from({ length: Math.max(1, Math.ceil(ids.length / 4)) }, (_, i) => ids.slice(i * 4, i * 4 + 4));
 	const results = await Promise.all(
 		batches.map(async (batch) => {

@@ -15,7 +15,6 @@ export type Save = (value: unknown) => void;
 const time = (v: string) => new Date(v).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 const empty = (v: unknown) => v === null || v === undefined || v === "";
 
-/** JSON：对象一行一个「键：值」 */
 const jsonText = (v: unknown) =>
 	v && typeof v === "object" && !Array.isArray(v)
 		? Object.entries(v)
@@ -23,7 +22,6 @@ const jsonText = (v: unknown) =>
 				.join("\n")
 		: JSON.stringify(v);
 
-/** 只看的一格；compact 是表格里（长字截断、图小） */
 export function Show({ col, value, compact }: { col: Column; value: unknown; compact?: boolean }) {
 	if (col.type === "pics") return <Pics pics={(value ?? []) as Pic[]} compact={compact} />;
 	if (col.type === "specs" && value) return <Specs specs={value as SpecsTable} compact={compact} />;
@@ -50,7 +48,6 @@ export function Show({ col, value, compact }: { col: Column; value: unknown; com
 	return <span className={`whitespace-pre-wrap break-words ${compact ? "line-clamp-3" : ""}`}>{text}</span>;
 }
 
-/** 改的一格 */
 export function Edit({ col, value, save }: { col: Column; value: unknown; save: Save }) {
 	const [draft, setDraft] = useState(String(value ?? ""));
 	useEffect(() => setDraft(String(value ?? "")), [value]);
@@ -92,7 +89,6 @@ export function Edit({ col, value, save }: { col: Column; value: unknown; save: 
 
 const STATE: Record<Pic["state"], string> = { used: "", removed: "已删除", dropped: "x2 去掉", extra: "超出张数" };
 
-/** 商品稿的图：主图、详情图、规格图。能改时主图、详情图能删、能放回；x2 去掉的写着原因（要用告诉 agent） */
 function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean | undefined; save?: Save }) {
 	if (compact) {
 		const cover = pics.find((p) => p.role === "main" && p.state === "used");
@@ -124,7 +120,6 @@ function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean | undefi
 
 type SpecRow = SpecsTable["rows"][number];
 const price = (p: number | null) => (p === null ? "未定价" : `NT$${p}`);
-/** 规格表里的数：都一样的写在上面一行，不一样的才成一列 */
 const FIELDS: { label: string; of: (r: SpecRow) => string }[] = [
 	{ label: "售价", of: (r) => price(r.priceTwd) },
 	{ label: "进价", of: (r) => `¥${r.costRmb}` },
@@ -132,7 +127,6 @@ const FIELDS: { label: string; of: (r: SpecRow) => string }[] = [
 	{ label: "重量", of: (r) => (r.weightKg === null ? "缺重量" : `${r.weightKg} kg`) },
 ];
 
-/** 规格和价格：一个规格一行（规格图、每层的选项、不一样的数），都一样的数写在上面；表格里只写个数和售价 */
 function Specs({ specs, compact }: { specs: SpecsTable; compact?: boolean | undefined }) {
 	const { rows, tiers, removed } = specs;
 	const same = FIELDS.filter((f) => new Set(rows.map(f.of)).size <= 1);
