@@ -6,7 +6,7 @@ import { needsHuman } from "../connectors/sites/shopee/seller.ts";
 import { bySales30Day } from "../connectors/sites/zhixia/api.ts";
 import { runTool } from "../platform/cli.ts";
 import { Usage } from "../platform/errors.ts";
-import { byPage, day, get, ints, parseJson, str, type Toolkit } from "../platform/tool.ts";
+import { byPage, day, flag, get, ints, parseJson, str, type Toolkit } from "../platform/tool.ts";
 
 // 一个假的站点：items 一页 2 行，共 5 行
 const seen: unknown[] = [];
@@ -21,6 +21,7 @@ const fake: Toolkit = {
 			return { rows: all.slice((n - 1) * 2, n * 2), more: n * 2 < all.length };
 		}),
 		when: get("时间", z.object({ start: day("开始"), end: day("结束", true) }), async (p) => p),
+		note: get("开关和字", z.object({ why: str("理由"), force: flag("覆盖").default(false) }), async (p) => p),
 		raw: get("JSON 参数", z.object({ query: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}) }), async (p) => p),
 	},
 };
@@ -58,6 +59,13 @@ test("用法不对是 Usage：没有的操作、没有的参数、缺必填、ge
 	await assert.rejects(runTool(fake, ["items"]), Usage);
 	await assert.rejects(runTool(fake, ["when", "--start", "2026-09-01", "--end", "2026-09-01", "--pages", "1"]), Usage);
 	await assert.rejects(runTool(fake, ["items", "--shop-id", "7", "--pages", "0"]), Usage);
+});
+
+test("单独的 --名字 只算开关：字的参数没给值是 Usage，不当成字的 true", async () => {
+	await assert.rejects(runTool(fake, ["note", "--why"]), (e: Error) => e instanceof Usage && /--why 后面要写值/.test(e.message));
+	await assert.rejects(runTool(fake, ["note", "--why", "--force"]), (e: Error) => e instanceof Usage && /--why 后面要写值/.test(e.message));
+	assert.deepEqual(await value(["note", "--why", "撞货", "--force"]), { why: "撞货", force: true });
+	assert.deepEqual(await value(["note", "--why", "撞货"]), { why: "撞货", force: false });
 });
 
 test("--help 回帮助文本，列出参数", async () => {

@@ -30,8 +30,9 @@ const readStdin = async () => {
 };
 
 /** --名字 值、--名字=值、单独的 --名字（开关）；值是 - 的从 stdin 读 */
-async function parseFlags(args: string[]): Promise<Record<string, string>> {
+async function parseFlags(args: string[]): Promise<{ flags: Record<string, string>; bare: Set<string> }> {
 	const out: Record<string, string> = {};
+	const bare = new Set<string>();
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i]!;
 		if (!a.startsWith("--")) throw new Usage(`多余的参数：${a}（参数都写成 --名字 值）`);
@@ -41,14 +42,16 @@ async function parseFlags(args: string[]): Promise<Record<string, string>> {
 			continue;
 		}
 		const next = args[i + 1];
-		if (next === undefined || (next.startsWith("--") && next !== "--")) out[a.slice(2)] = "true";
-		else {
+		if (next === undefined || (next.startsWith("--") && next !== "--")) {
+			out[a.slice(2)] = "true";
+			bare.add(a.slice(2));
+		} else {
 			out[a.slice(2)] = next;
 			i++;
 		}
 	}
 	for (const [k, v] of Object.entries(out)) if (v === "-") out[k] = (await readStdin()).trim();
-	return out;
+	return { flags: out, bare };
 }
 
 export function toolHelp(kit: Toolkit, name: string, t: Tool): string {
@@ -132,7 +135,8 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	if (rest.includes("--help") || rest.includes("-h")) return { help: usage() };
 	if (t.kind === "write" && !isWrite(t)) throw new Usage(`${call(kit, name)} 是连接器的写工具，只经 skill 的写工具调（x2 schema 看有哪些）`);
 
-	const { pages, cursor, try: tryFlag, ...given } = await parseFlags(rest);
+	const { flags, bare } = await parseFlags(rest);
+	const { pages, cursor, try: tryFlag, ...given } = flags;
 	if (!paged(t) && (pages !== undefined || cursor !== undefined)) throw new Usage(`${name} 不是列表，没有 --pages、--cursor\n${usage()}`);
 	if (!isWrite(t) && tryFlag !== undefined) throw new Usage(`${name} 不是写工具，没有 --try\n${usage()}`);
 	const scoped = kit.scope ? given[kit.scope.flag] : undefined;
@@ -142,6 +146,8 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	const raw: Record<string, string> = {};
 	for (const [k, v] of Object.entries(given)) {
 		if (!known.has(camel(k))) throw new Usage(`${name} 没有参数 --${k}\n${usage()}`);
+		// 单独的 --名字 只给开关：别的参数后面要写值（不然 --why 会被当成字的 true）
+		if (bare.has(k) && !(t.params.shape[camel(k)] as z.ZodType).safeParse(true).success) throw new Usage(`--${k} 后面要写值\n${usage()}`);
 		raw[camel(k)] = v;
 	}
 	const parsed = t.params.safeParse(raw);
