@@ -1,0 +1,18 @@
+# 三台服务器的 SSH 配置（只有主机、地址、用户；不放密钥、密码）。
+# 用法二选一：
+#   1. 写进 ~/.ssh/config 的开头：Include <仓库的路径>/ops/ssh_config，然后 ssh penna-hk
+#   2. 不改 ~/.ssh/config：ssh -F ops/ssh_config penna-hk
+# 钥匙用你自己的（~/.ssh 里的，或 ssh-agent）。penna-hk 经 penna-gw 跳过去。
+
+Host penna-gw
+	HostName 43.160.247.167
+	User ubuntu
+
+Host penna-hk
+	HostName 43.132.177.132
+	User ubuntu
+	ProxyJump penna-gw
+
+Host penna-sh
+	HostName 175.24.190.201
+	User ubuntu

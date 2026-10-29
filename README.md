@@ -7,6 +7,7 @@ x2 帮我们经营 Shopee 台湾的两家店（ni1206、cheeroutdoor）：一个
 1. Node 24、pnpm：`pnpm install`。
 2. 仓库根目录写 `.env`（不进 git），要设什么照 `.env.example`：至少 `X2_DATABASE_URL`（Postgres）、`GEMINI_API_KEY`、`XIANGJI_USER_KEY`、`XIANGJI_IMG_TRANS_KEY`。
 3. Chrome 装 cdp-relay，两家店各开一个浏览器（Chrome 的不同用户），在里面登录 Shopee、1688、知虾、chanboss。
+4. 连服务器：`ops/ssh_config` 是三台服务器的 SSH 配置（不含秘密），在 `~/.ssh/config` 里 `Include` 它，或 `ssh -F ops/ssh_config penna-hk`。
 
 ## 开始
 

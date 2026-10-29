@@ -46,6 +46,7 @@ const TOP = [
 	"AGENTS.md",
 	"CLAUDE.md",
 	"README.md",
+	"ops",
 	"biome.json",
 	"components.json",
 	"connectors",
@@ -65,7 +66,7 @@ const CODE = [join(ROOT, "x2.ts"), ...["platform", "connectors", "tools", "test"
 );
 const UI = CODE.filter((f) => rel(f).startsWith("platform/ui/"));
 
-test("顶层只有这几样：代码分 platform、connectors、tools，skills 只有 md，test 是跨层的测试；别的是工具链的配置", () => {
+test("顶层只有这几样：代码分 platform、connectors、tools，skills 只有 md，test 是跨层的测试，ops 是连服务器的配置（不放秘密）；别的是工具链的配置", () => {
 	assert.deepEqual(
 		[...new Set(tracked().map((f) => f.split("/")[0]!))].filter((x) => !TOP.includes(x)),
 		[],
