@@ -1,90 +1,47 @@
-// 写入引擎：一批马上做；结果未知停下这一批、不重发；没核清的同一个对象不再做；被拒的记下原因。连库（test/db.ts）
+// 写入引擎的判断：没核清的同一个对象不再做；结果未知停下这一批、不重发；被拒的记下原因，同一个 key 再交加次数
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { z } from "zod";
-import { check, skip, sql } from "../test/db.ts";
-import { Usage } from "./errors.ts";
-import { register } from "./tool.ts";
-import { perform, run, type Submitted, type WriteOp } from "./writes.ts";
+import { admit, gate, type Stuck, settle, stuck } from "./writes.ts";
 
-const outcome = new Map<number, { sent: Submitted; done: boolean | null }>();
-const submitted: number[] = [];
-const fake: WriteOp<{ n: number }> = {
-	describe: "试写",
-	params: z.object({ n: z.number() }),
-	target: (p) => `t:${p.n}`,
-	key: (p) => `k:${p.n}`,
-	display: (p) => `第 ${p.n} 项`,
-	where: (_sql, _p, fn) => fn(),
-	prepare: async (_sql, p) => ({ params: p, before: { n: p.n } }),
-	submit: async (_sql, p) => {
-		submitted.push(p.n);
-		return outcome.get(p.n)?.sent ?? { kind: "done" };
-	},
-	check: async (p) => ({ done: outcome.has(p.n) ? outcome.get(p.n)!.done : true, readback: { n: p.n } }),
-};
-const ops = { 试写: fake };
-register({ name: "test", title: "试", kind: "tool", tools: {}, writes: ops });
-const perform1 = (db: NonNullable<typeof sql>, writes: { op: string; params: unknown }[]) => perform(db, [writes], {}, ops);
+const none = (): Stuck => ({ batches: new Set(), targets: new Set() });
+const w = { op: "试写", batch: "1", target: "t:1" };
+const ok = { known: true, blocked: null, stuck: none(), tried: false, dup: null };
 
-test("写入：写工具交的一批马上做；结果未知停下这一批（剩下的未执行），不重发；没核清的同一个对象不再做；x2 verify 核清", {
-	skip,
-}, async () => {
-	const db = sql!;
-	outcome.set(1, { sent: { kind: "unknown", why: "超时" }, done: null });
-	const r1 = await perform1(db, [
-		{ op: "试写", params: { n: 1 } },
-		{ op: "试写", params: { n: 2 } },
-	]);
-	assert.equal(r1.unknown, true);
+test("写入：没核清的同一个 key 不再收新的；做过、被拒过的再交加次数", () => {
+	assert.deepEqual(admit("k:1", []), { key: "k:1" });
+	assert.deepEqual(admit("k:1", [{ id: "3", status: "结果未知" }]), { busy: "3" });
+	assert.deepEqual(admit("k:1", [{ id: "3", status: "已提交" }]), { busy: "3" });
+	assert.deepEqual(admit("k:1", [{ id: "3", status: "不一致" }]), { busy: "3" });
+	assert.deepEqual(admit("k:4", [{ id: "5", status: "被拒" }]), { key: "k:4#2" });
 	assert.deepEqual(
-		r1.ran.map((x) => [x.display, x.status]),
-		[
-			["第 1 项", "结果未知"],
-			["第 2 项", "未执行"],
-		],
-	);
-	assert.deepEqual(submitted, [1]);
-
-	await assert.rejects(perform1(db, [{ op: "试写", params: { n: 1 } }]), (e: Error) => e instanceof Usage && /还没核清/.test(e.message));
-
-	assert.equal((await run(db, {}, ops)).ran[0]!.status, "结果未知");
-	assert.deepEqual(submitted, [1]);
-	const unknown = (await check(db)).reminders.filter((x) => x.kind === "结果未知");
-	assert.equal(unknown.length, 1);
-
-	outcome.set(1, { sent: { kind: "unknown", why: "超时" }, done: true });
-	assert.deepEqual(
-		(await run(db, {}, ops)).ran.map((x) => [x.display, x.status]),
-		[["第 1 项", "已核对"]],
-	);
-	assert.deepEqual(
-		(await perform1(db, [{ op: "试写", params: { n: 2 } }])).ran.map((x) => [x.display, x.status]),
-		[["第 2 项", "已核对"]],
-	);
-	assert.deepEqual(submitted, [1, 2]);
-	assert.deepEqual(
-		(await check(db)).reminders.filter((x) => x.kind === "结果未知"),
-		[],
+		admit("k:4", [
+			{ id: "5", status: "被拒" },
+			{ id: "6", status: "已核对" },
+		]),
+		{ key: "k:4#3" },
 	);
 });
 
-test("写入：被拒的记下原因；同一个 key 被拒过的再交加次数", { skip }, async () => {
-	const db = sql!;
-	outcome.set(4, { sent: { kind: "refused", why: "库存不够" }, done: false });
-	const r = await perform1(db, [{ op: "试写", params: { n: 4 } }]);
-	assert.deepEqual(
-		r.ran.map((x) => [x.display, x.status, x.why]),
-		[["第 4 项", "被拒", "库存不够"]],
+test("写入：结果未知停下这一批和同一个对象（剩下的未执行）；要人处理的停下全部；没跑过的要 --try；重复的不做", () => {
+	assert.equal(gate(w, ok), null);
+	assert.equal(gate(w, { ...ok, stuck: { batches: new Set(["1"]), targets: new Set() } }), "这一批（或同一个对象）有结果未知的写入：先核清再做");
+	assert.equal(
+		gate({ ...w, batch: "2" }, { ...ok, stuck: { batches: new Set(), targets: new Set(["t:1"]) } }),
+		"这一批（或同一个对象）有结果未知的写入：先核清再做",
 	);
-	outcome.delete(4);
-	await perform1(db, [{ op: "试写", params: { n: 4 } }]);
-	const rows = await db`select key, status from writes where params->>'n' = '4' order by id`;
-	assert.deepEqual(
-		rows.map((x) => [x.key, x.status]),
-		[
-			["k:4", "被拒"],
-			["k:4#2", "已核对"],
-		],
-	);
+	assert.equal(gate(w, { ...ok, blocked: "1688 要过滑块" }), "没做：1688 要过滑块");
+	assert.equal(gate(w, { ...ok, known: false }), "没有 试写 这个写操作");
+	assert.equal(gate(w, { ...ok, untried: "还没在真站点上跑过：加 --try" }), "还没在真站点上跑过：加 --try");
+	assert.equal(gate(w, { ...ok, untried: "还没在真站点上跑过：加 --try", tried: true }), null);
+	assert.equal(gate(w, { ...ok, dup: "7" }), "重复：写入 #7 已经做过（或还没核清）");
+});
+
+test("写入：站点的答复和读回来的合成状态；看不出做没做是结果未知，停下、不重发", () => {
+	assert.deepEqual(settle({ kind: "done" }, true), { status: "已核对" });
+	assert.deepEqual(settle({ kind: "unknown", why: "超时" }, true), { status: "已核对" });
+	assert.deepEqual(settle({ kind: "unknown", why: "超时" }, null), { status: "结果未知", why: "读回来看不出做没做（超时）" });
+	assert.deepEqual(settle({ kind: "done" }, null), { status: "结果未知", why: "读回来看不出做没做" });
+	assert.deepEqual(settle({ kind: "done" }, false), { status: "不一致", why: "站点说做了，读回来没有" });
+	assert.deepEqual(settle({ kind: "refused", why: "库存不够" }, false), { status: "被拒", why: "没做成：库存不够" });
+	assert.deepEqual(["结果未知", "不一致", "被拒", "已核对"].map(stuck), [true, true, false, false]);
 });

@@ -117,3 +117,30 @@ export function matchSku<T extends { name: string }>(spec: string, skus: readonl
 	if (ok.length === 1 || (ok.length > 1 && ok[0]!.score - ok[1]!.score >= 0.2)) return skus.find((s) => s.name === ok[0]!.name) ?? null;
 	return null;
 }
+
+/** 人写的规格例外「店里的规格名 = 货源的规格名」：两边都要对得上（繁简、空格不算）；同一个店里的规格写过的换掉。回新的规格例外 */
+export function addException<T extends { name: string }>(
+	text: string,
+	sold: string[],
+	source: { title: string; skus: readonly T[]; exceptions: string | null },
+): { spec: string; sku: string; exceptions: string } | { error: string } {
+	const i = text.indexOf("=");
+	if (i <= 0) return { error: `--spec 写成「店里的规格名 = 货源的规格名」：${text}` };
+	const spec = text.slice(0, i).trim(),
+		named = text.slice(i + 1).trim();
+	const mine = sold.find((s) => sameName(s || "（单规格）", spec));
+	if (mine === undefined) return { error: `最近 60 天卖过的规格里没有「${spec}」。卖过的：${sold.map((s) => s || "（单规格）").join("、")}` };
+	const sku = source.skus.find((k) => sameName(k.name, named));
+	if (!sku)
+		return {
+			error: `货源「${source.title}」里没有「${named}」。最像的：${rank(mine, source.skus)
+				.slice(0, 5)
+				.map((k) => k.name)
+				.join("、")}`,
+		};
+	const left = mine || "（单规格）";
+	const lines = String(source.exceptions ?? "")
+		.split("\n")
+		.filter((l) => l.trim() && exceptionFor(mine, l) === undefined);
+	return { spec: left, sku: sku.name, exceptions: [...lines, `${left} = ${sku.name}`].join("\n") };
+}

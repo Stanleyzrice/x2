@@ -9,7 +9,7 @@ import { similar1688, ready as zhixiaReady } from "../../connectors/sites/zhixia
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { SourceSku } from "./check.ts";
-import { exceptionFor, matchSku, rank, sameName } from "./similar.ts";
+import { addException, matchSku } from "./similar.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const live = (id: string) =>
@@ -130,31 +130,16 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 }
 
 export async function setException(sql: Sql, itemId: string, text: string): Promise<{ spec: string; sku: string; title: string }> {
-	const i = text.indexOf("=");
-	if (i <= 0) throw new Usage(`--spec 写成「店里的规格名 = 货源的规格名」：${text}`);
-	const spec = text.slice(0, i).trim(),
-		named = text.slice(i + 1).trim();
+	if (text.indexOf("=") <= 0) throw new Usage(`--spec 写成「店里的规格名 = 货源的规格名」：${text}`);
 	const [row] =
 		await sql`select offer_id, title, skus, sku_exceptions from sources where item_id = ${itemId} and (chosen or sure) and broken is null order by chosen desc limit 1`;
 	if (!row) throw new Usage(`商品 ${itemId} 还没定货源：先选货源（x2 orders source --items ${itemId}）`);
-	const specs = (await sql`select distinct i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`).map((r) =>
+	const sold = (await sql`select distinct i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`).map((r) =>
 		String(r.spec ?? ""),
 	);
-	const mine = specs.find((s) => sameName(s || "（单规格）", spec));
-	if (mine === undefined) throw new Usage(`商品 ${itemId} 最近 60 天卖过的规格里没有「${spec}」。卖过的：${specs.map((s) => s || "（单规格）").join("、")}`);
-	const skus = row.skus as SourceSku[];
-	const sku = skus.find((k) => sameName(k.name, named));
-	if (!sku)
-		throw new Usage(
-			`货源「${row.title}」里没有「${named}」。最像的：${rank(mine, skus)
-				.slice(0, 5)
-				.map((k) => k.name)
-				.join("、")}`,
-		);
-	const left = mine || "（单规格）";
-	const lines = String(row.sku_exceptions ?? "")
-		.split("\n")
-		.filter((l) => l.trim() && exceptionFor(mine, l) === undefined);
-	await sql`update sources set sku_exceptions = ${[...lines, `${left} = ${sku.name}`].join("\n")} where item_id = ${itemId} and offer_id = ${row.offer_id}`;
-	return { spec: left, sku: sku.name, title: String(row.title ?? row.offer_id) };
+	const title = String(row.title ?? row.offer_id);
+	const r = addException(text, sold, { title, skus: row.skus as SourceSku[], exceptions: row.sku_exceptions });
+	if ("error" in r) throw new Usage(`商品 ${itemId}：${r.error}`);
+	await sql`update sources set sku_exceptions = ${r.exceptions} where item_id = ${itemId} and offer_id = ${row.offer_id}`;
+	return { spec: r.spec, sku: r.sku, title };
 }

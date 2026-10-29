@@ -11,11 +11,12 @@ import type { Ran } from "../../platform/writes.ts";
 import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../selection/index.ts";
 import { AUDIT_DROP, type Audit, type AuditIssue, auditDropped, auditIssues, auditKey, dropAudited, issueLine, restoreAudited } from "./audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
+import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { unmarked } from "./images.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
-import type { Pic, Pics } from "./pics.ts";
-import { estimateNeeds, freightOf, pricingProblems, quote, settingsOf } from "./pricing.ts";
-import { imageNames, LABEL, numbered } from "./product.ts";
+import type { Pics } from "./pics.ts";
+import { estimateNeeds, pricingProblems, quote, settingsOf } from "./pricing.ts";
+import { imageNames } from "./product.ts";
 import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import { listingsCheck } from "./status.ts";
@@ -228,26 +229,7 @@ export const listing: Toolkit = {
 					const [l] = await sql`select * from listings where id = ${p.id}`;
 					if (!l) throw new Usage(`没有商品稿 ${p.id}`);
 					if (!l.offer || !specsOf(l.variants)) throw new Usage(`${listingName(l)}还没做好：先 x2 listing make --ids ${p.id}`);
-					const needs = estimateNeeds(l);
-					const notes: string[] = [],
-						set: Record<string, number> = {};
-					if (p.weight !== undefined) {
-						if (l.weight_kg !== null) notes.push(`重量：已有 ${Number(l.weight_kg)} kg（人填的或估过的），不改`);
-						else if (!needs.includes("重量")) notes.push("重量：1688 给了每个规格的重量，不用估");
-						else {
-							set.weight_kg = p.weight;
-							notes.push(`重量：记为 ${p.weight} kg`);
-						}
-					}
-					if (p.freight !== undefined) {
-						const known = freightOf(l.offer, null);
-						if (l.freight_rmb !== null) notes.push(`国内运费：已有 ${Number(l.freight_rmb)} 元/件（人填的或估过的），不改`);
-						else if (known !== null) notes.push(`国内运费：${l.offer.tags?.freeShipping ? "货源包邮" : `1688 读得到（${known} 元/件）`}，不用估`);
-						else {
-							set.freight_rmb = p.freight;
-							notes.push(`国内运费：记为 ${p.freight} 元/件`);
-						}
-					}
+					const { set, notes } = estimateFill(l as any, estimateNeeds(l), p);
 					if (set.weight_kg !== undefined)
 						await sql`update listings set weight_kg = ${set.weight_kg}, updated_at = now() where id = ${p.id} and weight_kg is null`;
 					if (set.freight_rmb !== undefined)
@@ -418,14 +400,9 @@ export const listing: Toolkit = {
 					if (!asked.length) throw new Usage("x2 listing keep --id <商品稿> --images 主图 N,详情图 N（图的名字，见商品稿的说明；人说了才用）");
 					const [l] = await sql`select * from listings where id = ${p.id}`;
 					if (!l) throw new Usage(`没有商品稿 ${p.id}`);
-					const named = new Map<string, Pic>();
-					for (const role of ["main", "detail"] as const) for (const { pic, n } of numbered(l.images ?? {}, role)) named.set(`${LABEL[role]} ${n}`, pic);
-					const unknown = asked.filter((x) => !named.has(x));
-					if (unknown.length) throw new Usage(`${listingName(l)}没有${unknown.join("、")}（有：${[...named.keys()].join("、") || "无"}）`);
-					const deleted = asked.filter((x) => (l.removed_images ?? []).includes(named.get(x)!.imageId));
-					if (deleted.length) throw new Usage(`${listingName(l)}的${deleted.join("、")}是人删的（已删除的图），不放回来`);
-					const imageIds = [...new Set(asked.map((x) => named.get(x)!.imageId!))];
-					const restored = asked.filter((x) => named.get(x)!.drop?.startsWith(AUDIT_DROP));
+					const k = keepImages(listingName(l), asked, l.images ?? {}, l.removed_images ?? [], AUDIT_DROP);
+					if ("error" in k) throw new Usage(k.error);
+					const { imageIds, restored } = k;
 					await sql`update listings set images = ${sql.json(restoreAudited(l.images, imageIds) as any)}, kept_images = ${sql.json([...new Set([...(l.kept_images ?? []), ...imageIds])])}, updated_at = now() where id = ${p.id}`;
 					const checks = await textChecks(sql, [p.id]);
 					return { id: p.id, name: listingName(l), kept: asked, restored, audit: checks };
@@ -488,11 +465,8 @@ export const listing: Toolkit = {
 					const bad = want.flatMap((id) => {
 						const r = rows.find((x) => x.id === id);
 						if (!r) return [`没有商品稿 ${id}`];
-						if (r.cancelled) return [];
-						if (r.listed_at) return [`${name(id)}已上架（商品 ${r.product_id ?? "—"}）：不卖了是下架，不是放弃`];
-						if (r.product_id) return [`${name(id)}已经建了商品（商品 ${r.product_id}，下架）：不上架就不 publish，不是放弃`];
-						const unsure = writes.filter((w) => w.listing === id);
-						return unsure.length ? [`${name(id)}在建商品中（${unsure.map((w) => `${w.op}：${w.status}`).join("；")}）：可能已经建了，先核清（x2 verify）`] : [];
+						const no = cancelBlock(name(id), r as any, writes.filter((w) => w.listing === id) as any);
+						return no ? [no] : [];
 					});
 					if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没放弃`);
 					const already = new Set(rows.filter((r) => r.cancelled).map((r) => r.id as string));
@@ -547,14 +521,16 @@ export async function setCategory(sql: Sql, id: string, category: string, tree: 
 	const [l] = await sql`select * from listings where id = ${id}`;
 	if (!l) throw new Usage(`没有商品稿 ${id}`);
 	const name = listingName(l);
-	if (l.product_id || l.listed_at) throw new Usage(`${name}已经建了商品（商品 ${l.product_id ?? "—"}）：不改类目`);
+	const built = categoryBlock(name, l as any, category, "", null);
+	if (built) throw new Usage(built);
 	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
 	if (!row) throw new Usage(`店铺设置里没有「${l.shop}」`);
 	const s = settingsOf(row);
 	const found = leafPath(await tree(s.shopId), category);
 	if ("error" in found) throw new Usage(`${name}：${found.error}`);
 	const full = found.names.join(" > ");
-	if (s.categories && !s.categories.has(category)) throw new Usage(`${name}：「${full}」不在 ${l.shop} 允许的类目里（店铺设置的「允许的类目」）`);
+	const no = categoryBlock(name, l as any, category, full, s.categories);
+	if (no) throw new Usage(no);
 	const problems =
 		String(l.problems ?? "")
 			.split("\n")

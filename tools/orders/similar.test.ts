@@ -1,7 +1,7 @@
 // 规格名的比较：在货源的规格里配店里的规格、规格例外
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compare, matchSku, rank } from "./similar.ts";
+import { addException, compare, matchSku, rank } from "./similar.ts";
 
 const rack = [
 	"特厚25管全钢-双杆150黑+万向轮",
@@ -44,4 +44,23 @@ test("规格例外：按名字配不上时照人写的配（繁简、空格不�
 	assert.equal(matchSku(spec, rack, `${spec} = 顶配侧三层置物网+双层置物架+双杆150银+万向轮`), null);
 	assert.equal(matchSku("", [{ name: "红" }, { name: "蓝" }]), null);
 	assert.equal(matchSku("", [{ name: "红" }, { name: "蓝" }], "（单规格） = 蓝")?.name, "蓝");
+});
+
+test("x2 orders spec：两边都要对得上（繁简、空格不算）；配不上说最像的；同一个店里的规格写过的换掉", () => {
+	const sold = ["特粗26管雙層側三網150金+輪"];
+	const source = { title: "衣帽架货源", skus: rack, exceptions: null };
+	assert.match((addException("特粗26管", sold, source) as any).error, /^--spec 写成/);
+	assert.match((addException("特粗26管 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮", sold, source) as any).error, /卖过的规格里没有「特粗26管」/);
+	assert.match((addException("特粗26管雙層側三網150金+輪 = 顶配150银", sold, source) as any).error, /里没有「顶配150银」。最像的：顶配/);
+	const first = addException("特粗26管双层侧三网150金+轮 = 顶配侧三层置物网+双层置物架+双杆150白+万向轮", sold, source);
+	assert.ok(!("error" in first));
+	const again = addException("特粗26管雙層側三網150金+輪=顶配侧三层置物网+双层置物架+双杆150金+万向轮", sold, {
+		...source,
+		exceptions: `别的规格 = 特厚25管全钢-双杆150黑+万向轮\n${first.exceptions}`,
+	});
+	assert.deepEqual(again, {
+		spec: "特粗26管雙層側三網150金+輪",
+		sku: "顶配侧三层置物网+双层置物架+双杆150金+万向轮",
+		exceptions: "别的规格 = 特厚25管全钢-双杆150黑+万向轮\n特粗26管雙層側三網150金+輪 = 顶配侧三层置物网+双层置物架+双杆150金+万向轮",
+	});
 });

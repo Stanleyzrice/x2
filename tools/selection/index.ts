@@ -12,6 +12,22 @@ export { type Added, addListings, type PickSnapshot, pickSnapshot, snapshotLine 
 const STATUS = ["试验中", "使用中", "已停用"] as const;
 const FIELD = { status: "状态", bet: "假设", how: "选品方法", note: "备注" } as const;
 type Field = keyof typeof FIELD;
+
+/** 改策略：和现在一样的不算改（空的是清掉）；改了的记改之前、改之后，版本号加 1 */
+export function strategyDiff(
+	old: Partial<Record<Field, string | null>>,
+	wanted: Partial<Record<Field, string>>,
+): { before: Record<string, unknown>; after: Record<string, unknown> } {
+	const before: Record<string, unknown> = {},
+		after: Record<string, unknown> = {};
+	for (const k of Object.keys(FIELD) as Field[]) {
+		const v = wanted[k];
+		if (v === undefined || v === (old[k] ?? "")) continue;
+		before[k] = old[k];
+		after[k] = v === "" ? null : v;
+	}
+	return { before, after };
+}
 const text = z.string().trim().min(1);
 
 const changeLines = (before: Record<string, unknown> | null, after: Record<string, unknown>) =>
@@ -68,14 +84,7 @@ export const selection: Toolkit = {
 					const r = await (await db()).begin(async (tx) => {
 						const [old] = await tx`select status, bet, how, note, version from strategies where name = ${wanted.name} for update`;
 						if (!old) return null;
-						const before: Record<string, unknown> = {},
-							after: Record<string, unknown> = {};
-						for (const k of Object.keys(FIELD) as Field[]) {
-							const v = wanted[k];
-							if (v === undefined || v === (old[k] ?? "")) continue;
-							before[k] = old[k];
-							after[k] = v === "" ? null : v;
-						}
+						const { before, after } = strategyDiff(old as any, wanted);
 						if (!Object.keys(after).length) return { version: old.version as number, before, after };
 						const version = (old.version as number) + 1;
 						await tx`update strategies set ${tx(after as any)}, version = ${version}, updated_at = now() where name = ${wanted.name}`;
