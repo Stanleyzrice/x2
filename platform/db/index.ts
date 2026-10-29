@@ -11,6 +11,7 @@ export type Json = postgres.JSONValue;
 
 let conn: Sql | null = null;
 let ready: Promise<void> | null = null;
+let target: string | null = null;
 
 export const host = hostname();
 
@@ -26,7 +27,7 @@ export async function migrate(sql: Sql): Promise<void> {
 
 export async function db(): Promise<Sql> {
 	if (!conn) {
-		const url = process.env.X2_DATABASE_URL;
+		const url = target ?? process.env.X2_DATABASE_URL;
 		if (!url) throw new NeedsHuman("没有设 X2_DATABASE_URL（库的地址，例 postgres://localhost/x2）");
 		// numeric 回字符串（postgres 的默认），bigint 也回字符串：id 一律是字符串
 		conn = postgres(url, { onnotice: () => {}, max: 4 });
@@ -37,6 +38,12 @@ export async function db(): Promise<Sql> {
 	}
 	await ready;
 	return conn;
+}
+
+/** 这个进程改用另一个库（x2 web --scratch 的临时库）：在第一次 db() 之前调 */
+export function setDatabase(url: string): void {
+	if (conn) throw new Error("已经连上 X2_DATABASE_URL 的库了，换不了");
+	target = url;
 }
 
 /** 进程结束前关掉连接（不关进程不退出） */

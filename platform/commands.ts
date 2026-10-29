@@ -1,11 +1,15 @@
-// 平台自己的命令（x2 status、verify、resolve、handled、schema、web、migrate）和页（x2 page <工具>）：换哪门生意都一样
+// 平台自己的命令（x2 status、verify、resolve、handled、schema、web、shot、browsers、migrate）和页（x2 page <工具>）：换哪门生意都一样
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { browsers } from "./browser/browser.ts";
+import { shoot } from "./browser/shot.ts";
 import { outcomeText, schema } from "./cli.ts";
-import { db } from "./db/index.ts";
+import { close, db, setDatabase } from "./db/index.ts";
+import { openScratch } from "./db/scratch.ts";
 import { Usage } from "./errors.ts";
 import { status } from "./status.ts";
-import { type Checked, findTool, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
+import { type Checked, findTool, flag, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
 import { catalog, createPage, deletePage, listPages, parseItem, push, showPage, update } from "./web/pages.ts";
 import { serve } from "./web/server.ts";
 import { run, WriteId } from "./writes.ts";
@@ -76,18 +80,60 @@ export const platform: Toolkit = {
 			z.object({
 				host: z.string().min(1).default("127.0.0.1").describe("0.0.0.0：同一个网络里别的电脑也能开"),
 				port: z.coerce.number().int().min(1).max(65535).default(5170).describe("端口"),
+				scratch: flag("在真库的一份临时拷贝上开（验证改了的网页）：关掉时删掉，不碰真库").default(false),
 			}),
 			async (p) => {
-				const { build } = await import("vite");
-				await build({ configFile: `${root}platform/ui/vite.config.ts`, logLevel: "warn" });
-				const { stop } = await serve(await db(), { ...p, dist: `${root}platform/ui/dist` });
-				const url = `http://${p.host === "0.0.0.0" ? "localhost" : p.host}:${p.port}`;
-				console.error(`网页：${url}（Ctrl-C 关掉）`);
-				await new Promise<void>((ok) => process.once("SIGINT", ok).once("SIGTERM", ok));
-				await stop();
-				return { url };
+				const source = process.env.X2_DATABASE_URL;
+				if (p.scratch && !source) throw new Usage("没有设 X2_DATABASE_URL：--scratch 复制它");
+				const scratch = p.scratch && source ? await openScratch(source) : null;
+				try {
+					if (scratch) {
+						setDatabase(scratch.url);
+						console.error(`临时库：${scratch.name}（真库的拷贝，关掉时删掉）`);
+					}
+					const { build } = await import("vite");
+					await build({ configFile: `${root}platform/ui/vite.config.ts`, logLevel: "warn" });
+					const { stop } = await serve(await db(), { host: p.host, port: p.port, dist: `${root}platform/ui/dist` });
+					const url = `http://${p.host === "0.0.0.0" ? "localhost" : p.host}:${p.port}`;
+					console.error(`网页：${url}（Ctrl-C 关掉）`);
+					await new Promise<void>((ok) => process.once("SIGINT", ok).once("SIGTERM", ok));
+					await stop();
+					return { url, scratch: scratch?.name ?? null };
+				} finally {
+					if (scratch) {
+						await close();
+						await scratch.drop();
+					}
+				}
 			},
-			{ text: (r) => `关掉了 ${r.url}` },
+			{ text: (r) => `关掉了 ${r.url}${r.scratch ? `，删了临时库 ${r.scratch}` : ""}` },
+		),
+		shot: get(
+			"截 x2 网页的图（验证改了的网页）：在连着的浏览器里开一个新标签页，等画完截图存成 PNG、关掉标签页；回页面上的报错和失败的请求（有的话退出码 1，截图照样存）。只开本机的地址",
+			z.object({
+				url: str("网页地址，例 http://127.0.0.1:5199/#3（#后面是页编号）"),
+				out: str("存成哪个 PNG 文件"),
+				browser: z.string().min(1).optional().describe("用哪个浏览器（booey 里的 id 或名字，x2 browsers 看）；只连着一个时不用给"),
+				width: z.coerce.number().int().min(320).default(1440).describe("宽"),
+				height: z.coerce.number().int().min(320).default(900).describe("高"),
+				wait: z.coerce.number().int().min(0).default(60).describe("网页服务还没起来时等几秒"),
+			}),
+			async (p) => shoot({ url: p.url, out: resolve(p.out), browser: p.browser, width: p.width, height: p.height, waitMs: p.wait * 1000 }),
+			{
+				text: (r) =>
+					[
+						`截图：${r.file}（${r.browser}${r.settled ? "" : "；30 秒网络还没静下来，可能没画完"}）`,
+						r.problems.length ? `报错 ${r.problems.length} 条：` : "没有报错",
+						...r.problems.map((x) => `  [${x.kind}] ${x.text}${x.url ? ` ${x.url}` : ""}`),
+					].join("\n"),
+				exit: (r) => (r.problems.length ? "error" : undefined),
+			},
+		),
+		browsers: get(
+			"连着的浏览器（booey）：id、名字、x2 已经 attach 的标签页。不开页面、不认登录",
+			undefined,
+			async () => (await browsers()).map((b) => ({ id: b.id, label: b.label, attached: b.attached.length })),
+			{ text: (l) => (l.length ? l.map((b) => `${b.label || "（没起名）"} ${b.id}`).join("\n") : "没有连着的浏览器") },
 		),
 		migrate: get(
 			"建表、加列（每个命令第一次用库时也会跑）",

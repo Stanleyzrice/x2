@@ -1,4 +1,4 @@
-// 唯一碰 booey 的地方：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
+// 碰 booey 的只有 platform/browser（这里管站点；shot.ts 截 x2 自己的网页）：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
 // 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
 // 站点由连接器注册（SiteDef：首页、主机名、怎么认登录、要不要隔开、怎么认人机验证），这里不认具体站点。
 // 在哪个浏览器里做（一家店一个浏览器）：using() 指定的（按账号找浏览器的 inAccount 用它）；没指定的用 X2_BROWSER
@@ -86,7 +86,7 @@ export async function browsers(): Promise<Browser[]> {
 
 const short = (b: Browser) => b.label || b.id.slice(0, 8);
 
-async function pick(origin: string): Promise<Browser> {
+export async function pick(origin: string): Promise<Browser> {
 	const all = await browsers();
 	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 booey 扩展已连接");
 	const want = chosen.getStore() ?? process.env.X2_BROWSER;

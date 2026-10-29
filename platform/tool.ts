@@ -14,8 +14,8 @@ import type { Ran, WriteOp } from "./writes.ts";
 
 export type Page<R = unknown> = { rows: R[]; next: string | null };
 
-/** 命令行怎么显示一个工具的输出（不给是 JSON）、什么样的输出算要人处理、结果未知（退出码） */
-export type Show<O> = { text?: (out: O) => string; exit?: (out: O) => "human" | "unknown" | undefined };
+/** 命令行怎么显示一个工具的输出（不给是 JSON）、什么样的输出算出错、要人处理、结果未知（退出码） */
+export type Show<O> = { text?: (out: O) => string; exit?: (out: O) => "error" | "human" | "unknown" | undefined };
 // 注册表里放各种工具，参数、输出各不一样：存起来时函数的参数写成 never（什么都传不进），
 // 只有照这个工具自己的 zod 解析过的参数、它自己的输出才传回给它（cli.ts、invoke 在那几处写 as never）。定义工具用下面的 get、list、write、submit，参数和输出的类型照 zod、照函数推出来
 type Common = { description: string; params: z.ZodObject } & Show<never>;
