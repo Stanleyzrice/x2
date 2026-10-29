@@ -1,13 +1,18 @@
 // 库里读出的商品稿、店铺设置的一行：列照 schema.sql（numeric、bigint 回字符串，jsonb 回写进去的样子）。读库的地方用 sql<ListingRow[]>，不再当 any 往下传
-import type { Freight, Offer, Sku, Tags } from "../../connectors/sites/1688/api.ts";
+import { z } from "zod";
+import type { Freight, Offer, OfferId, Tags } from "../../connectors/sites/1688/api.ts";
 import type { Audit } from "./audit.ts";
 import type { Pics } from "./pics.ts";
 import type { Product } from "./product.ts";
 
+/** 商品稿编号（listings 的 id）：命令行参数、写入的参数、读库时贴上，别和货源 id、Shopee 商品 id 传混 */
+export const ListingId = z.string().regex(/^\d+$/, "商品稿编号是数字").brand<"ListingId">();
+export type ListingId = z.output<typeof ListingId>;
+
 export type ListingRow = {
-	id: string;
+	id: ListingId;
 	shop: string;
-	offer_id: string;
+	offer_id: OfferId;
 	strategy: string;
 	cancelled: boolean;
 	weight_kg: string | null;
@@ -48,7 +53,7 @@ export type ListingRow = {
 
 /** 核价只看货源的这几格（规格的重量、运费、包邮）：完整的 Offer 也是它 */
 export type OfferLike = Partial<Omit<Offer, "skus" | "tags" | "freight">> & {
-	skus?: (Pick<Sku, "skuId"> & Partial<Sku>)[];
+	skus?: { skuId: string; weightKg?: number | null; attrs?: string[]; name?: string }[];
 	tags?: Partial<Tags>;
 	freight?: Partial<Freight> | null;
 };

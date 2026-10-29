@@ -44,7 +44,7 @@ test("核价：两道门都过的最小整数售价（和 lilto 的验算、真�
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
-import type { Offer } from "../../connectors/sites/1688/api.ts";
+import { type Offer, OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import {
 	dropSpecs,
 	limitProblems,
@@ -61,7 +61,7 @@ import {
 } from "./variants.ts";
 
 const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offer => ({
-	offerId: "1",
+	offerId: OfferId.parse("1"),
 	url: "",
 	title: "",
 	image: "",
@@ -69,8 +69,8 @@ const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offe
 	minQty: 1,
 	props: props.map(([name, values], i) => ({ name, values: values.map((v) => ({ name: v, image: i === 0 ? `${v}.jpg` : "" })) })),
 	skus: skus.map(([attrs, stock = 9], k) => ({
-		skuId: `k${k}`,
-		specId: `s${k}`,
+		skuId: SkuId.parse(`k${k}`),
+		specId: SpecId.parse(`s${k}`),
 		name: attrs.join(" / "),
 		attrs,
 		price: 10,
@@ -94,8 +94,8 @@ const grid = (tiers: [string, string[]][], price: (c: number[]) => number | null
 		})),
 		variants: cells.map((c) => ({
 			sku: `LT1-${c.join("")}`,
-			skuId: c.join(""),
-			specId: c.join(""),
+			skuId: SkuId.parse(c.join("")),
+			specId: SpecId.parse(c.join("")),
 			options: c,
 			costRmb: 1,
 			stock: 9,
@@ -505,8 +505,8 @@ const draft = (): Product => ({
 		[1, 1, 299, 1.6],
 	].map(([a, b, priceTwd, weightKg], i) => ({
 		sku: `LT952803717616-${i + 1}`,
-		skuId: String(i + 1),
-		specId: String(i + 1),
+		skuId: SkuId.parse(String(i + 1)),
+		specId: SpecId.parse(String(i + 1)),
 		options: [a!, b!],
 		costRmb: 1,
 		stock: 9,
@@ -696,13 +696,13 @@ import { type TranslatedCheck, translatedDrop } from "./images.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf, usableWeights } from "./pricing.ts";
 import { productOf } from "./ready.ts";
-import type { ListingRow, OfferLike, ShopSettingsRow } from "./row.ts";
+import { ListingId, type ListingRow, type OfferLike, type ShopSettingsRow } from "./row.ts";
 
 /** 一行商品稿：没给的格是空的 */
 const BLANK: ListingRow = {
-	id: "",
+	id: ListingId.parse("0"),
 	shop: "",
-	offer_id: "",
+	offer_id: OfferId.parse(""),
 	strategy: "人选",
 	cancelled: false,
 	weight_kg: null,
@@ -781,8 +781,8 @@ const colors = (): Specs => ({
 	],
 	variants: [1, 2].map((n, i) => ({
 		sku: `LT952803717616-${n}`,
-		skuId: String(n),
-		specId: String(n),
+		skuId: SkuId.parse(String(n)),
+		specId: SpecId.parse(String(n)),
 		options: [i],
 		costRmb: 1,
 		stock: 9,
@@ -797,9 +797,9 @@ const ready = (o: Partial<ListingRow> = {}): ListingRow => {
 	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({ skuId: v.skuId, attrs: [v.sku], weightKg: v.weightKg }));
 	return {
 		...BLANK,
-		id: "7",
+		id: ListingId.parse("7"),
 		shop: "cheeroutdoor",
-		offer_id: "952803717616",
+		offer_id: OfferId.parse("952803717616"),
 		cancelled: false,
 		listed_at: null,
 		product_id: null,

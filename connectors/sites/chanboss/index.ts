@@ -1,7 +1,7 @@
 // x2 chanboss <工具>：chanboss（货代）的读工具（预报是写，只经业务工具的写工具调）
 import { z } from "zod";
-import { byPage, day, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
-import { balance, forecast, identity, orders, putaway, returnChanges, returns, stock } from "./api.ts";
+import { byPage, day, get, type SubmitTool, strs, type Toolkit } from "../../../platform/tool.ts";
+import { balance, ChanbossOrderId, forecast, identity, OrderSn, orders, putaway, returnChanges, returns, stock } from "./api.ts";
 
 const range = { start: day("开始"), end: day("结束", true) };
 
@@ -9,8 +9,8 @@ export const forecastOrder: SubmitTool = {
 	kind: "write",
 	description: "预报一张订单（只经业务工具的写工具调）",
 	params: z.object({
-		sn: str("Shopee 订单号"),
-		orderId: str("chanboss 上这张订单的 id"),
+		sn: OrderSn.describe("Shopee 订单号"),
+		orderId: ChanbossOrderId.describe("chanboss 上这张订单的 id"),
 		orderTime: z.number().describe("chanboss 上的下单时间（秒）"),
 		sendwayId: z.number().describe("发货线路"),
 		lineId: z.number().describe("线路"),
@@ -28,7 +28,7 @@ const tools = {
 	}),
 	orders: byPage(
 		"订单（两家店的 Shopee 订单在 chanboss 的进度），按下单时间筛",
-		z.object({ ...range, sns: strs("只读这几张 Shopee 订单号（最多 100）").optional() }),
+		z.object({ ...range, sns: strs("只读这几张 Shopee 订单号（最多 100）").pipe(z.array(OrderSn)).optional() }),
 		async (p, n) => {
 			const r = await orders(p.start, p.end, n, p.sns ?? []);
 			return { rows: r.rows, more: n < r.pageCount };

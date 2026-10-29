@@ -1,6 +1,8 @@
 // 订单的检查（纯函数）：当前步骤、提醒人的、agent 要做的一批加购和预报；采购单分给订单
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
+import { ChanbossOrderId, OrderSn } from "../../connectors/sites/chanboss/api.ts";
 import { allocate } from "./allocate.ts";
 import { checkOrders, type Order, type Snapshot, type Source } from "./check.ts";
 
@@ -16,13 +18,13 @@ const item = (modelId: string, qty: number) => ({
 	image: "",
 });
 const order = (sn: string, qty: number, o: Partial<Order> = {}): Order => ({
-	sn,
+	sn: OrderSn.parse(sn),
 	shop: "ni1206",
 	createdAt: hours(-24),
 	shipBy: hours(24 * 10),
 	platformStatus: "待出货",
 	chanbossStatus: "待处理",
-	chanbossId: `cb${sn}`,
+	chanbossId: ChanbossOrderId.parse(`cb${sn}`),
 	chanbossTime: 1,
 	items: [item("M1", qty)],
 	problem: null,
@@ -37,16 +39,16 @@ const cartWrite = (status = "已核对") => ({
 	finishedAt: T0,
 	params: {
 		account: "A",
-		offerId: "O1",
-		skuId: "S1",
+		offerId: OfferId.parse("O1"),
+		skuId: SkuId.parse("S1"),
 		qty: 3,
 		title: "货源",
 		sku: "规格",
 		price: null,
 		newSources: [],
 		lines: [
-			{ sn: "1", modelId: "M1", qty: 1 },
-			{ sn: "2", modelId: "M1", qty: 2 },
+			{ sn: OrderSn.parse("1"), modelId: "M1", qty: 1 },
+			{ sn: OrderSn.parse("2"), modelId: "M1", qty: 2 },
 		],
 	},
 });
@@ -63,10 +65,10 @@ const purchase = (qty: number, o: { signed?: boolean; toChanboss?: boolean; trac
 	signed: o.signed ?? false,
 });
 
-const sku = (skuId: string, name: string) => ({ skuId, specId: `sp${skuId}`, name, price: 10, stock: 99, image: "" });
+const sku = (skuId: string, name: string) => ({ skuId: SkuId.parse(skuId), specId: SpecId.parse(`sp${skuId}`), name, price: 10, stock: 99, image: "" });
 const source = (o: Partial<Source> = {}): Source => ({
 	itemId: "I1",
-	offerId: "O1",
+	offerId: OfferId.parse("O1"),
 	title: "红T 货源",
 	skus: [sku("S1", "红色 L"), sku("S2", "白色 L")],
 	chosen: false,
@@ -96,8 +98,8 @@ test("采购单分给订单：采购单的件数按加购的先后分给订单�
 		skuId: "S1",
 		at: T0,
 		lines: [
-			{ sn: "1", modelId: "M1", qty: 1 },
-			{ sn: "2", modelId: "M1", qty: 2 },
+			{ sn: OrderSn.parse("1"), modelId: "M1", qty: 1 },
+			{ sn: OrderSn.parse("2"), modelId: "M1", qty: 2 },
 		],
 	};
 	const all = allocate([w], [purchase(3, { signed: true })], []);
@@ -225,7 +227,7 @@ test("选货源：只有一个明显匹配的随加购一起定下；几个候�
 	assert.ok(t && t.kind === "加购");
 	assert.deepEqual(t.params.items[0]!.newSources, ["I1"]);
 
-	const unsure = checkOrders(snap({ sources: [source(), source({ offerId: "O2" })] }));
+	const unsure = checkOrders(snap({ sources: [source(), source({ offerId: OfferId.parse("O2") })] }));
 	assert.ok(unsure.reminders.find((i) => i.key === "source:I1"));
 	assert.equal(
 		unsure.todo.find((x) => x.kind === "加购"),

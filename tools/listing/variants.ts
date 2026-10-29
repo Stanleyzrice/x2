@@ -6,7 +6,7 @@
 // 尺寸类的层只留字母码（别把「【M碼】」连括号洗掉）；最多 20 字，同一层撞名加「-2」
 import * as OpenCC from "opencc-js";
 import { z } from "zod";
-import type { Offer, Sku } from "../../connectors/sites/1688/api.ts";
+import { type Offer, type Sku, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 
 let converter: ((s: string) => string) | null = null;
 export const toTw = (s: string) => {
@@ -35,8 +35,8 @@ const tier = z.object({
 });
 const variant = z.object({
 	sku: z.string().min(1),
-	skuId: z.string(),
-	specId: z.string(),
+	skuId: SkuId,
+	specId: SpecId,
 	options: z.array(z.number().int()),
 	costRmb: z.number(),
 	stock: z.number(),

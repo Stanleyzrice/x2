@@ -10,6 +10,13 @@ import { reply } from "../../../platform/reply.ts";
 const ORIGIN = "https://c.chanboss.com";
 const API = "/api/v2/common/cangboss";
 
+/** 订单号：chanboss 的订单号就是 Shopee 的订单号，标签和 Shopee 连接器的 OrderSn 是同一个（"OrderSn"），两边的值能互传 */
+export const OrderSn = z.string().min(1).brand<"OrderSn">();
+export type OrderSn = z.output<typeof OrderSn>;
+/** chanboss 上一张订单自己的 id（预报的 order_id），不是订单号 */
+export const ChanbossOrderId = z.string().min(1).brand<"ChanbossOrderId">();
+export type ChanbossOrderId = z.output<typeof ChanbossOrderId>;
+
 /** 外壳：code 10000 成功、90000 会话失效；unknown 是页面里的 fetch 没拿到答复（请求可能到了站点） */
 const envelope = z.looseObject({
 	code: z.union([z.number(), z.string()]).nullish(),
@@ -82,7 +89,7 @@ const me = async () => (await identity()).userId;
 
 /** 一行订单：只写用到的格（NOTES.md「订单」那张表），别的原样留着；值不改（命令行回原样数据） */
 export const order = z.looseObject({
-	sn: z.string().min(1),
+	sn: OrderSn,
 	id: z.union([z.number(), z.string()]),
 	status: z.string().nullish(),
 	platform_status: z.string().nullish(),
@@ -125,7 +132,7 @@ export const pageOf = (data: unknown, path: string) => reply(listOf(z.looseObjec
 export const ordersOf = (data: unknown) => reply(listOf(order), data, "chanboss /order/list_order");
 
 /** 订单（两家店的 Shopee 订单在 chanboss 的进度）的一页，按下单时间（秒）筛；给了 Shopee 订单号（最多 100 个）只读这几张 */
-export async function orders(from: number, to: number, pageIndex = 1, orderSns: string[] = [], pageSize = 50) {
+export async function orders(from: number, to: number, pageIndex = 1, orderSns: OrderSn[] = [], pageSize = 50) {
 	return ordersOf(
 		await api("/order/list_order", z.unknown(), {
 			body: {
@@ -196,14 +203,14 @@ export type Write = { kind: "done"; data: unknown } | { kind: "refused"; why: st
 /** 「无单号」预报的快递单号：chanboss 页面上的常量（打拣货单时的自动预报就填它），站上存成 reserved 开头的一串 */
 export const NO_TRACKING = "reserved";
 
-export async function ordersBySn(sns: string[]): Promise<Map<string, Order>> {
+export async function ordersBySn(sns: OrderSn[]): Promise<Map<OrderSn, Order>> {
 	const now = Math.floor(Date.now() / 1000);
 	const r = await orders(now - 90 * 86400, now, 1, sns, 100);
 	return new Map(r.rows.map((o) => [o.sn, o]));
 }
 
 export type Forecast = {
-	orderId: string;
+	orderId: ChanbossOrderId;
 	orderTime: number;
 	/** 发货线路（海快 752）、线路、仓库：已预报的订单上是 752、1111、5176 */
 	sendwayId: number;

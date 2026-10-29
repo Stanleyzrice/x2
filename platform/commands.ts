@@ -8,7 +8,7 @@ import { status } from "./status.ts";
 import { type Checked, findTool, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
 import { catalog, createPage, deletePage, listPages, parseItem, push, showPage, update } from "./web/pages.ts";
 import { serve } from "./web/server.ts";
-import { run } from "./writes.ts";
+import { run, WriteId } from "./writes.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -52,7 +52,7 @@ export const platform: Toolkit = {
 		resolve: {
 			...get(
 				"人到站点上看过结果未知、不一致的写入：做成了是已核对，没做成是被拒（人说了才用）",
-				z.object({ id: z.string().regex(/^\d+$/).describe("写入的编号"), status: z.enum(["已核对", "被拒"]).describe("人看到的结果") }),
+				z.object({ id: WriteId.describe("写入的编号"), status: z.enum(["已核对", "被拒"]).describe("人看到的结果") }),
 				async (p) => {
 					const rows =
 						await (await db())`update writes set status = ${p.status}, finished_at = now() where id = ${p.id} and status in ('结果未知', '不一致', '已提交') returning id::text, op, display`;

@@ -13,6 +13,14 @@ export const ORIGIN = "https://seller.shopee.tw";
 /** 商品图、订单图的地址：图片 id 接在后面，加 _tn 是缩略图 */
 export const IMAGE = "https://down-tw.img.susercontent.com/file/";
 
+/** Shopee 的几种 id 都是字符串，贴上标签别互相传错：商品 id（item id，卖家中心叫 product_id）、规格 id（model id）、订单号（order sn；和 chanboss 连接器的 OrderSn 是同一个标签）。解析回包时贴 */
+export const ItemId = z.string().min(1).brand<"ItemId">();
+export type ItemId = z.output<typeof ItemId>;
+export const ModelId = z.string().min(1).brand<"ModelId">();
+export type ModelId = z.output<typeof ModelId>;
+export const OrderSn = z.string().min(1).brand<"OrderSn">();
+export type OrderSn = z.output<typeof OrderSn>;
+
 export type Req = { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown };
 
 export type Raw = { kind: "signin" } | { kind: "unknown"; why: string } | { kind: "http"; status: number; json: unknown; text: string };

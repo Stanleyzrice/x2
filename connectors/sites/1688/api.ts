@@ -9,12 +9,21 @@ import { challenge, page } from "../../../platform/browser/browser.ts";
 import { Challenge, NeedsHuman } from "../../../platform/errors.ts";
 import { idText, numeric, reply } from "../../../platform/reply.ts";
 
-export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
+/** 1688 的几种 id 都是字符串，贴上标签别互相传错：商品 id（offer id）、规格的 skuId（只有一个规格的商品用商品 id）、
+ * 加购要带的 specId（只有一个规格的是空字符串）。在这里解析回包时贴，业务工具的参数、读库时贴 */
+export const OfferId = z.string().brand<"OfferId">();
+export type OfferId = z.output<typeof OfferId>;
+export const SkuId = z.string().brand<"SkuId">();
+export type SkuId = z.output<typeof SkuId>;
+export const SpecId = z.string().brand<"SpecId">();
+export type SpecId = z.output<typeof SpecId>;
+
+export type Sku = { skuId: SkuId; specId: SpecId; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
 export type Prop = { name: string; values: { name: string; image: string }[] };
 export type Tags = { onePsale: boolean; freeShipping: boolean; ship48h: boolean; deliveryDays: number | null };
 export type Freight = { costRmb: number | null; to: string };
 export type Offer = {
-	offerId: string;
+	offerId: OfferId;
 	url: string;
 	title: string;
 	image: string;
@@ -28,9 +37,9 @@ export type Offer = {
 	freight?: Freight;
 };
 
-export function offerIdOf(linkOrId: string): string | null {
+export function offerIdOf(linkOrId: string): OfferId | null {
 	const m = /offer\/(\d+)\.html/.exec(linkOrId) ?? /^(\d+)$/.exec(linkOrId.trim());
-	return m ? m[1]! : null;
+	return m ? OfferId.parse(m[1]) : null;
 }
 
 export class Gone extends Error {}
@@ -39,7 +48,7 @@ const image = z.union([z.looseObject({ fullPathImageURI: z.string().nullish() })
 /** 商品页上要用的几块（页面里只取这几块原样带回来，在这边解析）：model 的 tradeModel、offerDetail、detailDescription.freightInfo，data 的主图和详情地址 */
 export const offerPage = z.object({
 	tradeModel: z.looseObject({
-		offerId: idText,
+		offerId: idText.pipe(OfferId),
 		unit: z.string().nullish(),
 		beginAmount: numeric.nullish(),
 		minPrice: numeric.nullish(),
@@ -47,8 +56,8 @@ export const offerPage = z.object({
 		skuMap: z
 			.array(
 				z.looseObject({
-					skuId: idText,
-					specId: z.string().nullish(),
+					skuId: idText.pipe(SkuId),
+					specId: SpecId.nullish(),
 					specAttrs: z.string().nullish(),
 					price: numeric.nullish(),
 					discountPrice: numeric.nullish(),
@@ -83,7 +92,7 @@ const https = (u: unknown) => (typeof u === "string" ? u.replace(/^\/\//, "https
 const unescapeHtml = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 /** 商品页上的几块 → Offer（纯函数） */
-export function offerOf(raw: unknown, offerId: string): Offer {
+export function offerOf(raw: unknown, offerId: OfferId): Offer {
 	const { tradeModel: t, offerDetail: d, freightInfo, gallery, descriptionUrl, tags } = reply(offerPage, raw, `1688 商品 ${offerId}`);
 	const url = `https://detail.1688.com/offer/${offerId}.html`;
 	const freight = freightInfo ?? {};
@@ -113,7 +122,7 @@ export function offerOf(raw: unknown, offerId: string): Offer {
 				const attrs = unescapeHtml(s.specAttrs ?? "").split(">");
 				return {
 					skuId: s.skuId,
-					specId: s.specId ?? "",
+					specId: s.specId ?? SpecId.parse(""),
 					name: attrs.join(" / "),
 					attrs,
 					price: Number(s.price || s.discountPrice || t.minPrice),
@@ -124,8 +133,8 @@ export function offerOf(raw: unknown, offerId: string): Offer {
 			})
 		: [
 				{
-					skuId: t.offerId,
-					specId: "",
+					skuId: SkuId.parse(t.offerId),
+					specId: SpecId.parse(""),
 					name: "",
 					attrs: [],
 					price: Number(t.minPrice),
@@ -157,7 +166,7 @@ type OfferWindow = {
 };
 type OfferData = { gallery?: { fields?: { mainImage?: unknown[] } }; description?: { fields?: { detailUrl?: string } } };
 
-export async function offer(offerId: string): Promise<Offer> {
+export async function offer(offerId: OfferId): Promise<Offer> {
 	const p = await page("https://detail.1688.com");
 	await p.goto(`https://detail.1688.com/offer/${offerId}.html`);
 	// 页面里只取要用的几块原样带回来（解析在 offerOf）；包邮、48 小时发货这几个标记是在整个 model 的 JSON 和页面的字里找的，在页面里算
@@ -369,11 +378,11 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 	throw new Error("1688 搜索结果 30 秒没出来：页面可能改版了");
 }
 
-export type CartLine = { offerId: string; skuId: string; quantity: number };
+export type CartLine = { offerId: OfferId; skuId: SkuId; quantity: number };
 
 /** 购物车：data.model 是一串 JSON，里面 data 的每一块有 type（item 是一个规格，root 是汇总） */
 const cartModel = z.object({ data: z.record(z.string(), z.looseObject({ type: z.string().nullish(), fields: z.unknown().optional() })) });
-const cartItem = z.object({ offerId: idText, skuId: idText.nullish(), quantity: numeric });
+const cartItem = z.object({ offerId: idText.pipe(OfferId), skuId: idText.pipe(SkuId).nullish(), quantity: numeric });
 const cartRoot = z.looseObject({ totalSkuCount: numeric.nullish() }).nullish();
 
 /** 购物车 render 的回包 → 每个规格和件数（纯函数） */
@@ -384,7 +393,7 @@ export function cartOf(data: unknown): CartLine[] {
 		z.array(cartItem),
 		parts.filter((x) => x.type === "item").map((x) => x.fields),
 		"1688 购物车的规格（render 的 model 里 type 是 item 的 fields）",
-	).map((f) => ({ offerId: f.offerId, skuId: f.skuId ?? f.offerId, quantity: f.quantity }));
+	).map((f) => ({ offerId: f.offerId, skuId: f.skuId ?? SkuId.parse(f.offerId), quantity: f.quantity }));
 	const root = reply(cartRoot, parts.find((x) => x.type === "root")?.fields, "1688 购物车的汇总（type 是 root 的 fields）");
 	const total = Number(root?.totalSkuCount ?? items.length);
 	if (items.length < total) throw new Error(`购物车有 ${total} 个规格，只读到 ${items.length} 个（没有做翻页）`);
@@ -406,7 +415,7 @@ export type AddResult = { kind: "sent" } | { kind: "refused"; why: string } | { 
 
 /** 把一个规格加进购物车（addCargo，在这个商品的详情页里发）。只有一个规格的商品 specId 是空字符串。
  * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发。 */
-export async function addToCart(offerId: string, specId: string, quantity: number): Promise<AddResult> {
+export async function addToCart(offerId: OfferId, specId: SpecId, quantity: number): Promise<AddResult> {
 	const r = await mtop(`https://detail.1688.com/offer/${offerId}.html`, "com.alibaba.china.buy.service.purchase.MtopPurchaseService.addCargo", {
 		client: "pc",
 		purchaseType: "",

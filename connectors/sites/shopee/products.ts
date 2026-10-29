@@ -12,12 +12,12 @@ import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { idText, reply } from "../../../platform/reply.ts";
-import { IMAGE, ORIGIN, row, seller, type Write, withData, write } from "./seller.ts";
+import { IMAGE, ItemId, ModelId, ORIGIN, row, seller, type Write, withData, write } from "./seller.ts";
 
 const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? String(id) : `${IMAGE}${id}`);
 
-export type Model = { modelId: string; sku: string; name: string; price: number | null; stock: number | null; sold: number | null; tierIndex: number[] };
-export type Product = { productId: string; parentSku: string; name: string; cover: string; createdAt: string | null; models: Model[] };
+export type Model = { modelId: ModelId; sku: string; name: string; price: number | null; stock: number | null; sold: number | null; tierIndex: number[] };
+export type Product = { productId: ItemId; parentSku: string; name: string; cover: string; createdAt: string | null; models: Model[] };
 
 const scalar = z.union([z.string(), z.number()]).nullish();
 const pageInfo = z.looseObject({ total: scalar }).nullish();
@@ -30,7 +30,7 @@ export const liveList = withData(
 			products: z
 				.array(
 					z.looseObject({
-						id: idText,
+						id: idText.pipe(ItemId),
 						parent_sku: z.string().nullish(),
 						name: z.string().nullish(),
 						cover_image: z.string().nullish(),
@@ -38,7 +38,7 @@ export const liveList = withData(
 						model_list: z
 							.array(
 								z.looseObject({
-									id: idText,
+									id: idText.pipe(ModelId),
 									sku: z.string().nullish(),
 									name: z.string().nullish(),
 									price_detail: z.looseObject({ origin_price: scalar }).nullish(),
@@ -62,13 +62,13 @@ export function liveProductsOf(raw: unknown): { total: number; rows: Product[] }
 	return {
 		total: Number(b.data?.page_info?.total ?? 0),
 		rows: (b.data?.products ?? []).map((p) => ({
-			productId: String(p.id),
+			productId: p.id,
 			parentSku: String(p.parent_sku ?? ""),
 			name: String(p.name ?? ""),
 			cover: image(p.cover_image),
 			createdAt: Number(p.create_time) > 0 ? new Date(Number(p.create_time) * 1000).toISOString() : null,
 			models: (p.model_list ?? []).map((m) => ({
-				modelId: String(m.id),
+				modelId: m.id,
 				sku: String(m.sku ?? ""),
 				name: String(m.name ?? ""),
 				price: n(m.price_detail?.origin_price),

@@ -19,7 +19,7 @@ import { estimateNeeds, pricingProblems, quote, settingsOf } from "./pricing.ts"
 import { imageNames } from "./product.ts";
 import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
-import type { ListingRow, ShopSettingsRow } from "./row.ts";
+import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
@@ -36,7 +36,7 @@ async function namesOf(sql: Sql, ids: string[]): Promise<(id: string) => string>
 	return (id) => names.get(id) ?? `商品稿 ${id}`;
 }
 
-const id = z.string().regex(/^\d+$/, "商品稿编号是数字").describe("商品稿编号");
+const id = ListingId.describe("商品稿编号");
 const ids = z
 	.preprocess(
 		(v) =>
@@ -46,7 +46,7 @@ const ids = z
 						.map((s) => s.trim())
 						.filter(Boolean)
 				: v,
-		z.array(z.string().regex(/^\d+$/, "商品稿编号是数字")).min(1),
+		z.array(ListingId).min(1),
 	)
 	.meta({ description: "商品稿编号，逗号分隔", placeholder: "1,2,…" });
 const text = z.string().trim().min(1);
@@ -310,7 +310,7 @@ export const listing: Toolkit = {
 								parseJson,
 								z.array(
 									z.object({
-										id: z.coerce.string(),
+										id: z.coerce.string().pipe(ListingId),
 										title: z.coerce.string().default(""),
 										description: z.coerce.string().default(""),
 										tiers: z.unknown().optional(),
@@ -327,7 +327,7 @@ export const listing: Toolkit = {
 					const items = p.items
 						? p.items.map((x) => ({ ...x, nickname: x.nickname ?? undefined }))
 						: [{ id: p.id!, title: p.title ?? "", description: p.description ?? "", tiers: p.tiers, nickname: p.nickname }];
-					const results: { id: string; saved: boolean; problems: string[]; notes?: string[] }[] = [];
+					const results: { id: ListingId; saved: boolean; problems: string[]; notes?: string[] }[] = [];
 					for (const it of items) {
 						const problems = [...textProblems(it.title.trim(), it.description.trim()), ...(it.nickname === undefined ? [] : nicknameProblems(it.nickname))];
 						const [l] = await sql`select variants, offer, removed_variants, nickname from listings where id = ${it.id}`;
@@ -385,7 +385,9 @@ export const listing: Toolkit = {
 					const sql = await db();
 					const want =
 						p.ids ??
-						(await sql`select id::text from listings where not cancelled and product_id is null and title is not null order by id`).map((r) => r.id as string);
+						(await sql<{ id: ListingId }[]>`select id::text from listings where not cancelled and product_id is null and title is not null order by id`).map(
+							(r) => r.id,
+						);
 					return textChecks(sql, want);
 				},
 			),
@@ -518,7 +520,7 @@ export const listing: Toolkit = {
 	schema: new URL("./schema.sql", import.meta.url),
 };
 
-export async function setCategory(sql: Sql, id: string, category: string, tree: (shopId: string) => Promise<Category[]>) {
+export async function setCategory(sql: Sql, id: ListingId, category: string, tree: (shopId: string) => Promise<Category[]>) {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Usage(`没有商品稿 ${id}`);
 	const name = listingName(l);
@@ -564,7 +566,7 @@ const checkLine = (c: CheckResult) => {
 	].join("\n");
 };
 
-async function productNow(sql: Sql, id: string) {
+async function productNow(sql: Sql, id: ListingId) {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) return null;
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
@@ -573,7 +575,7 @@ async function productNow(sql: Sql, id: string) {
 
 const MAX_RECHECK = 2;
 
-async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
+async function textChecks(sql: Sql, ids: ListingId[]): Promise<CheckResult[]> {
 	const out: CheckResult[] = [];
 	for (const id of ids) {
 		let c = await productNow(sql, id);

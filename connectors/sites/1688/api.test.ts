@@ -2,12 +2,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { accountOf, buyerOrdersOf, cartOf, offerOf, refundOf, tracesOf } from "./api.ts";
+import { accountOf, buyerOrdersOf, cartOf, OfferId, offerOf, refundOf, tracesOf } from "./api.ts";
 
 const sample = (name: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
 
 test("商品页：规格的属性拆开、价格没有用折扣价、重量没有用整个商品的；图去重补 https；规格图取第一个属性的值", () => {
-	const o = offerOf(sample("offer"), "1014247787336");
+	const o = offerOf(sample("offer"), OfferId.parse("1014247787336"));
 	assert.equal(o.offerId, "1014247787336");
 	assert.equal(o.title, "浴水生财猫咪浴室地垫硅藻泥卫生间门口防滑脚垫异形卡通耐脏门垫");
 	assert.equal(o.minQty, 1);
@@ -33,7 +33,7 @@ test("商品页：规格的属性拆开、价格没有用折扣价、重量没�
 });
 
 test("商品页：只有一个规格的商品，规格 id 用商品 id、specId 是空的；包邮的运费是 0", () => {
-	const o = offerOf(sample("offer-single"), "720000000001");
+	const o = offerOf(sample("offer-single"), OfferId.parse("720000000001"));
 	assert.deepEqual(o.props, []);
 	assert.deepEqual(o.skus, [
 		{
@@ -54,7 +54,7 @@ test("商品页：只有一个规格的商品，规格 id 用商品 id、specId 
 test("商品页变了（没有标题）：说哪个商品、哪一格", () => {
 	const raw = sample("offer") as { offerDetail: Record<string, unknown> };
 	delete raw.offerDetail.subject;
-	assert.throws(() => offerOf(raw, "1014247787336"), /1688 商品 1014247787336 的回包变了：offerDetail\.subject 没有了/);
+	assert.throws(() => offerOf(raw, OfferId.parse("1014247787336")), /1688 商品 1014247787336 的回包变了：offerDetail\.subject 没有了/);
 });
 
 test("购物车：只取规格（type 是 item），没有 skuId 的用商品 id；读到的比汇总少就报错", () => {

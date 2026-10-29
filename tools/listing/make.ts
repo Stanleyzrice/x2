@@ -4,7 +4,7 @@
 // 几份同时做（x2 listing make --jobs）：碰浏览器的（读 1688 货源、加水印、传图、类目、属性、备货天数）按浏览器排队，读 1688 隔几秒（queue.ts）；
 // 问 Gemini、交象寄、取图不排队。报价（quote，选品用）用第 2 步的同一套代码，不做图、不存库
 
-import { detailImages, Gone, type Offer, offer as readOffer } from "../../connectors/sites/1688/api.ts";
+import { detailImages, Gone, type Offer, type OfferId, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../../connectors/sites/shopee/products.ts";
 import { logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
@@ -41,7 +41,7 @@ async function categoryNames(): Promise<Map<string, string>> {
 	return tree;
 }
 
-export async function readOffer1688(offerId: string): Promise<Offer> {
+export async function readOffer1688(offerId: OfferId): Promise<Offer> {
 	const a = (await logins("1688"))[0];
 	if (!a) throw new NeedsHuman("没有登录着 1688 的浏览器：读不了货源");
 	return usableWeights(await on1688(a.account.id, () => readOffer(offerId)));

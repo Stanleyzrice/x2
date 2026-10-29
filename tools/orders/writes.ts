@@ -1,9 +1,9 @@
 // 订单的写操作：加购（1688 购物车）、预报（chanboss）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
 // prepare 是业务上的保护：现读还该不该做（订单取消了、货源下架了、已经买了就不做）；提交是连接器的写（1688 的 cart-add、chanboss 的 forecast），读回对账用连接器的读（购物车、订单）
 import { z } from "zod";
-import { type CartLine, Gone, cart as readCart, offer as readOffer } from "../../connectors/sites/1688/api.ts";
+import { type CartLine, Gone, OfferId, cart as readCart, offer as readOffer, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import { cartAdd } from "../../connectors/sites/1688/index.ts";
-import { ordersBySn as liveOrders, NO_TRACKING } from "../../connectors/sites/chanboss/api.ts";
+import { ChanbossOrderId, ordersBySn as liveOrders, NO_TRACKING, OrderSn } from "../../connectors/sites/chanboss/api.ts";
 import { forecastOrder } from "../../connectors/sites/chanboss/index.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
@@ -16,16 +16,16 @@ const inCart = (lines: CartLine[], offerId: string, skuId: string) =>
 	lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
 
 export const cartParams = z.object({
-	offerId: z.string(),
-	skuId: z.string(),
+	offerId: OfferId,
+	skuId: SkuId,
 	qty: z.number().int().positive(),
 	title: z.string(),
 	sku: z.string(),
 	price: z.number().nullable(),
-	lines: z.array(z.object({ sn: z.string(), modelId: z.string(), qty: z.number().int().positive() })).min(1),
+	lines: z.array(z.object({ sn: OrderSn, modelId: z.string(), qty: z.number().int().positive() })).min(1),
 	newSources: z.array(z.string()).default([]),
 	account: z.string().optional(),
-	specId: z.string().optional(),
+	specId: SpecId.optional(),
 });
 type CartP = z.infer<typeof cartParams>;
 
@@ -74,7 +74,7 @@ const cart: WriteOp<CartP> = {
 		await sleep(1500);
 		return { params: { ...p, account, specId: sku.specId }, before: { inCart: inCart(await readCart(), p.offerId, p.skuId) } };
 	},
-	submit: (_sql, p) => cartAdd.submit({ offerId: p.offerId, specId: p.specId ?? "", qty: p.qty }),
+	submit: (_sql, p) => cartAdd.submit({ offerId: p.offerId, specId: p.specId ?? SpecId.parse(""), qty: p.qty }),
 	async check(p, before, fresh) {
 		const now = inCart(await readCart(), p.offerId, p.skuId);
 		const d = now - Number(before?.inCart ?? 0);
@@ -89,8 +89,8 @@ const cart: WriteOp<CartP> = {
 };
 
 export const forecastParams = z.object({
-	sn: z.string(),
-	chanbossId: z.string(),
+	sn: OrderSn,
+	chanbossId: ChanbossOrderId,
 	chanbossTime: z.number(),
 	lines: z.array(z.object({ modelId: z.string(), chanbossModelId: z.string(), qty: z.number().int().positive(), trackingNo: z.string().nullable() })).min(1),
 });

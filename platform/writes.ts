@@ -10,10 +10,14 @@
 // 3. 执行完：告诉注册了 written 的业务工具（例 上品重算碰过的商品稿的当前步骤）
 // 不花钱、能重来的写不经它（业务工具直接调连接器的写）
 import type postgres from "postgres";
-import type { z } from "zod";
+import { z } from "zod";
 import { host, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
 import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
+
+/** 写入的编号（writes 的 id）：命令行参数、读库时贴上，别和商品稿编号、订单号传混 */
+export const WriteId = z.string().regex(/^\d+$/, "写入的编号是数字").brand<"WriteId">();
+export type WriteId = z.output<typeof WriteId>;
 
 export type Submitted = Sent;
 export type Prepared<P> = { skip: string } | { params: P; before: unknown };
@@ -35,11 +39,11 @@ export type WriteOp<P = any> = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export type Ran = { id: string; batch: string; op: string; display: string; status: string; why?: string };
+export type Ran = { id: WriteId; batch: string; op: string; display: string; status: string; why?: string };
 
-type Row = { id: string; batch: string; op: string; target: string; key: string; params: any; display: string; status: string; readback: any };
+type Row = { id: WriteId; batch: string; op: string; target: string; key: string; params: any; display: string; status: string; readback: any };
 
-async function set(sql: Sql, id: string, fields: Record<string, unknown>) {
+async function set(sql: Sql, id: WriteId, fields: Record<string, unknown>) {
 	await sql`update writes set ${sql(fields as any)} where id = ${id}`;
 }
 

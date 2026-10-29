@@ -1,6 +1,8 @@
 // 订单的检查（x2 status 问它）：拿这一轮现读的站点数据（read.ts）和库里人定的东西拼成一份快照，跑 check.ts 的检查，
 // 算出要提醒人的、agent 要做的，把订单上算出来的列写回库；规格定了货源以后删掉它剩下的候选
 
+import type { OfferId } from "../../connectors/sites/1688/api.ts";
+import type { ChanbossOrderId, OrderSn } from "../../connectors/sites/chanboss/api.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import type { Checked, Reminder } from "../../platform/tool.ts";
@@ -10,13 +12,13 @@ import { type Reads, read1688 } from "./read.ts";
 // 库里读出的行（列照 schema.sql；numeric、bigint 回字符串，jsonb 回写进去的样子）
 type SettingsRow = { late_days: number; channel: string; ship_wait_hours: number };
 type OrderRow = {
-	sn: string;
+	sn: OrderSn;
 	shop: string | null;
 	created_at: Date | null;
 	ship_by: Date | null;
 	platform_status: string | null;
 	chanboss_status: string | null;
-	chanboss_id: string;
+	chanboss_id: ChanbossOrderId;
 	chanboss_time: string | null;
 	items: Item[];
 	problem: string | null;
@@ -24,7 +26,7 @@ type OrderRow = {
 };
 type SourceRow = {
 	item_id: string;
-	offer_id: string;
+	offer_id: OfferId;
 	title: string | null;
 	skus: SourceSku[];
 	chosen: boolean;

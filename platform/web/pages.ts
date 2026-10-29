@@ -47,8 +47,8 @@ export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise
 /** 引用别处的组件，服务端再查一遍指向的东西在不在（schema.ts 只管形状，不认库） */
 const REFS: Record<string, (props: any) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
 
-export type Item = { id: string; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null };
-export type Page = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
+export type Item = { id: PageItemId; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null };
+export type Page = { id: PageId; title: string; createdAt: string; updatedAt: string; items: Item[] };
 export type PageSummary = Omit<Page, "items">;
 
 const names = () => [...COMPONENTS.keys()].join("、");
@@ -78,22 +78,26 @@ export const catalog = () =>
 		examples: c.examples,
 	}));
 
-const summary = (r: any): PageSummary => ({
-	id: String(r.id),
+// 库里的一行（bigint 回字符串）
+type PageRow = { id: PageId; title: string; created_at: Date; updated_at: Date };
+type ItemRow = { id: PageItemId; component: string; props: unknown; created_at: Date; answer: unknown; answered_at: Date | null };
+
+const summary = (r: PageRow): PageSummary => ({
+	id: r.id,
 	title: r.title,
 	createdAt: r.created_at.toISOString(),
 	updatedAt: r.updated_at.toISOString(),
 });
 
 export async function listPages(sql: Sql): Promise<PageSummary[]> {
-	return (await sql`select * from pages order by updated_at desc`).map(summary);
+	return (await sql<PageRow[]>`select * from pages order by updated_at desc`).map(summary);
 }
 
 export async function createPage(sql: Sql, title: string): Promise<PageSummary> {
 	const t = title.trim();
 	if (!t) throw new Usage("页要有标题");
-	const [r] = await sql`insert into pages (title) values (${t}) returning *`;
-	return summary(r);
+	const [r] = await sql<PageRow[]>`insert into pages (title) values (${t}) returning *`;
+	return summary(r!);
 }
 
 export async function deletePage(sql: Sql, id: string): Promise<void> {
@@ -102,14 +106,14 @@ export async function deletePage(sql: Sql, id: string): Promise<void> {
 }
 
 export async function showPage(sql: Sql, id: string): Promise<Page> {
-	const [s] = await sql`select * from pages where id = ${pageId(id)}`;
+	const [s] = await sql<PageRow[]>`select * from pages where id = ${pageId(id)}`;
 	if (!s) throw new Usage(`没有页 ${id}`);
-	const items = await sql`select * from page_items where page_id = ${s.id} order by id`;
+	const items = await sql<ItemRow[]>`select * from page_items where page_id = ${s.id} order by id`;
 	return {
 		...summary(s),
 		items: items.map(
 			(i): Item => ({
-				id: String(i.id),
+				id: i.id,
 				component: i.component,
 				props: i.props,
 				at: i.created_at.toISOString(),
@@ -207,12 +211,20 @@ export const refKey = (props: unknown) => {
 	});
 };
 
-function pageId(id: string): string {
-	if (!/^\d+$/.test(id)) throw new Usage(`页是数字编号：${id}`);
-	return id;
+/** 页的编号、页上组件的编号：命令行、网页给的字符串在这里认成编号，之后别互相传错 */
+export const PageId = z.string().regex(/^\d+$/).brand<"PageId">();
+export type PageId = z.output<typeof PageId>;
+export const PageItemId = z.string().regex(/^\d+$/).brand<"PageItemId">();
+export type PageItemId = z.output<typeof PageItemId>;
+
+function pageId(id: string): PageId {
+	const r = PageId.safeParse(id);
+	if (!r.success) throw new Usage(`页是数字编号：${id}`);
+	return r.data;
 }
 
-function itemId(id: string): string {
-	if (!/^\d+$/.test(id)) throw new Usage(`组件是数字编号：${id}`);
-	return id;
+function itemId(id: string): PageItemId {
+	const r = PageItemId.safeParse(id);
+	if (!r.success) throw new Usage(`组件是数字编号：${id}`);
+	return r.data;
 }

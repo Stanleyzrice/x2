@@ -2,28 +2,30 @@
 // 算出要提醒人的、agent 要做的，和订单上「当前步骤」等列。
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
 
+import type { OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
+import type { ChanbossOrderId, OrderSn } from "../../connectors/sites/chanboss/api.ts";
 import type { Reminder } from "../../platform/tool.ts";
 import { allocate, type CartLine, type CartWrite, type Line, type Need, type Purchase } from "./allocate.ts";
 import { exceptionFor, matchSku, rank as nearest } from "./similar.ts";
 
 export type Item = { itemId: string; modelId: string; chanbossModelId: string; name: string; spec: string; qty: number; image: string };
 export type Order = {
-	sn: string;
+	sn: OrderSn;
 	shop: string | null;
 	createdAt: Date | null;
 	shipBy: Date | null;
 	platformStatus: string;
 	chanbossStatus: string;
-	chanbossId: string;
+	chanbossId: ChanbossOrderId;
 	chanbossTime: number;
 	items: Item[];
 	problem: string | null;
 	cancelledAt: Date | null;
 };
-export type SourceSku = { skuId: string; specId: string; name: string; price: number; stock: number; image: string };
+export type SourceSku = { skuId: SkuId; specId: SpecId; name: string; price: number; stock: number; image: string };
 export type Source = {
 	itemId: string;
-	offerId: string;
+	offerId: OfferId;
 	title: string | null;
 	skus: SourceSku[];
 	chosen: boolean;
@@ -54,19 +56,19 @@ export type Snapshot = {
 
 export type Computed = { daysLeft: number | null; destination: string | null; step: string; stepDetail: string | null };
 export type CartParams = {
-	offerId: string;
-	skuId: string;
+	offerId: OfferId;
+	skuId: SkuId;
 	qty: number;
 	title: string;
 	sku: string;
 	price: number | null;
-	lines: { sn: string; modelId: string; qty: number }[];
+	lines: { sn: OrderSn; modelId: string; qty: number }[];
 	newSources: string[];
 	account?: string;
 };
 export type ForecastParams = {
-	sn: string;
-	chanbossId: string;
+	sn: OrderSn;
+	chanbossId: ChanbossOrderId;
 	chanbossTime: number;
 	lines: { modelId: string; chanbossModelId: string; qty: number; trackingNo: string | null }[];
 };
@@ -123,7 +125,7 @@ export function checkOrders(s: Snapshot): Result {
 	const computed = new Map<string, Computed>();
 	const who = (account: string) => s.accounts.get(account) ?? account;
 	const chosenOf = new Map(s.sources.filter((x) => x.chosen).map((x) => [x.itemId, x]));
-	const offerOf = new Map(s.sources.map((x) => [x.offerId, x]));
+	const offerOf = new Map<string, Source>(s.sources.map((x) => [x.offerId, x]));
 
 	const cartWrites: CartWrite[] = s.writes.flatMap((w) =>
 		w.op === "加购" && DONE.has(w.status) && w.params.account

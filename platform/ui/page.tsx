@@ -82,7 +82,7 @@ export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void 
 
 function Panel({ items, onClosed }: { items: Item[]; onClosed: () => void }) {
 	const newest = [...items].sort((a, b) => b.at.localeCompare(a.at))[0]!;
-	const [active, setActive] = useState(newest.id);
+	const [active, setActive] = useState<string>(newest.id);
 	const seen = useRef(newest.at);
 	useEffect(() => {
 		if (newest.at !== seen.current) {

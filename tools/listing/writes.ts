@@ -13,7 +13,7 @@ import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
 import { readbackProblems } from "./product.ts";
 import { productOf } from "./ready.ts";
-import type { ListingRow, ShopSettingsRow } from "./row.ts";
+import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -43,7 +43,7 @@ export async function translate(sql: Sql, items: { sha: string; url: string }[])
 	for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
 }
 
-async function listingNow(sql: Sql, id: string) {
+async function listingNow(sql: Sql, id: ListingId) {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) return null;
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
@@ -52,7 +52,7 @@ async function listingNow(sql: Sql, id: string) {
 }
 
 const createParams = z.object({
-	listingId: z.string(),
+	listingId: ListingId,
 	shop: z.string(),
 	shopId: z.string(),
 	parentSku: z.string(),
@@ -112,7 +112,7 @@ const createOp: WriteOp<CreateP> = {
 };
 
 const liveParams = z.object({
-	listingId: z.string(),
+	listingId: ListingId,
 	shop: z.string(),
 	shopId: z.string(),
 	parentSku: z.string(),

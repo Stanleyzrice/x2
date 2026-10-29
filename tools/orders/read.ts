@@ -4,7 +4,7 @@
 // 同一个进程里 2 分钟内读过的复用（一批几项加购、x2 orders source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
-import { orders as chanbossOrders, type Order } from "../../connectors/sites/chanboss/api.ts";
+import { ChanbossOrderId, orders as chanbossOrders, type Order } from "../../connectors/sites/chanboss/api.ts";
 import { challengeIn, inAccount, logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
@@ -66,7 +66,7 @@ export function orderRow(r: Order) {
 		ship_by: time(r.ship_deadline_time),
 		platform_status: PLATFORM_STATUS[platform] ?? platform,
 		chanboss_status: CHANBOSS_STATUS[String(r.status)] ?? String(r.status ?? ""),
-		chanboss_id: String(r.id),
+		chanboss_id: ChanbossOrderId.parse(String(r.id)),
 		chanboss_time: Number(r.platform_create_time ?? 0),
 		items,
 		items_text: items.map((i) => `${i.name} / ${i.spec || "（单规格）"} × ${i.qty}`).join("\n"),
