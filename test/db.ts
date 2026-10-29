@@ -3,7 +3,6 @@
 import assert from "node:assert/strict";
 import { after, before } from "node:test";
 import postgres from "postgres";
-import { TOOLKITS } from "../bin/toolkits.ts";
 import { runTool } from "../platform/cli.ts";
 import { close, migrate } from "../platform/db/index.ts";
 import { status } from "../platform/status.ts";
@@ -11,6 +10,7 @@ import { register, type Toolkit } from "../platform/tool.ts";
 import { orders } from "../skills/orders/index.ts";
 import type { Reads } from "../skills/orders/read.ts";
 import { ordersCheck } from "../skills/orders/status.ts";
+import { TOOLKITS } from "../x2.ts";
 
 export const url = process.env.X2_TEST_DATABASE_URL;
 export const sql = url ? postgres(url, { onnotice: () => {}, max: 2 }) : null;

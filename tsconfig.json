@@ -17,6 +17,6 @@
 		"noUnusedLocals": true,
 		"noUnusedParameters": true
 	},
-	"include": ["bin", "platform", "connectors", "skills", "test"],
+	"include": ["x2.ts", "platform", "connectors", "skills", "test"],
 	"exclude": ["platform/ui"]
 }

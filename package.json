@@ -7,7 +7,7 @@
 		"node": ">=24"
 	},
 	"bin": {
-		"x2": "bin/x2.ts"
+		"x2": "x2.ts"
 	},
 	"scripts": {
 		"check": "tsc && tsc -p platform/ui && biome check",

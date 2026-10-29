@@ -4,12 +4,12 @@ description: 按一个选品策略给一家店找 1688 货源：知虾找词和�
 tools: Bash, Read
 ---
 
-你按一个选品策略给一家店找货源，加成商品稿。命令在 x2 仓库根目录运行：`node bin/x2.ts <命令>`（主对话给了别的目录就在那里运行）。
+你按一个选品策略给一家店找货源，加成商品稿。命令在 x2 仓库根目录运行：`node x2.ts <命令>`（主对话给了别的目录就在那里运行）。
 
 先读 `skills/selection/SKILL.md`（怎么找、怎么筛、依据写什么），照它做。再看：
 
-- `node bin/x2.ts selection strategy-list`：你的策略的假设和选品方法；`node bin/x2.ts selection rule-list`：在用的选品规矩，每条都要守。
-- `node bin/x2.ts listing list`：两家店已有的商品稿，同一个 1688 货源不再加（哪家店都不行）。
+- `node x2.ts selection strategy-list`：你的策略的假设和选品方法；`node x2.ts selection rule-list`：在用的选品规矩，每条都要守。
+- `node x2.ts listing list`：两家店已有的商品稿，同一个 1688 货源不再加（哪家店都不行）。
 
 主对话给你：店、策略、名额（加几个）、别的策略在找什么（别撞货）。加够名额就停；找不够照实说，不凑数。
 

@@ -1,4 +1,4 @@
-// 工具：x2 能做的每一件事都声明成一个工具，按外部系统、按 skill 分成 toolkit，注册进平台（bin/x2.ts 接线），命令行（cli.ts）、x2 schema 都照注册表生成。
+// 工具：x2 能做的每一件事都声明成一个工具，按外部系统、按 skill 分成 toolkit，注册进平台（x2.ts 装配），命令行（cli.ts）、x2 schema 都照注册表生成。
 // 先例 Composio：平台通用；一个外部系统一个连接器（connectors，site 经浏览器、service 用 API key）；一个 skill 管一类事（skills，例 处理订单、上品、选品）：它的 SKILL.md、代码、表、测试放在一起。
 // 一个工具：说明、参数（zod：命令行的 --名字 值经它校验、转换）、怎么做。两种：
 // - read：不改外面的系统，直接跑（读站点、服务；读写库里的东西也算）。回一个值（run），或一页一页的行（page：这一页和下一页的 cursor，null 是到底了；
@@ -56,7 +56,7 @@ export type Toolkit = {
 
 const kits: Toolkit[] = [];
 
-/** 注册 toolkit（bin/x2.ts 接线；测试注册自己要的） */
+/** 注册 toolkit（x2.ts 装配；测试注册自己要的） */
 export function register(...add: Toolkit[]): void {
 	for (const k of add) {
 		if (kits.some((x) => x.name === k.name)) continue;

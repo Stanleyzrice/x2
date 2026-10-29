@@ -5,12 +5,12 @@ x2 帮我们经营 Shopee 台湾的两家店（ni1206、cheeroutdoor）：一个
 ## 装
 
 1. Node 24、pnpm：`pnpm install`。
-2. 仓库根目录写 `.env`（不进 git）：`X2_DATABASE_URL`（Postgres）、`GEMINI_API_KEY`、`XIANGJI_USER_KEY`、`XIANGJI_IMG_TRANS_KEY`。
+2. 仓库根目录写 `.env`（不进 git），要设什么照 `.env.example`：至少 `X2_DATABASE_URL`（Postgres）、`GEMINI_API_KEY`、`XIANGJI_USER_KEY`、`XIANGJI_IMG_TRANS_KEY`。
 3. Chrome 装 cdp-relay，两家店各开一个浏览器（Chrome 的不同用户），在里面登录 Shopee、1688、知虾、chanboss。
 
 ## 开始
 
-在仓库里开 Claude Code 或 Codex，它读 `AGENTS.md`，第一件事是 `node bin/x2.ts status`。人看网页：`node bin/x2.ts web`，打开 http://127.0.0.1:5170。全部命令：`node bin/x2.ts --help`（每件事是一个工具：`x2 <toolkit> <工具> --参数 值`）。
+在仓库里开 Claude Code 或 Codex，它读 `AGENTS.md`，第一件事是 `node x2.ts status`。人看网页：`node x2.ts web`，打开 http://127.0.0.1:5170。全部命令：`node x2.ts --help`（每件事是一个工具：`x2 <toolkit> <工具> --参数 值`）。
 
 ## 输出约定
 

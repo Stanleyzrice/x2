@@ -122,14 +122,14 @@ export function on1688<T>(account: string, fn: () => Promise<T>): Promise<T> {
 export const from1688 = <T>(fn: () => Promise<T>): Promise<T> => lane("1688", fn, GAP_1688_MS);
 
 /** 上限从环境变量读（第一次用时）：X2_GEMINI_CONCURRENCY 同时问 Gemini 几个（默认 8），X2_DOWNLOAD_CONCURRENCY 同时取几张图（默认 6） */
-const fromEnv = (name: string, fallback: number) => {
-	const n = Number(process.env[name]);
+const fromEnv = (value: string | undefined, fallback: number) => {
+	const n = Number(value);
 	return Number.isInteger(n) && n > 0 ? n : fallback;
 };
 let geminiGate: Runner | null = null,
 	downloadGate: Runner | null = null;
 const askGate = () => {
-	geminiGate ??= limiter(fromEnv("X2_GEMINI_CONCURRENCY", 8));
+	geminiGate ??= limiter(fromEnv(process.env.X2_GEMINI_CONCURRENCY, 8));
 	return geminiGate;
 };
 /** 问 Gemini（不排队，同时最多 X2_GEMINI_CONCURRENCY 个请求） */
@@ -137,6 +137,6 @@ export const gemini = (prompt: string, images: Image[], schema?: object): Promis
 export const geminiJson = <T>(prompt: string, images: Image[], schema: object): Promise<T> => askGate()(() => askJson<T>(prompt, images, schema));
 /** 取图（同时最多 X2_DOWNLOAD_CONCURRENCY 张） */
 export const download: Runner = (fn) => {
-	downloadGate ??= limiter(fromEnv("X2_DOWNLOAD_CONCURRENCY", 6));
+	downloadGate ??= limiter(fromEnv(process.env.X2_DOWNLOAD_CONCURRENCY, 6));
 	return downloadGate(fn);
 };

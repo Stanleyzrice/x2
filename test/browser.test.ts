@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
 import { z } from "zod";
-import { TOOLKITS } from "../bin/toolkits.ts";
 import { alibabaCookie } from "../connectors/sites/1688/api.ts";
 import { challengeOf, SLIDER } from "../connectors/sites/1688/challenge.ts";
 import { choose } from "../platform/browser/accounts.ts";
@@ -11,6 +10,7 @@ import { guarded, loginPage, siteOf } from "../platform/browser/browser.ts";
 import { runTool } from "../platform/cli.ts";
 import { Challenge, NeedsHuman, Usage } from "../platform/errors.ts";
 import { get, register, str, type Toolkit } from "../platform/tool.ts";
+import { TOOLKITS } from "../x2.ts";
 
 // 站点由连接器注册（认网址、认登录）
 register(...TOOLKITS);

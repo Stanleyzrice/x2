@@ -1,6 +1,6 @@
 # x2：给 agent 的说明
 
-你在 x2 里帮人经营两家 Shopee 台湾店（ni1206、cheeroutdoor）。命令在仓库根目录跑 `node bin/x2.ts <命令>`（下面写 `x2`），加 `--json` 读结果。每件事是一个工具：`x2 <toolkit> <工具> --参数 值`，`x2 --help` 列 toolkit，`x2 <toolkit> <工具> --help` 看参数，`x2 schema` 是全部工具的 JSON Schema。订单、上品、选品怎么做在 `skills/<名字>/SKILL.md`，退出码照 README。
+你在 x2 里帮人经营两家 Shopee 台湾店（ni1206、cheeroutdoor）。命令在仓库根目录跑 `node x2.ts <命令>`（下面写 `x2`），加 `--json` 读结果。每件事是一个工具：`x2 <toolkit> <工具> --参数 值`，`x2 --help` 列 toolkit，`x2 <toolkit> <工具> --help` 看参数，`x2 schema` 是全部工具的 JSON Schema。订单、上品、选品怎么做在 `skills/<名字>/SKILL.md`，退出码照 README。
 
 ## 开起来做什么
 
@@ -20,7 +20,7 @@
 
 ## 改代码
 
-- 代码分三层：`platform` 换哪门生意都一样（写入、命令行、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改），`connectors` 一个外部系统一个（`sites` 经浏览器、用人的登录，`services` 用 API key），`skills` 一个 skill 管一类事（例 处理订单、上品、选品）：它的 SKILL.md、代码、表、测试放在一起。`test/architecture.test.ts` 守着谁能引谁。
+- 代码分三层：`platform` 换哪门生意都一样（工具的注册表和命令行、至多一次写入、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改），`connectors` 一个外部系统一个（`sites` 经浏览器、用人的登录，`services` 用 API key；写只发一次请求），`skills` 一个 skill 管一类事（例 处理订单、上品、选品）：它的 SKILL.md、代码、表、测试放在一起。根上的 `x2.ts` 是装配（把连接器、skill 登记进平台，唯一同时认识三层的文件）；platform 不 import connectors、skills；连接器只 import platform 和自己；skill 互相只经对方的 `index.ts`。代码里读的环境变量都写在 `.env.example`。`test/architecture.test.ts` 守着。
 - 规矩往结构里放：目录结构 > lint > 测试 > 文档。代码看不出的「为什么」写在文件开头；文档只放代码说不清的（skill、连接器的 `NOTES.md`），不写来历和进度。
 - 先做通 happy path；边界多的判断（看图、文案、估重量、选品）先由 agent 填、人能改，攒够数据再写成程序。人定下的做法当场写进代码、测试或 skill。
 - 写法照现有代码：中文注释，zod 声明参数，stdout 只放结果。
