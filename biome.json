@@ -54,6 +54,14 @@
 			},
 			"complexity": {
 				"noExcessiveCognitiveComplexity": "off"
+			},
+			"nursery": {
+				"useExhaustiveSwitchCases": {
+					"level": "error",
+					"options": {
+						"requireExplicitCase": true
+					}
+				}
 			}
 		}
 	},
