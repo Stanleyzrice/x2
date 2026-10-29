@@ -19,6 +19,7 @@ export const api = {
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),
 	page: (id: string) => call<Page>("GET", `/api/page?id=${q(id)}`),
 	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
+	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
 	closeItem: (id: string) => call<unknown>("DELETE", `/api/page/item?id=${q(id)}`),
 	rows: (ref: unknown) => call<Row[]>("GET", `/api/rows?ref=${q(JSON.stringify(ref))}`),
 	set: (table: string, key: Key, col: string, value: unknown) => call<Row | null>("PATCH", "/api/rows", { table, key, col, value }),

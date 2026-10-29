@@ -133,8 +133,15 @@ export const page: Toolkit = {
 			text: (r) => `删了页 #${r.id}`,
 		},
 		show: {
-			...get("这一页上的组件", pageId, async (p) => showPage(await db(), p.id)),
-			text: (s) => [`#${s.id} ${s.title}`, ...s.items.map((i: any) => `  ${i.id} ${i.component} ${JSON.stringify(i.props).slice(0, 120)}`)].join("\n"),
+			...get("这一页上的组件和参数；人在上面答了的（例 choice 选了）带答案（answer）和时间（answeredAt）", pageId, async (p) => showPage(await db(), p.id)),
+			text: (s) =>
+				[
+					`#${s.id} ${s.title}`,
+					...s.items.map(
+						(i: any) =>
+							`  ${i.id} ${i.component} ${JSON.stringify(i.props).slice(0, 120)}${i.answeredAt ? `\n    答了（${i.answeredAt}）：${JSON.stringify(i.answer)}` : ""}`,
+					),
+				].join("\n"),
 		},
 		push: {
 			...get(

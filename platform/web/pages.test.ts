@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Usage } from "../errors.ts";
-import { parseItem, parseProps } from "./pages.ts";
+import { parseAnswer, parseItem, parseProps } from "./pages.ts";
 
 test("页：没有的组件说有哪些；参数不对说哪一格", () => {
 	assert.throws(
@@ -25,5 +25,26 @@ test("页：改参数照组件自己的校验（x2 page update），整份换掉
 	assert.throws(
 		() => parseProps("nope", {}),
 		(e: Error) => e instanceof Usage && /没有组件 nope/.test(e.message),
+	);
+});
+
+test("choice 的答案：只认它的选项；单选只能一个；没请人写理由的不存理由；不收答案的组件说不收", () => {
+	const props = { question: "用哪个？", options: [{ label: "A" }, { label: "B" }], reason: true };
+	assert.deepEqual(parseAnswer("choice", props, { picked: ["B"], reason: " 便宜 " }), { picked: ["B"], reason: "便宜" });
+	assert.deepEqual(parseAnswer("choice", { ...props, reason: false }, { picked: ["A"], reason: "x" }), { picked: ["A"] });
+	assert.deepEqual(parseAnswer("choice", { ...props, multiple: true }, { picked: ["A", "B"] }), { picked: ["A", "B"] });
+	for (const [p, a, why] of [
+		[props, { picked: ["A", "B"] }, /只能选一个/],
+		[props, { picked: [] }, /要选一个/],
+		[props, { picked: ["C"] }, /picked\.0/],
+		[{ ...props, multiple: true }, { picked: ["A", "A"] }, /选重了/],
+	] as const)
+		assert.throws(
+			() => parseAnswer("choice", p, a),
+			(e: Error) => e instanceof Usage && why.test(e.message),
+		);
+	assert.throws(
+		() => parseAnswer("markdown", { text: "x" }, {}),
+		(e: Error) => e instanceof Usage && /markdown 不收答案/.test(e.message),
 	);
 });

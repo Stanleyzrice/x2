@@ -69,3 +69,7 @@ create table if not exists page_items (
 	created_at timestamptz not null default now()
 );
 create index if not exists page_items_page on page_items (page_id);
+
+-- 加列
+alter table page_items add column if not exists answer jsonb;
+alter table page_items add column if not exists answered_at timestamptz;

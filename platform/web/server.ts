@@ -1,7 +1,7 @@
 // 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。只读写库，不碰站点。
 // GET /api/meta：每张表的列（类型从库里读）、表单；GET /api/rows?ref=：一个 datagrid 引用的行（ref 是它的 props 的 JSON，照组件的校验查过、grid.ts 拼成 SQL，只给要的列）；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
-// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab
+// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { type Ref, refQuery } from "./grid.ts";
-import { closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
+import { answer, closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
 
 const LIMIT = 1000;
@@ -161,6 +161,10 @@ export async function serve(
 		"GET /api/page": async (_, url) => showPage(sql, url.searchParams.get("id") ?? ""),
 		"DELETE /api/page": async (_, url) => {
 			await deletePage(sql, url.searchParams.get("id") ?? "");
+			return { ok: true };
+		},
+		"POST /api/page/answer": async (b) => {
+			await answer(sql, String(b?.item ?? ""), b?.answer);
 			return { ok: true };
 		},
 		"DELETE /api/page/item": async (_, url) => {

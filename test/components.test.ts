@@ -27,8 +27,11 @@ test("每类目录下只有组件的文件夹；每个有 schema.ts（只有 zod
 			if (!existsSync(join(dir, "view.tsx"))) bad.push(`${kind}/${name}：没有 view.tsx`);
 			else {
 				const view = readFileSync(join(dir, "view.tsx"), "utf8");
-				if (!/^export function View\(\{ props \}: \{ props: Props \}\)/m.test(view))
-					bad.push(`${kind}/${name}/view.tsx：没有导出 View({ props }: { props: Props })`);
+				const sig =
+					kind === "generative"
+						? /^export function View\(\{ props \}: \{ props: Props \}\)/m
+						: /^export function View\(\{ props(, item)? \}: \{ props: Props(; item: PageItem)? \}\)/m;
+				if (!sig.test(view)) bad.push(`${kind}/${name}/view.tsx：没有导出 View（generative：{ props }；interactable 还可以有 item）`);
 				if (!/import type \{[^}]*\bProps\b[^}]*\} from "\.\/schema\.ts"/.test(view)) bad.push(`${kind}/${name}/view.tsx：Props 不是从 ./schema.ts 来的`);
 			}
 		}

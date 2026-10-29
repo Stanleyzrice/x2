@@ -11,7 +11,8 @@ import { tables } from "./tables.ts";
 
 export const KINDS = ["generative", "interactable"] as const;
 export type Kind = (typeof KINDS)[number];
-export type Component = { name: string; kind: Kind; description: string; props: z.ZodType; examples: unknown[] };
+/** 一个组件的 schema.ts：参数、说明、例子；要人回答的（例 choice）还有 answer：照这一个组件的参数，人的答案长什么样 */
+export type Component = { name: string; kind: Kind; description: string; props: z.ZodType; examples: unknown[]; answer?: (props: any) => z.ZodType };
 
 const UI = new URL("../ui/", import.meta.url);
 
@@ -25,7 +26,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 	return Promise.all(
 		names.map(async (name) => {
 			const m = await import(new URL(`${name}/schema.ts`, dir).href);
-			return { name, kind, description: m.description, props: m.props, examples: m.examples };
+			return { name, kind, description: m.description, props: m.props, examples: m.examples, answer: m.answer };
 		}),
 	);
 }
@@ -35,7 +36,7 @@ export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise
 /** 引用别处的组件，服务端再查一遍指向的东西在不在（schema.ts 只管形状，不认库） */
 const REFS: Record<string, (props: any) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
 
-export type Item = { id: string; component: string; props: unknown; at: string };
+export type Item = { id: string; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null };
 export type Page = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
 export type PageSummary = Omit<Page, "items">;
 
@@ -93,7 +94,19 @@ export async function showPage(sql: Sql, id: string): Promise<Page> {
 	const [s] = await sql`select * from pages where id = ${pageId(id)}`;
 	if (!s) throw new Usage(`没有页 ${id}`);
 	const items = await sql`select * from page_items where page_id = ${s.id} order by id`;
-	return { ...summary(s), items: items.map((i): Item => ({ id: String(i.id), component: i.component, props: i.props, at: i.created_at.toISOString() })) };
+	return {
+		...summary(s),
+		items: items.map(
+			(i): Item => ({
+				id: String(i.id),
+				component: i.component,
+				props: i.props,
+				at: i.created_at.toISOString(),
+				answer: i.answer,
+				answeredAt: i.answered_at?.toISOString() ?? null,
+			}),
+		),
+	};
 }
 
 export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: string; component: string; replaced: boolean }> {
@@ -128,6 +141,25 @@ export async function update(sql: Sql, item: string, input: unknown): Promise<{ 
 		await tx`update pages set updated_at = now() where id = ${i.page_id}`;
 		return { id, component: i.component as string };
 	});
+}
+
+/** 照组件的 answer 查人的答案（例 choice 只认它的选项、单选只能一个）；不对说哪一格 */
+export function parseAnswer(component: string, props: unknown, input: unknown): unknown {
+	const c = COMPONENTS.get(component);
+	if (!c?.answer) throw new Usage(`${component} 不收答案`);
+	const r = c.answer(c.props.parse(props)).safeParse(input);
+	if (!r.success) throw new Usage(`答案不对：${r.error.issues.map((x) => `${x.path.join(".") || "answer"}：${x.message}`).join("；")}`);
+	return r.data;
+}
+
+/** 人在网页上回答（例 在 choice 上选了）：存进这个组件的 answer，记下时间；再答是换掉 */
+export async function answer(sql: Sql, item: string, input: unknown): Promise<void> {
+	const id = itemId(item);
+	const [i] = await sql`select component, props, page_id from page_items where id = ${id}`;
+	if (!i) throw new Usage(`没有组件 ${item}`);
+	const a = parseAnswer(i.component, i.props, input);
+	await sql`update page_items set answer = ${sql.json(a as any)}, answered_at = now() where id = ${id}`;
+	await sql`update pages set updated_at = now() where id = ${i.page_id}`;
 }
 
 export async function closeItem(sql: Sql, item: string): Promise<void> {
