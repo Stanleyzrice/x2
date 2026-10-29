@@ -799,8 +799,8 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 	const old = run(ready({ variants: [{ sku: "LT952803717616-1", specs: [{ label: "顏色", value: "黑色" }] }] }));
 	assert.deepEqual(old.steps.get("7"), { step: "待做商品稿", detail: "规格为旧格式，待重做商品稿" });
 	assert.deepEqual(
-		[old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).command],
-		["做商品稿", "规格是旧格式，要重做：雨衣（cheeroutdoor，#7）", "x2 listing make 7"],
+		[old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).params],
+		["做商品稿", "规格是旧格式，要重做：雨衣（cheeroutdoor，#7）", { ids: ["7"] }],
 	);
 	assert.deepEqual(productOf(ready({ variants: [] }), s.get("cheeroutdoor")!).problems, [OLD_SPECS]);
 	const fix = run(ready({ problems: "类目：推荐的「雨衣」不在本店允许的类目里" }));
@@ -853,8 +853,8 @@ test("检查：人换了类目（属性、备货天数清掉了）、没有别�
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const r = checkListings([ready({ days_to_ship: null, attributes: null })], s, []);
 	assert.deepEqual(
-		[r.steps.get("7"), r.reminders, r.todo[0]!.why, (r.todo[0] as any).command],
-		[{ step: "待做商品稿", detail: "换了类目，待照新的类目做属性、备货天数" }, [], "换了类目，要照新的类目重做：雨衣（cheeroutdoor，#7）", "x2 listing make 7"],
+		[r.steps.get("7"), r.reminders, r.todo[0]!.why, (r.todo[0] as any).params],
+		[{ step: "待做商品稿", detail: "换了类目，待照新的类目做属性、备货天数" }, [], "换了类目，要照新的类目重做：雨衣（cheeroutdoor，#7）", { ids: ["7"] }],
 	);
 	// 还有别的问题：照旧待补充
 	assert.equal(checkListings([ready({ days_to_ship: null, problems: "货源：起订量 2，无法单件购买" })], s, []).steps.get("7")!.step, "待补充");
@@ -1207,8 +1207,8 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待 Gemini 文字检查");
 });
 
-import { WRITES } from "../../platform/ops.ts";
 import { autoNickname, listingName, nicknameFor, nicknameOpen, nicknameProblems } from "./text.ts";
+import { LISTING_WRITES as WRITES } from "./writes.ts";
 
 test("简称：x2 先填 1688 标题的前 12 个字；空着的、还是自动填的才换，人改过的不动；简体中文、最多 12 字", () => {
 	const title = "浴水生财猫咪浴室地垫硅藻泥卫生间门口防滑脚垫";

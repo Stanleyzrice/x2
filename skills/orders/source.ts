@@ -1,5 +1,5 @@
 // 选货源：给店里的一个商品定一个货源（一个商品只用一个货源；店里的规格加购时按名字在货源的规格里配，配不上的看人定的规格例外）。
-// agent 先自己找（x2 source）：拿商品图经知虾以图搜图，每个找到的货源，看店里卖过的规格在它里面有几个对得上。
+// agent 先自己找（x2 orders source）：拿商品图经知虾以图搜图，每个找到的货源，看店里卖过的规格在它里面有几个对得上。
 // 卖过的规格都对得上、而且只有它这样：标成「明显匹配」（sure），人同意加购时一起定下，加购做成了这个货源才标成「选用」；
 // 别的都写成还在挑的货源，x2 status 提醒「选货源」，人在网页的「货源」里勾「选用」。人贴了链接（--url）就直接用它。
 // 货源的样子（标题、图、规格）存一份快照，x2 每次现读就更新；买之前一律现读
@@ -125,7 +125,7 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 				: sure
 					? "卖过的规格都对得上，而且只有它这样：随加购一起定下"
 					: found.length === 0
-						? "没找到：贴一个 1688 链接（x2 source <商品> --url …），或者请人在 1688 上找"
+						? "没找到：贴一个 1688 链接（x2 orders source --items <商品> --url …），或者请人在 1688 上找"
 						: all.length > 1
 							? `${all.length} 个货源都对得上：请人在「货源」里勾`
 							: "没有规格全对得上的：请人在「货源」里勾，或者贴链接",
@@ -143,7 +143,7 @@ export async function setException(sql: Sql, itemId: string, text: string): Prom
 		named = text.slice(i + 1).trim();
 	const [row] =
 		await sql`select offer_id, title, skus, sku_exceptions from sources where item_id = ${itemId} and (chosen or sure) and broken is null order by chosen desc limit 1`;
-	if (!row) throw new Usage(`商品 ${itemId} 还没定货源：先选货源（x2 source ${itemId}）`);
+	if (!row) throw new Usage(`商品 ${itemId} 还没定货源：先选货源（x2 orders source --items ${itemId}）`);
 	const specs = (await sql`select distinct i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`).map((r) =>
 		String(r.spec ?? ""),
 	);

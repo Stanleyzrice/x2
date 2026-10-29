@@ -2,7 +2,7 @@
 // - 接口要聊聊自己的 token：打开聊聊页、页面自己登录一次，存在 localStorage 的 chat-session（{ token, p_token }），几个小时就失效（回 401）；
 //   卖家中心的登录不受影响。请求头 Authorization: Bearer <token>、x-shop-region: TW，查询参数 csrf_token=<p_token>
 // - 响应没有 code 外壳（会话、消息是数组），按 HTTP 状态判
-// - 发消息走 WebSocket（页面的 SharedWorker webchat/worker.js，socket.io），不是 HTTP；没有写成函数，见 shopee.md。
+// - 发消息走 WebSocket（页面的 SharedWorker webchat/worker.js，socket.io），不是 HTTP；没有写成函数，见同目录的 NOTES.md。
 //   旧研究里的 agent/send_message 是跟 Shopee 官方客服聊的，不是跟买家
 // - 不调 conversation/enter、conversation/open：会把消息标成已读
 

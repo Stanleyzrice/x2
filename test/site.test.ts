@@ -1,18 +1,20 @@
-// 站点读操作的通用入口：翻页、参数、日期、用法不对、出错分类
+// 命令行照注册表跑工具：翻页、参数、日期、用法不对、出错分类
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
 import { needsHuman } from "../connectors/sites/shopee/seller.ts";
 import { bySales30Day } from "../connectors/sites/zhixia/api.ts";
-import { runOp, type Site } from "../platform/cli.ts";
+import { runTool } from "../platform/cli.ts";
 import { Usage } from "../platform/errors.ts";
-import { byPage, day, get, ints, parseJson, str } from "../platform/tool.ts";
+import { byPage, day, get, ints, parseJson, str, type Toolkit } from "../platform/tool.ts";
 
 // 一个假的站点：items 一页 2 行，共 5 行
 const seen: unknown[] = [];
-const fake: Site = {
-	describe: "假的",
-	ops: {
+const fake: Toolkit = {
+	name: "fake",
+	title: "假的",
+	kind: "site",
+	tools: {
 		items: byPage("一列东西", z.object({ shopId: str("店"), path: ints("路径").default([]) }), async (p, n) => {
 			seen.push(p);
 			const all = [1, 2, 3, 4, 5];
@@ -24,7 +26,7 @@ const fake: Site = {
 };
 
 const value = async (args: string[]) => {
-	const r = await runOp("fake", fake, args);
+	const r = await runTool(fake, args);
 	assert.ok("value" in r);
 	return r.value;
 };
@@ -51,15 +53,15 @@ test("日期是台湾时间：开始是零点，结束是 23:59:59；秒数原�
 });
 
 test("用法不对是 Usage：没有的操作、没有的参数、缺必填、get 带 --pages", async () => {
-	await assert.rejects(runOp("fake", fake, ["nope"]), Usage);
-	await assert.rejects(runOp("fake", fake, ["items", "--shop-id", "7", "--color", "red"]), Usage);
-	await assert.rejects(runOp("fake", fake, ["items"]), Usage);
-	await assert.rejects(runOp("fake", fake, ["when", "--start", "2026-09-01", "--end", "2026-09-01", "--pages", "1"]), Usage);
-	await assert.rejects(runOp("fake", fake, ["items", "--shop-id", "7", "--pages", "0"]), Usage);
+	await assert.rejects(runTool(fake, ["nope"]), Usage);
+	await assert.rejects(runTool(fake, ["items", "--shop-id", "7", "--color", "red"]), Usage);
+	await assert.rejects(runTool(fake, ["items"]), Usage);
+	await assert.rejects(runTool(fake, ["when", "--start", "2026-09-01", "--end", "2026-09-01", "--pages", "1"]), Usage);
+	await assert.rejects(runTool(fake, ["items", "--shop-id", "7", "--pages", "0"]), Usage);
 });
 
 test("--help 回帮助文本，列出参数", async () => {
-	const r = await runOp("fake", fake, ["items", "--help"]);
+	const r = await runTool(fake, ["items", "--help"]);
 	assert.ok("help" in r);
 	assert.match(r.help, /--shop-id <string>\s+必填/);
 	assert.match(r.help, /--path <1,2,…>\s+默认 \[\]/);
@@ -87,5 +89,5 @@ test("知虾热词商品按 30 天销量从高到低排，没有销量的排最�
 
 test("JSON 参数：合法的转成对象，不合法的是 Usage（不是一般错误）", async () => {
 	assert.deepEqual(await value(["raw", "--query", '{"a":1}']), { query: { a: 1 } });
-	await assert.rejects(runOp("fake", fake, ["raw", "--query", "{bad"]), Usage);
+	await assert.rejects(runTool(fake, ["raw", "--query", "{bad"]), Usage);
 });

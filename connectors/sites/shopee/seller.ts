@@ -2,7 +2,7 @@
 // 两个值都在页面的 cookie 里。请求一定在页面里用页面的 fetch 发：Shopee 的反爬 SDK 给页面里的每个请求现签名，
 // 签名只在页面里算得出来，扩展或服务端发会被拒（90309999，lilto 旧工作台踩过）。
 // 响应的外壳多数是 { code, message, data }，code 0 是成功；财务、售后的是 { error, error_msg, data }，error 0 是成功。
-// 接口一览、各自的坑在 shopee.md
+// 接口一览、各自的坑在同目录的 NOTES.md
 
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";

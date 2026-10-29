@@ -2,6 +2,7 @@
 // 算出要提醒人的、agent 要做的，和订单上「当前步骤」等列。
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
 
+import type { Reminder } from "../../platform/tool.ts";
 import { type CartLine, type CartWrite, type Line, type Need, type Purchase, reconcile } from "./reconcile.ts";
 import { exceptionFor, matchSku, rank as nearest } from "./similar.ts";
 
@@ -53,8 +54,6 @@ export type Snapshot = {
 	accounts: Map<string, string>;
 };
 
-/** 提醒人做的一件事。key 是「类别:对象」：x2 看不到结果的，人做完用 x2 handled <key> 记下，不再提醒 */
-export type Reminder = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
 /** step：当前步骤（下面 STEPS 里的一个，网页上订单按它分组）；stepDetail：说明（哪件未到、哪个规格缺货源……） */
 export type Computed = { daysLeft: number | null; destination: string | null; step: string; stepDetail: string | null };
 /** 加购这个写操作的参数：同一个货源规格的几张订单合成一行。newSources：随这次加购一起定下的新货源（店里的商品 id） */
@@ -69,36 +68,18 @@ export type CartParams = {
 	newSources: string[];
 	account?: string;
 };
-/** 一批写入：x2 do 从 stdin 读的 JSON */
-export type Batch = { title: string; writes: { op: string; params: unknown }[] };
 export type ForecastParams = {
 	sn: string;
 	chanbossId: string;
 	chanbossTime: number;
 	lines: { modelId: string; chanbossModelId: string; qty: number; trackingNo: string | null }[];
 };
+/** agent 能做的：tool、params 是照着调的工具（加购、预报是写：给人看过、人同意了再调） */
 export type Todo =
-	| { kind: "找货源"; why: string; items: { itemId: string; name: string; why: string }[]; command: string }
-	// batch：现成的一批写入，给人看过、人同意了交给 x2 do
-	| { kind: "加购" | "预报"; why: string; batch: Batch }
-	| { kind: "取消预报"; why: string; orders: string[] }
-	| { kind: "核清"; why: string; writes: string[]; command: string }
-	// 上品：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；备注：照人写的备注做
-	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查"; why: string; ids: string[]; command: string }
-	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[]; command: string }
-	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; command: string };
-
-/** agent 估重量、国内运费的一份商品稿：缺什么（needs），和估要用的事实（1688 的标题、每个规格、运费） */
-export type EstimateItem = {
-	id: string;
-	name: string;
-	shop: string;
-	needs: ("重量" | "国内运费")[];
-	title: string;
-	specs: { spec: string; priceRmb: number; weightKg: number | null }[];
-	freight: unknown;
-	freeShipping: boolean;
-};
+	| { kind: "找货源"; why: string; items: { itemId: string; name: string; why: string }[]; tool: "orders.source"; params: { items: string[] } }
+	| { kind: "加购"; why: string; tool: "orders.cart"; params: { items: CartParams[] } }
+	| { kind: "预报"; why: string; tool: "orders.forecast"; params: { orders: ForecastParams[] } }
+	| { kind: "取消预报"; why: string; orders: string[] };
 
 /** covered：已经买了或者在购物车里的订单行（订单号:规格 id），不管是不是经 x2 加购的 */
 export type Result = {
@@ -448,7 +429,7 @@ export function checkOrders(s: Snapshot): Result {
 							`采购单 ${x.line!.purchases.map((p) => `${p.orderId}${p.refund ? `（${p.refund.kind ?? "退款"}：${p.refund.label}）` : ""}`).join("、")}：${label(x.i)} × ${x.line!.paidQty}${x.line!.outside ? "（外部采购）" : ""}`,
 					),
 					"",
-					bought.length ? "x2 读得到退款、退货的进度：退款成功后不再提醒" : `处理完告诉 agent（x2 handled cancel-goods:${o.sn}）`,
+					bought.length ? "x2 读得到退款、退货的进度：退款成功后不再提醒" : `处理完告诉 agent（x2 handled --keys cancel-goods:${o.sn}）`,
 				].join("\n"),
 			});
 	}
@@ -568,33 +549,28 @@ export function checkOrders(s: Snapshot): Result {
 			kind: "找货源",
 			why: `${toFind.size} 个商品缺货源或货源不可用`,
 			items: [...toFind.values()],
-			command: `x2 source ${[...toFind.keys()].join(" ")}`,
+			tool: "orders.source",
+			params: { items: [...toFind.keys()] },
 		});
 	if (cartPlan.size) {
 		const plan = [...cartPlan.values()].map((c) => (s.settings.buyAccount ? { ...c, account: s.settings.buyAccount } : c));
 		const sns = new Set(plan.flatMap((c) => c.lines.map((l) => l.sn)));
 		todo.push({
 			kind: "加购",
-			why: `${sns.size} 张订单货源齐了，待加购`,
-			batch: {
-				title: `加购：${plan.map((c) => `${short(c.title, 10)} / ${c.sku} × ${c.qty}`).join("；")}（订单 ${[...sns].join("、")}）`,
-				writes: plan.map((params) => ({ op: "加购", params })),
-			},
+			why: `${sns.size} 张订单货源齐了，待加购：${plan.map((c) => `${short(c.title, 10)} / ${c.sku} × ${c.qty}`).join("；")}（订单 ${[...sns].join("、")}）`,
+			tool: "orders.cart",
+			params: { items: plan },
 		});
 	}
 	if (forecasts.length)
 		todo.push({
 			kind: "预报",
-			why: `${forecasts.length} 张订单已付款，待预报`,
-			batch: {
-				title: `预报 ${forecasts.length} 张订单（${s.settings.channel}、${forecasts.every((f) => f.lines.every((l) => !l.trackingNo)) ? "无单号" : "带快递单号"}）：${forecasts.map((f) => f.sn).join("、")}`,
-				writes: forecasts.map((params) => ({ op: "预报", params })),
-			},
+			why: `${forecasts.length} 张订单已付款，待预报（${s.settings.channel}、${forecasts.every((f) => f.lines.every((l) => !l.trackingNo)) ? "无单号" : "带快递单号"}）：${forecasts.map((f) => f.sn).join("、")}`,
+			tool: "orders.forecast",
+			params: { orders: forecasts },
 		});
 	if (unforecast.length)
 		todo.push({ kind: "取消预报", why: `${unforecast.length} 张取消的订单在 chanboss 上还是已预报（不重要；x2 还不会取消预报，先不管）`, orders: unforecast });
-	const unknown = s.writes.filter((w) => w.status === "结果未知" || w.status === "已提交");
-	if (unknown.length) todo.push({ kind: "核清", why: `${unknown.length} 个写入结果未知：先读回来`, writes: unknown.map((w) => w.id), command: "x2 verify" });
 
 	return {
 		reminders,
@@ -605,13 +581,13 @@ export function checkOrders(s: Snapshot): Result {
 	};
 }
 
-/** 检查现在认为该做的：加购的订单行（订单号:规格 id）、该预报的订单号。x2 do 只收这些；加购前现读一遍再对一次 */
+/** 检查现在认为该做的：加购的订单行（订单号:规格 id）、该预报的订单号。加购、预报的写工具只收这些；加购前现读一遍再对一次 */
 export function planned(r: Result): { cart: Set<string>; forecast: Set<string> } {
 	const cart = new Set<string>(),
 		forecast = new Set<string>();
 	for (const t of r.todo) {
-		if (t.kind === "加购") for (const w of t.batch.writes) for (const l of (w.params as CartParams).lines) cart.add(`${l.sn}:${l.modelId}`);
-		if (t.kind === "预报") for (const w of t.batch.writes) forecast.add((w.params as ForecastParams).sn);
+		if (t.kind === "加购") for (const c of t.params.items) for (const l of c.lines) cart.add(`${l.sn}:${l.modelId}`);
+		if (t.kind === "预报") for (const f of t.params.orders) forecast.add(f.sn);
 	}
 	return { cart, forecast };
 }

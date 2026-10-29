@@ -58,4 +58,4 @@
 - **读预报**：`GET /pack/get_report`（带 seller_id）。
 - **取消预报**：页面上的按钮发 `POST /pack/cancel/pack/sub`，`{ sns: [订单号…] }`，回 `{ failed_sns }`；但它走的是另一个 axios（baseURL 没核实，可能是 `https://cn.connkey.com/api`）。x2 还没做：要先在页面上点一次，看它发到哪。
 
-第一次预报要和运营约好一张单一起跑（`x2 do --try 预报`），跑完在 chanboss 上看那张订单变成「已预报」、明细是海快、无单号。
+第一次预报要和运营约好一张单一起跑（`x2 orders forecast --orders - --try`），跑完在 chanboss 上看那张订单变成「已预报」、明细是海快、无单号。

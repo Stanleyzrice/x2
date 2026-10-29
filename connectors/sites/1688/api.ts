@@ -4,10 +4,8 @@
 // 2026-10-10 核对过：mainImageList 是 { fullPathImageURI }；detailDescription.freightInfo.skuWeight 按 skuId 记运费重量（kg），没有的用 unitWeight；
 // 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee；
 // freightInfo.totalCost 是寄到账号默认地址（recieveAddress）买 1 件的运费（页面上的「运费¥8起」）
-import { z } from "zod";
 import { challenge, page } from "../../../platform/browser/browser.ts";
-import { Challenge, NeedsHuman, Usage } from "../../../platform/errors.ts";
-import { all, byPage, get, type Ops, str, strs } from "../../../platform/tool.ts";
+import { Challenge, NeedsHuman } from "../../../platform/errors.ts";
 
 /** attrs：每个属性的取值，顺序同 Offer.props */
 export type Sku = { skuId: string; specId: string; name: string; attrs: string[]; price: number; stock: number; image: string; weightKg?: number | null };
@@ -450,7 +448,7 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 				status: String(e.entryStatus ?? ""),
 				statusLabel: String(e.entryStatusLabel ?? ""),
 				received: Number(e.entryExtension?.receivedQuantity ?? 0),
-				// 售中退款在 refundId / refundStatus，售后（确认收货以后申请的）在 refundIdForAs / refundStatusForAs（2026-10-09 读页面的 JS、对真退款单核对过，见 1688.md）
+				// 售中退款在 refundId / refundStatus，售后（确认收货以后申请的）在 refundIdForAs / refundStatusForAs（2026-10-09 读页面的 JS、对真退款单核对过，见同目录的 NOTES.md）
 				refund: e.entryExtension?.refundIdForAs
 					? { id: String(e.entryExtension.refundIdForAs), stage: "售后", status: String(e.entryExtension.refundStatusForAs ?? "") }
 					: e.entryExtension?.refundId
@@ -533,30 +531,3 @@ export async function traces(orders: { orderId: string; trackingNos?: string[] }
 		};
 	});
 }
-
-// ── x2 1688 <操作>：读操作（加购是写，声明在 writes.ts，只经 x2 do） ──
-
-export const ops: Ops = {
-	account: get("登录着的 1688 账号", undefined, () => account()),
-	offer: get("一家货源：标题、起订量、属性、每个规格的价格和库存", z.object({ id: str("货源 id 或 1688 链接") }), (p) => {
-		const id = offerIdOf(p.id);
-		if (!id) throw new Usage(`认不出货源：${p.id}`);
-		return offer(id);
-	}),
-	search: all("按关键词搜货源（第一页）", z.object({ keyword: str("关键词") }), (p) => search(p.keyword)),
-	cart: all("购物车里的全部规格和件数", undefined, () => cart()),
-	orders: byPage(
-		"采购单（在 1688 买的订单），新的在前；金额是元",
-		z.object({ status: z.string().default("").describe("交易状态（采购单列表接口的 tradeStatus）；不给是全部") }),
-		async (p, n) => {
-			const r = await buyerOrders(n, 50, p.status);
-			return { rows: r.rows, more: n < r.pages };
-		},
-	),
-	refund: get(
-		"一张退款单：状态、类型、退的钱、退货运单号",
-		z.object({ id: str("退款单号（TQ 开头）"), stage: z.enum(["售中", "售后"]).default("售中").describe("售中（行上的 refundId）还是售后（refundIdForAs）") }),
-		(p) => refund(p.id, p.stage),
-	),
-	traces: all("采购单的物流轨迹", z.object({ orders: strs("采购单号") }), (p) => traces(p.orders.map((orderId) => ({ orderId })))),
-};

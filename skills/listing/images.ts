@@ -7,13 +7,13 @@ import { type Image, model } from "../../connectors/services/gemini/api.ts";
 import { type Bytes, fetchImage, inspect } from "../../connectors/services/image/api.ts";
 import { uploadImages } from "../../connectors/sites/shopee/products.ts";
 import type { Sql } from "../../platform/db/index.ts";
-import { saveTranslation, translationState } from "../../platform/ops.ts";
 import { run } from "../../platform/writes.ts";
 import type { Mark, Pic, Pics, Verdict } from "./pics.ts";
 import { detailFits, MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { download, geminiJson, limiter, once, type Runner } from "./queue.ts";
 import { SCREEN_VERSION, screen } from "./screen.ts";
 import { markKey, watermark } from "./watermark.ts";
+import { saveTranslation, translationState } from "./writes.ts";
 
 /** 原图：取字节，记一行（来源、宽高）；同一个进程里取过的不再取（取不到的下次再取） */
 const fetched = new Map<string, Promise<Bytes>>();

@@ -1,6 +1,6 @@
 // 检查商品稿：每份的当前步骤、要提醒人的、agent 能做的进 todo、人同意了就能建商品、上架的（ready）。纯函数，读写库在 index.ts
 
-import type { EstimateItem, Reminder, Todo, Write } from "../orders/check.ts";
+import type { Reminder } from "../../platform/tool.ts";
 import { auditIssues, auditKey, auditNotes } from "./audit.ts";
 import { estimateNeeds, type Settings } from "./pricing.ts";
 import { imageNames } from "./product.ts";
@@ -11,6 +11,29 @@ import { specsOf } from "./variants.ts";
 /** 当前步骤。网页上商品稿按它分组，组也是这个顺序（要人看的在前） */
 export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待 Gemini 文字检查", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
+
+/** 建商品、上架的写入（库里的一行） */
+export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null; error?: string | null };
+
+/** agent 估重量、国内运费的一份商品稿：缺什么（needs），和估要用的事实（1688 的标题、每个规格、运费） */
+export type EstimateItem = {
+	id: string;
+	name: string;
+	shop: string;
+	needs: ("重量" | "国内运费")[];
+	title: string;
+	specs: { spec: string; priceRmb: number; weightKg: number | null }[];
+	freight: unknown;
+	freeShipping: boolean;
+};
+
+/** agent 能做的：tool、params 是照着调的工具；估重量、写文案要 agent 先定值、写字（why 里写着怎么调），备注照做完再调 */
+export type Todo =
+	| { kind: "做商品稿"; why: string; tool: "listing.make"; params: { ids: string[] } }
+	| { kind: "Gemini 文字检查"; why: string; tool: "listing.audit"; params: { ids: string[] } }
+	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[] }
+	| { kind: "写文案"; why: string; ids: string[] }
+	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; tool: "listing.noted"; params: { ids: string[] } };
 
 // 建商品、上架的写入：x2 listing publish 照 ready 记进库、马上执行
 const IN_FLIGHT = new Set(["待执行", "已提交", "结果未知", "不一致"]);
@@ -125,7 +148,7 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 				due: null,
 				link: null,
 				title: `商品稿：${name}待补充：${String(l.problems).split("\n")[0]}`,
-				detail: `${l.problems}\n\n处理好以后 agent 再做一次（x2 listing make ${id}）。类目不在本店范围：在「店铺设置」里加上这个类目，或者告诉 agent 换成哪个类目；不上这个货源：勾「放弃」`,
+				detail: `${l.problems}\n\n处理好以后 agent 再做一次（x2 listing make --ids ${id}）。类目不在本店范围：在「店铺设置」里加上这个类目，或者告诉 agent 换成哪个类目；不上这个货源：勾「放弃」`,
 			});
 			continue;
 		}
@@ -204,30 +227,28 @@ export function checkListings(listings: any[], settings: Map<string, Settings>, 
 			.filter(Boolean)
 			.join("；");
 		const ids = [...toMake, ...stale, ...recategorized];
-		todo.push({ kind: "做商品稿", why, ids, command: `x2 listing make ${ids.join(" ")}` });
+		todo.push({ kind: "做商品稿", why, tool: "listing.make", params: { ids } });
 	}
 	if (toEstimate.length)
 		todo.push({
 			kind: "估重量、国内运费",
-			why: `${toEstimate.map((x) => `${x.name}缺${x.needs.join("、")}`).join("；")}：照 1688 的标题和规格估，重量往重了估（轻的写 1 kg），国内运费往高了估，留出利润`,
+			why: `${toEstimate.map((x) => `${x.name}缺${x.needs.join("、")}`).join("；")}：照 1688 的标题和规格估，重量往重了估（轻的写 1 kg），国内运费往高了估，留出利润；x2 listing estimate --id <编号> --weight <kg> --freight <元/件>（只写缺的）`,
 			items: toEstimate,
-			command: "x2 listing estimate <商品稿> --weight <kg> --freight <元/件>（只写缺的）",
 		});
 	if (toWrite.length)
 		todo.push({
 			kind: "写文案",
 			why: toWrite.map((x) => `${names.get(x.id)}：${x.why}`).join("；"),
 			ids: toWrite.map((x) => x.id),
-			command: `x2 listing show <商品稿>，写好标题、描述、规格名、简称用 x2 listing text`,
 		});
-	if (toCheck.length)
-		todo.push({ kind: "Gemini 文字检查", why: `文案或图还没查过：${named(toCheck)}`, ids: toCheck, command: `x2 listing audit ${toCheck.join(" ")}` });
+	if (toCheck.length) todo.push({ kind: "Gemini 文字检查", why: `文案或图还没查过：${named(toCheck)}`, tool: "listing.audit", params: { ids: toCheck } });
 	if (notes.length)
 		todo.push({
 			kind: "备注",
-			why: notes.map((x) => `${x.name}：${x.note}`).join("；"),
+			why: `${notes.map((x) => `${x.name}：${x.note}`).join("；")}。照备注做（人写的备注不改），做完再调`,
 			items: notes,
-			command: "照备注做（人写的备注不改），做完 x2 listing noted <商品稿>",
+			tool: "listing.noted",
+			params: { ids: notes.map((x) => x.id) },
 		});
 	return { reminders, todo, steps, ready };
 }

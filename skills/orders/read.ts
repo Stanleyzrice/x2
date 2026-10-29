@@ -1,7 +1,7 @@
 // 现读：x2 status 每次经浏览器把要用的站点数据读进内存，不存库（只有订单写回库，给网页上看进度）。
 // 读什么：chanboss 的订单（两家店都在）；每个登录着的 1688 账号的购物车、采购单（带物流、进行中的退款）。
 // 哪一样读不了就记下来（results）：检查照常算，x2 status 说哪样没读成（漏读不算做完）。
-// 同一个进程里 2 分钟内读过的复用（x2 do 一批几项加购、x2 source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
+// 同一个进程里 2 分钟内读过的复用（一批几项加购、x2 orders source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
 import { orders as chanbossOrders } from "../../connectors/sites/chanboss/api.ts";
@@ -202,7 +202,7 @@ export async function readAll(sql: Sql, log: (s: string) => void = console.error
 	return read1688(sql, log, results);
 }
 
-/** 1688：每个登录着的账号的购物车、采购单（带物流、进行中的退款）。x2 do 加购前只读这些：订单、货源用库里的 */
+/** 1688：每个登录着的账号的购物车、采购单（带物流、进行中的退款）。加购前只读这些：订单、货源用库里的 */
 export async function read1688(sql: Sql, log: (s: string) => void = console.error, results: Read[] = []): Promise<Reads> {
 	const accounts = new Map((await alibabaAccounts().catch(() => [])).map((a) => [a.userId, a.loginId]));
 	const buy = await attempt(

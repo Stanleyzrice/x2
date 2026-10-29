@@ -17,7 +17,7 @@ export async function shopMetrics(start: number, end: number, period: "past7days
 // ── 评价 ──
 
 /** 评价的一页（20 条）。cursor 是上一页最后一条的 comment_id，第一页是 "0"；给了订单号只找它的评价。
- * 回复评价要在「评价管理」页上点它的按钮、填表单（没有写成函数，见 shopee.md） */
+ * 回复评价要在「评价管理」页上点它的按钮、填表单（没有写成函数，见同目录的 NOTES.md） */
 export async function reviews(pageNo = 1, cursor = "0", orderSn?: string): Promise<{ total: number; rows: any[] }> {
 	const b = await seller("/api/v3/settings/search_shop_rating_comments_new/", {
 		query: {

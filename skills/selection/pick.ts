@@ -44,7 +44,7 @@ export async function addListings(
 ): Promise<{ added: Added[]; snapshot: PickSnapshot }> {
 	const strategy = a.strategy ?? "人选";
 	const [st] = await sql`select name from strategies where name = ${strategy}`;
-	if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "假设" --how "选品方法"`);
+	if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 selection strategy-add --name ${strategy} --bet "假设" --how "选品方法"`);
 	const [s] = await sql`select shop from shop_settings where shop = ${a.shop}`;
 	if (!s) throw new Usage(`没有「${a.shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
 	const offerIds = a.links.map((link) => {

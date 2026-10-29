@@ -5,12 +5,12 @@
 import { IMAGE } from "../../connectors/sites/shopee/seller.ts";
 import { LISTING_STEPS } from "../../skills/listing/check.ts";
 import { LABEL, numbered, usedPics } from "../../skills/listing/product.ts";
+import { listingsCheck } from "../../skills/listing/status.ts";
 import { isSingle, removedOf, specsOf, specsTable } from "../../skills/listing/variants.ts";
 import { STEPS } from "../../skills/orders/check.ts";
 import { addListings } from "../../skills/selection/pick.ts";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { listingsCheck } from "../status.ts";
 
 /** 人能改的一格：options 是可选的值；when 是这一行能改的条件（例 结果未知的写入才能改状态）；set 不是改一列（例 删图） */
 export type Edit = { options?: readonly string[]; when?: string; set?: (sql: Sql, key: Key, value: unknown) => Promise<void> };

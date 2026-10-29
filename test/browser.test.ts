@@ -5,9 +5,9 @@ import vm from "node:vm";
 import { z } from "zod";
 import { alibabaCookie, choose } from "../platform/browser/accounts.ts";
 import { challengeOf, guarded, loginPage, siteOf } from "../platform/browser/browser.ts";
-import { runOp, type Site } from "../platform/cli.ts";
+import { runTool } from "../platform/cli.ts";
 import { Challenge, NeedsHuman, Usage } from "../platform/errors.ts";
-import { get, str } from "../platform/tool.ts";
+import { get, str, type Toolkit } from "../platform/tool.ts";
 
 test("网址是哪个站点：1688 的各个子域都是 1688，不认识的是 null", () => {
 	assert.equal(siteOf("https://seller.shopee.tw/portal/product/new"), "shopee");
@@ -151,17 +151,14 @@ test("1688 页面里跑的表达式：没有验证照常跑；有验证（整页
 });
 
 test("--shop 只有 Shopee 收；要写哪家店；帮助里写着", async () => {
-	const ops = { thing: get("一样东西", z.object({ id: str("id") }), async (p) => p) };
-	const plain: Site = { describe: "没有店", ops };
-	const shopee: Site = { describe: "按店", ops, shop: true };
-	await assert.rejects(
-		runOp("plain", plain, ["thing", "--id", "1", "--shop", "ni1206"]),
-		(e: Error) => e instanceof Usage && /没有参数 --shop/.test(e.message),
-	);
-	await assert.rejects(runOp("shopee", shopee, ["thing", "--id", "1", "--shop"]), (e: Error) => e instanceof Usage && /--shop 后面写哪家店/.test(e.message));
-	assert.deepEqual(await runOp("shopee", shopee, ["thing", "--id", "1"]), { value: { id: "1" } });
-	const help = await runOp("shopee", shopee, ["thing", "--help"]);
-	assert.ok("help" in help && /--shop <店>/.test(help.help));
+	const tools = { thing: get("一样东西", z.object({ id: str("id") }), async (p) => p) };
+	const plain: Toolkit = { name: "plain", title: "没有店", kind: "site", tools };
+	const shopee: Toolkit = { name: "shopee", title: "按店", kind: "site", tools, scope: { flag: "shop", description: "店", run: (_v, fn) => fn() } };
+	await assert.rejects(runTool(plain, ["thing", "--id", "1", "--shop", "ni1206"]), (e: Error) => e instanceof Usage && /没有参数 --shop/.test(e.message));
+	await assert.rejects(runTool(shopee, ["thing", "--id", "1", "--shop"]), (e: Error) => e instanceof Usage && /--shop 后面写哪一个/.test(e.message));
+	assert.deepEqual(((await runTool(shopee, ["thing", "--id", "1"])) as { value: unknown }).value, { id: "1" });
+	const help = await runTool(shopee, ["thing", "--help"]);
+	assert.ok("help" in help && /--shop <值>/.test(help.help));
 });
 
 test("1688 的 cookie：__cn_logon__ 说登录着没有；没有这个 cookie 是看不出（要开页面认）", () => {

@@ -1,7 +1,7 @@
 // 订单的检查（纯函数）：当前步骤、提醒人的、agent 要做的一批加购和预报；采购单分给订单
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type CartParams, checkOrders, type ForecastParams, type Order, type Snapshot, type Source } from "./check.ts";
+import { checkOrders, type Order, type Snapshot, type Source } from "./check.ts";
 import { reconcile } from "./reconcile.ts";
 
 // 例子：订单 1 买红T ×1，订单 2 买红T ×2；红T 的货源是 1688 的 O1 / S1
@@ -128,7 +128,7 @@ test("货源齐了、待加购：agent 准备一行加购，同一个货源的�
 	const r = checkOrders(snap());
 	const t = r.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	const p = t.batch.writes[0]!.params as CartParams;
+	const p = t.params.items[0]!;
 	assert.equal(p.qty, 3);
 	assert.deepEqual(
 		p.lines.map((l) => l.sn),
@@ -164,7 +164,7 @@ test("付了款寄到我们这里：预报无单号；报过、到齐了：提�
 	const f = paid.todo.find((x) => x.kind === "预报");
 	assert.ok(f && f.kind === "预报");
 	assert.deepEqual(
-		(f.batch.writes as { params: ForecastParams }[]).map((w) => [w.params.sn, w.params.lines[0]!.trackingNo]),
+		f.params.orders.map((o) => [o.sn, o.lines[0]!.trackingNo]),
 		[
 			["1", null],
 			["2", null],
@@ -192,7 +192,7 @@ test("寄到 chanboss：有了快递单号才预报，填快递单号", () => {
 	const shipped = checkOrders(snap({ writes: [cartWrite()], purchases: [purchase(3, { toChanboss: true, trackingNo: "YT123" })] }));
 	const f = shipped.todo.find((x) => x.kind === "预报");
 	assert.ok(f && f.kind === "预报");
-	assert.equal((f.batch.writes[0]!.params as ForecastParams).lines[0]!.trackingNo, "YT123");
+	assert.equal(f.params.orders[0]!.lines[0]!.trackingNo, "YT123");
 });
 
 test("快到期：写出当前步骤", () => {
@@ -222,7 +222,7 @@ test("选货源：只有一个明显匹配的随加购一起定下；几个候�
 	const sure = checkOrders(snap({ sources: [source({ sure: true })] }));
 	const t = sure.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.deepEqual((t.batch.writes[0]!.params as CartParams).newSources, ["I1"]);
+	assert.deepEqual(t.params.items[0]!.newSources, ["I1"]);
 
 	const unsure = checkOrders(snap({ sources: [source(), source({ offerId: "O2" })] }));
 	assert.ok(unsure.reminders.find((i) => i.key === "source:I1"));
@@ -261,7 +261,7 @@ test("外部采购：采购单按货源的规格分给订单（先下单的先�
 	const cart = r.todo.find((x) => x.kind === "加购");
 	assert.ok(cart && cart.kind === "加购");
 	assert.deepEqual(
-		(cart.batch.writes[0]!.params as CartParams).lines.map((l) => l.sn),
+		cart.params.items[0]!.lines.map((l) => l.sn),
 		["2"],
 	);
 	assert.ok(r.covered.has("1:M1"));
@@ -361,7 +361,7 @@ test("一个商品一个货源：店里的规格按名字在货源的规格里�
 	const ok = checkOrders(snap());
 	const t = ok.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.equal((t.batch.writes[0]!.params as CartParams).skuId, "S1");
+	assert.equal(t.params.items[0]!.skuId, "S1");
 });
 
 test("取消的订单只分到取消以前下的采购单", () => {
@@ -388,7 +388,7 @@ test("规格不匹配：提醒写出照抄的一行和最像的几个；人写�
 	);
 	const t = ok.todo.find((x) => x.kind === "加购");
 	assert.ok(t && t.kind === "加购");
-	assert.equal((t.batch.writes[0]!.params as CartParams).skuId, "S8");
+	assert.equal(t.params.items[0]!.skuId, "S8");
 	// 写的那个货源里没有了（卖家改了规格名）：还是规格不匹配，写出原因
 	const gone = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 粉色 L" })] }));
 	assert.match(gone.reminders.find((i) => i.key === "sku:M1")!.detail, /规格例外中的「粉色 L」在货源「红T 货源」里已不存在/);

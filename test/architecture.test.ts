@@ -1,4 +1,4 @@
-// 代码放哪（AGENTS.md「改代码」）：平台（platform）、连接器（connectors：sites 经浏览器、services 用 API key）、一件生意一个包（skills）；
+// 代码放哪（AGENTS.md「改代码」）：平台（platform）、连接器（connectors：sites 经浏览器、services 用 API key）、skill（skills：一个 skill 管一类事）；
 // 网页的界面只引自己；每个文件开头一段注释说它做什么；文档只放在几个固定的地方，提到的仓库里的文件都在。破例不加白名单：放错了就搬，规则不对就改这里和 AGENTS.md
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

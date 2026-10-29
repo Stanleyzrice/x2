@@ -86,7 +86,7 @@ create table if not exists handled (
 
 create sequence if not exists batch_seq;
 
--- 写入：做了一次写操作。人在终端里同意了，agent 用 x2 do 交一批（待执行），x2 先记意图（已提交），再提交一次，再读回来
+-- 写入：做了一次写操作。人在终端里同意了，agent 调写工具交一批（待执行），x2 先记意图（已提交），再提交一次，再读回来
 -- status：待执行、已提交、成功、被拒、结果未知、已核对、不一致、未执行
 create table if not exists writes (
 	id bigserial primary key,
@@ -275,7 +275,7 @@ insert into strategies (name, bet, how, status) values ('人选', '人挑的货�
 -- ── 加列（表建好以后加的列写在这里） ──
 
 -- 规格例外：店里的规格按名字在货源的规格里配不上时，人定的。一行一个「店里的规格名 = 货源的规格名」（单规格写「（单规格）」）；
--- 只记例外，配得上的不记。人在网页上写，或者人在终端里说了、agent 用 x2 source <商品 id> --spec 写。换了货源就跟着那一行删掉
+-- 只记例外，配得上的不记。人在网页上写，或者人在终端里说了、agent 用 x2 orders spec 写。换了货源就跟着那一行删掉
 alter table sources add column if not exists sku_exceptions text;
 
 -- 已删除的图（Shopee 的图片 id）：人在网页上删的主图、详情图，再做商品稿也不用它
@@ -307,7 +307,7 @@ alter table listings add column if not exists nickname text;
 
 -- ── 选品可追溯：每份商品稿为什么选、按的是哪一版策略和选品规矩 ──
 
--- 策略的版本号：x2 strategy add 是第 1 版，每次 x2 strategy set 加 1（加版本号之前记的策略都算第 1 版）
+-- 策略的版本号：x2 selection strategy-add 是第 1 版，每次 strategy-set 加 1（加版本号之前记的策略都算第 1 版）
 alter table strategies add column if not exists version int not null default 1;
 
 -- 策略的变更记录：一行是一个策略的一版。改之前、改之后只写改了的列（{ status, bet, how, note }），第 1 版没有改之前
@@ -346,7 +346,7 @@ alter table listings add column if not exists noted text;
 -- images 不存 shown（放在建触发器之后）
 update listings set images = images - 'shown' where images ? 'shown';
 
--- 收件箱、批准去掉了：人在终端里跟 agent 说同意，agent 用 x2 do、x2 listing publish 直接做
+-- 收件箱、批准去掉了：人在终端里跟 agent 说同意，agent 调写工具直接做
 drop table if exists inbox;
 alter table writes alter column status set default '待执行';
 update writes set status = '未执行', error = coalesce(error, '没有批准就没执行：批准的流程去掉了'), finished_at = coalesce(finished_at, now()) where status in ('待批准', '已批准');
