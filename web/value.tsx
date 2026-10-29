@@ -11,9 +11,12 @@ const time = (v: string) => new Date(v).toLocaleString("zh-CN", { month: "2-digi
 const empty = (v: unknown) => v === null || v === undefined || v === "";
 
 /** JSON：对象一行一个「键：值」 */
-const jsonText = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v)
-	? Object.entries(v).map(([k, x]) => `${k}：${typeof x === "string" ? x : JSON.stringify(x)}`).join("\n")
-	: JSON.stringify(v));
+const jsonText = (v: unknown) =>
+	v && typeof v === "object" && !Array.isArray(v)
+		? Object.entries(v)
+				.map(([k, x]) => `${k}：${typeof x === "string" ? x : JSON.stringify(x)}`)
+				.join("\n")
+		: JSON.stringify(v);
 
 /** 只看的一格；compact 是表格里（长字截断、图小） */
 export function Show({ col, value, compact }: { col: Column; value: unknown; compact?: boolean }) {
@@ -23,8 +26,21 @@ export function Show({ col, value, compact }: { col: Column; value: unknown; com
 	if (col.type === "bool") return <Checkbox checked={Boolean(value)} disabled aria-label={col.label} />;
 	if (col.type === "time") return <span className="whitespace-nowrap">{time(String(value))}</span>;
 	if (col.type === "number") return <span className="tabular-nums">{Number(value).toLocaleString("zh-CN")}</span>;
-	if (col.type === "image") return <img src={String(value)} alt={col.label} referrerPolicy="no-referrer" className={compact ? "size-10 rounded object-cover" : "size-24 rounded object-cover"} />;
-	if (col.type === "link") return <Link href={String(value)} target="_blank">打开</Link>;
+	if (col.type === "image")
+		return (
+			<img
+				src={String(value)}
+				alt={col.label}
+				referrerPolicy="no-referrer"
+				className={compact ? "size-10 rounded object-cover" : "size-24 rounded object-cover"}
+			/>
+		);
+	if (col.type === "link")
+		return (
+			<Link href={String(value)} target="_blank">
+				打开
+			</Link>
+		);
 	const text = col.type === "json" ? jsonText(value) : String(value);
 	return <span className={`whitespace-pre-wrap break-words ${compact ? "line-clamp-3" : ""}`}>{text}</span>;
 }
@@ -33,17 +49,38 @@ export function Show({ col, value, compact }: { col: Column; value: unknown; com
 export function Edit({ col, value, save }: { col: Column; value: unknown; save: Save }) {
 	const [draft, setDraft] = useState(value ?? "");
 	useEffect(() => setDraft(value ?? ""), [value]);
-	const commit = () => { if (String(draft) !== String(value ?? "")) save(col.type === "number" ? (draft === "" ? null : Number(draft)) : draft); };
+	const commit = () => {
+		if (String(draft) !== String(value ?? "")) save(col.type === "number" ? (draft === "" ? null : Number(draft)) : draft);
+	};
 
 	if (col.type === "bool") return <Checkbox checked={Boolean(value)} onCheckedChange={(c) => save(c)} aria-label={col.label} />;
 	if (col.type === "pics") return <Pics pics={(value ?? []) as Pic[]} save={save} />;
 	if (col.edit?.options) {
-		return <Select aria-label={col.label} className="w-48" value={value ?? null} placeholder="—" onValueChange={(v) => save(v)}
-			items={Object.fromEntries(col.edit.options.map((o) => [o, o]))} />;
+		return (
+			<Select
+				aria-label={col.label}
+				className="w-48"
+				value={value ?? null}
+				placeholder="—"
+				onValueChange={(v) => save(v)}
+				items={Object.fromEntries(col.edit.options.map((o) => [o, o]))}
+			/>
+		);
 	}
-	if (col.type === "time") return <Input type="date" aria-label={col.label} value={value ? String(value).slice(0, 10) : ""} onChange={(e) => save(e.target.value || null)} />;
+	if (col.type === "time")
+		return <Input type="date" aria-label={col.label} value={value ? String(value).slice(0, 10) : ""} onChange={(e) => save(e.target.value || null)} />;
 	if (col.type === "number") {
-		return <Input type="number" step="any" aria-label={col.label} className="w-40" value={String(draft)} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />;
+		return (
+			<Input
+				type="number"
+				step="any"
+				aria-label={col.label}
+				className="w-40"
+				value={String(draft)}
+				onChange={(e) => setDraft(e.target.value)}
+				onBlur={commit}
+			/>
+		);
 	}
 	return <InputArea aria-label={col.label} autoResize minRows={1} maxRows={12} value={String(draft)} onValueChange={setDraft} onBlur={commit} />;
 }
@@ -60,12 +97,21 @@ function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean; save?: 
 		<div className="flex flex-wrap gap-3">
 			{pics.map((p) => (
 				<figure key={`${p.label}:${p.id}`} className="w-36" title={p.why}>
-					<img src={p.url} alt={p.label} loading="lazy" className={`size-36 rounded-lg border border-kumo-line object-cover ${p.state === "used" ? "" : "opacity-30"}`} />
+					<img
+						src={p.url}
+						alt={p.label}
+						loading="lazy"
+						className={`size-36 rounded-lg border border-kumo-line object-cover ${p.state === "used" ? "" : "opacity-30"}`}
+					/>
 					<figcaption className="mt-1 flex items-center justify-between gap-1 text-xs">
 						<span className="truncate">{p.label}</span>
 						{STATE[p.state] && <Badge variant={p.state === "removed" ? "red" : "neutral"}>{STATE[p.state]}</Badge>}
 						{save && p.role !== "option" && (p.state === "used" || p.state === "removed") && (
-							<Button size="xs" variant={p.state === "removed" ? "secondary" : "secondary-destructive"} onClick={() => save({ id: p.id, removed: p.state !== "removed" })}>
+							<Button
+								size="xs"
+								variant={p.state === "removed" ? "secondary" : "secondary-destructive"}
+								onClick={() => save({ id: p.id, removed: p.state !== "removed" })}
+							>
 								{p.state === "removed" ? "放回" : "删"}
 							</Button>
 						)}
@@ -94,7 +140,12 @@ function Specs({ specs, compact }: { specs: SpecsTable; compact?: boolean }) {
 	if (compact) {
 		const prices = [...new Set(rows.map((r) => r.priceTwd))].filter((p) => p !== null) as number[];
 		const range = prices.length ? (prices.length === 1 ? price(prices[0]!) : `${price(Math.min(...prices))}–${Math.max(...prices)}`) : "未定价";
-		return <span className="whitespace-nowrap">{rows.length > 1 || tiers.length ? `${rows.length} 个规格 · ` : ""}{range}</span>;
+		return (
+			<span className="whitespace-nowrap">
+				{rows.length > 1 || tiers.length ? `${rows.length} 个规格 · ` : ""}
+				{range}
+			</span>
+		);
 	}
 	const images = rows.some((r) => r.image);
 	return (
@@ -108,16 +159,34 @@ function Specs({ specs, compact }: { specs: SpecsTable; compact?: boolean }) {
 						<Table.Header>
 							<Table.Row>
 								{images && <Table.Head className="w-16 whitespace-nowrap">规格图</Table.Head>}
-								{tiers.map((t) => <Table.Head key={t} className="whitespace-nowrap">{t}</Table.Head>)}
-								{varying.map((f) => <Table.Head key={f.label} className="whitespace-nowrap text-right">{f.label}</Table.Head>)}
+								{tiers.map((t) => (
+									<Table.Head key={t} className="whitespace-nowrap">
+										{t}
+									</Table.Head>
+								))}
+								{varying.map((f) => (
+									<Table.Head key={f.label} className="whitespace-nowrap text-right">
+										{f.label}
+									</Table.Head>
+								))}
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
 							{rows.map((r) => (
 								<Table.Row key={r.sku}>
-									{images && <Table.Cell>{r.image && <img src={r.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-10 max-w-none rounded object-cover" />}</Table.Cell>}
-									{r.options.map((o, a) => <Table.Cell key={tiers[a]}>{o}</Table.Cell>)}
-									{varying.map((f) => <Table.Cell key={f.label} className="text-right tabular-nums">{f.of(r)}</Table.Cell>)}
+									{images && (
+										<Table.Cell>
+											{r.image && <img src={r.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-10 max-w-none rounded object-cover" />}
+										</Table.Cell>
+									)}
+									{r.options.map((o, a) => (
+										<Table.Cell key={tiers[a]}>{o}</Table.Cell>
+									))}
+									{varying.map((f) => (
+										<Table.Cell key={f.label} className="text-right tabular-nums">
+											{f.of(r)}
+										</Table.Cell>
+									))}
 								</Table.Row>
 							))}
 						</Table.Body>

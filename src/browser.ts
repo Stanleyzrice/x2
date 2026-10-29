@@ -31,7 +31,12 @@ export type Browser = { id: string; label: string; attached: number[] };
 export type Site = "shopee" | "1688" | "chanboss" | "zhixia";
 export const SITE_NAMES: Record<Site, string> = { shopee: "Shopee 卖家中心", "1688": "1688", chanboss: "chanboss", zhixia: "知虾" };
 /** 各站点的首页（认登录、看浏览器里有没有开着它） */
-export const SITE_ORIGINS: Record<Site, string> = { shopee: "https://seller.shopee.tw", "1688": "https://www.1688.com", chanboss: "https://c.chanboss.com", zhixia: "https://shopee.mobduos.com" };
+export const SITE_ORIGINS: Record<Site, string> = {
+	shopee: "https://seller.shopee.tw",
+	"1688": "https://www.1688.com",
+	chanboss: "https://c.chanboss.com",
+	zhixia: "https://shopee.mobduos.com",
+};
 /** 页面两次加载之间至少隔多久（几个进程一起算）：1688 读得太密跳滑块验证 */
 const PACE_MS: Partial<Record<string, number>> = { "1688": 3000 };
 
@@ -68,7 +73,9 @@ export function look(): Look {
 	const body = document.body;
 	return {
 		url: location.href,
-		frames: Array.from(document.querySelectorAll("iframe")).filter(shown).map((f) => f.src),
+		frames: Array.from(document.querySelectorAll("iframe"))
+			.filter(shown)
+			.map((f) => f.src),
 		slider: Array.from(document.querySelectorAll("#nc_1_wrapper, .nc_wrapper, .baxia-dialog")).some(shown),
 		text: body && (body.textContent ?? "").length < 20000 ? body.innerText.slice(0, 5000) : "",
 	};
@@ -89,7 +96,9 @@ export const using = <T>(browser: string, fn: () => Promise<T>): Promise<T> => c
 
 /** 连着的浏览器 */
 export async function browsers(): Promise<Browser[]> {
-	const all = await new RelayClient({}).browsers().catch(() => { throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？"); });
+	const all = await new RelayClient({}).browsers().catch(() => {
+		throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？");
+	});
 	return all.map((b) => ({ id: b.id, label: b.label, attached: b.attached ?? [] }));
 }
 
@@ -127,15 +136,25 @@ const leases = new Map<string, Lease>();
 async function enter(b: Browser, site: string): Promise<() => void> {
 	const key = `${b.id}-${site}`;
 	let l = leases.get(key);
-	if (!l) leases.set(key, (l = { lock: null, active: 0, idle: null, wait: null }));
+	if (!l) {
+		l = { lock: null, active: 0, idle: null, wait: null };
+		leases.set(key, l);
+	}
 	const lease = l;
 	lease.active++;
-	if (lease.idle) { clearTimeout(lease.idle); lease.idle = null; }
+	if (lease.idle) {
+		clearTimeout(lease.idle);
+		lease.idle = null;
+	}
 	try {
 		while (!lease.lock) {
 			lease.wait ??= acquire(key, { onWait: (o) => console.error(`排队：浏览器 ${short(b)} 的 ${site} 正被另一个 x2 用（pid ${o.pid}：${o.cmd}），等它用完`) })
-				.then((lock) => { lease.lock = lock; })
-				.finally(() => { lease.wait = null; });
+				.then((lock) => {
+					lease.lock = lock;
+				})
+				.finally(() => {
+					lease.wait = null;
+				});
 			await lease.wait;
 		}
 	} catch (e) {
@@ -149,7 +168,10 @@ async function enter(b: Browser, site: string): Promise<() => void> {
 		if (--lease.active > 0) return;
 		lease.idle = setTimeout(() => {
 			lease.idle = null;
-			if (lease.active === 0 && lease.lock) { lease.lock.release(); lease.lock = null; }
+			if (lease.active === 0 && lease.lock) {
+				lease.lock.release();
+				lease.lock = null;
+			}
 		}, GRACE_MS);
 		lease.idle.unref();
 	};
@@ -265,21 +287,23 @@ export async function page(origin: string): Promise<Page> {
 		await c.send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
 		return tabId;
 	});
-	const run = <A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>> => within(b, site, async (): Promise<Awaited<R>> => {
-		if (site !== "1688") return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
-		const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args), { awaitPromise: true });
-		if (r.x2 === "challenge") throw new Hit();
-		return r.value;
-	});
+	const run = <A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>> =>
+		within(b, site, async (): Promise<Awaited<R>> => {
+			if (site !== "1688") return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
+			const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args), { awaitPromise: true });
+			if (r.x2 === "challenge") throw new Hit();
+			return r.value;
+		});
 	return {
 		browser: b.id,
 		run,
-		goto: (url) => within(b, site, async () => {
-			await pace(b, site);
-			await c.navigate(id, url);
-			await settle(c, id, origin, site);
-			await c.eval(id, `window.name = ${JSON.stringify(MARK)}`);
-		}),
+		goto: (url) =>
+			within(b, site, async () => {
+				await pace(b, site);
+				await c.navigate(id, url);
+				await settle(c, id, origin, site);
+				await c.eval(id, `window.name = ${JSON.stringify(MARK)}`);
+			}),
 	};
 }
 
@@ -305,7 +329,9 @@ export async function cookies(b: Browser, url: string): Promise<Map<string, stri
 		try {
 			const r = await c.send<{ cookies: { name: string; value: string }[] }>(tab, "Network.getCookies", { urls: [url] });
 			return new Map(r.cookies.map((k) => [k.name, k.value]));
-		} catch { /* 这个标签页不行了（关了、换了页），换一个 */ }
+		} catch {
+			/* 这个标签页不行了（关了、换了页），换一个 */
+		}
 	}
 	return null;
 }

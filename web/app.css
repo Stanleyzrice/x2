@@ -1,5 +1,8 @@
-@source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 @import "@cloudflare/kumo/styles/tailwind";
 @import "tailwindcss";
+@source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 
-body { @apply bg-kumo-base text-kumo-default; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; }
+body {
+	@apply bg-kumo-base text-kumo-default;
+	font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+}

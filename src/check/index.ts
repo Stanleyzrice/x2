@@ -2,7 +2,7 @@
 // 算出要提醒人的（人用 x2 handled 记下做完了的不再提醒）、agent 要做的，把订单上算出来的列写回库；规格定了货源以后删掉它剩下的候选
 import type { Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
-import { savePrices, type Settings, settingsOf } from "../listing/make.ts";
+import { type Settings, savePrices, settingsOf } from "../listing/make.ts";
 import { type Reads, read1688 } from "../read.ts";
 import { checkListings } from "./listings.ts";
 import { checkOrders, planned, type Reminder, type Result, type Snapshot, type Todo } from "./orders.ts";
@@ -15,12 +15,35 @@ export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 	const issues = await sql`select id::text, sn, item, kind, qty, note, resolution from arrival_issues where not done order by id`;
 	return {
 		now: new Date(),
-		settings: { lateDays: Number(settings!.late_days), channel: settings!.channel, buyAccount: reads.buyAccount, shipWaitHours: Number(settings!.ship_wait_hours) },
+		settings: {
+			lateDays: Number(settings!.late_days),
+			channel: settings!.channel,
+			buyAccount: reads.buyAccount,
+			shipWaitHours: Number(settings!.ship_wait_hours),
+		},
 		orders: orders.map((o) => ({
-			sn: o.sn, shop: o.shop, createdAt: o.created_at, shipBy: o.ship_by, platformStatus: o.platform_status ?? "", chanbossStatus: o.chanboss_status ?? "", chanbossId: o.chanboss_id,
-			chanbossTime: Number(o.chanboss_time), items: o.items, problem: o.problem, cancelledAt: o.cancelled_at,
+			sn: o.sn,
+			shop: o.shop,
+			createdAt: o.created_at,
+			shipBy: o.ship_by,
+			platformStatus: o.platform_status ?? "",
+			chanbossStatus: o.chanboss_status ?? "",
+			chanbossId: o.chanboss_id,
+			chanbossTime: Number(o.chanboss_time),
+			items: o.items,
+			problem: o.problem,
+			cancelledAt: o.cancelled_at,
 		})),
-		sources: sources.map((r) => ({ itemId: r.item_id, offerId: r.offer_id, title: r.title, skus: r.skus, chosen: r.chosen, sure: r.sure, broken: r.broken, exceptions: r.sku_exceptions })),
+		sources: sources.map((r) => ({
+			itemId: r.item_id,
+			offerId: r.offer_id,
+			title: r.title,
+			skus: r.skus,
+			chosen: r.chosen,
+			sure: r.sure,
+			broken: r.broken,
+			exceptions: r.sku_exceptions,
+		})),
 		writes: writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })),
 		purchases: reads.purchases,
 		cart: reads.cart,
@@ -46,16 +69,34 @@ export async function current(sql: Sql): Promise<Result & { planned: ReturnType<
 /** 读不了要人处理的（没登录、浏览器没连上），结果未知、不一致的写入：也提醒人 */
 function loopReminders(reads: Reads, writes: any[]): Reminder[] {
 	return [
-		...reads.results.filter((r) => !r.ok && r.blocked).map((r): Reminder => ({
-			key: `login:${r.what}:${r.who}`, kind: "登录", shop: null, due: null, link: null,
-			title: `登录：${r.what === "订单" ? "chanboss" : "1688"} ${reads.accounts.get(r.who) ?? (r.who === "chanboss" || r.who === "1688" ? "" : r.who)} 无法读取`.replace(/\s+无法读取/, " 无法读取"),
-			detail: r.error ?? "",
-		})),
-		...writes.map((w): Reminder => ({
-			key: `unknown:${w.id}`, kind: "结果未知", shop: null, due: null, link: w.op === "加购" ? "https://cart.1688.com/cart.htm" : null,
-			title: `${w.status}：#${w.id} ${w.op} ${w.display ?? ""}`,
-			detail: `${w.error ?? ""}\n到站点上看一眼做没做成，告诉 agent（x2 resolve ${w.id} 已核对|被拒）。不要重做`,
-		})),
+		...reads.results
+			.filter((r) => !r.ok && r.blocked)
+			.map(
+				(r): Reminder => ({
+					key: `login:${r.what}:${r.who}`,
+					kind: "登录",
+					shop: null,
+					due: null,
+					link: null,
+					title:
+						`登录：${r.what === "订单" ? "chanboss" : "1688"} ${reads.accounts.get(r.who) ?? (r.who === "chanboss" || r.who === "1688" ? "" : r.who)} 无法读取`.replace(
+							/\s+无法读取/,
+							" 无法读取",
+						),
+					detail: r.error ?? "",
+				}),
+			),
+		...writes.map(
+			(w): Reminder => ({
+				key: `unknown:${w.id}`,
+				kind: "结果未知",
+				shop: null,
+				due: null,
+				link: w.op === "加购" ? "https://cart.1688.com/cart.htm" : null,
+				title: `${w.status}：#${w.id} ${w.op} ${w.display ?? ""}`,
+				detail: `${w.error ?? ""}\n到站点上看一眼做没做成，告诉 agent（x2 resolve ${w.id} 已核对|被拒）。不要重做`,
+			}),
+		),
 	];
 }
 
@@ -70,15 +111,26 @@ export async function listingsCheck(sql: Sql, ids?: string[]) {
 		? await sql`select * from listings where id in ${sql(ids)} order by id`
 		: await sql`select * from listings where not cancelled or updated_at > now() - interval '7 days' order by id`;
 	const settings = new Map<string, Settings>();
-	for (const s of await sql`select * from shop_settings`) { try { settings.set(s.shop, settingsOf(s)); } catch { /* 店铺设置填得不对：这家店的商品稿停在「已暂停」 */ } }
+	for (const s of await sql`select * from shop_settings`) {
+		try {
+			settings.set(s.shop, settingsOf(s));
+		} catch {
+			/* 店铺设置填得不对：这家店的商品稿停在「已暂停」 */
+		}
+	}
 	for (const l of rows) {
 		if (l.cancelled || l.product_id) continue;
 		const s = settings.get(l.shop);
 		if (s) await savePrices(sql, l, s);
 	}
 	const writes = await sql`select id, batch, op, status, params, finished_at, error from writes where op in ('建商品', '上架')`;
-	const r = checkListings(rows, settings, writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at, error: w.error })));
-	for (const [id, c] of r.steps) await sql`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
+	const r = checkListings(
+		rows,
+		settings,
+		writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at, error: w.error })),
+	);
+	for (const [id, c] of r.steps)
+		await sql`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
 	return r;
 }
 

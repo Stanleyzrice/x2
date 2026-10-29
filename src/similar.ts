@@ -4,15 +4,68 @@
 
 // 繁体 → 简体：只收规格名里常见的字，不求全
 const T2S: Record<string, string> = {
-	貓: "猫", 藍: "蓝", 黃: "黄", 綠: "绿", 紅: "红", 銀: "银", 墊: "垫", 雙: "双", 層: "层", 網: "网", 輪: "轮", 鋼: "钢", 鐵: "铁", 門: "门",
-	衛: "卫", 間: "间", 傢: "家", 臟: "脏", 號: "号", 條: "条", 張: "张", 個: "个", 裝: "装", 組: "组", 淺: "浅", 寬: "宽", 長: "长", 圓: "圆",
-	側: "侧", 單: "单", 顏: "颜", 碼: "码", 開: "开", 擴: "扩", 燈: "灯", 輕: "轻", 櫃: "柜", 盤: "盘", 爐: "炉", 鍋: "锅", 蓋: "盖",
-	掛: "挂", 鉤: "钩", 釦: "扣", 環: "环", 風: "风", 萬: "万", 兩: "两", 對: "对", 夾: "夹", 縫: "缝", 納: "纳", 絲: "丝",
+	貓: "猫",
+	藍: "蓝",
+	黃: "黄",
+	綠: "绿",
+	紅: "红",
+	銀: "银",
+	墊: "垫",
+	雙: "双",
+	層: "层",
+	網: "网",
+	輪: "轮",
+	鋼: "钢",
+	鐵: "铁",
+	門: "门",
+	衛: "卫",
+	間: "间",
+	傢: "家",
+	臟: "脏",
+	號: "号",
+	條: "条",
+	張: "张",
+	個: "个",
+	裝: "装",
+	組: "组",
+	淺: "浅",
+	寬: "宽",
+	長: "长",
+	圓: "圆",
+	側: "侧",
+	單: "单",
+	顏: "颜",
+	碼: "码",
+	開: "开",
+	擴: "扩",
+	燈: "灯",
+	輕: "轻",
+	櫃: "柜",
+	盤: "盘",
+	爐: "炉",
+	鍋: "锅",
+	蓋: "盖",
+	掛: "挂",
+	鉤: "钩",
+	釦: "扣",
+	環: "环",
+	風: "风",
+	萬: "万",
+	兩: "两",
+	對: "对",
+	夾: "夹",
+	縫: "缝",
+	納: "纳",
+	絲: "丝",
 };
 const COLORS = "金银黑白红蓝绿黄灰粉紫棕咖橙";
 const UNITS = "cm|mm|kg|ml|g|l|m|管|寸|码|号|个|只|件|层|米|片|套|包|斤|克";
 
-const simple = (s: string) => [...s].map((c) => T2S[c] ?? c).join("").toLowerCase();
+const simple = (s: string) =>
+	[...s]
+		.map((c) => T2S[c] ?? c)
+		.join("")
+		.toLowerCase();
 const squash = (s: string) => simple(s).replace(/[\s,，/>*×xX（）()【】[\]:：+\-—_·、|。.]+/g, "");
 
 function bigrams(s: string): Set<string> {
@@ -29,12 +82,17 @@ export type Compared = { score: number; missing: string[] };
 
 /** mine：店里的规格名；theirs：1688 的规格名。分数越高越像；missing 是店里的数字、颜色里对方没有的 */
 export function compare(mine: string, theirs: string): Compared {
-	const a = bigrams(mine), b = bigrams(theirs);
+	const a = bigrams(mine),
+		b = bigrams(theirs);
 	const shared = [...a].filter((g) => b.has(g)).length;
 	const theirNumbers = new Set(numbers(theirs).map((x) => x.n));
 	const theirColors = colors(theirs);
 	const missing = [
-		...new Set(numbers(mine).filter((x) => !theirNumbers.has(x.n)).map((x) => x.text)),
+		...new Set(
+			numbers(mine)
+				.filter((x) => !theirNumbers.has(x.n))
+				.map((x) => x.text),
+		),
 		...colors(mine).filter((c) => !theirColors.includes(c)),
 	];
 	return { score: (a.size ? shared / a.size : 0) - 0.25 * missing.length, missing };

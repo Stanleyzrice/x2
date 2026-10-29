@@ -8,14 +8,18 @@ import { db } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { when } from "../listing/pick.ts";
 
-const flag = (args: string[], name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const flag = (args: string[], name: string) => {
+	const i = args.indexOf(name);
+	return i >= 0 ? args[i + 1] : undefined;
+};
 const plain = (args: string[], ...flags: string[]) => args.filter((a, j) => !a.startsWith("--") && !flags.includes(args[j - 1] ?? ""));
 
 const text = z.string().trim().min(1);
 const USAGE = `x2 rule add "<规矩>" --why "为什么" | retire <编号> --why "为什么停用" | list [--all]（见 docs/listing.md「策略」）`;
 
 type Rule = { id: string; rule: string; why: string; started_at: Date; ended_at: Date | null; retire_why: string | null };
-const ruleLine = (r: Rule) => `#${r.id} ${r.rule}${r.ended_at ? `（已停用：${when(r.started_at)} – ${when(r.ended_at)}）` : `（${when(r.started_at)} 起）`}\n  为什么：${r.why}${r.retire_why ? `\n  停用原因：${r.retire_why}` : ""}`;
+const ruleLine = (r: Rule) =>
+	`#${r.id} ${r.rule}${r.ended_at ? `（已停用：${when(r.started_at)} – ${when(r.ended_at)}）` : `（${when(r.started_at)} 起）`}\n  为什么：${r.why}${r.retire_why ? `\n  停用原因：${r.retire_why}` : ""}`;
 
 export async function ruleCommand(args: string[], json: boolean): Promise<void> {
 	const [sub, ...rest] = args;
@@ -25,7 +29,9 @@ export async function ruleCommand(args: string[], json: boolean): Promise<void> 
 	if (sub === "add") {
 		const a = z.object({ rule: text, why: text }).safeParse({ rule: plain(rest, "--why").join(" "), why: flag(rest, "--why") });
 		if (!a.success) throw new Usage(`x2 rule add "<规矩>" --why "为什么"（--why 必填）`);
-		const [r] = await sql<Rule[]>`insert into selection_rules (rule, why) values (${a.data.rule}, ${a.data.why}) returning id::text, rule, why, started_at, ended_at, retire_why`;
+		const [r] = await sql<
+			Rule[]
+		>`insert into selection_rules (rule, why) values (${a.data.rule}, ${a.data.why}) returning id::text, rule, why, started_at, ended_at, retire_why`;
 		return out(r, `记下选品规矩 ${ruleLine(r!)}`);
 	}
 
@@ -44,7 +50,9 @@ export async function ruleCommand(args: string[], json: boolean): Promise<void> 
 
 	if (sub === "list") {
 		const all = rest.includes("--all");
-		const rows = await sql<Rule[]>`select id::text, rule, why, started_at, ended_at, retire_why from selection_rules ${all ? sql`` : sql`where ended_at is null`} order by id`;
+		const rows = await sql<
+			Rule[]
+		>`select id::text, rule, why, started_at, ended_at, retire_why from selection_rules ${all ? sql`` : sql`where ended_at is null`} order by id`;
 		return out(rows, rows.length ? rows.map(ruleLine).join("\n") : all ? "还没有选品规矩：x2 rule add" : "没有在用的选品规矩（x2 rule list --all 看停用的）");
 	}
 

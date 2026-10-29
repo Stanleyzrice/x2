@@ -23,15 +23,28 @@ export function productOf(l: any, s: Settings): { product?: Product; info?: Reco
 	const removed = new Set<string>([...((l.removed_images ?? []) as string[])]);
 	// 规格图：第一层的选项挂；图被筛掉、删掉的选项不挂图
 	const used = new Set(specs.tiers[0]!.options.map((o) => o.image));
-	const optionImages = Object.fromEntries((pics.options ?? []).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId) && used.has(p.from)).map((p) => [p.from, p.imageId!]));
-	const tiers = specs.tiers.map((t, a) => (a > 0 ? t : { ...t, options: t.options.map((o) => (o.image && !optionImages[o.image] ? { ...o, image: null } : o)) }));
+	const optionImages = Object.fromEntries(
+		(pics.options ?? []).filter((p) => !p.drop && p.imageId && !removed.has(p.imageId) && used.has(p.from)).map((p) => [p.from, p.imageId!]),
+	);
+	const tiers = specs.tiers.map((t, a) =>
+		a > 0 ? t : { ...t, options: t.options.map((o) => (o.image && !optionImages[o.image] ? { ...o, image: null } : o)) },
+	);
 	const product: Product = {
-		parentSku: `LT${l.offer_id}`, title: String(l.title), description: String(l.description), categoryPath: (l.category_path as unknown[]).map(Number),
-		attributes: l.attributes ?? [], preOrder: s.preOrder, daysToShip: Number(l.days_to_ship), minPurchase: s.minPurchase, channels: s.channels,
-		tiers, variants: specs.variants.map((v) => ({ ...v, priceTwd: v.priceTwd! })),
+		parentSku: `LT${l.offer_id}`,
+		title: String(l.title),
+		description: String(l.description),
+		categoryPath: (l.category_path as unknown[]).map(Number),
+		attributes: l.attributes ?? [],
+		preOrder: s.preOrder,
+		daysToShip: Number(l.days_to_ship),
+		minPurchase: s.minPurchase,
+		channels: s.channels,
+		tiers,
+		variants: specs.variants.map((v) => ({ ...v, priceTwd: v.priceTwd! })),
 		images: usedPics(pics, "main", removed).map(({ pic }) => pic.imageId!),
 		detail: usedPics(pics, "detail", removed).map(({ pic }) => ({ id: pic.imageId!, width: pic.width!, height: pic.height! })),
-		optionImages, sizeChart: null,
+		optionImages,
+		sizeChart: null,
 	};
 	try {
 		const info = productInfo(product);

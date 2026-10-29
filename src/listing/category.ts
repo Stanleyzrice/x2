@@ -21,7 +21,8 @@ export function leafPath(tree: Category[], id: string): { path: number[]; names:
 	if (!hit) return { error: `Shopee 的类目树里没有类目 ${id}` };
 	const names = hit.map((c) => c.name);
 	const leaf = hit[hit.length - 1]!;
-	if (leaf.children.length) return { error: `「${names.join(" > ")}」不是叶子类目，选它下面的：${leaf.children.map((c) => `${c.name}（${c.id}）`).join("、")}` };
+	if (leaf.children.length)
+		return { error: `「${names.join(" > ")}」不是叶子类目，选它下面的：${leaf.children.map((c) => `${c.name}（${c.id}）`).join("、")}` };
 	return { path: hit.map((c) => Number(c.id)), names };
 }
 
@@ -35,12 +36,22 @@ export function recommendedPath(data: any): { path: number[]; names: string[] } 
 }
 
 /** 必填属性 → product_info 的 attributes；要人填的列出来 */
-export function pickAttributes(tree: Attribute[]): { attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[]; text: string[]; missing: string[] } {
-	const attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[] = [], text: string[] = [], missing: string[] = [];
+export function pickAttributes(tree: Attribute[]): {
+	attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[];
+	text: string[];
+	missing: string[];
+} {
+	const attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[] = [],
+		text: string[] = [],
+		missing: string[] = [];
 	for (const a of tree.filter((x) => x.mandatory)) {
-		if (!a.values.length) { missing.push(a.name); continue; }
+		if (!a.values.length) {
+			missing.push(a.name);
+			continue;
+		}
 		const names = a.values.map((v) => v.name);
-		const pick = names.every((n) => n === "是" || n === "否") && names.includes("否") ? "否" : names.find((n) => n.includes("其他") || n.includes("一般")) ?? names[0]!;
+		const pick =
+			names.every((n) => n === "是" || n === "否") && names.includes("否") ? "否" : (names.find((n) => n.includes("其他") || n.includes("一般")) ?? names[0]!);
 		const v = a.values.find((x) => x.name === pick)!;
 		attributes.push({ attribute_id: Number(a.id), attribute_values: [{ value_id: Number(v.valueId) }] });
 		text.push(`${a.name}：${pick}`);

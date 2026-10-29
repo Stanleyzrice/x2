@@ -59,7 +59,8 @@ export function minPrice(costRmb: number, freightRmb: number, kg: number, p: Pri
 		const m = margin(t, costRmb, freightRmb, kg, p, preOrder);
 		return m.rate >= p.minMarginRate && m.profitRmb >= p.minMarginRmb;
 	};
-	let low = 1, high = 499_999;
+	let low = 1,
+		high = 499_999;
 	if (!passes(high)) return null;
 	while (low < high) {
 		const mid = Math.floor((low + high) / 2);

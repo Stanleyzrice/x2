@@ -15,16 +15,24 @@ export type Outcome =
 	| { kind: "refused"; why: string; raw: unknown }
 	| { kind: "unknown"; why: string };
 
-export const sign = (commitTime: string, userKey: string, imgTransKey: string) => createHash("md5").update(`${commitTime}_${userKey}_${imgTransKey}`).digest("hex");
+export const sign = (commitTime: string, userKey: string, imgTransKey: string) =>
+	createHash("md5").update(`${commitTime}_${userKey}_${imgTransKey}`).digest("hex");
 
 /** 表单：Urls 先逐个编码再连起来，URLSearchParams 再编码一次 */
 export function form(urls: string[], keys: { userKey: string; imgTransKey: string }, now = Date.now(), engine?: string): URLSearchParams {
 	const commitTime = String(Math.floor(now / 1000));
 	return new URLSearchParams({
-		Action: "GetImageTranslateBatch", SourceLanguage: "CHS", TargetLanguage: "CHT",
+		Action: "GetImageTranslateBatch",
+		SourceLanguage: "CHS",
+		TargetLanguage: "CHT",
 		Urls: urls.map(encodeURIComponent).join(","),
-		ImgTransKey: keys.imgTransKey, CommitTime: commitTime, Sign: sign(commitTime, keys.userKey, keys.imgTransKey),
-		Sync: "1", NeedWatermark: "0", Qos: "BestQuality", ...(engine ? { EngineType: engine } : {}),
+		ImgTransKey: keys.imgTransKey,
+		CommitTime: commitTime,
+		Sign: sign(commitTime, keys.userKey, keys.imgTransKey),
+		Sync: "1",
+		NeedWatermark: "0",
+		Qos: "BestQuality",
+		...(engine ? { EngineType: engine } : {}),
 	});
 }
 
@@ -32,8 +40,16 @@ export function form(urls: string[], keys: { userKey: string; imgTransKey: strin
 export function parse(urls: string[], raw: any): Outcome {
 	if (Number(raw?.Code) !== 200) return { kind: "refused", why: `象寄没有翻译：Code=${raw?.Code} ${raw?.Message ?? ""}`.trim(), raw };
 	const rows = (raw?.Data?.Content ?? []) as any[];
-	const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
-	const results: Translated[] = [], failed: { origin: string; why: string }[] = [], missing: string[] = [];
+	const decode = (s: string) => {
+		try {
+			return decodeURIComponent(s);
+		} catch {
+			return s;
+		}
+	};
+	const results: Translated[] = [],
+		failed: { origin: string; why: string }[] = [],
+		missing: string[] = [];
 	for (const u of urls) {
 		const hits = rows.filter((c) => c?.OriginUrl === u || decode(String(c?.OriginUrl ?? "")) === u);
 		const hit = hits[0];
@@ -47,13 +63,19 @@ export function parse(urls: string[], raw: any): Outcome {
 /** 交一批（最多 5 张）给象寄。没拿到答复（超时、断网、回的不是 JSON）是 unknown：可能已经扣钱，不许重交 */
 export async function translate(urls: string[]): Promise<Outcome> {
 	if (urls.length === 0 || urls.length > BATCH) throw new Error(`一批交 1 到 ${BATCH} 张，这批 ${urls.length} 张`);
-	const userKey = process.env.XIANGJI_USER_KEY, imgTransKey = process.env.XIANGJI_IMG_TRANS_KEY;
+	const userKey = process.env.XIANGJI_USER_KEY,
+		imgTransKey = process.env.XIANGJI_IMG_TRANS_KEY;
 	if (!userKey || !imgTransKey) throw new Error("没有设 XIANGJI_USER_KEY、XIANGJI_IMG_TRANS_KEY（写在 .env 里）");
 	const base = process.env.XIANGJI_BASE || "https://api.tosoiot.com";
 	if (!base.startsWith("https://")) throw new Error("XIANGJI_BASE 要是 https 地址");
 	let raw: unknown;
 	try {
-		const r = await fetch(base, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form(urls, { userKey, imgTransKey }, Date.now(), process.env.XIANGJI_ENGINE_TYPE), signal: AbortSignal.timeout(120_000) });
+		const r = await fetch(base, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: form(urls, { userKey, imgTransKey }, Date.now(), process.env.XIANGJI_ENGINE_TYPE),
+			signal: AbortSignal.timeout(120_000),
+		});
 		raw = await r.json();
 	} catch (e) {
 		return { kind: "unknown", why: `象寄没有答复（${(e as Error).name === "TimeoutError" ? "超时" : (e as Error).message}）：可能已经扣钱，不要重交` };

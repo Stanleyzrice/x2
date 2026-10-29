@@ -18,9 +18,11 @@ p = 只有产品本体上的文字:印在实物表面的字(仪器刻度、表�
 n = 完全没有文字
 判断顺序:只要命中 d 的内容,即使同时有商品卖点也必须答 d;拿不准答 r。否则营销文字是"画上去的",产品文字是"拍到的"。两者都有时答 m。只输出 d、r、m、p 或 n。`;
 
-export const SCREEN_FALLBACK_PROMPT = "这是电商商品图。只输出一个小写字母：d=含工厂/OEM/ODM/MADE IN CHINA/中国制造/公司店铺名/联系方式/二维码/供应商水印，或含¥/￥/几元/只要X元/低至/亏本冲量/厂价批发价等人民币低价承诺（单独商品数量不算），或是写给1688买家的售后、退换货、退货运费、定制、色差尺寸免责（望亲谅解）、「亲」的口吻，删除；r=品牌商标、IP 角色或不确定，记录后直接放行；m=后期营销说明文字；p=只有产品本体文字；n=完全无字。";
+export const SCREEN_FALLBACK_PROMPT =
+	"这是电商商品图。只输出一个小写字母：d=含工厂/OEM/ODM/MADE IN CHINA/中国制造/公司店铺名/联系方式/二维码/供应商水印，或含¥/￥/几元/只要X元/低至/亏本冲量/厂价批发价等人民币低价承诺（单独商品数量不算），或是写给1688买家的售后、退换货、退货运费、定制、色差尺寸免责（望亲谅解）、「亲」的口吻，删除；r=品牌商标、IP 角色或不确定，记录后直接放行；m=后期营销说明文字；p=只有产品本体文字；n=完全无字。";
 
-export const R_PROMPT = "这是电商商品图。图上有没有后期叠加的简体中文文字（文案、标题、卖点、参数表、标签、角标等画上去的字，不算实物本身印的字和品牌商标）？有答 y，没有答 n。只输出 y 或 n。";
+export const R_PROMPT =
+	"这是电商商品图。图上有没有后期叠加的简体中文文字（文案、标题、卖点、参数表、标签、角标等画上去的字，不算实物本身印的字和品牌商标）？有答 y，没有答 n。只输出 y 或 n。";
 
 /** 模型的回答 → 一个字母。去掉空白、反引号、标点，转小写，整个是同一个字母（可以重复）才算；「marketing」「m or p」都不算 */
 export function parseVerdict(text: string): Verdict | null {
@@ -33,7 +35,10 @@ export function parseVerdict(text: string): Verdict | null {
 export async function screen(img: Image): Promise<{ verdict: Verdict; raw: string; simplified?: boolean }> {
 	let raw = await gemini(SCREEN_PROMPT, [img]);
 	let verdict = parseVerdict(raw);
-	if (!verdict) { raw = await gemini(SCREEN_FALLBACK_PROMPT, [img]); verdict = parseVerdict(raw); }
+	if (!verdict) {
+		raw = await gemini(SCREEN_FALLBACK_PROMPT, [img]);
+		verdict = parseVerdict(raw);
+	}
 	if (!verdict) throw new Error(`Gemini 没答出图上是什么字（回「${raw.slice(0, 40)}」）：这张图先不往下做`);
 	if (verdict !== "r") return { verdict, raw };
 	const yn = (await gemini(R_PROMPT, [img])).trim().toLowerCase().replace(/[^yn]/g, "");

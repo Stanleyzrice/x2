@@ -6,21 +6,25 @@
 // 4. check：读回来，和 before 比：做了、没做、看不出（看不出就是结果未知，不重发）
 import { z } from "zod";
 import { buyAccount, in1688, inShop } from "../accounts.ts";
-import type { Sql } from "../db/index.ts";
 import { current } from "../check/index.ts";
+import type { Sql } from "../db/index.ts";
 import { db } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
-import { fetchImage } from "../service/image.ts";
-import { translate } from "../service/xiangji.ts";
 import { settingsOf } from "../listing/make.ts";
 import { minPrice } from "../listing/price.ts";
 import { readbackProblems } from "../listing/product.ts";
 import { productOf } from "../listing/ready.ts";
+import { fetchImage } from "../service/image.ts";
+import { translate } from "../service/xiangji.ts";
+import { addToCart, type CartLine, Gone, cart as readCart, offer as readOffer } from "./1688.ts";
+import { orders as chanbossOrders, forecast, NO_TRACKING } from "./chanboss.ts";
 import { allProducts, channels, createProduct, productInfo, productPage, setUnlisted } from "./shopee/products.ts";
-import { addToCart, cart as readCart, type CartLine, Gone, offer as readOffer } from "./1688.ts";
-import { forecast, NO_TRACKING, orders as chanbossOrders } from "./chanboss.ts";
 
-export type Submitted = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
+export type Submitted =
+	| { kind: "done"; data?: unknown }
+	| { kind: "refused"; why: string }
+	| { kind: "blocked"; why: string }
+	| { kind: "unknown"; why: string };
 export type Prepared<P> = { skip: string } | { params: P; before: unknown };
 
 export type WriteOp<P = any> = {
@@ -45,7 +49,8 @@ export type WriteOp<P = any> = {
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const inCart = (lines: CartLine[], offerId: string, skuId: string) => lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
+const inCart = (lines: CartLine[], offerId: string, skuId: string) =>
+	lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
 
 /** 现读 chanboss 上这几张订单 */
 async function liveOrders(sns: string[]): Promise<Map<string, any>> {
@@ -55,7 +60,12 @@ async function liveOrders(sns: string[]): Promise<Map<string, any>> {
 }
 
 const cartParams = z.object({
-	offerId: z.string(), skuId: z.string(), qty: z.number().int().positive(), title: z.string(), sku: z.string(), price: z.number().nullable(),
+	offerId: z.string(),
+	skuId: z.string(),
+	qty: z.number().int().positive(),
+	title: z.string(),
+	sku: z.string(),
+	price: z.number().nullable(),
 	lines: z.array(z.object({ sn: z.string(), modelId: z.string(), qty: z.number().int().positive() })).min(1),
 	/** 随这次加购一起定下的新货源（店里的商品 id）：加上了才标成「选用」 */
 	newSources: z.array(z.string()).default([]),
@@ -71,7 +81,11 @@ const cart: WriteOp<CartP> = {
 	describe: "把货源的一个规格加进购物车",
 	params: cartParams,
 	target: (p) => `1688:${p.offerId}:${p.skuId}`,
-	key: (p) => `cart:${p.lines.map((l) => `${l.sn}:${l.modelId}`).sort().join(",")}`,
+	key: (p) =>
+		`cart:${p.lines
+			.map((l) => `${l.sn}:${l.modelId}`)
+			.sort()
+			.join(",")}`,
 	display: (p) => `${p.title} / ${p.sku} × ${p.qty}（订单 ${[...new Set(p.lines.map((l) => l.sn))].join("、")}）${p.newSources.length ? "（新货源）" : ""}`,
 	// 只往采购账号加购：在登录着它的浏览器里做
 	where: async (sql, p, fn) => {
@@ -99,7 +113,10 @@ const cart: WriteOp<CartP> = {
 			await sql`update sources set broken = ${why}, read_at = now() where offer_id = ${p.offerId} and chosen`;
 			return { skip: why };
 		};
-		const offer = await readOffer(p.offerId).catch((e) => { if (e instanceof Gone) return null; throw e; });
+		const offer = await readOffer(p.offerId).catch((e) => {
+			if (e instanceof Gone) return null;
+			throw e;
+		});
 		if (!offer) return broken("货源已在 1688 下架");
 		const sku = offer.skus.find((s) => s.skuId === p.skuId);
 		if (!sku) return broken("1688 上已无这个规格");
@@ -127,7 +144,9 @@ const cart: WriteOp<CartP> = {
 };
 
 const forecastParams = z.object({
-	sn: z.string(), chanbossId: z.string(), chanbossTime: z.number(),
+	sn: z.string(),
+	chanbossId: z.string(),
+	chanbossTime: z.number(),
 	lines: z.array(z.object({ modelId: z.string(), chanbossModelId: z.string(), qty: z.number().int().positive(), trackingNo: z.string().nullable() })).min(1),
 });
 type ForecastP = z.infer<typeof forecastParams>;
@@ -152,7 +171,11 @@ const forecastOp: WriteOp<ForecastP> = {
 		// 线路、仓库在订单设置里
 		const [s] = await sql`select sendway_id, line_id, warehouse_id from order_settings where id = 1`;
 		return forecast({
-			orderId: p.chanbossId, orderTime: p.chanbossTime, sendwayId: Number(s!.sendway_id), lineId: Number(s!.line_id), warehouseId: Number(s!.warehouse_id),
+			orderId: p.chanbossId,
+			orderTime: p.chanbossTime,
+			sendwayId: Number(s!.sendway_id),
+			lineId: Number(s!.line_id),
+			warehouseId: Number(s!.warehouse_id),
 			lines: p.lines.map((l) => ({ platformModelId: l.modelId, modelId: l.chanbossModelId, count: l.qty, trackNum: l.trackingNo ?? NO_TRACKING })),
 		});
 	},
@@ -163,12 +186,18 @@ const forecastOp: WriteOp<ForecastP> = {
 	},
 };
 
-const translateParams = z.object({ items: z.array(z.object({ sha: z.string(), url: z.string() })).min(1).max(5) });
+const translateParams = z.object({
+	items: z
+		.array(z.object({ sha: z.string(), url: z.string() }))
+		.min(1)
+		.max(5),
+});
 type TranslateP = z.infer<typeof translateParams>;
 
 /** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）或 { failed }（象寄说译不成） */
 export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; saved: boolean }>> {
-	const rows = await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
+	const rows =
+		await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
 	return new Map(rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, saved: Boolean(r.saved) }]));
 }
 
@@ -184,11 +213,18 @@ const translateOp: WriteOp<TranslateP> = {
 	describe: "交象寄把图上的简体字译成繁体（收费）",
 	params: translateParams,
 	target: (p) => `xiangji:${p.items.map((i) => i.sha.slice(0, 12)).join(",")}`,
-	key: (p) => `xiangji:${p.items.map((i) => i.sha).sort().join(",")}`,
+	key: (p) =>
+		`xiangji:${p.items
+			.map((i) => i.sha)
+			.sort()
+			.join(",")}`,
 	display: (p) => `译图 ${p.items.length} 张`,
 	where: (_sql, _p, fn) => fn(),
 	async prepare(sql, p) {
-		const state = await translationState(sql, p.items.map((i) => i.sha));
+		const state = await translationState(
+			sql,
+			p.items.map((i) => i.sha),
+		);
 		const items = p.items.filter((i) => !state.has(i.sha));
 		return items.length ? { params: { items }, before: {} } : { skip: "这几张都译过了" };
 	},
@@ -198,14 +234,18 @@ const translateOp: WriteOp<TranslateP> = {
 		const shaOf = new Map(p.items.map((i) => [i.url, i.sha]));
 		const at = new Date().toISOString();
 		for (const t of r.results) await sql`update images set checks = checks || ${sql.json({ 译图: { url: t.url, at } })} where sha256 = ${shaOf.get(t.origin)!}`;
-		for (const f of r.failed) await sql`update images set checks = checks || ${sql.json({ 译图: { failed: f.why, at } })} where sha256 = ${shaOf.get(f.origin)!}`;
+		for (const f of r.failed)
+			await sql`update images set checks = checks || ${sql.json({ 译图: { failed: f.why, at } })} where sha256 = ${shaOf.get(f.origin)!}`;
 		// 记下了地址再取图：取不回来下次照地址再取，不用再付钱
 		for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
 		if (r.missing.length) return { kind: "unknown", why: `象寄的答复里没有 ${r.missing.length} 张（不知道扣没扣钱）` };
 		return { kind: "done", data: { translated: r.results.length, failed: r.failed } };
 	},
 	async check(p) {
-		const state = await translationState(await db(), p.items.map((i) => i.sha));
+		const state = await translationState(
+			await db(),
+			p.items.map((i) => i.sha),
+		);
 		const done = p.items.every((i) => state.get(i.sha)?.url || state.get(i.sha)?.failed || state.get(i.sha)?.saved);
 		return { done: done ? true : null, readback: Object.fromEntries(state) };
 	},
@@ -233,7 +273,15 @@ async function findBySku(parentSku: string, name: string): Promise<string | null
 }
 
 // name：商品稿的叫法「简称（店铺）」，只给人看（x2 status、写入的输出）
-const createParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), productInfo: z.record(z.string(), z.unknown()), hash: z.string(), name: z.string().optional() });
+const createParams = z.object({
+	listingId: z.string(),
+	shop: z.string(),
+	shopId: z.string(),
+	parentSku: z.string(),
+	productInfo: z.record(z.string(), z.unknown()),
+	hash: z.string(),
+	name: z.string().optional(),
+});
 type CreateP = z.infer<typeof createParams>;
 
 /** 建商品：在这家店的卖家中心页面里发 create_product_info，先建成下架，读回来逐项核对。
@@ -271,7 +319,7 @@ const createOp: WriteOp<CreateP> = {
 	},
 	async check(p) {
 		const sql = await db();
-		let [{ product_id: id }] = await sql`select product_id from listings where id = ${p.listingId}` as any;
+		let [{ product_id: id }] = (await sql`select product_id from listings where id = ${p.listingId}`) as any;
 		if (!id) {
 			id = await findBySku(p.parentSku, String(p.productInfo.name));
 			if (!id) return { done: null, readback: { found: false } };
@@ -290,7 +338,15 @@ const createOp: WriteOp<CreateP> = {
 	},
 };
 
-const liveParams = z.object({ listingId: z.string(), shop: z.string(), shopId: z.string(), parentSku: z.string(), title: z.string().nullable().optional(), name: z.string().optional(), productId: z.string().optional() });
+const liveParams = z.object({
+	listingId: z.string(),
+	shop: z.string(),
+	shopId: z.string(),
+	parentSku: z.string(),
+	title: z.string().nullable().optional(),
+	name: z.string().optional(),
+	productId: z.string().optional(),
+});
 type LiveP = z.infer<typeof liveParams>;
 
 /** 上架：建好的商品从下架翻成在售（update_product_info 的 unlisted: false），读回来确认在售 */

@@ -18,16 +18,25 @@ export type Product = { productId: string; parentSku: string; name: string; cove
 
 /** 在售商品的一页（一页最多 48） */
 export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: number; rows: Product[] }> {
-	const b = await seller("/api/v3/opt/mpsku/list/v2/get_product_list", { query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "live_all", need_ads: false } });
+	const b = await seller("/api/v3/opt/mpsku/list/v2/get_product_list", {
+		query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "live_all", need_ads: false },
+	});
 	const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
 	return {
 		total: Number(b.data?.page_info?.total ?? 0),
 		rows: ((b.data?.products ?? []) as any[]).map((p) => ({
-			productId: String(p.id), parentSku: String(p.parent_sku ?? ""), name: String(p.name ?? ""), cover: image(p.cover_image),
+			productId: String(p.id),
+			parentSku: String(p.parent_sku ?? ""),
+			name: String(p.name ?? ""),
+			cover: image(p.cover_image),
 			createdAt: Number(p.create_time) > 0 ? new Date(Number(p.create_time) * 1000).toISOString() : null,
 			models: ((p.model_list ?? []) as any[]).map((m) => ({
-				modelId: String(m.id), sku: String(m.sku ?? ""), name: String(m.name ?? ""),
-				price: n(m.price_detail?.origin_price), stock: n(m.stock_detail?.total_seller_stock), sold: n(m.statistics?.sold_count),
+				modelId: String(m.id),
+				sku: String(m.sku ?? ""),
+				name: String(m.name ?? ""),
+				price: n(m.price_detail?.origin_price),
+				stock: n(m.stock_detail?.total_seller_stock),
+				sold: n(m.statistics?.sold_count),
 				// 改商品的 model_list 必须带 tier_index
 				tierIndex: ((m.tier_index ?? []) as unknown[]).map(Number),
 			})),
@@ -38,11 +47,21 @@ export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: 
 export const STATUS: Record<number, string> = { 0: "删除", 1: "在售", 2: "审核中", 3: "禁卖", 8: "下架" };
 
 /** 全部商品（含下架、审核中）的一页：id、名字、状态码 */
-export async function allProducts(pageNo = 1, pageSize = 48): Promise<{ total: number; rows: { productId: string; name: string; status: number; cover: string }[] }> {
-	const b = await seller("/api/v3/opt/mpsku/list/v2/search_product_list", { query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "all", need_ads: false } });
+export async function allProducts(
+	pageNo = 1,
+	pageSize = 48,
+): Promise<{ total: number; rows: { productId: string; name: string; status: number; cover: string }[] }> {
+	const b = await seller("/api/v3/opt/mpsku/list/v2/search_product_list", {
+		query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "all", need_ads: false },
+	});
 	return {
 		total: Number(b.data?.page_info?.total ?? 0),
-		rows: ((b.data?.products ?? []) as any[]).map((p) => ({ productId: String(p.id), name: String(p.name ?? ""), status: Number(p.status), cover: image(p.cover_image) })),
+		rows: ((b.data?.products ?? []) as any[]).map((p) => ({
+			productId: String(p.id),
+			name: String(p.name ?? ""),
+			status: Number(p.status),
+			cover: image(p.cover_image),
+		})),
 	};
 }
 
@@ -55,7 +74,9 @@ export async function productInfo(productId: string): Promise<any> {
 
 /** 物流渠道（启用哪些、谁付运费）。新商品给 productId 0、叶子类目 id */
 export async function channels(productId: string, categoryId: number): Promise<any[]> {
-	const b = await seller("/api/v3/listing-upload/component/get_product_channel_info", { body: { product_id: Number(productId), category_id: categoryId, is_draft: false } });
+	const b = await seller("/api/v3/listing-upload/component/get_product_channel_info", {
+		body: { product_id: Number(productId), category_id: categoryId, is_draft: false },
+	});
 	return b.data?.list ?? [];
 }
 
@@ -67,9 +88,26 @@ export async function countLimit(): Promise<{ used: number; unlisted: number; li
 }
 
 /** 数据中心「商品表现」的一页（一页最多 50）：销售额、订单、件数、曝光、点击、访客、加购、转化。period 是 past7days 或 past30days，时间是秒 */
-export async function performance(start: number, end: number, period: "past7days" | "past30days", pageNo = 1, pageSize = 50): Promise<{ total: number; rows: any[] }> {
+export async function performance(
+	start: number,
+	end: number,
+	period: "past7days" | "past30days",
+	pageNo = 1,
+	pageSize = 50,
+): Promise<{ total: number; rows: any[] }> {
 	const b = await seller("/api/mydata/v4/product/performance/", {
-		query: { start_time: start, end_time: end, period, keyword: "", category_type: "shopee", category_id: -1, page_size: Math.min(50, pageSize), page_num: pageNo, order_type: "confirmed", order_by: "confirmed_sales.desc" },
+		query: {
+			start_time: start,
+			end_time: end,
+			period,
+			keyword: "",
+			category_type: "shopee",
+			category_id: -1,
+			page_size: Math.min(50, pageSize),
+			page_num: pageNo,
+			order_type: "confirmed",
+			order_by: "confirmed_sales.desc",
+		},
 	});
 	return { total: Number(b.result?.total ?? 0), rows: b.result?.items ?? [] };
 }
@@ -91,14 +129,19 @@ export type Attribute = { id: string; name: string; mandatory: boolean; maxValue
 export async function attributes(categoryId: number): Promise<Attribute[]> {
 	const b = await seller("/api/v3/listing-upload/component/get_attribute_tree", { body: { category_id: categoryId } });
 	return ((b.data?.list?.[0]?.attribute_tree ?? []) as any[]).map((a) => ({
-		id: String(a.attribute_id), name: String(a.display_name ?? a.name ?? ""), mandatory: Boolean(a.mandatory), maxValues: Number(a.attribute_info?.max_value_count ?? 1),
+		id: String(a.attribute_id),
+		name: String(a.display_name ?? a.name ?? ""),
+		mandatory: Boolean(a.mandatory),
+		maxValues: Number(a.attribute_info?.max_value_count ?? 1),
 		values: ((a.children ?? []) as any[]).map((c) => ({ valueId: String(c.value_id), name: String(c.display_name ?? c.name ?? "") })),
 	}));
 }
 
 /** Shopee 推荐的类目：商品名 + 一张已传的图的 id。原样回 data */
 export async function recommendedCategory(name: string, imageId = ""): Promise<any> {
-	return (await seller("/api/v3/category/get_recommended_category", { body: { item_id: 0, name, image: imageId, description: "", description_type: "normal" } })).data;
+	return (
+		await seller("/api/v3/category/get_recommended_category", { body: { item_id: 0, name, image: imageId, description: "", description_type: "normal" } })
+	).data;
 }
 
 /** 各类目的备货天数范围（较长备货）和现货的备货天数 */
@@ -106,7 +149,11 @@ export async function shippingDays(): Promise<{ inStock: number; rules: { catego
 	const b = await seller("/api/v3/product/get_product_constraints/");
 	return {
 		inStock: Number(b.data?.in_stock_dts),
-		rules: ((b.data?.category_dts_setting ?? []) as any[]).map((r) => ({ categoryIds: (r.category_id_list ?? []).map(String), min: Number(r.dts_min), max: Number(r.dts_max) })),
+		rules: ((b.data?.category_dts_setting ?? []) as any[]).map((r) => ({
+			categoryIds: (r.category_id_list ?? []).map(String),
+			min: Number(r.dts_min),
+			max: Number(r.dts_max),
+		})),
 	};
 }
 
@@ -136,7 +183,8 @@ export async function productPage() {
 	const p = await page(ORIGIN);
 	if (!/\/portal\/product\/(new|\d+)/.test(await p.run(() => location.pathname))) await p.goto(`${ORIGIN}/portal/product/new`);
 	const blocked = await p.run(() => /no-permission/.test(location.href) || /您的權限不足|卖场迁移中|賣場遷移中/.test(String(document.body?.innerText ?? "")));
-	if (blocked) throw new NeedsHuman("Shopee 这家店现在不能新增商品（權限不足 / 賣場遷移中）：到卖家中心看一眼；要暂停上品就在「店铺设置」的「暂停上品原因」里写原因");
+	if (blocked)
+		throw new NeedsHuman("Shopee 这家店现在不能新增商品（權限不足 / 賣場遷移中）：到卖家中心看一眼；要暂停上品就在「店铺设置」的「暂停上品原因」里写原因");
 	return p;
 }
 
@@ -148,46 +196,81 @@ export async function uploadImages(files: { base64: string; mime: string }[], bi
 	for (const [i, f] of files.entries()) {
 		if (i > 0) await new Promise((r) => setTimeout(r, 500));
 		const ext = f.mime === "image/png" ? "png" : f.mime === "image/webp" ? "webp" : "jpg";
-		const r = await p.run(async (b64: string, filename: string, mime: string, biz: number) => {
-			const w = window as any;
-			const find = async () => {
-				const reqs: any[] = await new Promise((resolve) => {
-					const found: any[] = [];
-					const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
-					let pending = names.length;
-					if (!pending) return resolve(found);
-					for (const n of names) {
-						try { w[n].push([[`__x2_up_${n}_${Date.now()}`], {}, (req: any) => { found.push(req); if (--pending <= 0) resolve(found); }]); } catch { if (--pending <= 0) resolve(found); }
-					}
-					setTimeout(() => resolve(found), 3000);
-				});
-				for (const req of reqs) {
-					// 上传模块在按需加载的代码块里：先把名字里带 upload. 的代码块都加载了
-					for (let i = 0; i < 600; i++) {
-						let u: unknown;
-						try { u = req.u?.(i); } catch { continue; }
-						if (u && /upload\./.test(String(u))) { try { await req.e(i); } catch { /* 没有这一块 */ } }
-					}
-					for (const id in req.m ?? {}) {
-						if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(req.m[id]))) continue;
-						let mod: any;
-						try { mod = req(id); } catch { continue; }
-						for (const v of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
-							if (typeof v === "function" && typeof v.prototype?.uploadImage === "function" && typeof v.$instance?.uploadImage === "function") return v.$instance;
+		const r = await p.run(
+			async (b64: string, filename: string, mime: string, biz: number) => {
+				const w = window as any;
+				const find = async () => {
+					const reqs: any[] = await new Promise((resolve) => {
+						const found: any[] = [];
+						const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
+						let pending = names.length;
+						if (!pending) return resolve(found);
+						for (const n of names) {
+							try {
+								w[n].push([
+									[`__x2_up_${n}_${Date.now()}`],
+									{},
+									(req: any) => {
+										found.push(req);
+										if (--pending <= 0) resolve(found);
+									},
+								]);
+							} catch {
+								if (--pending <= 0) resolve(found);
+							}
+						}
+						setTimeout(() => resolve(found), 3000);
+					});
+					for (const req of reqs) {
+						// 上传模块在按需加载的代码块里：先把名字里带 upload. 的代码块都加载了
+						for (let i = 0; i < 600; i++) {
+							let u: unknown;
+							try {
+								u = req.u?.(i);
+							} catch {
+								continue;
+							}
+							if (u && /upload\./.test(String(u))) {
+								try {
+									await req.e(i);
+								} catch {
+									/* 没有这一块 */
+								}
+							}
+						}
+						for (const id in req.m ?? {}) {
+							if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(req.m[id]))) continue;
+							let mod: any;
+							try {
+								mod = req(id);
+							} catch {
+								continue;
+							}
+							for (const v of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
+								if (typeof v === "function" && typeof v.prototype?.uploadImage === "function" && typeof v.$instance?.uploadImage === "function")
+									return v.$instance;
+							}
 						}
 					}
+					return null;
+				};
+				for (let i = 0; i < 5 && !w.__x2Upload; i++) {
+					w.__x2Upload = await find();
+					if (!w.__x2Upload) await new Promise((r) => setTimeout(r, 2000));
 				}
-				return null;
-			};
-			for (let i = 0; i < 5 && !w.__x2Upload; i++) { w.__x2Upload = await find(); if (!w.__x2Upload) await new Promise((r) => setTimeout(r, 2000)); }
-			if (!w.__x2Upload) return { error: "没找到页面的 UploadService：先在浏览器里打开一次新增商品页" };
-			const bin = atob(b64);
-			const bytes = new Uint8Array(bin.length);
-			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-			const res = await w.__x2Upload.uploadImage(new File([bytes], filename, { type: mime }), { biz, func: ["compress"], useMms: true });
-			const id = res?.data?.resourceId;
-			return id ? { imageId: String(id) } : { error: `传图没有回图片 id：${JSON.stringify(res?.error ?? res).slice(0, 200)}` };
-		}, f.base64, `x2.${ext}`, f.mime, biz);
+				if (!w.__x2Upload) return { error: "没找到页面的 UploadService：先在浏览器里打开一次新增商品页" };
+				const bin = atob(b64);
+				const bytes = new Uint8Array(bin.length);
+				for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+				const res = await w.__x2Upload.uploadImage(new File([bytes], filename, { type: mime }), { biz, func: ["compress"], useMms: true });
+				const id = res?.data?.resourceId;
+				return id ? { imageId: String(id) } : { error: `传图没有回图片 id：${JSON.stringify(res?.error ?? res).slice(0, 200)}` };
+			},
+			f.base64,
+			`x2.${ext}`,
+			f.mime,
+			biz,
+		);
 		if ("error" in r) throw new Error(r.error);
 		ids.push(r.imageId);
 	}

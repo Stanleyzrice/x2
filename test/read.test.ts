@@ -11,7 +11,11 @@ test("同一个进程里读过的复用，过期了重读；读失败的不留",
 	assert.equal(await count(), 2);
 
 	let slider = true;
-	const flaky = () => reuse("会失败", async () => { if (slider) throw new Error("要过滑块"); return "读到了"; });
+	const flaky = () =>
+		reuse("会失败", async () => {
+			if (slider) throw new Error("要过滑块");
+			return "读到了";
+		});
 	await assert.rejects(flaky(), /要过滑块/);
 	slider = false;
 	assert.equal(await flaky(), "读到了");

@@ -6,14 +6,16 @@ export const MAX_NICKNAME = 12;
 const chars = (s: string) => [...s].length;
 
 /** 简称还没人写时，x2 先填 1688 标题的前 12 个字（去掉空白） */
-export const autoNickname = (title: string | null | undefined): string | null => [...String(title ?? "").replace(/\s+/g, "")].slice(0, MAX_NICKNAME).join("") || null;
+export const autoNickname = (title: string | null | undefined): string | null =>
+	[...String(title ?? "").replace(/\s+/g, "")].slice(0, MAX_NICKNAME).join("") || null;
 
 /** 做商品稿时的简称：空着的、还是上一版自动填的（prevTitle 是上一版货源快照的标题），换成这一版 1688 标题的前 12 个字；人改过、agent 写过的不动 */
 export const nicknameFor = (current: string | null | undefined, prevTitle: string | null | undefined, title: string): string | null =>
 	current?.trim() && current !== autoNickname(prevTitle) ? current : autoNickname(title);
 
 /** agent 能不能写简称：空着的、还是自动填的那个值才写（人在网页上改过的不改） */
-export const nicknameOpen = (l: { nickname?: string | null; offer?: { title?: string } | null }) => !l.nickname?.trim() || l.nickname === autoNickname(l.offer?.title);
+export const nicknameOpen = (l: { nickname?: string | null; offer?: { title?: string } | null }) =>
+	!l.nickname?.trim() || l.nickname === autoNickname(l.offer?.title);
 
 let toCn: ((s: string) => string) | null = null;
 /** 简称的规矩：简体中文，1–12 字；回问题 */
@@ -22,13 +24,18 @@ export function nicknameProblems(nickname: string): string[] {
 	if (!n) return ["简称是空的"];
 	const p: string[] = [];
 	if (chars(n) > MAX_NICKNAME) p.push(`简称「${n}」 ${chars(n)} 字，最多 ${MAX_NICKNAME} 字`);
-	const cn = (toCn ??= OpenCC.Converter({ from: "t", to: "cn" }))(n);
+	const toSimplified = toCn ?? OpenCC.Converter({ from: "t", to: "cn" });
+	toCn = toSimplified;
+	const cn = toSimplified(n);
 	if (cn !== n) p.push(`简称「${n}」有繁体字，要用简体中文（${cn}）`);
 	return p;
 }
 
 /** 商品稿在提醒、命令输出里的叫法：简称（店铺），命令要用编号的跟在后面，例 浴水生财猫狗地垫（cheeroutdoor，#2）。还没有简称的用 1688 标题的前 12 个字、货源 id */
-export function listingName(l: { id?: unknown; shop?: string | null; nickname?: string | null; offer?: { title?: string } | null; offer_id?: string | null }, withId = true): string {
+export function listingName(
+	l: { id?: unknown; shop?: string | null; nickname?: string | null; offer?: { title?: string } | null; offer_id?: string | null },
+	withId = true,
+): string {
 	const name = l.nickname?.trim() || autoNickname(l.offer?.title) || `货源 ${l.offer_id ?? ""}`.trim();
 	return `${name}（${[l.shop, withId && l.id !== undefined ? `#${l.id}` : ""].filter(Boolean).join("，")}）`;
 }
@@ -43,4 +50,3 @@ export function textProblems(title: string, description: string): string[] {
 	if (hit.length) p.push(`有采购端、卖家话术：${hit.join("、")}`);
 	return p;
 }
-

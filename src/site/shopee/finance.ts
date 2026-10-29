@@ -9,7 +9,12 @@ export const twd = (v: unknown) => (v === null || v === undefined || v === "" ? 
  * 翻页用上一页回的 nextCursor，空字符串是到底了。入账后还会有调整（adjustment_income_amount） */
 export async function income(startDate: string, endDate: string, cursor = "", limit = 50): Promise<{ nextCursor: string; rows: any[] }> {
 	const b = await seller("/api/v4/accounting/pc/seller_income/income_overview/get_income_detail", {
-		body: { source_type: 0, income_category: 2, pagination_info: { direction: 0, limit: Math.min(50, limit), ...(cursor ? { cursor } : {}) }, local_query_condition: { start_date: startDate, end_date: endDate } },
+		body: {
+			source_type: 0,
+			income_category: 2,
+			pagination_info: { direction: 0, limit: Math.min(50, limit), ...(cursor ? { cursor } : {}) },
+			local_query_condition: { start_date: startDate, end_date: endDate },
+		},
 	});
 	return { nextCursor: String(b.data?.next_page?.cursor ?? ""), rows: b.data?.list ?? [] };
 }
@@ -18,7 +23,9 @@ export async function income(startDate: string, endDate: string, cursor = "", li
 export async function incomeComponents(orderId: string): Promise<any[]> {
 	const out = [];
 	for (const components of [[2, 3, 4], [5]]) {
-		const b = await seller("/api/v4/accounting/pc/seller_income/income_detail/get_order_income_components", { body: { order_id: Number(orderId), components } });
+		const b = await seller("/api/v4/accounting/pc/seller_income/income_detail/get_order_income_components", {
+			body: { order_id: Number(orderId), components },
+		});
 		if (String(b.data?.order_info?.order_id) !== orderId) throw new Error(`Shopee 回的收入明细不是订单 ${orderId}`);
 		out.push({ components, data: b.data });
 	}

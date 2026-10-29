@@ -4,13 +4,14 @@
 // 1688 先看 cookie（__cn_logon__），明说没登录的不开页面。
 // 没在 using() 里、也没设 X2_BROWSER 的读写，browser.ts 按站点来问 browserFor：Shopee 按店（连着几家店时要给 --shop），
 // 1688、知虾、chanboss 用登录着的那个
+
+import { type Browser, browsers, cookies, hasTab, probe, SITE_NAMES, SITE_ORIGINS, type Site, using } from "./browser.ts";
+import type { Sql } from "./db/index.ts";
+import { Challenge, NeedsHuman, Usage } from "./errors.ts";
 import { account as alibabaAccount } from "./site/1688.ts";
 import { identity as chanbossIdentity } from "./site/chanboss.ts";
 import { shop as shopeeShop } from "./site/shopee/seller.ts";
 import { categories as zhixiaCategories } from "./site/zhixia.ts";
-import { type Browser, browsers, cookies, hasTab, probe, SITE_NAMES, SITE_ORIGINS, type Site, using } from "./browser.ts";
-import type { Sql } from "./db/index.ts";
-import { Challenge, NeedsHuman, Usage } from "./errors.ts";
 
 type Shop = Awaited<ReturnType<typeof shopeeShop>>;
 type Alibaba = { userId: string; loginId: string };
@@ -23,7 +24,10 @@ const memo = new Map<string, Promise<Login<unknown>>>();
 function once<T>(key: string, fn: () => Promise<T | null>): Promise<Login<T>> {
 	let p = memo.get(key) as Promise<Login<T>> | undefined;
 	if (!p) {
-		p = fn().then((value) => ({ value, error: null }), (error: Error) => ({ value: null, error }));
+		p = fn().then(
+			(value) => ({ value, error: null }),
+			(error: Error) => ({ value: null, error }),
+		);
 		memo.set(key, p);
 	}
 	return p;
@@ -36,11 +40,21 @@ export function alibabaCookie(jar: Map<string, string> | null): boolean | null {
 }
 
 const shopIn = (b: Browser) => once<Shop>(`shopee ${b.id}`, () => probe(b.id, () => shopeeShop()));
-const alibabaIn = (b: Browser) => once<Alibaba>(`1688 ${b.id}`, async () =>
-	alibabaCookie(await cookies(b, `${SITE_ORIGINS["1688"]}/`)) === false ? null : probe(b.id, () => alibabaAccount()));
+const alibabaIn = (b: Browser) =>
+	once<Alibaba>(`1688 ${b.id}`, async () =>
+		alibabaCookie(await cookies(b, `${SITE_ORIGINS["1688"]}/`)) === false ? null : probe(b.id, () => alibabaAccount()),
+	);
 const signedIn: Record<"chanboss" | "zhixia", (b: Browser) => Promise<Login<true>>> = {
-	chanboss: (b) => once<true>(`chanboss ${b.id}`, async () => { await probe(b.id, () => chanbossIdentity()); return true; }),
-	zhixia: (b) => once<true>(`zhixia ${b.id}`, async () => { await probe(b.id, () => zhixiaCategories()); return true; }),
+	chanboss: (b) =>
+		once<true>(`chanboss ${b.id}`, async () => {
+			await probe(b.id, () => chanbossIdentity());
+			return true;
+		}),
+	zhixia: (b) =>
+		once<true>(`zhixia ${b.id}`, async () => {
+			await probe(b.id, () => zhixiaCategories());
+			return true;
+		}),
 };
 
 /** 给人看的浏览器名字：登录着的店的账号名（例 cheeroutdoor）；没登录 Shopee 的用扩展里起的名字，或 id 的前 8 位 */
@@ -54,11 +68,15 @@ let seen: Promise<Seen[]> | null = null;
 
 /** 每个连着的浏览器里登录着哪家店、哪个 1688 账号（没登录的是 null） */
 export function scan(): Promise<Seen[]> {
-	seen ??= browsers().then((all) => Promise.all(all.map(async (b): Promise<Seen> => {
-		const shop = (await shopIn(b)).value;
-		const a = (await alibabaIn(b)).value;
-		return { browser: b.id, label: b.label, shop, alibaba: a?.userId ?? null, loginId: a?.loginId ?? null };
-	})));
+	seen ??= browsers().then((all) =>
+		Promise.all(
+			all.map(async (b): Promise<Seen> => {
+				const shop = (await shopIn(b)).value;
+				const a = (await alibabaIn(b)).value;
+				return { browser: b.id, label: b.label, shop, alibaba: a?.userId ?? null, loginId: a?.loginId ?? null };
+			}),
+		),
+	);
 	return seen;
 }
 
@@ -71,8 +89,10 @@ export function choose(site: Site, found: Found[]): string {
 	const logged = found.filter((f) => f.login);
 	if (logged.length === 1 || (logged.length > 1 && site !== "shopee")) return logged[0]!.id;
 	if (logged.length > 1) throw new Usage(`连着 ${logged.length} 家店的浏览器，用 --shop 选一家：${logged.map((f) => f.name).join("、")}`);
-	throw found.map((f) => f.error).find((e) => e instanceof Challenge)
-		?? new NeedsHuman(`没有登录着 ${SITE_NAMES[site]} 的浏览器：打开登录着它的 Chrome（或在浏览器里登录 ${SITE_NAMES[site]}），确认 cdp-relay 扩展已连接`);
+	throw (
+		found.map((f) => f.error).find((e) => e instanceof Challenge) ??
+		new NeedsHuman(`没有登录着 ${SITE_NAMES[site]} 的浏览器：打开登录着它的 Chrome（或在浏览器里登录 ${SITE_NAMES[site]}），确认 cdp-relay 扩展已连接`)
+	);
 }
 
 /** 浏览器排个序：开着这个 origin 的标签页的在前（多半就是登录着的那个，认它不用开新标签页） */
@@ -86,13 +106,19 @@ async function route(site: Site): Promise<string> {
 	const found: Found[] = [];
 	if (site === "shopee") {
 		for (const [i, r] of (await Promise.all(all.map(shopIn))).entries()) {
-			found.push({ id: all[i]!.id, name: r.value?.username || r.value?.shopId || all[i]!.label || all[i]!.id.slice(0, 8), login: r.value !== null, error: r.error });
+			found.push({
+				id: all[i]!.id,
+				name: r.value?.username || r.value?.shopId || all[i]!.label || all[i]!.id.slice(0, 8),
+				login: r.value !== null,
+				error: r.error,
+			});
 		}
 		return choose(site, found);
 	}
 	if (site === "1688") {
 		// 这个进程认过的照认过的；没认过的先看 cookie：说登录着的直接用（不开页面），说没登录的跳过，看不出的再开页面认
-		const sure: Browser[] = [], unsure: Browser[] = [];
+		const sure: Browser[] = [],
+			unsure: Browser[] = [];
 		for (const b of all) {
 			const known = memo.get(`1688 ${b.id}`) as Promise<Login<Alibaba>> | undefined;
 			if (known) {
@@ -149,18 +175,25 @@ async function find<T>(check: (b: Browser) => Promise<Login<T>>, match: (v: T) =
 
 /** 在登录着这家店（店铺 id）的浏览器里做 fn */
 export async function inShop<T>(shopId: string, fn: () => Promise<T>): Promise<T> {
-	const b = await find(shopIn, (s) => s.shopId === shopId, `没有登录着店铺 ${shopId} 的浏览器：打开这家店的 Chrome，登录 Shopee 卖家中心，确认 cdp-relay 扩展已连接`);
+	const b = await find(
+		shopIn,
+		(s) => s.shopId === shopId,
+		`没有登录着店铺 ${shopId} 的浏览器：打开这家店的 Chrome，登录 Shopee 卖家中心，确认 cdp-relay 扩展已连接`,
+	);
 	return using(b.id, fn);
 }
 
 /** 在登录着这家店的浏览器里做 fn：name 是账号名（例 ni1206），也可以给店铺 id（x2 shopee <操作> --shop） */
 export async function inShopNamed<T>(name: string, fn: () => Promise<T>): Promise<T> {
-	const b = await find(shopIn, (s) => s.username === name || s.shopId === name, `没有登录着 ${name} 的浏览器：打开这家店的 Chrome，登录 Shopee 卖家中心，确认 cdp-relay 扩展已连接`)
-		.catch(async (e) => {
-			if (!(e instanceof NeedsHuman) || e instanceof Challenge) throw e;
-			const shops = (await Promise.all((await browsers()).map(shopIn))).flatMap((r) => (r.value ? [r.value.username || r.value.shopId] : []));
-			throw new NeedsHuman(`${e.message}（现在登录着的店：${shops.join("、") || "没有"}）`);
-		});
+	const b = await find(
+		shopIn,
+		(s) => s.username === name || s.shopId === name,
+		`没有登录着 ${name} 的浏览器：打开这家店的 Chrome，登录 Shopee 卖家中心，确认 cdp-relay 扩展已连接`,
+	).catch(async (e) => {
+		if (!(e instanceof NeedsHuman) || e instanceof Challenge) throw e;
+		const shops = (await Promise.all((await browsers()).map(shopIn))).flatMap((r) => (r.value ? [r.value.username || r.value.shopId] : []));
+		throw new NeedsHuman(`${e.message}（现在登录着的店：${shops.join("、") || "没有"}）`);
+	});
 	return using(b.id, fn);
 }
 
@@ -189,7 +222,11 @@ export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: s
 
 /** 在登录着这个 1688 账号（userId）的浏览器里做 fn */
 export async function in1688<T>(account: string, fn: () => Promise<T>): Promise<T> {
-	const b = await find(alibabaIn, (a) => a.userId === account, `没有登录着 1688 账号 ${account} 的浏览器：打开那个 Chrome，登录 1688，确认 cdp-relay 扩展已连接`);
+	const b = await find(
+		alibabaIn,
+		(a) => a.userId === account,
+		`没有登录着 1688 账号 ${account} 的浏览器：打开那个 Chrome，登录 1688，确认 cdp-relay 扩展已连接`,
+	);
 	return using(b.id, fn);
 }
 

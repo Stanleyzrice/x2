@@ -4,9 +4,9 @@
 // 几份同时做（x2 listing make --jobs）：碰浏览器的（读 1688 货源、加水印、传图、类目、属性、备货天数）按浏览器排队，读 1688 隔几秒（queue.ts）；
 // 问 Gemini、交象寄、取图不排队。报价（quote，选品用）用第 2 步的同一套代码，不做图、不存库
 import { alibabaAccounts } from "../accounts.ts";
-import { type Sql } from "../db/index.ts";
+import type { Sql } from "../db/index.ts";
 import { NeedsHuman } from "../errors.ts";
-import { detailImages, Gone, offer as readOffer, type Offer } from "../site/1688.ts";
+import { detailImages, Gone, type Offer, offer as readOffer } from "../site/1688.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../site/shopee/products.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages, type Pics } from "./images.ts";
@@ -20,16 +20,36 @@ import type { Mark } from "./watermark.ts";
 export function settingsOf(row: any) {
 	const n = (v: unknown) => Number(v);
 	const params: PriceParams = priceParams.parse({
-		fx: n(row.fx), pricePerKgRmb: n(row.price_per_kg_rmb), labelFeeRmb: n(row.label_fee_rmb), weightRoundingKg: n(row.weight_rounding_kg),
-		returnLossRate: n(row.return_loss_rate), minMarginRate: n(row.min_margin_rate), minMarginRmb: n(row.min_margin_rmb),
-		commissionRate: n(row.commission_rate), preOrderRate: n(row.pre_order_rate), paymentRate: n(row.payment_rate), coinRate: n(row.coin_rate),
-		freeShippingRate: n(row.free_shipping_rate), freeShippingMinTwd: n(row.free_shipping_min_twd), shippingNetTwd: n(row.shipping_net_twd),
+		fx: n(row.fx),
+		pricePerKgRmb: n(row.price_per_kg_rmb),
+		labelFeeRmb: n(row.label_fee_rmb),
+		weightRoundingKg: n(row.weight_rounding_kg),
+		returnLossRate: n(row.return_loss_rate),
+		minMarginRate: n(row.min_margin_rate),
+		minMarginRmb: n(row.min_margin_rmb),
+		commissionRate: n(row.commission_rate),
+		preOrderRate: n(row.pre_order_rate),
+		paymentRate: n(row.payment_rate),
+		coinRate: n(row.coin_rate),
+		freeShippingRate: n(row.free_shipping_rate),
+		freeShippingMinTwd: n(row.free_shipping_min_twd),
+		shippingNetTwd: n(row.shipping_net_twd),
 	});
-	const mark: Mark | null = row.watermark_text ? { text: row.watermark_text, size: n(row.watermark_size), opacity: n(row.watermark_opacity), position: row.watermark_position } : null;
+	const mark: Mark | null = row.watermark_text
+		? { text: row.watermark_text, size: n(row.watermark_size), opacity: n(row.watermark_opacity), position: row.watermark_position }
+		: null;
 	return {
-		shop: String(row.shop), shopId: String(row.shop_id), params, mark, paused: row.paused ? String(row.paused) : null,
-		preOrder: Boolean(row.pre_order), minPurchase: n(row.min_purchase), stockCap: n(row.stock_cap),
-		channels: String(row.channels ?? "").split(/[,，\s]+/).filter(Boolean),
+		shop: String(row.shop),
+		shopId: String(row.shop_id),
+		params,
+		mark,
+		paused: row.paused ? String(row.paused) : null,
+		preOrder: Boolean(row.pre_order),
+		minPurchase: n(row.min_purchase),
+		stockCap: n(row.stock_cap),
+		channels: String(row.channels ?? "")
+			.split(/[,，\s]+/)
+			.filter(Boolean),
 		categories: Array.isArray(row.categories) && row.categories.length ? new Set((row.categories as unknown[]).map(String)) : null,
 	};
 }
@@ -53,7 +73,8 @@ export const freightOf = (offer: Partial<Offer> | null | undefined, column: unkn
 	num(column) ?? offer?.freight?.costRmb ?? (offer?.tags?.freeShipping ? 0 : null);
 
 /** 货源快照里 1688 给的每个规格的重量（规格 id → kg；没给的不在里面） */
-const weightsOf = (offer: Partial<Offer> | null | undefined) => new Map((offer?.skus ?? []).filter((k) => (k.weightKg ?? 0) > 0).map((k) => [k.skuId, k.weightKg!]));
+const weightsOf = (offer: Partial<Offer> | null | undefined) =>
+	new Map((offer?.skus ?? []).filter((k) => (k.weightKg ?? 0) > 0).map((k) => [k.skuId, k.weightKg!]));
 
 export type Need = "重量" | "国内运费";
 /** agent 要估的：重量（有规格 1688 没给重量，「重量」也空着）、国内运费（1688 读不到，「国内运费」也空着）。人填过的不算缺 */
@@ -80,7 +101,11 @@ export function reprice(l: any, s: Settings): { specs: Specs; freightRmb: number
 	if (!l.offer || !specs) return null;
 	const weights = weightsOf(l.offer);
 	const freightRmb = freightOf(l.offer, l.freight_rmb);
-	const variants = priceVariants(specs.variants.map((v) => ({ ...v, weightKg: weights.get(v.skuId) ?? null })), s, { weightKg: num(l.weight_kg), freightRmb });
+	const variants = priceVariants(
+		specs.variants.map((v) => ({ ...v, weightKg: weights.get(v.skuId) ?? null })),
+		s,
+		{ weightKg: num(l.weight_kg), freightRmb },
+	);
 	const changed = (l.pricing?.freightRmb ?? null) !== freightRmb || variants.some((v, i) => v.weightKg !== specs.variants[i]!.weightKg);
 	return { specs: { tiers: specs.tiers, variants }, freightRmb, changed };
 }
@@ -99,8 +124,15 @@ let tree: Map<string, string> | null = null;
 /** 类目 id → 名字（类目树一个进程读一次） */
 async function categoryNames(): Promise<Map<string, string>> {
 	if (tree) return tree;
-	const walk = (list: Category[], out: Map<string, string>) => { for (const c of list) { out.set(c.id, c.name); walk(c.children, out); } return out; };
-	return (tree = walk(await categoryTree(), new Map()));
+	const walk = (list: Category[], out: Map<string, string>) => {
+		for (const c of list) {
+			out.set(c.id, c.name);
+			walk(c.children, out);
+		}
+		return out;
+	};
+	tree = walk(await categoryTree(), new Map());
+	return tree;
 }
 
 /** 读 1688 货源：在一个登录着 1688 的浏览器里（读货源不用采购账号），排在这个浏览器的队里，和上一次读 1688 隔几秒 */
@@ -112,12 +144,15 @@ export async function readOffer1688(offerId: string): Promise<Offer> {
 
 /** 货源 → 排好、核好价的规格（做商品稿的第 2 步，报价也用它）：有货的、没移除的规格排成 Shopee 的规格（prev：上一版，名字按 1688 层名、原值对回去），
  * 每个规格核价（weightKg、freightRmb 是 1688 没给重量时、国内运费用的），再核一遍规格的结构。problems 是要人处理的（起订量、规格图、结构） */
-export function specsAndPrices(o: Offer, s: Settings, opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null }): { specs: Specs; problems: string[] } {
+export function specsAndPrices(
+	o: Offer,
+	s: Settings,
+	opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null },
+): { specs: Specs; problems: string[] } {
 	const built = specsFrom(o, opts.removed ?? [], opts.prev ?? null);
 	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, { weightKg: opts.weightKg, freightRmb: opts.freightRmb }) };
 	return { specs, problems: [...(o.minQty > 1 ? [`货源：起订量 ${o.minQty}，无法单件购买`] : []), ...built.problems, ...structureProblems(specs)] };
 }
-
 
 /** 报价（选品用，x2 listing quote）：照做商品稿的第 2 步排规格、按店铺设置核价，不做图、不存库。1688 没给重量的规格按 assume.weightKg 算、
  * 读不到国内运费的按 assume.freightRmb 算（往重了、往高了估），用了估的写出来 */
@@ -128,15 +163,36 @@ export function quote(o: Offer, s: Settings, assume: { weightKg: number; freight
 	const given = new Map(o.skus.map((k) => [k.skuId, k]));
 	const list = specs.variants.map((v) => {
 		const k = given.get(v.skuId);
-		return { sku: v.sku, spec: (k?.attrs ?? []).filter(Boolean).join(" / ") || k?.name || "（单规格）", priceTwd: v.priceTwd, weightKg: v.weightKg, weightAssumed: !((k?.weightKg ?? 0) > 0), costRmb: v.costRmb, stock: v.stock };
+		return {
+			sku: v.sku,
+			spec: (k?.attrs ?? []).filter(Boolean).join(" / ") || k?.name || "（单规格）",
+			priceTwd: v.priceTwd,
+			weightKg: v.weightKg,
+			weightAssumed: !((k?.weightKg ?? 0) > 0),
+			costRmb: v.costRmb,
+			stock: v.stock,
+		};
 	});
 	const guessed = list.filter((x) => x.weightAssumed).length;
 	return {
-		offerId: o.offerId, url: o.url, title: o.title, shop: s.shop, minQty: o.minQty,
-		tags: { onePsale: Boolean(o.tags?.onePsale), ship48h: Boolean(o.tags?.ship48h), freeShipping: Boolean(o.tags?.freeShipping), deliveryDays: o.tags?.deliveryDays ?? null },
-		freightRmb, freightAssumed: read === null,
+		offerId: o.offerId,
+		url: o.url,
+		title: o.title,
+		shop: s.shop,
+		minQty: o.minQty,
+		tags: {
+			onePsale: Boolean(o.tags?.onePsale),
+			ship48h: Boolean(o.tags?.ship48h),
+			freeShipping: Boolean(o.tags?.freeShipping),
+			deliveryDays: o.tags?.deliveryDays ?? null,
+		},
+		freightRmb,
+		freightAssumed: read === null,
 		weightAssumed: guessed ? `${guessed} 个规格 1688 没给重量，按 ${assume.weightKg} kg 算` : null,
-		variants: list.length, priceTwd: priceRange(specs.variants), specs: specsText(specs), list,
+		variants: list.length,
+		priceTwd: priceRange(specs.variants),
+		specs: specsText(specs),
+		list,
 		problems: [...problems, ...pricingProblems(specs, [])],
 	};
 }
@@ -153,59 +209,105 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 	// 1. 货源（1688 的页面、详情图的地址：排队，和上一次读 1688 隔几秒）
 	log(`读货源 ${l.offer_id}`);
 	let o: Offer;
-	try { o = await readOffer1688(l.offer_id); } catch (e) {
+	try {
+		o = await readOffer1688(l.offer_id);
+	} catch (e) {
 		if (e instanceof Gone) return save(sql, id, {}, ["货源：已在 1688 下架"]);
 		throw e;
 	}
-	const detail = o.detailUrl ? await from1688(() => detailImages(o.detailUrl!)).catch((e) => { log(`详情图取不到：${(e as Error).message}`); return [] as string[]; }) : [];
+	const detail = o.detailUrl
+		? await from1688(() => detailImages(o.detailUrl!)).catch((e) => {
+				log(`详情图取不到：${(e as Error).message}`);
+				return [] as string[];
+			})
+		: [];
 
 	// 2. 规格、核价。缺重量、缺国内运费的售价先空着（agent 估）；定不了价的、超过上限的现算（pricingProblems），不存
 	const freight = freightOf(o, l.freight_rmb);
-	const { specs, problems } = specsAndPrices(o, s, { removed: l.removed_variants ?? [], prev: specsOf(l.variants), weightKg: num(l.weight_kg), freightRmb: freight });
+	const { specs, problems } = specsAndPrices(o, s, {
+		removed: l.removed_variants ?? [],
+		prev: specsOf(l.variants),
+		weightKg: num(l.weight_kg),
+		freightRmb: freight,
+	});
 
 	// 3. 图：问 Gemini、交象寄、取图不排队；加水印、传图在这家店的浏览器里排队。
 	// 候选：主图前 12 张、详情图前 16 张（最后用 9 张、12 张；多看几张是给筛掉的留余地，再多就白花筛字和译图的钱）
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
-	const pics: Pics = await makeImages(sql, { shop: s.shop, mark: s.mark, browser, main: (o.images ?? [o.image]).slice(0, 12), detail: detail.slice(0, 16), options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)) }, log);
+	const pics: Pics = await makeImages(
+		sql,
+		{
+			shop: s.shop,
+			mark: s.mark,
+			browser,
+			main: (o.images ?? [o.image]).slice(0, 12),
+			detail: detail.slice(0, 16),
+			options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)),
+		},
+		log,
+	);
 	const done: Record<string, unknown> = { images: pics };
 	const cover = pics.main.find((p) => p.imageId);
 	if (!cover) problems.push("图：缺可用的主图");
 	// 4. 类目、属性、备货天数：卖家中心的接口，在这家店的浏览器里排队
-	else Object.assign(done, await browser(async () => {
-		const out: Record<string, unknown> = {};
-		// 已经有类目的（上次推荐的，人定的：x2 listing category）不再问推荐，照用
-		let path: number[] = l.category_path ?? [];
-		const kept = path.length > 0;
-		if (!kept) {
-			log("推荐类目");
-			const rec = recommendedPath(await recommendedCategory(o.title, cover.imageId!));
-			if (!rec) { problems.push("类目：Shopee 未推荐类目，待人定"); return out; }
-			path = rec.path;
-		}
-		const leaf = path[path.length - 1]!;
-		const names = await categoryNames().catch(() => new Map<string, string>());
-		// 类目树读不到：已经有的类目的名字照旧
-		const name = names.size || !kept ? path.map((c) => names.get(String(c)) ?? String(c)).join(" > ") : l.category_name ?? path.join(" > ");
-		Object.assign(out, { category_path: path, category_id: leaf, category_name: name });
-		if (s.categories && !s.categories.has(String(leaf))) problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
-		const attrs = pickAttributes(await attributeTree(leaf));
-		Object.assign(out, { attributes: attrs.attributes, attributes_text: attrs.text.join("\n") || null });
-		if (attrs.missing.length) problems.push(`属性：必填的「${attrs.missing.join("、")}」待人工填写`);
-		const days = daysToShip(leaf, (await shippingDays()).rules);
-		if (days === null) problems.push("备货天数：无法读取这个类目的备货天数规则");
-		out.days_to_ship = days;
-		return out;
-	}));
+	else
+		Object.assign(
+			done,
+			await browser(async () => {
+				const out: Record<string, unknown> = {};
+				// 已经有类目的（上次推荐的，人定的：x2 listing category）不再问推荐，照用
+				let path: number[] = l.category_path ?? [];
+				const kept = path.length > 0;
+				if (!kept) {
+					log("推荐类目");
+					const rec = recommendedPath(await recommendedCategory(o.title, cover.imageId!));
+					if (!rec) {
+						problems.push("类目：Shopee 未推荐类目，待人定");
+						return out;
+					}
+					path = rec.path;
+				}
+				const leaf = path[path.length - 1]!;
+				const names = await categoryNames().catch(() => new Map<string, string>());
+				// 类目树读不到：已经有的类目的名字照旧
+				const name = names.size || !kept ? path.map((c) => names.get(String(c)) ?? String(c)).join(" > ") : (l.category_name ?? path.join(" > "));
+				Object.assign(out, { category_path: path, category_id: leaf, category_name: name });
+				if (s.categories && !s.categories.has(String(leaf))) problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
+				const attrs = pickAttributes(await attributeTree(leaf));
+				Object.assign(out, { attributes: attrs.attributes, attributes_text: attrs.text.join("\n") || null });
+				if (attrs.missing.length) problems.push(`属性：必填的「${attrs.missing.join("、")}」待人工填写`);
+				const days = daysToShip(leaf, (await shippingDays()).rules);
+				if (days === null) problems.push("备货天数：无法读取这个类目的备货天数规则");
+				out.days_to_ship = days;
+				return out;
+			}),
+		);
 
-	return save(sql, id, {
-		...done,
-		// 简称：空着的、还是上一版自动填的，先填 1688 标题的前 12 个字；人改过、agent 写过的不动
-		nickname: nicknameFor(l.nickname, l.offer?.title, o.title),
-		offer: { offerId: o.offerId, url: o.url, title: o.title, images: o.images, detail, tags: o.tags, freight: o.freight, minQty: o.minQty, props: o.props, skus: o.skus },
-		offer_read_at: new Date(),
-		variants: specs,
-		pricing: { params: s.params, preOrder: s.preOrder, freightRmb: freight, at: new Date().toISOString() },
-	}, problems);
+	return save(
+		sql,
+		id,
+		{
+			...done,
+			// 简称：空着的、还是上一版自动填的，先填 1688 标题的前 12 个字；人改过、agent 写过的不动
+			nickname: nicknameFor(l.nickname, l.offer?.title, o.title),
+			offer: {
+				offerId: o.offerId,
+				url: o.url,
+				title: o.title,
+				images: o.images,
+				detail,
+				tags: o.tags,
+				freight: o.freight,
+				minQty: o.minQty,
+				props: o.props,
+				skus: o.skus,
+			},
+			offer_read_at: new Date(),
+			variants: specs,
+			pricing: { params: s.params, preOrder: s.preOrder, freightRmb: freight, at: new Date().toISOString() },
+		},
+		problems,
+	);
 }
 
 async function save(sql: Sql, id: string, fields: Record<string, unknown>, problems: string[]): Promise<{ id: string; problems: string[] }> {

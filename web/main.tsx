@@ -12,13 +12,17 @@ function App() {
 	const [metas, setMetas] = useState<Meta[] | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [[name, viewTitle], setRoute] = useState(route);
-	useEffect(() => { api.meta().then(setMetas, (e: Error) => setError(e.message)); }, []);
+	useEffect(() => {
+		api.meta().then(setMetas, (e: Error) => setError(e.message));
+	}, []);
 	useEffect(() => {
 		const on = () => setRoute(route());
 		window.addEventListener("hashchange", on);
 		return () => window.removeEventListener("hashchange", on);
 	}, []);
-	const go = (table: string, view?: string) => { location.hash = view ? `${table}/${view}` : table; };
+	const go = (table: string, view?: string) => {
+		location.hash = view ? `${table}/${view}` : table;
+	};
 
 	if (error) return <p className="p-6 text-kumo-danger">{error}</p>;
 	if (!metas) return <Loader />;
@@ -40,20 +44,41 @@ function Nav({ metas, active, go }: { metas: Meta[]; active: string; go: (table:
 	return (
 		<>
 			<Sidebar className="md:sticky md:top-0 md:h-screen">
-				<Sidebar.Header><span className="px-2 font-semibold">x2</span></Sidebar.Header>
+				<Sidebar.Header>
+					<span className="px-2 font-semibold">x2</span>
+				</Sidebar.Header>
 				<Sidebar.Content>
 					<Sidebar.Group>
 						<Sidebar.Menu>
 							{metas.map((m) => (
-								<Sidebar.MenuButton key={m.name} active={m.name === active} onClick={() => { go(m.name); setOpenMobile(false); }}>{m.title}</Sidebar.MenuButton>
+								<Sidebar.MenuButton
+									key={m.name}
+									active={m.name === active}
+									onClick={() => {
+										go(m.name);
+										setOpenMobile(false);
+									}}
+								>
+									{m.title}
+								</Sidebar.MenuButton>
 							))}
 						</Sidebar.Menu>
 					</Sidebar.Group>
 				</Sidebar.Content>
 			</Sidebar>
-			{isMobile && <Sidebar.Trigger aria-label="表" className="fixed top-3 left-3 z-10 rounded-lg border border-kumo-line bg-kumo-base p-2"><ListIcon size={18} /></Sidebar.Trigger>}
+			{isMobile && (
+				<Sidebar.Trigger aria-label="表" className="fixed top-3 left-3 z-10 rounded-lg border border-kumo-line bg-kumo-base p-2">
+					<ListIcon size={18} />
+				</Sidebar.Trigger>
+			)}
 		</>
 	);
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><Toasty toastManager={toast}><App /></Toasty></StrictMode>);
+createRoot(document.getElementById("root")!).render(
+	<StrictMode>
+		<Toasty toastManager={toast}>
+			<App />
+		</Toasty>
+	</StrictMode>,
+);

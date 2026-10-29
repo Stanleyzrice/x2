@@ -37,7 +37,10 @@ export type Added = { id: string; offerId: string; isNew: boolean; why: string |
 
 /** 添加货源（x2 listing add、网页的「添加货源」）：一个链接一份商品稿，记下选品理由、依据和这一刻的选品快照（几个链接一起加的是同一份）。
  * 已经有的商品稿不改（理由、快照照旧），回库里存着的 */
-export async function addListings(sql: Sql, a: { shop: string; links: string[]; strategy?: string; why?: string; evidence?: string }): Promise<{ added: Added[]; snapshot: PickSnapshot }> {
+export async function addListings(
+	sql: Sql,
+	a: { shop: string; links: string[]; strategy?: string; why?: string; evidence?: string },
+): Promise<{ added: Added[]; snapshot: PickSnapshot }> {
 	const strategy = a.strategy ?? "人选";
 	const [st] = await sql`select name from strategies where name = ${strategy}`;
 	if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 strategy add ${strategy} --bet "假设" --how "选品方法"`);

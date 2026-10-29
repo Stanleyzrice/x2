@@ -25,19 +25,33 @@ async function refresh(): Promise<void> {
 }
 
 /** 发一个聊聊的读请求。token 失效（401）时打开聊聊页刷新一次再发 */
-async function webchat<T = any>(path: string, req: { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown } = {}): Promise<T> {
+async function webchat<T = any>(
+	path: string,
+	req: { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown } = {},
+): Promise<T> {
 	for (const again of [false, true]) {
 		if (again) await refresh();
 		const p = await page(ORIGIN);
-		const r = await p.run(async (path: string, method: string, query: Record<string, string>, body: string | null) => {
-			const s = JSON.parse(localStorage.getItem("chat-session") ?? "null");
-			if (!s?.token) return { status: 401, json: null };
-			const url = new URL(path, location.origin);
-			url.searchParams.set("csrf_token", String(s.p_token));
-			for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
-			const res = await fetch(url.href, { method, credentials: "include", headers: { authorization: `Bearer ${s.token}`, "content-type": "application/json", "x-shop-region": "TW" }, body: body ?? undefined });
-			return { status: res.status, json: await res.json().catch(() => null) };
-		}, `${API}${path}`, req.method ?? (req.body === undefined ? "GET" : "POST"), Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])), req.body === undefined ? null : JSON.stringify(req.body));
+		const r = await p.run(
+			async (path: string, method: string, query: Record<string, string>, body: string | null) => {
+				const s = JSON.parse(localStorage.getItem("chat-session") ?? "null");
+				if (!s?.token) return { status: 401, json: null };
+				const url = new URL(path, location.origin);
+				url.searchParams.set("csrf_token", String(s.p_token));
+				for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+				const res = await fetch(url.href, {
+					method,
+					credentials: "include",
+					headers: { authorization: `Bearer ${s.token}`, "content-type": "application/json", "x-shop-region": "TW" },
+					body: body ?? undefined,
+				});
+				return { status: res.status, json: await res.json().catch(() => null) };
+			},
+			`${API}${path}`,
+			req.method ?? (req.body === undefined ? "GET" : "POST"),
+			Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])),
+			req.body === undefined ? null : JSON.stringify(req.body),
+		);
 		if (r.status === 401 && !again) continue;
 		if (r.status >= 400) throw new Error(`聊聊 ${path} 回 HTTP ${r.status}：${r.json?.message ?? ""}`);
 		return r.json as T;
@@ -52,7 +66,9 @@ export async function conversations(cursor = ""): Promise<any[]> {
 
 /** 「未回覆」列表的一页（和运营在聊聊里看到的一样，自动回复发出后也还在）。翻页用回的 page_result.next_cursor.next_message_time_nano */
 export async function unreplied(cursor = ""): Promise<{ next: string | null; rows: any[] }> {
-	const b = await webchat("/conversation/list", { body: { direction: "older", biz_id: 0, on_message_received: true, _s: 12, type: "unreplied", sort: 1, next_timestamp_nano: cursor } });
+	const b = await webchat("/conversation/list", {
+		body: { direction: "older", biz_id: 0, on_message_received: true, _s: 12, type: "unreplied", sort: 1, next_timestamp_nano: cursor },
+	});
 	return { next: b?.page_result?.has_more ? String(b.page_result.next_cursor?.next_message_time_nano ?? "") : null, rows: b?.conversations ?? [] };
 }
 

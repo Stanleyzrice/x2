@@ -1,0 +1,26 @@
+# 每次推送、PR：类型检查、lint、格式（pnpm check），单元测试和连库的测试（pnpm test，库是 CI 里起的 Postgres）
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: x2
+          POSTGRES_DB: x2_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      X2_TEST_DATABASE_URL: postgres://postgres:x2@localhost:5432/x2_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test

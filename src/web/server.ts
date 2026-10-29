@@ -1,8 +1,9 @@
 // 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（web/dist）。只读写库，不碰站点。
 // GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=：一个视图的行；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+
 import { readFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
@@ -11,7 +12,14 @@ import { type ColumnType, type Key, type Meta, type Row, TABLES, type Table } fr
 
 /** 一个视图最多给几行 */
 const LIMIT = 1000;
-const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".png": "image/png" };
+const MIME: Record<string, string> = {
+	".html": "text/html; charset=utf-8",
+	".js": "text/javascript",
+	".css": "text/css",
+	".svg": "image/svg+xml",
+	".woff2": "font/woff2",
+	".png": "image/png",
+};
 
 /** 库里的类型 → 网页的类型 */
 function typeOf(dataType: string): ColumnType {
@@ -37,11 +45,17 @@ async function types(sql: Sql): Promise<Map<string, Map<string, ColumnType>>> {
 }
 
 /** 人填的一格 → 存进库的值（照类型；空的是 null） */
-function valueOf(type: ColumnType, options: readonly string[] | undefined, v: unknown): unknown {
-	const schema = options ? z.enum(options as [string, ...string[]]).nullable()
-		: type === "bool" ? z.boolean()
-		: type === "number" ? z.number().nullable()
-		: z.string().nullable().transform((s) => (s?.trim() ? s : null));
+function cellValue(type: ColumnType, options: readonly string[] | undefined, v: unknown): unknown {
+	const schema = options
+		? z.enum(options as [string, ...string[]]).nullable()
+		: type === "bool"
+			? z.boolean()
+			: type === "number"
+				? z.number().nullable()
+				: z
+						.string()
+						.nullable()
+						.transform((s) => (s?.trim() ? s : null));
 	const r = schema.safeParse(v === "" ? null : v);
 	if (!r.success) throw new Usage(`值不对：${JSON.stringify(v)}`);
 	if (type === "time" && r.data && Number.isNaN(Date.parse(String(r.data)))) throw new Usage(`不是时间：${r.data}`);
@@ -49,11 +63,19 @@ function valueOf(type: ColumnType, options: readonly string[] | undefined, v: un
 }
 
 /** 有条件才能改的列（tables.ts 的 when） */
-const guarded = (t: Table) => Object.entries(t.edit ?? {}).filter(([, e]) => e.when).map(([c, e]) => [c, e.when!] as const);
+const guarded = (t: Table) =>
+	Object.entries(t.edit ?? {})
+		.filter(([, e]) => e.when)
+		.map(([c, e]) => [c, e.when!] as const);
 
 /** 一行给网页的样子：给人看的列、算出来的列；_key 是主键，_readonly 是这一行现在不能改的列 */
 function shape(t: Table, cols: Map<string, ColumnType>, row: Row): Row {
-	const out: Row = { _key: Object.fromEntries(t.key.map((k) => [k, String(row[k])])), _readonly: guarded(t).filter(([c]) => !row[`_can_${c}`]).map(([c]) => c) };
+	const out: Row = {
+		_key: Object.fromEntries(t.key.map((k) => [k, String(row[k])])),
+		_readonly: guarded(t)
+			.filter(([c]) => !row[`_can_${c}`])
+			.map(([c]) => c),
+	};
 	for (const c of Object.keys(t.columns)) {
 		const computed = t.computed?.[c];
 		const v = computed ? computed.of(row) : row[c];
@@ -63,7 +85,10 @@ function shape(t: Table, cols: Map<string, ColumnType>, row: Row): Row {
 }
 
 /** 开服务：回地址和关掉它的函数（port 0 是随便一个空着的口） */
-export async function serve(sql: Sql, { host, port, dist }: { host: string; port: number; dist: string }): Promise<{ port: number; stop: () => Promise<void> }> {
+export async function serve(
+	sql: Sql,
+	{ host, port, dist }: { host: string; port: number; dist: string },
+): Promise<{ port: number; stop: () => Promise<void> }> {
 	const colTypes = await types(sql);
 	const table = (name: unknown) => {
 		const t = TABLES.find((x) => x.name === name);
@@ -75,31 +100,53 @@ export async function serve(sql: Sql, { host, port, dist }: { host: string; port
 		return t.key.map((k) => sql`${sql(k)} = ${key[k]!}`).reduce((a, b) => sql`${a} and ${b}`);
 	};
 	// 每一列，加上有条件的列这一行能不能改（_can_列名）
-	const select = (t: Table) => sql`select *${sql.unsafe(guarded(t).map(([c, when]) => `, (${when}) as "_can_${c}"`).join(""))} from ${sql(t.name)}`;
+	const select = (t: Table) =>
+		sql`select *${sql.unsafe(
+			guarded(t)
+				.map(([c, when]) => `, (${when}) as "_can_${c}"`)
+				.join(""),
+		)} from ${sql(t.name)}`;
 	const one = async (t: Table, key: Key) => {
 		const [row] = await sql`${select(t)} where ${where(t, key)}`;
 		return row ? shape(t, colTypes.get(t.name)!, row) : null;
 	};
 
 	const api: Record<string, (body: any, url: URL) => Promise<unknown>> = {
-		"GET /api/meta": async () => Promise.all(TABLES.map(async (t): Promise<Meta> => {
-			const cols = colTypes.get(t.name)!;
-			return {
-				name: t.name, title: t.title, key: t.key, views: t.views,
-				columns: Object.entries(t.columns).map(([name, label]) => ({
-					name, label, type: cols.get(name) ?? "text", ...(t.edit?.[name] ? { edit: { options: t.edit[name].options } } : {}),
-				})),
-				...(t.form ? {
-					form: {
-						title: t.form.title,
-						fields: await Promise.all(Object.entries(t.form.fields).map(async ([name, hint]) => ({
-							name, label: t.columns[name] ?? name, hint, type: cols.get(name) ?? "text", required: t.form!.required.includes(name),
-							options: (await t.form!.options?.[name]?.(sql)) ?? t.edit?.[name]?.options,
-						}))),
-					},
-				} : {}),
-			};
-		})),
+		"GET /api/meta": async () =>
+			Promise.all(
+				TABLES.map(async (t): Promise<Meta> => {
+					const cols = colTypes.get(t.name)!;
+					return {
+						name: t.name,
+						title: t.title,
+						key: t.key,
+						views: t.views,
+						columns: Object.entries(t.columns).map(([name, label]) => ({
+							name,
+							label,
+							type: cols.get(name) ?? "text",
+							...(t.edit?.[name] ? { edit: { options: t.edit[name].options } } : {}),
+						})),
+						...(t.form
+							? {
+									form: {
+										title: t.form.title,
+										fields: await Promise.all(
+											Object.entries(t.form.fields).map(async ([name, hint]) => ({
+												name,
+												label: t.columns[name] ?? name,
+												hint,
+												type: cols.get(name) ?? "text",
+												required: t.form!.required.includes(name),
+												options: (await t.form!.options?.[name]?.(sql)) ?? t.edit?.[name]?.options,
+											})),
+										),
+									},
+								}
+							: {}),
+					};
+				}),
+			),
 
 		"GET /api/rows": async (_, url) => {
 			const t = table(url.searchParams.get("table"));
@@ -121,7 +168,7 @@ export async function serve(sql: Sql, { host, port, dist }: { host: string; port
 			}
 			if (edit.set) await edit.set(sql, key, b.value);
 			else {
-				const value = valueOf(colTypes.get(t.name)!.get(col)!, edit.options, b.value);
+				const value = cellValue(colTypes.get(t.name)!.get(col)!, edit.options, b.value);
 				const r = await sql`update ${sql(t.name)} set ${sql({ [col]: value } as Record<string, any>)} where ${where(t, key)} returning 1`;
 				if (!r.length) throw new Usage(`${t.title}里没有这一行`);
 			}
@@ -144,7 +191,7 @@ export async function serve(sql: Sql, { host, port, dist }: { host: string; port
 			}
 			if (f.insert) return { key: await f.insert(sql, values) };
 			const cols = colTypes.get(t.name)!;
-			const row = Object.fromEntries(Object.entries(values).map(([c, v]) => [c, valueOf(cols.get(c)!, undefined, cols.get(c) === "number" ? Number(v) : v)]));
+			const row = Object.fromEntries(Object.entries(values).map(([c, v]) => [c, cellValue(cols.get(c)!, undefined, cols.get(c) === "number" ? Number(v) : v)]));
 			const [r] = await sql`insert into ${sql(t.name)} ${sql(row as Record<string, any>)} returning *`;
 			return { key: shape(t, cols, r!)._key };
 		},
@@ -172,8 +219,11 @@ export async function serve(sql: Sql, { host, port, dist }: { host: string; port
 		}
 		// 界面：打好的文件，别的地址都给 index.html
 		const file = normalize(join(dist, url.pathname)).startsWith(dist) && extname(url.pathname) ? join(dist, url.pathname) : join(dist, "index.html");
-		try { send(res, 200, MIME[extname(file)] ?? "application/octet-stream", await readFile(file)); }
-		catch { send(res, 404, "text/plain", "没有这个文件"); }
+		try {
+			send(res, 200, MIME[extname(file)] ?? "application/octet-stream", await readFile(file));
+		} catch {
+			send(res, 404, "text/plain", "没有这个文件");
+		}
 	};
 
 	const server = createServer((req, res) => void handle(req, res));

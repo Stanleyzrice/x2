@@ -4,7 +4,7 @@
 // - 读 1688 两次之间隔几秒：读得太密 1688 会跳滑块验证
 // - 同一件事同时要几次的只做一次（once：同一张图的筛字、加水印传图）
 // 跨进程（两个 x2 同时开）的排队不在这里
-import { inShop, in1688, scan } from "../accounts.ts";
+import { in1688, inShop, scan } from "../accounts.ts";
 import { NeedsHuman } from "../errors.ts";
 import { gemini as ask, geminiJson as askJson, type Image } from "../service/gemini.ts";
 
@@ -21,7 +21,9 @@ export function limiter(n: number): Runner {
 	return async <T>(fn: () => Promise<T>): Promise<T> => {
 		if (running >= max) await new Promise<void>((r) => waiting.push(r));
 		else running++;
-		try { return await fn(); } finally {
+		try {
+			return await fn();
+		} finally {
 			const next = waiting.shift();
 			if (next) next();
 			else running--;
@@ -36,7 +38,9 @@ export function lanes(): <T>(key: string, fn: () => Promise<T>, gapMs?: number) 
 	return async <T>(key: string, fn: () => Promise<T>, gapMs = 0): Promise<T> => {
 		const prev = tails.get(key) ?? Promise.resolve();
 		let release!: () => void;
-		const mine = new Promise<void>((r) => { release = r; });
+		const mine = new Promise<void>((r) => {
+			release = r;
+		});
 		const tail = prev.then(() => mine);
 		tails.set(key, tail);
 		await prev;
@@ -63,16 +67,26 @@ export function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** 几件事同时做（最多 n 件），结果照 items 的顺序。一件要人处理（NeedsHuman）以后，没开始的不再开始（要人处理的多半是登录、滑块，接着做也是一样） */
-export async function each<I, R>(items: I[], n: number, fn: (item: I) => Promise<R>): Promise<({ ok: true; value: R } | { ok: false; error: unknown; started: boolean })[]> {
+export async function each<I, R>(
+	items: I[],
+	n: number,
+	fn: (item: I) => Promise<R>,
+): Promise<({ ok: true; value: R } | { ok: false; error: unknown; started: boolean })[]> {
 	const gate = limiter(n);
 	let stop: NeedsHuman | null = null;
-	return Promise.all(items.map((item) => gate(async () => {
-		if (stop) return { ok: false as const, error: stop, started: false };
-		try { return { ok: true as const, value: await fn(item) }; } catch (error) {
-			if (error instanceof NeedsHuman) stop ??= error;
-			return { ok: false as const, error, started: true };
-		}
-	})));
+	return Promise.all(
+		items.map((item) =>
+			gate(async () => {
+				if (stop) return { ok: false as const, error: stop, started: false };
+				try {
+					return { ok: true as const, value: await fn(item) };
+				} catch (error) {
+					if (error instanceof NeedsHuman) stop ??= error;
+					return { ok: false as const, error, started: true };
+				}
+			}),
+		),
+	);
 }
 
 /** 一个进程里的浏览器队：key 是浏览器 */
@@ -81,7 +95,10 @@ const lane = lanes();
 export const GAP_1688_MS = 3000;
 
 /** 浏览器队的 key：登录着这家店（shopId）或这个 1688 账号（account）的浏览器（seen 是 accounts.ts 的 scan）。同一个浏览器里登录着店和 1688 的，是同一个队 */
-export function browserKey(seen: { browser: string; shop: { shopId: string } | null; alibaba: string | null }[], who: { shopId: string } | { account: string }): string {
+export function browserKey(
+	seen: { browser: string; shop: { shopId: string } | null; alibaba: string | null }[],
+	who: { shopId: string } | { account: string },
+): string {
 	const s = "shopId" in who ? seen.find((x) => x.shop?.shopId === who.shopId) : seen.find((x) => x.alibaba === who.account);
 	return s ? `浏览器 ${s.browser}` : "shopId" in who ? `店铺 ${who.shopId}` : `1688 ${who.account}`;
 }
@@ -104,10 +121,17 @@ const fromEnv = (name: string, fallback: number) => {
 	const n = Number(process.env[name]);
 	return Number.isInteger(n) && n > 0 ? n : fallback;
 };
-let geminiGate: Runner | null = null, downloadGate: Runner | null = null;
-const askGate = () => (geminiGate ??= limiter(fromEnv("X2_GEMINI_CONCURRENCY", 8)));
+let geminiGate: Runner | null = null,
+	downloadGate: Runner | null = null;
+const askGate = () => {
+	geminiGate ??= limiter(fromEnv("X2_GEMINI_CONCURRENCY", 8));
+	return geminiGate;
+};
 /** 问 Gemini（不排队，同时最多 X2_GEMINI_CONCURRENCY 个请求） */
 export const gemini = (prompt: string, images: Image[], schema?: object): Promise<string> => askGate()(() => ask(prompt, images, schema));
 export const geminiJson = <T>(prompt: string, images: Image[], schema: object): Promise<T> => askGate()(() => askJson<T>(prompt, images, schema));
 /** 取图（同时最多 X2_DOWNLOAD_CONCURRENCY 张） */
-export const download: Runner = (fn) => (downloadGate ??= limiter(fromEnv("X2_DOWNLOAD_CONCURRENCY", 6)))(fn);
+export const download: Runner = (fn) => {
+	downloadGate ??= limiter(fromEnv("X2_DOWNLOAD_CONCURRENCY", 6));
+	return downloadGate(fn);
+};

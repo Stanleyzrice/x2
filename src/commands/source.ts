@@ -2,9 +2,9 @@
 // x2 source <商品 id> --spec "店里的规格名 = 货源的规格名"：记下人定的规格例外（按名字配不上时；人说了才写）
 import { check, snapshot } from "../check/index.ts";
 import { checkOrders } from "../check/orders.ts";
-import { readAll } from "../read.ts";
 import { db } from "../db/index.ts";
 import { Usage } from "../errors.ts";
+import { readAll } from "../read.ts";
 import { findSources, setException } from "../source.ts";
 
 export async function sourceCommand(args: string[], json: boolean): Promise<void> {
@@ -13,7 +13,8 @@ export async function sourceCommand(args: string[], json: boolean): Promise<void
 		if (i >= 0 && !args[i + 1]) throw new Usage(`${name} 后面写${what}`);
 		return i >= 0 ? args[i + 1] : undefined;
 	};
-	const url = flag("--url", " 1688 链接"), spec = flag("--spec", "「店里的规格名 = 货源的规格名」");
+	const url = flag("--url", " 1688 链接"),
+		spec = flag("--spec", "「店里的规格名 = 货源的规格名」");
 	let ids = args.filter((a, j) => !a.startsWith("--") && args[j - 1] !== "--url" && args[j - 1] !== "--spec");
 	if (url && ids.length !== 1) throw new Usage("贴链接时只给一个商品：x2 source <商品 id> --url <1688 链接>");
 	const sql = await db();
@@ -31,5 +32,8 @@ export async function sourceCommand(args: string[], json: boolean): Promise<void
 	// 找完再检查一遍（收件箱的「选货源」）：2 分钟内读过的站点数据复用
 	await check(sql, await readAll(sql));
 	if (json) return console.log(JSON.stringify({ found }));
-	for (const f of found) console.log(`${f.name}（${f.itemId}）\n  ${f.sure ?? f.chosen ? `→ ${f.sure ?? f.chosen}：` : ""}${f.why}${f.options > 1 ? `（找到 ${f.options} 个）` : ""}`);
+	for (const f of found)
+		console.log(
+			`${f.name}（${f.itemId}）\n  ${(f.sure ?? f.chosen) ? `→ ${f.sure ?? f.chosen}：` : ""}${f.why}${f.options > 1 ? `（找到 ${f.options} 个）` : ""}`,
+		);
 }

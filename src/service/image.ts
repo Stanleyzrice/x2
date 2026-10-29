@@ -23,12 +23,18 @@ export function sizeOf(b: Uint8Array): { width: number; height: number } | null 
 	const mime = mimeOf(b);
 	if (mime === "image/png" && b.length >= 24) return { width: v.getUint32(16), height: v.getUint32(20) };
 	if (mime === "image/jpeg") {
-		for (let i = 2; i + 9 < b.length;) {
-			if (b[i] !== 0xff) { i++; continue; }
+		for (let i = 2; i + 9 < b.length; ) {
+			if (b[i] !== 0xff) {
+				i++;
+				continue;
+			}
 			const marker = b[i + 1]!;
 			// SOF0–SOF15，除了 DHT(C4)、JPG(C8)、DAC(CC)
 			if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { width: v.getUint16(i + 7), height: v.getUint16(i + 5) };
-			if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) { i += 2; continue; }
+			if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+				i += 2;
+				continue;
+			}
 			i += 2 + v.getUint16(i + 2);
 		}
 		return null;
@@ -36,7 +42,10 @@ export function sizeOf(b: Uint8Array): { width: number; height: number } | null 
 	if (mime === "image/webp" && b.length >= 30) {
 		const chunk = String.fromCharCode(...b.slice(12, 16));
 		if (chunk === "VP8 ") return { width: v.getUint16(26, true) & 0x3fff, height: v.getUint16(28, true) & 0x3fff };
-		if (chunk === "VP8L") { const n = v.getUint32(21, true); return { width: (n & 0x3fff) + 1, height: ((n >> 14) & 0x3fff) + 1 }; }
+		if (chunk === "VP8L") {
+			const n = v.getUint32(21, true);
+			return { width: (n & 0x3fff) + 1, height: ((n >> 14) & 0x3fff) + 1 };
+		}
 		if (chunk === "VP8X") return { width: 1 + (b[24]! | (b[25]! << 8) | (b[26]! << 16)), height: 1 + (b[27]! | (b[28]! << 8) | (b[29]! << 16)) };
 	}
 	return null;

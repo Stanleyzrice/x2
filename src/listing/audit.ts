@@ -36,7 +36,20 @@ const schema = (n: number) => ({
 	type: "object",
 	properties: {
 		textIssues: { type: "array", items: { type: "string" } },
-		images: { type: "array", minItems: n, maxItems: n, items: { type: "object", properties: { index: { type: "integer" }, issues: { type: "array", items: { type: "string" } }, printedTextNotes: { type: "array", items: { type: "string" } } }, required: ["index", "issues", "printedTextNotes"] } },
+		images: {
+			type: "array",
+			minItems: n,
+			maxItems: n,
+			items: {
+				type: "object",
+				properties: {
+					index: { type: "integer" },
+					issues: { type: "array", items: { type: "string" } },
+					printedTextNotes: { type: "array", items: { type: "string" } },
+				},
+				required: ["index", "issues", "printedTextNotes"],
+			},
+		},
 	},
 	required: ["textIssues", "images"],
 });
@@ -63,7 +76,9 @@ const specNames = (p: Product) => p.tiers.map((t) => ({ name: t.name, options: t
 /** 这份内容的检查键：标题、描述、规格名、图一样，就不用再查 */
 export function auditKey(p: Product): string {
 	const specs = specNames(p).map((t) => [t.name, t.options]);
-	return createHash("sha256").update(JSON.stringify({ v: AUDIT_VERSION, title: p.title, description: p.description, specs, images: auditImages(p) })).digest("hex");
+	return createHash("sha256")
+		.update(JSON.stringify({ v: AUDIT_VERSION, title: p.title, description: p.description, specs, images: auditImages(p) }))
+		.digest("hex");
 }
 
 /** 图在商品里是什么 */
@@ -86,25 +101,50 @@ export async function textCheck(p: Product, opts: { image: (id: string) => Promi
 	const content = { title: p.title, description: p.description, specs: specNames(p) };
 	// 一批 4 张（没图也问一次文案）
 	const batches = Array.from({ length: Math.max(1, Math.ceil(ids.length / 4)) }, (_, i) => ids.slice(i * 4, i * 4 + 4));
-	const results = await Promise.all(batches.map(async (batch) => {
-		const bytes = await Promise.all(batch.map((id) => opts.image(id)));
-		const prompt = `${batch.length ? `本批恰有 ${batch.length} 张图片，必须逐一返回 index=[0..${batch.length - 1}]，即使相似也不能合并。\n` : ""}${PROMPT(content)}`;
-		const r = await geminiJson<{ textIssues: string[]; images: { index: number; issues: string[] }[] }>(prompt, bytes, schema(batch.length));
-		const got = new Set(r.images.map((x) => x.index));
-		if (batch.some((_, j) => !got.has(j))) throw new Error("Gemini 文字检查漏了图：这一批要重查");
-		const images = await Promise.all(r.images.filter((x) => x.issues.length && batch[x.index]).map(async (x): Promise<AuditImage> => {
-			const id = batch[x.index]!;
-			const role = roleOf(p, id), keep = kept.has(id);
-			const where = keep ? null : await textWhere(bytes[x.index]!, x.issues);
-			return { id, issues: uniqIssues(x.issues), ...(where ? { where } : {}), role, ...(shouldDrop(where, role, keep, opts.canDrop ?? false) ? { dropped: true } : {}) };
-		}));
-		return { textIssues: uniqIssues(r.textIssues), images };
-	}));
-	return { key: auditKey(p), textIssues: [...new Set(results.flatMap((r) => r.textIssues))], images: results.flatMap((r) => r.images), at: new Date().toISOString() };
+	const results = await Promise.all(
+		batches.map(async (batch) => {
+			const bytes = await Promise.all(batch.map((id) => opts.image(id)));
+			const prompt = `${batch.length ? `本批恰有 ${batch.length} 张图片，必须逐一返回 index=[0..${batch.length - 1}]，即使相似也不能合并。\n` : ""}${PROMPT(content)}`;
+			const r = await geminiJson<{ textIssues: string[]; images: { index: number; issues: string[] }[] }>(prompt, bytes, schema(batch.length));
+			const got = new Set(r.images.map((x) => x.index));
+			if (batch.some((_, j) => !got.has(j))) throw new Error("Gemini 文字检查漏了图：这一批要重查");
+			const images = await Promise.all(
+				r.images
+					.filter((x) => x.issues.length && batch[x.index])
+					.map(async (x): Promise<AuditImage> => {
+						const id = batch[x.index]!;
+						const role = roleOf(p, id),
+							keep = kept.has(id);
+						const where = keep ? null : await textWhere(bytes[x.index]!, x.issues);
+						return {
+							id,
+							issues: uniqIssues(x.issues),
+							...(where ? { where } : {}),
+							role,
+							...(shouldDrop(where, role, keep, opts.canDrop ?? false) ? { dropped: true } : {}),
+						};
+					}),
+			);
+			return { textIssues: uniqIssues(r.textIssues), images };
+		}),
+	);
+	return {
+		key: auditKey(p),
+		textIssues: [...new Set(results.flatMap((r) => r.textIssues))],
+		images: results.flatMap((r) => r.images),
+		at: new Date().toISOString(),
+	};
 }
 
 /** 一张图的问题去掉重复的：Gemini 偶尔把同一句重复上百遍（一条里用「；」连着的也拆开比） */
-export const uniqIssues = (issues: string[]) => [...new Set(issues.flatMap((s) => s.split("；")).map((s) => s.trim()).filter(Boolean))];
+export const uniqIssues = (issues: string[]) => [
+	...new Set(
+		issues
+			.flatMap((s) => s.split("；"))
+			.map((s) => s.trim())
+			.filter(Boolean),
+	),
+];
 
 /** x2 去掉挑出的图：主图、详情图里这几张（图片 id）的 Pic 写上 drop */
 export function dropAudited(pics: Pics, drops: AuditImage[]): Pics {
@@ -116,20 +156,26 @@ export function dropAudited(pics: Pics, drops: AuditImage[]): Pics {
 /** 人要用 x2 去掉的图：放回来 */
 export function restoreAudited(pics: Pics, ids: Iterable<string>): Pics {
 	const back = new Set(ids);
-	const clear = (list: Pic[] = []) => list.map((p) => {
-		if (!p.imageId || !back.has(p.imageId) || !p.drop?.startsWith(AUDIT_DROP)) return p;
-		const { drop: _, ...rest } = p;
-		return rest;
-	});
+	const clear = (list: Pic[] = []) =>
+		list.map((p) => {
+			if (!p.imageId || !back.has(p.imageId) || !p.drop?.startsWith(AUDIT_DROP)) return p;
+			const { drop: _, ...rest } = p;
+			return rest;
+		});
 	return { ...pics, main: clear(pics.main), detail: clear(pics.detail) };
 }
 
 /** 商品稿上 x2 去掉的图，一张一条（记进检查结果，人看得到，要用可以保留） */
 export function auditDropped(pics: Pics): AuditImage[] {
 	const out = new Map<string, AuditImage>();
-	for (const [list, role] of [[pics.main ?? [], "主图"], [pics.detail ?? [], "详情图"]] as const) for (const p of list) {
-		if (p.imageId && p.drop?.startsWith(AUDIT_DROP) && !out.has(p.imageId)) out.set(p.imageId, { id: p.imageId, issues: uniqIssues([p.drop.slice(AUDIT_DROP.length)]), where: "后加的文案", role, dropped: true });
-	}
+	for (const [list, role] of [
+		[pics.main ?? [], "主图"],
+		[pics.detail ?? [], "详情图"],
+	] as const)
+		for (const p of list) {
+			if (p.imageId && p.drop?.startsWith(AUDIT_DROP) && !out.has(p.imageId))
+				out.set(p.imageId, { id: p.imageId, issues: uniqIssues([p.drop.slice(AUDIT_DROP.length)]), where: "后加的文案", role, dropped: true });
+		}
 	return [...out.values()];
 }
 
@@ -143,16 +189,28 @@ export function auditIssues(a: Partial<Audit>, kept: Iterable<string> = [], name
 	const images = (a.images ?? []).map((x) => ({ x, status: statusOf(x) }));
 	const ordered = [...images.filter((i) => shown(i.status)), ...images.filter((i) => !shown(i.status))];
 	const text = (a.textIssues ?? []).map((t, i): AuditIssue => ({ n: i + 1, kind: "文案", text: t, status: "提示" }));
-	return [...text, ...ordered.map(({ x, status }, i): AuditIssue => {
-		const name = names.get(x.id);
-		return { n: text.length + i + 1, kind: "图", text: uniqIssues(x.issues).join("；"), image: x.id, ...(name ? { name } : {}), ...(x.role ? { role: x.role } : {}), ...(x.where ? { where: x.where } : {}), status };
-	})];
+	return [
+		...text,
+		...ordered.map(({ x, status }, i): AuditIssue => {
+			const name = names.get(x.id);
+			return {
+				n: text.length + i + 1,
+				kind: "图",
+				text: uniqIssues(x.issues).join("；"),
+				image: x.id,
+				...(name ? { name } : {}),
+				...(x.role ? { role: x.role } : {}),
+				...(x.where ? { where: x.where } : {}),
+				status,
+			};
+		}),
+	];
 }
 
 const SUFFIX: Record<IssueStatus, string> = { 提示: "", 已去掉: "（x2 已去掉）", 不算问题: "（印在商品上，不算问题）", 保留的图: "（保留的图）" };
 
 /** 一条问题写成一行：编号、文案或图的名字（不写图片 id）、问题原文、怎么样了 */
-export const issueLine = (x: AuditIssue) => `${x.n}. ${x.kind === "文案" ? "文案" : x.name ?? x.role ?? "图"}：${x.text}${SUFFIX[x.status]}`;
+export const issueLine = (x: AuditIssue) => `${x.n}. ${x.kind === "文案" ? "文案" : (x.name ?? x.role ?? "图")}：${x.text}${SUFFIX[x.status]}`;
 
 /** 商品稿的「说明」：要人看的问题，带编号；没有回 null */
 export function auditNotes(issues: AuditIssue[]): string | null {

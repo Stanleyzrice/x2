@@ -6,12 +6,16 @@
 import type { SourceSku } from "./check/orders.ts";
 import type { Sql } from "./db/index.ts";
 import { Usage } from "./errors.ts";
-import { Gone, type Offer, offer as readOffer, offerIdOf } from "./site/1688.ts";
-import { ready as zhixiaReady, similar1688 } from "./site/zhixia.ts";
 import { exceptionFor, matchSku, rank, sameName } from "./similar.ts";
+import { Gone, type Offer, offerIdOf, offer as readOffer } from "./site/1688.ts";
+import { similar1688, ready as zhixiaReady } from "./site/zhixia.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const live = (id: string) => readOffer(id).catch((e) => { if (e instanceof Gone) return null; throw e; });
+const live = (id: string) =>
+	readOffer(id).catch((e) => {
+		if (e instanceof Gone) return null;
+		throw e;
+	});
 
 /** 现读的货源写进这个商品这一行的快照 */
 export async function snapshot(sql: Sql, itemId: string, o: Offer): Promise<void> {
@@ -52,11 +56,15 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 	const out: Found[] = [];
 	for (const itemId of itemIds) {
 		// 店里的商品：从最近 60 天的订单里取名字、图、卖过的规格
-		const rows = await sql`select distinct i->>'name' as name, i->>'image' as image, i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`;
+		const rows =
+			await sql`select distinct i->>'name' as name, i->>'image' as image, i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`;
 		if (!rows.length) throw new Usage(`最近 60 天的订单里没有商品 ${itemId}（先 x2 status）`);
-		const name = String(rows[0]!.name), image = String(rows[0]!.image ?? "");
+		const name = String(rows[0]!.name),
+			image = String(rows[0]!.image ?? "");
 		const specs = [...new Set(rows.map((r) => String(r.spec ?? "")))];
-		const kept = new Map((await sql`select offer_id, sku_exceptions from sources where item_id = ${itemId}`).map((r) => [r.offer_id as string, r.sku_exceptions as string | null]));
+		const kept = new Map(
+			(await sql`select offer_id, sku_exceptions from sources where item_id = ${itemId}`).map((r) => [r.offer_id as string, r.sku_exceptions as string | null]),
+		);
 		let found: Scored[] = [];
 		if (pasted) {
 			const o = await live(pasted);
@@ -83,20 +91,43 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 			for (const f of found) {
 				await tx`
 					insert into sources ${tx({
-						item_id: itemId, site: "1688", offer_id: f.offer.offerId, item_name: name, item_image: image, url: f.offer.url, title: f.offer.title, image: f.offer.image,
-						skus: tx.json(f.offer.skus as any), read_at: new Date(), score: f.total ? Math.round((f.matched / f.total) * 100) / 100 : null, missing: f.missing.join("、") || null,
-						origin: f.origin, sure: f === sure, chosen: Boolean(pasted),
+						item_id: itemId,
+						site: "1688",
+						offer_id: f.offer.offerId,
+						item_name: name,
+						item_image: image,
+						url: f.offer.url,
+						title: f.offer.title,
+						image: f.offer.image,
+						skus: tx.json(f.offer.skus as any),
+						read_at: new Date(),
+						score: f.total ? Math.round((f.matched / f.total) * 100) / 100 : null,
+						missing: f.missing.join("、") || null,
+						origin: f.origin,
+						sure: f === sure,
+						chosen: Boolean(pasted),
 					})}
 					on conflict (item_id, offer_id) do update set url = excluded.url, title = excluded.title, image = excluded.image, skus = excluded.skus, read_at = excluded.read_at,
 						score = excluded.score, missing = excluded.missing, origin = excluded.origin, sure = excluded.sure, chosen = excluded.chosen, broken = null, found_at = now()`;
 			}
 		});
 		out.push({
-			itemId, name, options: found.length, chosen: pasted && found.length ? found[0]!.offer.title : null, sure: sure?.offer.title ?? null,
-			why: pasted ? (found.length ? `用人贴的货源${found[0]!.missing.length ? `（未匹配的规格：${found[0]!.missing.join("、")}）` : ""}` : "贴的货源已在 1688 下架")
-				: sure ? "卖过的规格都对得上，而且只有它这样：随加购一起定下"
-				: found.length === 0 ? "没找到：贴一个 1688 链接（x2 source <商品> --url …），或者请人在 1688 上找"
-				: all.length > 1 ? `${all.length} 个货源都对得上：请人在「货源」里勾` : "没有规格全对得上的：请人在「货源」里勾，或者贴链接",
+			itemId,
+			name,
+			options: found.length,
+			chosen: pasted && found.length ? found[0]!.offer.title : null,
+			sure: sure?.offer.title ?? null,
+			why: pasted
+				? found.length
+					? `用人贴的货源${found[0]!.missing.length ? `（未匹配的规格：${found[0]!.missing.join("、")}）` : ""}`
+					: "贴的货源已在 1688 下架"
+				: sure
+					? "卖过的规格都对得上，而且只有它这样：随加购一起定下"
+					: found.length === 0
+						? "没找到：贴一个 1688 链接（x2 source <商品> --url …），或者请人在 1688 上找"
+						: all.length > 1
+							? `${all.length} 个货源都对得上：请人在「货源」里勾`
+							: "没有规格全对得上的：请人在「货源」里勾，或者贴链接",
 		});
 	}
 	return out;
@@ -107,17 +138,29 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 export async function setException(sql: Sql, itemId: string, text: string): Promise<{ spec: string; sku: string; title: string }> {
 	const i = text.indexOf("=");
 	if (i <= 0) throw new Usage(`--spec 写成「店里的规格名 = 货源的规格名」：${text}`);
-	const spec = text.slice(0, i).trim(), named = text.slice(i + 1).trim();
-	const [row] = await sql`select offer_id, title, skus, sku_exceptions from sources where item_id = ${itemId} and (chosen or sure) and broken is null order by chosen desc limit 1`;
+	const spec = text.slice(0, i).trim(),
+		named = text.slice(i + 1).trim();
+	const [row] =
+		await sql`select offer_id, title, skus, sku_exceptions from sources where item_id = ${itemId} and (chosen or sure) and broken is null order by chosen desc limit 1`;
 	if (!row) throw new Usage(`商品 ${itemId} 还没定货源：先选货源（x2 source ${itemId}）`);
-	const specs = (await sql`select distinct i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`).map((r) => String(r.spec ?? ""));
+	const specs = (await sql`select distinct i->>'spec' as spec from orders o, jsonb_array_elements(o.items) i where i->>'itemId' = ${itemId}`).map((r) =>
+		String(r.spec ?? ""),
+	);
 	const mine = specs.find((s) => sameName(s || "（单规格）", spec));
 	if (mine === undefined) throw new Usage(`商品 ${itemId} 最近 60 天卖过的规格里没有「${spec}」。卖过的：${specs.map((s) => s || "（单规格）").join("、")}`);
 	const skus = row.skus as SourceSku[];
 	const sku = skus.find((k) => sameName(k.name, named));
-	if (!sku) throw new Usage(`货源「${row.title}」里没有「${named}」。最像的：${rank(mine, skus).slice(0, 5).map((k) => k.name).join("、")}`);
+	if (!sku)
+		throw new Usage(
+			`货源「${row.title}」里没有「${named}」。最像的：${rank(mine, skus)
+				.slice(0, 5)
+				.map((k) => k.name)
+				.join("、")}`,
+		);
 	const left = mine || "（单规格）";
-	const lines = String(row.sku_exceptions ?? "").split("\n").filter((l) => l.trim() && exceptionFor(mine, l) === undefined);
+	const lines = String(row.sku_exceptions ?? "")
+		.split("\n")
+		.filter((l) => l.trim() && exceptionFor(mine, l) === undefined);
 	await sql`update sources set sku_exceptions = ${[...lines, `${left} = ${sku.name}`].join("\n")} where item_id = ${itemId} and offer_id = ${row.offer_id}`;
 	return { spec: left, sku: sku.name, title: String(row.title ?? row.offer_id) };
 }

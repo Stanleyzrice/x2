@@ -9,7 +9,11 @@ import { ORIGIN, seller, type Write, write } from "./seller.ts";
 async function download(path: string): Promise<string> {
 	const p = await page(ORIGIN);
 	const r = await p.run(async (path: string) => {
-		const cookie = (n: string) => document.cookie.split("; ").find((c) => c.startsWith(`${n}=`))?.slice(n.length + 1) ?? "";
+		const cookie = (n: string) =>
+			document.cookie
+				.split("; ")
+				.find((c) => c.startsWith(`${n}=`))
+				?.slice(n.length + 1) ?? "";
 		const url = new URL(path, location.origin);
 		url.searchParams.set("SPC_CDS", cookie("SPC_CDS"));
 		url.searchParams.set("SPC_CDS_VER", "2");
@@ -26,13 +30,18 @@ async function download(path: string): Promise<string> {
 }
 
 /** 批量上架的模板（xlsx 的 base64）。给了叶子类目 id 是类目模板（带这个类目的属性列），不给是 41 列的基础模板 */
-export const template = (categoryId?: number) => download(categoryId
-	? `/api/tool/mass_product/download_template/?category_id=${categoryId}&timestamp=${Date.now()}`
-	: `/api/tool/mass_product/download_basic_template/?timestamp=${Date.now()}`);
+export const template = (categoryId?: number) =>
+	download(
+		categoryId
+			? `/api/tool/mass_product/download_template/?category_id=${categoryId}&timestamp=${Date.now()}`
+			: `/api/tool/mass_product/download_basic_template/?timestamp=${Date.now()}`,
+	);
 
 /** 最近的批量上传记录（解析好没有、成功几行、失败几行、记录 id） */
 export async function records(pageSize = 30): Promise<any[]> {
-	const b = await seller("/api/tool/mass_product/get_mass_record_list/", { query: { operation_type: 2, page_number: 1, page_size: Math.max(10, Math.min(100, pageSize)) } });
+	const b = await seller("/api/tool/mass_product/get_mass_record_list/", {
+		query: { operation_type: 2, page_number: 1, page_size: Math.max(10, Math.min(100, pageSize)) },
+	});
 	return b.data?.list ?? b.data?.records ?? [];
 }
 
@@ -59,21 +68,34 @@ export async function drafts(): Promise<Draft[]> {
 /** 写：传填好的模板。站点当场受理，解析是异步的：之后看 records() */
 export async function upload(base64: string, filename = "x2.xlsx"): Promise<Write> {
 	const p = await page(ORIGIN);
-	return p.run(async (b64: string, filename: string) => {
-		const cookie = (n: string) => document.cookie.split("; ").find((c) => c.startsWith(`${n}=`))?.slice(n.length + 1) ?? "";
-		const bin = atob(b64);
-		const bytes = new Uint8Array(bin.length);
-		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-		const fd = new FormData();
-		fd.append("file", new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
-		try {
-			const r = await fetch(`/api/mass/mpsku/upload_template?timestamp=${Date.now()}&SPC_CDS=${cookie("SPC_CDS")}&SPC_CDS_VER=2`, { method: "POST", credentials: "include", headers: { "x-csrftoken": cookie("csrftoken") }, body: fd });
-			const j = await r.json();
-			return j?.code === 0 ? { kind: "done" as const, data: j.data } : { kind: "refused" as const, code: j?.code, why: String(j?.message ?? "") };
-		} catch (e) {
-			return { kind: "unknown" as const, why: String((e as Error)?.message ?? e) };
-		}
-	}, base64, filename);
+	return p.run(
+		async (b64: string, filename: string) => {
+			const cookie = (n: string) =>
+				document.cookie
+					.split("; ")
+					.find((c) => c.startsWith(`${n}=`))
+					?.slice(n.length + 1) ?? "";
+			const bin = atob(b64);
+			const bytes = new Uint8Array(bin.length);
+			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+			const fd = new FormData();
+			fd.append("file", new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
+			try {
+				const r = await fetch(`/api/mass/mpsku/upload_template?timestamp=${Date.now()}&SPC_CDS=${cookie("SPC_CDS")}&SPC_CDS_VER=2`, {
+					method: "POST",
+					credentials: "include",
+					headers: { "x-csrftoken": cookie("csrftoken") },
+					body: fd,
+				});
+				const j = await r.json();
+				return j?.code === 0 ? { kind: "done" as const, data: j.data } : { kind: "refused" as const, code: j?.code, why: String(j?.message ?? "") };
+			} catch (e) {
+				return { kind: "unknown" as const, why: String((e as Error)?.message ?? e) };
+			}
+		},
+		base64,
+		filename,
+	);
 }
 
 /** 写：把草稿发布出去。默认发成下架（unlisted），人在卖家中心看过再上架；直接开卖的路径 lilto 五次都回 10025。

@@ -3,7 +3,7 @@
 // 每张图单独判，同时做：取图、问 Gemini 不排队（上限在 queue.ts），同一张图同时要的只做一次；
 // 加水印（在页面的 canvas 里画）、传图（用页面的 UploadService）碰浏览器，在这家店的浏览器里排队（调用方给的 browser）
 import * as OpenCC from "opencc-js";
-import { type Sql } from "../db/index.ts";
+import type { Sql } from "../db/index.ts";
 import { run } from "../run.ts";
 import { type Image, model } from "../service/gemini.ts";
 import { type Bytes, fetchImage, inspect } from "../service/image.ts";
@@ -15,7 +15,18 @@ import { SCREEN_VERSION, screen, type Verdict } from "./screen.ts";
 import { type Mark, markKey, watermark } from "./watermark.ts";
 
 /** 一张图走到哪了。drop 是不用它的原因（给人看） */
-export type Pic = { from: string; sha?: string; verdict?: Verdict; simplified?: boolean; translated?: string; final?: string; imageId?: string; width?: number; height?: number; drop?: string };
+export type Pic = {
+	from: string;
+	sha?: string;
+	verdict?: Verdict;
+	simplified?: boolean;
+	translated?: string;
+	final?: string;
+	imageId?: string;
+	width?: number;
+	height?: number;
+	drop?: string;
+};
 export type Pics = { main: Pic[]; detail: Pic[]; options: Pic[] };
 
 /** 原图：取字节，记一行（来源、宽高）；同一个进程里取过的不再取（取不到的下次再取） */
@@ -63,22 +74,28 @@ simplified：text 里还是简体的字所在的词（例 「工艺」的「艺�
 wrong：text 里简转繁选错的字所在的词：同一个简体字对应几个繁体字，按意思选错了（例 「易干」是容易乾，要写成「易乾」，写成「易幹」是错的）。每条写「错的词 → 对的词」，两边只差选错的字；异体字（例 汙和污、裡和裏）、用词的不同、英文、数字、符号都不算。没有则[]。
 productText：商品本体上印的字被象寄改动的地方，每处写「原图的字 → 译图的字」（被涂掉写「原图的字 → 涂掉」，字没变、被重画的写「原图的字 → 重画」）。商品本体上印的字是印在实物表面、跟着实物的形状和材质走的字：地垫印花图案里的字、瓶身标签、包装印刷、表盘铭牌。后加在图上的圆圈、方框、色块里的说明标签、角标、标题不是商品本体，它们译成繁体是对的，不要列。商品上的字和原图一模一样（字、字体、位置都没变）则[]。
 数组为空才算没有。`;
-const strings = (keys: readonly string[]) => ({ type: "object", properties: Object.fromEntries(keys.map((k) => [k, { type: "array", items: { type: "string" } }])), required: keys });
+const strings = (keys: readonly string[]) => ({
+	type: "object",
+	properties: Object.fromEntries(keys.map((k) => [k, { type: "array", items: { type: "string" } }])),
+	required: keys,
+});
 const TEXT_FIELDS = ["text", "simplified", "wrong"] as const;
 const PRODUCT_FIELDS = [...TEXT_FIELDS, "productText"] as const;
 /** 译图检查的结果：text、simplified、wrong 来自第一问（只看译图），productText 来自第二问（比原图和译图） */
 export type TranslatedCheck = Record<(typeof PRODUCT_FIELDS)[number], string[]>;
 
 let cc: { traditional: ((s: string) => string)[]; simplified: (s: string) => string; variant: ((s: string) => string)[] } | null = null;
-const opencc = () => (cc ??= {
-	traditional: (["t", "tw", "hk"] as const).map((to) => OpenCC.Converter({ from: "cn", to })),
-	simplified: OpenCC.Converter({ from: "t", to: "cn" }),
-	variant: [OpenCC.Converter({ from: "t", to: "tw" }), OpenCC.Converter({ from: "tw", to: "t" })],
-});
+const opencc = () =>
+	(cc ??= {
+		traditional: (["t", "tw", "hk"] as const).map((to) => OpenCC.Converter({ from: "cn", to })),
+		simplified: OpenCC.Converter({ from: "t", to: "cn" }),
+		variant: [OpenCC.Converter({ from: "t", to: "tw" }), OpenCC.Converter({ from: "tw", to: "t" })],
+	});
 /** 词里有简体字：三种繁体（OpenCC 标准、台湾、香港）都要改它。台湾也用的字（台、群）、异体字不算 */
 const hasSimplified = (w: string) => opencc().traditional.every((f) => f(w) !== w);
 /** 两个字是简转繁选错：同一个简体字的两个繁体字（幹、乾 都是 干），又不是台湾的异体字（汙、污） */
-const misconverted = (a: string, b: string) => a !== b && opencc().simplified(a) === opencc().simplified(b) && !opencc().variant.some((f) => f(a) === b || f(b) === a);
+const misconverted = (a: string, b: string) =>
+	a !== b && opencc().simplified(a) === opencc().simplified(b) && !opencc().variant.some((f) => f(a) === b || f(b) === a);
 const han = (s: string) => [...s].filter((c) => /\p{Script=Han}/u.test(c));
 
 /** 译图检查的结果 → 不用这张的原因；没问题回 null。简体字、错字要在模型抄的字里，还要过 OpenCC 这一关 */
@@ -89,7 +106,9 @@ export function translatedDrop(c: TranslatedCheck): string | null {
 	const simplified = c.simplified.filter((w) => on(w) && hasSimplified(w));
 	const wrong = c.wrong.filter((x) => {
 		const [a = "", b = ""] = x.split(/→|->/).map((t) => t.trim());
-		const p = han(a), q = han(b), diff = p.map((ch, i) => [ch, q[i] ?? ""] as const).filter(([u, v]) => u !== v);
+		const p = han(a),
+			q = han(b),
+			diff = p.map((ch, i) => [ch, q[i] ?? ""] as const).filter(([u, v]) => u !== v);
 		return on(a) && p.length === q.length && diff.length > 0 && diff.every(([u, v]) => misconverted(u, v));
 	});
 	const product = c.productText.map((x) => x.trim()).filter(Boolean);
@@ -156,11 +175,14 @@ export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promi
 /** 把要译的交象寄：一批 5 张记成写入「译图」，马上执行（不用问人）。同一批图交过、核清了还没有结果的（人核对成已核对，象寄的地址没拿到），
  * 防重复的 key 后面加次数，重交 */
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
-	const [{ batch }] = await sql`select nextval('batch_seq')::text as batch` as any;
+	const [{ batch }] = (await sql`select nextval('batch_seq')::text as batch`) as any;
 	for (let i = 0; i < items.length; i += 5) {
 		const chunk = items.slice(i, i + 5);
-		const base = `xiangji:${chunk.map((x) => x.sha).sort().join(",")}`;
-		const [{ n }] = await sql`select count(*)::int as n from writes where key = ${base} or key like ${`${base}#%`}` as any;
+		const base = `xiangji:${chunk
+			.map((x) => x.sha)
+			.sort()
+			.join(",")}`;
+		const [{ n }] = (await sql`select count(*)::int as n from writes where key = ${base} or key like ${`${base}#%`}`) as any;
 		const key = n > 0 ? `${base}#${n + 1}` : base;
 		await sql`insert into writes (batch, op, target, params, display, key, status) values (${batch}, '译图', ${`xiangji:${chunk.map((x) => x.sha.slice(0, 12)).join(",")}`}, ${sql.json({ items: chunk })}, ${`译图 ${chunk.length} 张`}, ${key}, '待执行')`;
 	}
@@ -173,27 +195,49 @@ const translating = new Map<string, Promise<void>>();
 const deciding = limiter(1);
 
 /** 做一份商品稿的图。browser：碰浏览器的步骤（加水印、传图）在哪做；log 写进度（stderr） */
-export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: string[]; detail: string[]; options: string[]; browser: Runner }, log: (s: string) => void = console.error): Promise<Pics> {
-	const pics: Pics = { main: c.main.map((from) => ({ from })), detail: c.detail.map((from) => ({ from })), options: [...new Set(c.options)].map((from) => ({ from })) };
+export async function makeImages(
+	sql: Sql,
+	c: { shop: string; mark: Mark; main: string[]; detail: string[]; options: string[]; browser: Runner },
+	log: (s: string) => void = console.error,
+): Promise<Pics> {
+	const pics: Pics = {
+		main: c.main.map((from) => ({ from })),
+		detail: c.detail.map((from) => ({ from })),
+		options: [...new Set(c.options)].map((from) => ({ from })),
+	};
 	const bytes = new Map<string, Bytes>();
 	const all = [...pics.main, ...pics.detail, ...pics.options];
 
 	// 1. 取图、量尺寸、筛字：每张图单独判，同时做
 	log(`取图、筛字（${all.length} 张）`);
-	await Promise.all(all.map(async (p) => {
-		try {
-			const b = await original(sql, p.from);
-			Object.assign(p, { sha: b.sha256, width: b.width, height: b.height });
-			bytes.set(b.sha256, b);
-		} catch (e) { p.drop = `取不到：${(e as Error).message}`; return; }
-		if (p.width! <= 10 || p.height! <= 10) { p.drop = `占位图（${p.width}×${p.height}）`; return; }
-		if (pics.detail.includes(p) && !detailFits(p.width!, p.height!)) { p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`; return; }
-		// 问 Gemini 出错（超时……）只丢这一张，不挡商品稿；没缓存，下次做商品稿再问
-		const s = await screened(sql, bytes.get(p.sha!)!).catch((e: Error) => { p.drop = `筛字出错：${e.message}`; return null; });
-		if (!s) return;
-		Object.assign(p, s);
-		if (s.verdict === "d") p.drop = "有供应商痕迹或写给 1688 买家的说明（工厂、批发、联系方式、人民币价、售后、定制……）";
-	}));
+	await Promise.all(
+		all.map(async (p) => {
+			try {
+				const b = await original(sql, p.from);
+				Object.assign(p, { sha: b.sha256, width: b.width, height: b.height });
+				bytes.set(b.sha256, b);
+			} catch (e) {
+				p.drop = `取不到：${(e as Error).message}`;
+				return;
+			}
+			if (p.width! <= 10 || p.height! <= 10) {
+				p.drop = `占位图（${p.width}×${p.height}）`;
+				return;
+			}
+			if (pics.detail.includes(p) && !detailFits(p.width!, p.height!)) {
+				p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`;
+				return;
+			}
+			// 问 Gemini 出错（超时……）只丢这一张，不挡商品稿；没缓存，下次做商品稿再问
+			const s = await screened(sql, bytes.get(p.sha!)!).catch((e: Error) => {
+				p.drop = `筛字出错：${e.message}`;
+				return null;
+			});
+			if (!s) return;
+			Object.assign(p, s);
+			if (s.verdict === "d") p.drop = "有供应商痕迹或写给 1688 买家的说明（工厂、批发、联系方式、人民币价、售后、定制……）";
+		}),
+	);
 
 	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；结果未知的这张先不用（不挡商品稿），人核清以后再做商品稿就用上
 	const toTranslate = all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
@@ -203,57 +247,87 @@ export async function makeImages(sql: Sql, c: { shop: string; mark: Mark; main: 
 		let job = null as Promise<void> | null;
 		const { fresh, others } = await deciding(async () => {
 			const state = await translationState(sql, shas);
-			const flying = new Set((await sql`select params from writes where op = '译图' and status in ('待执行', '已提交', '结果未知', '不一致')`).flatMap((w) => (w.params.items as { sha: string }[]).map((i) => i.sha)));
+			const flying = new Set(
+				(await sql`select params from writes where op = '译图' and status in ('待执行', '已提交', '结果未知', '不一致')`).flatMap((w) =>
+					(w.params.items as { sha: string }[]).map((i) => i.sha),
+				),
+			);
 			const others = [...new Set(shas.flatMap((s) => (translating.has(s) ? [translating.get(s)!] : [])))];
 			const fresh = shas.filter((s) => !state.has(s) && !flying.has(s) && !translating.has(s));
 			if (fresh.length) {
-				job = translateNow(sql, fresh.map((s) => ({ sha: s, url: toTranslate.find((p) => p.sha === s)!.from })));
-				const settled = job.then(() => {}, () => {});
+				job = translateNow(
+					sql,
+					fresh.map((s) => ({ sha: s, url: toTranslate.find((p) => p.sha === s)!.from })),
+				);
+				const settled = job.then(
+					() => {},
+					() => {},
+				);
 				for (const s of fresh) translating.set(s, settled);
-				void settled.then(() => { for (const s of fresh) if (translating.get(s) === settled) translating.delete(s); });
+				void settled.then(() => {
+					for (const s of fresh) if (translating.get(s) === settled) translating.delete(s);
+				});
 			}
 			return { fresh, others };
 		});
-		if (job) { log(`交象寄译图（${fresh.length} 张）`); await job; }
+		if (job) {
+			log(`交象寄译图（${fresh.length} 张）`);
+			await job;
+		}
 		await Promise.all(others);
 		let state = await translationState(sql, shas);
-		await Promise.all(shas.map(async (s) => {
-			const t = state.get(s);
-			if (t && !t.saved && t.url) await download(() => saveTranslation(sql, s, t.url!)).catch((e) => log(`取译图：${(e as Error).message}`));
-		}));
+		await Promise.all(
+			shas.map(async (s) => {
+				const t = state.get(s);
+				if (t && !t.saved && t.url) await download(() => saveTranslation(sql, s, t.url!)).catch((e) => log(`取译图：${(e as Error).message}`));
+			}),
+		);
 		state = await translationState(sql, shas);
-		const still = new Map((await sql`select id::text, params from writes where op = '译图' and status in ('已提交', '结果未知', '不一致') order by id`).flatMap((w) => (w.params.items as { sha: string }[]).map((i) => [i.sha, w.id as string] as const)));
-		await Promise.all(toTranslate.map(async (p) => {
-			const t = state.get(p.sha!);
-			if (t?.saved) {
-				const [row] = await sql`select sha256 from images where kind = '译图' and from_sha = ${p.sha!} limit 1`;
-				p.translated = row!.sha256;
-			} else if (t?.failed) p.drop = `象寄译不成：${t.failed}`;
-			else if (still.has(p.sha!)) p.drop = `译图结果未知（写入 #${still.get(p.sha!)}）：先不用，在「写入」里核清以后再做商品稿就会用上`;
-			else p.drop = "还没译好";
-		}));
+		const still = new Map(
+			(await sql`select id::text, params from writes where op = '译图' and status in ('已提交', '结果未知', '不一致') order by id`).flatMap((w) =>
+				(w.params.items as { sha: string }[]).map((i) => [i.sha, w.id as string] as const),
+			),
+		);
+		await Promise.all(
+			toTranslate.map(async (p) => {
+				const t = state.get(p.sha!);
+				if (t?.saved) {
+					const [row] = await sql`select sha256 from images where kind = '译图' and from_sha = ${p.sha!} limit 1`;
+					p.translated = row!.sha256;
+				} else if (t?.failed) p.drop = `象寄译不成：${t.failed}`;
+				else if (still.has(p.sha!)) p.drop = `译图结果未知（写入 #${still.get(p.sha!)}）：先不用，在「写入」里核清以后再做商品稿就会用上`;
+				else p.drop = "还没译好";
+			}),
+		);
 		// 译图检查：还有简体字、象寄改了商品上印的字，这张不用（主图、详情图的张数在下一步才截，后面的图补上来）。同时问
 		const check = toTranslate.filter((p) => p.translated && !p.drop);
 		if (check.length) log(`检查译图（${new Set(check.map((p) => p.translated)).size} 张）`);
-		await Promise.all(check.map(async (p) => {
-			const c = await translatedChecked(sql, bytes.get(p.sha!)!, p.translated!).catch((e: Error) => { p.drop = `译图检查出错：${e.message}`; return null; });
-			const why = c && translatedDrop(c);
-			if (why) p.drop = why;
-		}));
+		await Promise.all(
+			check.map(async (p) => {
+				const c = await translatedChecked(sql, bytes.get(p.sha!)!, p.translated!).catch((e: Error) => {
+					p.drop = `译图检查出错：${e.message}`;
+					return null;
+				});
+				const why = c && translatedDrop(c);
+				if (why) p.drop = why;
+			}),
+		);
 	}
 
 	// 3. 水印、传图：主图最多 9 张、详情图最多 12 张、规格图都要；碰浏览器的在 browser 里排队
 	const use = (list: Pic[], max: number) => list.filter((p) => !p.drop).slice(0, max);
 	const keep = [...use(pics.main, MAX_MAIN), ...use(pics.detail, MAX_DETAIL), ...pics.options.filter((p) => !p.drop)];
 	log(`加水印、传图（${keep.length} 张）`);
-	await Promise.all(keep.map(async (p) => {
-		let base = bytes.get(p.sha!)!;
-		if (p.translated) {
-			const [row] = await sql`select bytes from images where sha256 = ${p.translated}`;
-			base = inspect(new Uint8Array(row!.bytes), "译图");
-		}
-		await finish(sql, c.shop, c.mark, p, base, c.browser);
-	}));
+	await Promise.all(
+		keep.map(async (p) => {
+			let base = bytes.get(p.sha!)!;
+			if (p.translated) {
+				const [row] = await sql`select bytes from images where sha256 = ${p.translated}`;
+				base = inspect(new Uint8Array(row!.bytes), "译图");
+			}
+			await finish(sql, c.shop, c.mark, p, base, c.browser);
+		}),
+	);
 	for (const p of [...pics.main, ...pics.detail]) if (!p.drop && !p.imageId && !keep.includes(p)) p.drop = "超过张数，不用";
 	return pics;
 }

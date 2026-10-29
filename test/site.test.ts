@@ -33,7 +33,7 @@ test("list 默认翻到底，输出 { rows, next }", async () => {
 });
 
 test("--pages 只翻几页，next 能接着翻", async () => {
-	const first = await value(["items", "--shop-id", "7", "--pages", "1"]) as { next: string };
+	const first = (await value(["items", "--shop-id", "7", "--pages", "1"])) as { next: string };
 	assert.deepEqual(first, { rows: [1, 2], next: "2" });
 	assert.deepEqual(await value(["items", "--shop-id", "7", "--cursor", first.next]), { rows: [3, 4, 5], next: null });
 });
@@ -73,8 +73,15 @@ test("Shopee 的 401、403、要验证算要人处理，别的出错不算", () 
 });
 
 test("知虾热词商品按 30 天销量从高到低排，没有销量的排最后", () => {
-	const rows = [{ itemId: "1", itemDataList: [{ sales30Day: "7" }] }, { itemId: "2", itemDataList: [] }, { itemId: "3", itemDataList: [{ sales30Day: "99" }] }];
-	assert.deepEqual(bySales30Day(rows).map((r) => r.itemId), ["3", "1", "2"]);
+	const rows = [
+		{ itemId: "1", itemDataList: [{ sales30Day: "7" }] },
+		{ itemId: "2", itemDataList: [] },
+		{ itemId: "3", itemDataList: [{ sales30Day: "99" }] },
+	];
+	assert.deepEqual(
+		bySales30Day(rows).map((r) => r.itemId),
+		["3", "1", "2"],
+	);
 });
 
 test("JSON 参数：合法的转成对象，不合法的是 Usage（不是一般错误）", async () => {

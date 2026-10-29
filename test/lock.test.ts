@@ -30,16 +30,27 @@ async function deadPid(): Promise<number> {
 
 /** 起一个子进程拿着锁不放；回子进程（stdout 打出 held 才回） */
 async function holder(name: string): Promise<ChildProcess> {
-	const c = spawn(process.execPath, ["--input-type=module", "-e", `const { acquire } = await import(${JSON.stringify(LOCK)}); await acquire(${JSON.stringify(name)}); console.log("held"); setInterval(() => {}, 1000);`], { env: process.env, stdio: ["ignore", "pipe", "inherit"] });
+	const c = spawn(
+		process.execPath,
+		[
+			"--input-type=module",
+			"-e",
+			`const { acquire } = await import(${JSON.stringify(LOCK)}); await acquire(${JSON.stringify(name)}); console.log("held"); setInterval(() => {}, 1000);`,
+		],
+		{ env: process.env, stdio: ["ignore", "pipe", "inherit"] },
+	);
 	await new Promise<void>((ok, bad) => {
-		c.stdout!.on("data", (d) => { if (String(d).includes("held")) ok(); });
+		c.stdout!.on("data", (d) => {
+			if (String(d).includes("held")) ok();
+		});
 		c.on("exit", (code) => bad(new Error(`拿锁的子进程退出了：${code}`)));
 	});
 	return c;
 }
 
 test("锁算不算数：过期（超过 1 分钟没摸）、同一台电脑上进程不在了的不算；读不出是谁的，刚建的还算", () => {
-	const yes = () => true, no = () => false;
+	const yes = () => true,
+		no = () => false;
 	assert.equal(stale(owner({}), 1000, yes), false);
 	assert.equal(stale(owner({}), 61_000, yes), true);
 	assert.equal(stale(owner({}), 1000, no), true);
@@ -54,7 +65,15 @@ test("拿锁写下自己是谁，放了就删掉；同一把锁再拿要等，�
 	assert.equal(o.pid, process.pid);
 	let waited: Owner | null = null;
 	const t0 = Date.now();
-	await assert.rejects(acquire("t-basic", { timeoutMs: 600, onWait: (w) => { waited = w; } }), /还没轮到/);
+	await assert.rejects(
+		acquire("t-basic", {
+			timeoutMs: 600,
+			onWait: (w) => {
+				waited = w;
+			},
+		}),
+		/还没轮到/,
+	);
 	assert.ok(Date.now() - t0 >= 500);
 	assert.equal(waited!.pid, process.pid);
 	lock.release();
@@ -79,7 +98,12 @@ test("另一个进程拿着锁：等它；它被 kill（TERM）时自己删锁�
 		const name = `t-cross-${signal}`;
 		const c = await holder(name);
 		let waited = false;
-		const got = acquire(name, { timeoutMs: 10_000, onWait: () => { waited = true; } });
+		const got = acquire(name, {
+			timeoutMs: 10_000,
+			onWait: () => {
+				waited = true;
+			},
+		});
 		await new Promise((r) => setTimeout(r, 500));
 		assert.equal(waited, true);
 		const t0 = Date.now();

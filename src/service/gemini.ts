@@ -22,12 +22,20 @@ export async function gemini(prompt: string, images: Image[], schema?: object): 
 	if (body.length > MAX_BYTES) throw new Error(`一次送给 Gemini 的图太大（${Math.round(body.length / 1048576)}MB，最多 20MB）`);
 	const url = `${base}/v1beta/models/${encodeURIComponent(model())}:generateContent`;
 	for (let attempt = 1; ; attempt++) {
-		const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": key }, body, signal: AbortSignal.timeout(60_000) });
+		const r = await fetch(url, {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-goog-api-key": key },
+			body,
+			signal: AbortSignal.timeout(60_000),
+		});
 		if (r.ok) {
 			const j = (await r.json()) as any;
 			return ((j?.candidates?.[0]?.content?.parts ?? []) as { text?: string }[]).map((p) => p.text ?? "").join("");
 		}
-		if ((r.status === 429 || r.status >= 500) && attempt < 4) { await new Promise((res) => setTimeout(res, 2 ** (attempt - 1) * 1000)); continue; }
+		if ((r.status === 429 || r.status >= 500) && attempt < 4) {
+			await new Promise((res) => setTimeout(res, 2 ** (attempt - 1) * 1000));
+			continue;
+		}
 		throw new Error(`Gemini 回 HTTP ${r.status}：${(await r.text()).slice(0, 300)}`);
 	}
 }
@@ -35,5 +43,9 @@ export async function gemini(prompt: string, images: Image[], schema?: object): 
 /** 要 JSON 的：按 schema 回，解析不了就抛 */
 export async function geminiJson<T>(prompt: string, images: Image[], schema: object): Promise<T> {
 	const text = await gemini(prompt, images, schema);
-	try { return JSON.parse(text) as T; } catch { throw new Error(`Gemini 没有回 JSON：${text.slice(0, 200)}`); }
+	try {
+		return JSON.parse(text) as T;
+	} catch {
+		throw new Error(`Gemini 没有回 JSON：${text.slice(0, 200)}`);
+	}
 }

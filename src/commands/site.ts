@@ -40,10 +40,16 @@ function parseFlags(args: string[]): Record<string, string> {
 		const a = args[i]!;
 		if (!a.startsWith("--")) throw new Usage(`多余的参数：${a}（参数都写成 --名字 值）`);
 		const eq = a.indexOf("=");
-		if (eq > 0) { out[a.slice(2, eq)] = a.slice(eq + 1); continue; }
+		if (eq > 0) {
+			out[a.slice(2, eq)] = a.slice(eq + 1);
+			continue;
+		}
 		const next = args[i + 1];
 		if (next === undefined || next.startsWith("--")) out[a.slice(2)] = "true";
-		else { out[a.slice(2)] = next; i++; }
+		else {
+			out[a.slice(2)] = next;
+			i++;
+		}
 	}
 	return out;
 }
@@ -52,7 +58,7 @@ export function opHelp(site: string, name: string, op: Op, shop = false): string
 	const s = schemaOf(op);
 	const required = new Set(s.required ?? []);
 	const params = Object.entries(s.properties ?? {}).map(([k, p]): [string, string] => {
-		const value = p.placeholder ?? (p.enum ? p.enum.join("|") : p.type ?? "值");
+		const value = p.placeholder ?? (p.enum ? p.enum.join("|") : (p.type ?? "值"));
 		// JSON Schema 里没有 preprocess 过的参数的默认值：从 zod 的声明里取
 		const def = (op.params.shape[k] as any)?.def;
 		const fallback = def?.type === "default" ? def.defaultValue : undefined;
@@ -65,7 +71,11 @@ export function opHelp(site: string, name: string, op: Op, shop = false): string
 }
 
 function siteHelp(name: string, site: Site): string {
-	return [`x2 ${name} <操作>：${site.describe}。只读；x2 ${name} <操作> --help 看参数`, ...table(Object.entries(site.ops).map(([k, op]) => [k, op.describe])), ...(site.shop ? [`每个操作都收 --shop <店>：${SHOP}`] : [])].join("\n");
+	return [
+		`x2 ${name} <操作>：${site.describe}。只读；x2 ${name} <操作> --help 看参数`,
+		...table(Object.entries(site.ops).map(([k, op]) => [k, op.describe])),
+		...(site.shop ? [`每个操作都收 --shop <店>：${SHOP}`] : []),
+	].join("\n");
 }
 
 /** 跑一个站点的一个操作，回要输出的值；是帮助时回帮助文本 */

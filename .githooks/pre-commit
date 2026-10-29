@@ -1,0 +1,3 @@
+#!/bin/sh
+# 提交前：类型检查、lint、格式（pnpm check）。格式不对的先 pnpm fix
+exec pnpm check

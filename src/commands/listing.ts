@@ -34,14 +34,25 @@ import { addWrites } from "../batch.ts";
 import { listingsCheck } from "../check/index.ts";
 import { db, type Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
-import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
+import {
+	AUDIT_DROP,
+	type Audit,
+	type AuditIssue,
+	auditDropped,
+	auditIssues,
+	auditKey,
+	dropAudited,
+	issueLine,
+	restoreAudited,
+	textCheck,
+} from "../listing/audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "../listing/category.ts";
-import { type Audit, AUDIT_DROP, auditDropped, type AuditIssue, auditIssues, auditKey, dropAudited, issueLine, restoreAudited, textCheck } from "../listing/audit.ts";
 import { type Pic, type Pics, unmarked } from "../listing/images.ts";
+import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
+import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
 import { imageNames, LABEL, numbered } from "../listing/product.ts";
 import { each } from "../listing/queue.ts";
 import { productOf } from "../listing/ready.ts";
-import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
 import { type Outcome, run } from "../run.ts";
@@ -55,14 +66,19 @@ const readStdin = async () => {
 	for await (const c of process.stdin) chunks.push(c as Buffer);
 	return Buffer.concat(chunks).toString("utf8");
 };
-const flag = (args: string[], name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const flag = (args: string[], name: string) => {
+	const i = args.indexOf(name);
+	return i >= 0 ? args[i + 1] : undefined;
+};
 const plain = (args: string[], ...flags: string[]) => args.filter((a, j) => !a.startsWith("--") && !flags.includes(args[j - 1] ?? ""));
 
 /** 命令输出里商品稿的叫法：简称（店铺，#编号）；没有的编号照原样写 */
 async function namesOf(sql: Sql, ids: string[]): Promise<(id: string) => string> {
 	const valid = [...new Set(ids.filter((id) => /^\d+$/.test(id)))];
 	const rows = valid.length ? await sql`select id::text, shop, nickname, offer_id, offer->>'title' as title from listings where id in ${sql(valid)}` : [];
-	const names = new Map(rows.map((r) => [r.id as string, listingName({ id: r.id, shop: r.shop, nickname: r.nickname, offer_id: r.offer_id, offer: { title: r.title } })]));
+	const names = new Map(
+		rows.map((r) => [r.id as string, listingName({ id: r.id, shop: r.shop, nickname: r.nickname, offer_id: r.offer_id, offer: { title: r.title } })]),
+	);
 	return (id) => names.get(id) ?? `商品稿 ${id}`;
 }
 
@@ -75,14 +91,23 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const usage = `x2 listing add <店> <1688 链接…> [--strategy 名字 --why "选品理由"] [--evidence "依据"]（带 --strategy 时 --why 必填）`;
 		const [shop, ...links] = plain(rest, "--strategy", "--why", "--evidence");
 		const text = z.string().trim().min(1);
-		const a = z.object({ strategy: text.optional(), why: text.optional(), evidence: text.optional() }).refine((x) => !x.strategy || x.why)
+		const a = z
+			.object({ strategy: text.optional(), why: text.optional(), evidence: text.optional() })
+			.refine((x) => !x.strategy || x.why)
 			.safeParse({ strategy: flag(rest, "--strategy"), why: flag(rest, "--why"), evidence: flag(rest, "--evidence") });
 		if (!shop || !links.length || !a.success) throw new Usage(usage);
 		const { added, snapshot } = await addListings(sql, { shop, links, ...a.data });
-		const name = await namesOf(sql, added.map((a) => a.id));
+		const name = await namesOf(
+			sql,
+			added.map((a) => a.id),
+		);
 		const old = added.some((x) => !x.isNew) && a.data.why ? "\n已经有了的不改理由、快照：补记用 x2 listing why <商品稿> --why …" : "";
-		return out(added.map((a) => ({ ...a, name: name(a.id) })),
-			added.map((a) => `${name(a.id)}${a.isNew ? "" : "：已经有了"}`).join("\n") + (added.some((x) => x.isNew) ? `\n选品快照：${snapshotLine(snapshot)}` : "") + `${old}\n下一步：x2 listing make`);
+		return out(
+			added.map((a) => ({ ...a, name: name(a.id) })),
+			added.map((a) => `${name(a.id)}${a.isNew ? "" : "：已经有了"}`).join("\n") +
+				(added.some((x) => x.isNew) ? `\n选品快照：${snapshotLine(snapshot)}` : "") +
+				`${old}\n下一步：x2 listing make`,
+		);
 	}
 
 	if (sub === "why") {
@@ -90,14 +115,16 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const usage = `x2 listing why <商品稿> --why "选品理由" [--evidence "依据"] [--force]（已有理由的要 --force 才覆盖）`;
 		const id = plain(rest, "--why", "--evidence")[0];
 		const text = z.string().trim().min(1);
-		const a = z.object({ id: z.string().regex(/^\d+$/), why: text, evidence: text.optional() })
+		const a = z
+			.object({ id: z.string().regex(/^\d+$/), why: text, evidence: text.optional() })
 			.safeParse({ id, why: flag(rest, "--why"), evidence: flag(rest, "--evidence") });
 		if (!a.success) throw new Usage(usage);
-		const [l] = await sql`select id::text, shop, nickname, offer_id, offer->>'title' as title, strategy, pick_why, pick_evidence, pick_snapshot from listings where id = ${a.data.id}`;
+		const [l] =
+			await sql`select id::text, shop, nickname, offer_id, offer->>'title' as title, strategy, pick_why, pick_evidence, pick_snapshot from listings where id = ${a.data.id}`;
 		if (!l) throw new Usage(`没有商品稿 ${a.data.id}`);
 		const name = listingName({ ...l, offer: { title: l.title } });
 		if (l.pick_why && !rest.includes("--force")) throw new Usage(`${name}已经有选品理由：${l.pick_why}\n要覆盖加 --force`);
-		const snapshot: PickSnapshot = l.pick_snapshot ?? await pickSnapshot(sql, l.strategy, true);
+		const snapshot: PickSnapshot = l.pick_snapshot ?? (await pickSnapshot(sql, l.strategy, true));
 		const evidence = a.data.evidence ?? l.pick_evidence ?? null;
 		await sql`update listings set pick_why = ${a.data.why}, pick_evidence = ${evidence}, pick_snapshot = ${sql.json(snapshot as any)}, updated_at = now() where id = ${a.data.id}`;
 		const notes = [
@@ -105,8 +132,10 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			l.pick_evidence && a.data.evidence ? `覆盖了原来的依据：${l.pick_evidence}` : "",
 			l.pick_snapshot ? "选品快照是加进来时记的，不改" : "补记了选品快照（照现在的）",
 		].filter(Boolean);
-		return out({ id: a.data.id, name, why: a.data.why, evidence, snapshot, replaced: Boolean(l.pick_why), backfilled: !l.pick_snapshot },
-			[`${name}：记下选品理由`, ...notes.map((x) => `  ${x}`), `  选品快照：${snapshotLine(snapshot)}`].join("\n"));
+		return out(
+			{ id: a.data.id, name, why: a.data.why, evidence, snapshot, replaced: Boolean(l.pick_why), backfilled: !l.pick_snapshot },
+			[`${name}：记下选品理由`, ...notes.map((x) => `  ${x}`), `  选品快照：${snapshotLine(snapshot)}`].join("\n"),
+		);
 	}
 
 	if (sub === "make") {
@@ -116,7 +145,10 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		if (!Number.isInteger(jobs) || jobs < 1 || jobs > 10) throw new Usage(usage);
 		let ids = plain(rest, "--jobs");
 		// 不给就做：还没做的、待补充的、规格是旧格式的、换了类目还没照它做属性和备货天数的
-		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object' or (category_path is not null and days_to_ship is null)) order by id`).map((r) => r.id as string);
+		if (!ids.length)
+			ids = (
+				await sql`select id::text from listings where not cancelled and product_id is null and (offer is null or problems is not null or jsonb_typeof(variants) is distinct from 'object' or (category_path is not null and days_to_ship is null)) order by id`
+			).map((r) => r.id as string);
 		if (!ids.length) return out([], "没有要做的商品稿");
 		const before = await namesOf(sql, ids);
 		const settled = await each(ids, jobs, async (id) => {
@@ -138,67 +170,114 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 			];
 			throw failed.some((f) => f.error instanceof NeedsHuman) ? new NeedsHuman(lines.join("\n")) : new Error(lines.join("\n"));
 		}
-		const hint = (r: { id: string; needs: string[] }) => (r.needs.length ? `\n  估：x2 listing estimate ${r.id}${r.needs.includes("重量") ? " --weight <kg>" : ""}${r.needs.includes("国内运费") ? " --freight <元/件>" : ""}` : "");
-		return out(results, results.map((r) => `${r.name}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : "已做好，待写文案（x2 listing show " + r.id + "）"}`).join("\n"));
+		const hint = (r: { id: string; needs: string[] }) =>
+			r.needs.length
+				? `\n  估：x2 listing estimate ${r.id}${r.needs.includes("重量") ? " --weight <kg>" : ""}${r.needs.includes("国内运费") ? " --freight <元/件>" : ""}`
+				: "";
+		return out(
+			results,
+			results
+				.map((r) => `${r.name}：${r.problems.length ? `\n  ${r.problems.join("\n  ")}${hint(r)}` : `已做好，待写文案（x2 listing show ${r.id}）`}`)
+				.join("\n"),
+		);
 	}
 
 	if (sub === "quote") {
 		// 报价（选品用）：1688 没给重量的按 --weight 算（默认 1 kg），读不到国内运费的按 --freight 算（默认 10 元），都往重了、往高了估；用了估的写出来
-		const usage = "x2 listing quote <1688 链接或货源 id> [--shop 店] [--weight kg] [--freight 元/件]（店默认 cheeroutdoor；1688 没给的重量按 --weight 算，默认 1；读不到的国内运费按 --freight 算，默认 10）";
+		const usage =
+			"x2 listing quote <1688 链接或货源 id> [--shop 店] [--weight kg] [--freight 元/件]（店默认 cheeroutdoor；1688 没给的重量按 --weight 算，默认 1；读不到的国内运费按 --freight 算，默认 10）";
 		const link = plain(rest, "--shop", "--weight", "--freight")[0];
 		const offerId = link ? offerIdOf(link) : null;
-		const opts = z.object({ shop: z.string().min(1).default("cheeroutdoor"), weight: z.coerce.number().positive().finite().default(1), freight: z.coerce.number().nonnegative().finite().default(10) })
+		const opts = z
+			.object({
+				shop: z.string().min(1).default("cheeroutdoor"),
+				weight: z.coerce.number().positive().finite().default(1),
+				freight: z.coerce.number().nonnegative().finite().default(10),
+			})
 			.safeParse({ shop: flag(rest, "--shop"), weight: flag(rest, "--weight"), freight: flag(rest, "--freight") });
 		if (!offerId || !opts.success) throw new Usage(usage);
 		const [row] = await sql`select * from shop_settings where shop = ${opts.data.shop}`;
-		if (!row) throw new Usage(`没有「${opts.data.shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
+		if (!row)
+			throw new Usage(`没有「${opts.data.shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
 		const q = quote(await readOffer1688(offerId), settingsOf(row), { weightKg: opts.data.weight, freightRmb: opts.data.freight });
-		const freight = q.freightAssumed ? `${q.freightRmb} 元/件（1688 读不到，按 --freight 估的）` : q.tags.freeShipping ? "0（包邮）" : `${q.freightRmb} 元/件（1688 页面上寄到我们这里买 1 件）`;
-		const tags = [q.tags.onePsale ? "一件代发" : "", q.tags.ship48h ? "48 小时发货" : q.tags.deliveryDays ? `${q.tags.deliveryDays} 天内发货` : ""].filter(Boolean).join("、") || "无";
-		return out(q, [
-			`${q.title}（${q.offerId}）`, `${q.shop} 售价 ${q.priceTwd}（${q.variants} 个规格）`, ...q.specs.split("\n").map((x) => `  ${x}`),
-			`国内运费：${freight}`, `重量：${q.weightAssumed ? `${q.weightAssumed}（估的）` : "1688 都给了"}`, `服务：${tags}；起订量 ${q.minQty}`,
-			...(q.problems.length ? [`问题：${q.problems.join("；")}`] : []),
-		].join("\n"));
+		const freight = q.freightAssumed
+			? `${q.freightRmb} 元/件（1688 读不到，按 --freight 估的）`
+			: q.tags.freeShipping
+				? "0（包邮）"
+				: `${q.freightRmb} 元/件（1688 页面上寄到我们这里买 1 件）`;
+		const tags =
+			[q.tags.onePsale ? "一件代发" : "", q.tags.ship48h ? "48 小时发货" : q.tags.deliveryDays ? `${q.tags.deliveryDays} 天内发货` : ""]
+				.filter(Boolean)
+				.join("、") || "无";
+		return out(
+			q,
+			[
+				`${q.title}（${q.offerId}）`,
+				`${q.shop} 售价 ${q.priceTwd}（${q.variants} 个规格）`,
+				...q.specs.split("\n").map((x) => `  ${x}`),
+				`国内运费：${freight}`,
+				`重量：${q.weightAssumed ? `${q.weightAssumed}（估的）` : "1688 都给了"}`,
+				`服务：${tags}；起订量 ${q.minQty}`,
+				...(q.problems.length ? [`问题：${q.problems.join("；")}`] : []),
+			].join("\n"),
+		);
 	}
 
 	if (sub === "estimate") {
 		// agent 估 1688 没给的重量、读不到的国内运费：只填空着的、缺的（人填过的不动），写完马上重新核价（不读 1688）
 		const usage = "x2 listing estimate <商品稿> [--weight <kg>] [--freight <元/件>]（1688 没给的重量往重了估，轻的写 1；读不到的国内运费往高了估）";
 		const id = plain(rest, "--weight", "--freight")[0];
-		const given = z.object({ weight: z.coerce.number().positive().finite().optional(), freight: z.coerce.number().nonnegative().finite().optional() })
+		const given = z
+			.object({ weight: z.coerce.number().positive().finite().optional(), freight: z.coerce.number().nonnegative().finite().optional() })
 			.safeParse({ weight: flag(rest, "--weight"), freight: flag(rest, "--freight") });
 		if (!id || !given.success || (given.data.weight === undefined && given.data.freight === undefined)) throw new Usage(usage);
 		const [l] = await sql`select * from listings where id = ${id}`;
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
 		if (!l.offer || !specsOf(l.variants)) throw new Usage(`${listingName(l)}还没做好：先 x2 listing make ${id}`);
 		const needs = estimateNeeds(l);
-		const notes: string[] = [], set: Record<string, number> = {};
+		const notes: string[] = [],
+			set: Record<string, number> = {};
 		const { weight, freight } = given.data;
 		if (weight !== undefined) {
 			if (l.weight_kg !== null) notes.push(`重量：已有 ${Number(l.weight_kg)} kg（人填的或估过的），不改`);
 			else if (!needs.includes("重量")) notes.push("重量：1688 给了每个规格的重量，不用估");
-			else { set.weight_kg = weight; notes.push(`重量：记为 ${weight} kg`); }
+			else {
+				set.weight_kg = weight;
+				notes.push(`重量：记为 ${weight} kg`);
+			}
 		}
 		if (freight !== undefined) {
 			const known = freightOf(l.offer, null);
 			if (l.freight_rmb !== null) notes.push(`国内运费：已有 ${Number(l.freight_rmb)} 元/件（人填的或估过的），不改`);
 			else if (known !== null) notes.push(`国内运费：${l.offer.tags?.freeShipping ? "货源包邮" : `1688 读得到（${known} 元/件）`}，不用估`);
-			else { set.freight_rmb = freight; notes.push(`国内运费：记为 ${freight} 元/件`); }
+			else {
+				set.freight_rmb = freight;
+				notes.push(`国内运费：记为 ${freight} 元/件`);
+			}
 		}
 		// 只写还空着的（两个 x2 同时估，先写的算）
 		if (set.weight_kg !== undefined) await sql`update listings set weight_kg = ${set.weight_kg}, updated_at = now() where id = ${id} and weight_kg is null`;
-		if (set.freight_rmb !== undefined) await sql`update listings set freight_rmb = ${set.freight_rmb}, updated_at = now() where id = ${id} and freight_rmb is null`;
+		if (set.freight_rmb !== undefined)
+			await sql`update listings set freight_rmb = ${set.freight_rmb}, updated_at = now() where id = ${id} and freight_rmb is null`;
 		const [now] = await sql`select * from listings where id = ${id}`;
 		const [row] = await sql`select * from shop_settings where shop = ${now!.shop}`;
 		await savePrices(sql, now, settingsOf(row));
 		const left = estimateNeeds(now);
-		const problems = [...String(now!.problems ?? "").split("\n").filter(Boolean), ...pricingProblems(specsOf(now!.variants)!, left)];
+		const problems = [
+			...String(now!.problems ?? "")
+				.split("\n")
+				.filter(Boolean),
+			...pricingProblems(specsOf(now!.variants)!, left),
+		];
 		const prices = specsText(specsOf(now!.variants)!, removedOf(now!.offer, now!.removed_variants));
-		return out({ id, name: listingName(now!), notes, needs: left, problems, prices }, [
-			`${listingName(now!)}：${notes.join("；")}`, `规格和价格：\n  ${prices.split("\n").join("\n  ")}`,
-			problems.length ? `还有：${problems.join("；")}` : "核价好了（下一步看 x2 status）",
-		].join("\n"));
+		return out(
+			{ id, name: listingName(now!), notes, needs: left, problems, prices },
+			[
+				`${listingName(now!)}：${notes.join("；")}`,
+				`规格和价格：\n  ${prices.split("\n").join("\n  ")}`,
+				problems.length ? `还有：${problems.join("；")}` : "核价好了（下一步看 x2 status）",
+			].join("\n"),
+		);
 	}
 
 	if (sub === "show") {
@@ -208,41 +287,82 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		if (!l) throw new Usage(`没有商品稿 ${id}`);
 		// 规格：每层（第几层、1688 的层名、现在的名字）、每个选项（第几个、1688 的原值、现在的名字、这个选项的售价范围）。单规格的不写规格名，tiers 是空的
 		const specs = specsOf(l.variants);
-		const tiers = specs && !isSingle(specs) ? specs.tiers.map((t, a) => ({
-			n: a + 1, source: t.source, name: t.name,
-			options: t.options.map((o, k) => ({ n: k + 1, source: o.source, name: o.name, price: priceRange(specs.variants.filter((v) => v.options[a] === k)) })),
-		})) : [];
+		const tiers =
+			specs && !isSingle(specs)
+				? specs.tiers.map((t, a) => ({
+						n: a + 1,
+						source: t.source,
+						name: t.name,
+						options: t.options.map((o, k) => ({
+							n: k + 1,
+							source: o.source,
+							name: o.name,
+							price: priceRange(specs.variants.filter((v) => v.options[a] === k)),
+						})),
+					}))
+				: [];
 		const facts = {
-			id: String(l.id), shop: l.shop, nickname: l.nickname ?? null, offerTitle: l.offer?.title ?? null, category: l.category_name, attributes: l.attributes_text,
-			variants: specs?.variants.length ?? 0, tiers, weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))], needs: estimateNeeds(l), tags: l.offer?.tags ?? null,
-			title: l.title, description: l.description, problems: l.offer && !specs ? OLD_SPECS : l.problems,
+			id: String(l.id),
+			shop: l.shop,
+			nickname: l.nickname ?? null,
+			offerTitle: l.offer?.title ?? null,
+			category: l.category_name,
+			attributes: l.attributes_text,
+			variants: specs?.variants.length ?? 0,
+			tiers,
+			weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))],
+			needs: estimateNeeds(l),
+			tags: l.offer?.tags ?? null,
+			title: l.title,
+			description: l.description,
+			problems: l.offer && !specs ? OLD_SPECS : l.problems,
 		};
 		return out(facts, JSON.stringify(facts, null, 1));
 	}
 
 	if (sub === "text") {
-		const usage = "x2 listing text <商品稿> --title … --description … [--tiers '[{ \"name\": \"款式\", \"options\": [\"…\"] }]'] [--nickname 简称]，或从 stdin 读 [{ id, title, description, tiers, nickname }]";
+		const usage =
+			'x2 listing text <商品稿> --title … --description … [--tiers \'[{ "name": "款式", "options": ["…"] }]\'] [--nickname 简称]，或从 stdin 读 [{ id, title, description, tiers, nickname }]';
 		const items: { id: string; title: string; description: string; tiers?: unknown; nickname?: string }[] = [];
 		const id = plain(rest, "--title", "--description", "--tiers", "--nickname")[0];
 		if (id) {
 			const t = flag(rest, "--tiers");
 			let tiers: unknown;
 			if (t !== undefined) {
-				try { tiers = JSON.parse(t); } catch { throw new Usage(`--tiers 要是 JSON：${usage}`); }
+				try {
+					tiers = JSON.parse(t);
+				} catch {
+					throw new Usage(`--tiers 要是 JSON：${usage}`);
+				}
 			}
 			items.push({ id, title: flag(rest, "--title") ?? "", description: flag(rest, "--description") ?? "", tiers, nickname: flag(rest, "--nickname") });
 		} else {
 			let input: unknown;
-			try { input = JSON.parse(await readStdin()); } catch { throw new Usage(usage); }
+			try {
+				input = JSON.parse(await readStdin());
+			} catch {
+				throw new Usage(usage);
+			}
 			if (!Array.isArray(input)) throw new Usage(usage);
-			items.push(...input.map((x) => ({ id: String(x.id), title: String(x.title ?? ""), description: String(x.description ?? ""), tiers: x.tiers, nickname: x.nickname === undefined || x.nickname === null ? undefined : String(x.nickname) })));
+			items.push(
+				...input.map((x) => ({
+					id: String(x.id),
+					title: String(x.title ?? ""),
+					description: String(x.description ?? ""),
+					tiers: x.tiers,
+					nickname: x.nickname === undefined || x.nickname === null ? undefined : String(x.nickname),
+				})),
+			);
 		}
 		const results: { id: string; saved: boolean; problems: string[]; notes?: string[] }[] = [];
 		for (const it of items) {
 			// 标题、描述的硬规矩；规格名（交了的话）照 show 的层和选项一个一个改，过一遍规格的规矩；简称（交了的话）简体中文、最多 12 字。有一样不对就什么都不存
 			const problems = [...textProblems(it.title.trim(), it.description.trim()), ...(it.nickname === undefined ? [] : nicknameProblems(it.nickname))];
 			const [l] = await sql`select variants, offer, removed_variants, nickname from listings where id = ${it.id}`;
-			if (!l) { results.push({ id: it.id, saved: false, problems: ["没有这份商品稿"] }); continue; }
+			if (!l) {
+				results.push({ id: it.id, saved: false, problems: ["没有这份商品稿"] });
+				continue;
+			}
 			let specs = specsOf(l.variants);
 			if (it.tiers !== undefined) {
 				const names = tierNames.safeParse(it.tiers);
@@ -254,24 +374,38 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 					specs = r.specs ?? specs;
 				}
 			}
-			if (problems.length) { results.push({ id: it.id, saved: false, problems }); continue; }
+			if (problems.length) {
+				results.push({ id: it.id, saved: false, problems });
+				continue;
+			}
 			const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs) } : {};
 			// 简称只在空着、还是自动填的那个值时写：人在网页上改过的不改
 			const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
 			await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() } as any)} where id = ${it.id}`;
 			results.push({ id: it.id, saved: true, problems: [], ...(nick ? {} : { notes: [`简称：已有「${l.nickname}」，不改（只在空着、还是自动填的时候写）`] }) });
 		}
-		const name = await namesOf(sql, results.map((r) => r.id));
-		const checks = await textChecks(sql, results.filter((r) => r.saved).map((r) => r.id));
-		return out({ text: results.map((r) => ({ ...r, name: name(r.id) })), audit: checks }, [
-			...results.map((r) => `${name(r.id)}：${r.saved ? ["记下了", ...(r.notes ?? [])].join("；") : r.problems.join("；")}`), ...checks.map(checkLine),
-		].join("\n"));
+		const name = await namesOf(
+			sql,
+			results.map((r) => r.id),
+		);
+		const checks = await textChecks(
+			sql,
+			results.filter((r) => r.saved).map((r) => r.id),
+		);
+		return out(
+			{ text: results.map((r) => ({ ...r, name: name(r.id) })), audit: checks },
+			[...results.map((r) => `${name(r.id)}：${r.saved ? ["记下了", ...(r.notes ?? [])].join("；") : r.problems.join("；")}`), ...checks.map(checkLine)].join(
+				"\n",
+			),
+		);
 	}
 
 	if (sub === "audit") {
-		if (rest.some((a) => a.startsWith("--"))) throw new Usage("x2 listing audit [商品稿…]（Gemini 文字检查只提示；x2 去掉的图人要用：x2 listing keep <商品稿> <主图 N、详情图 N…>）");
+		if (rest.some((a) => a.startsWith("--")))
+			throw new Usage("x2 listing audit [商品稿…]（Gemini 文字检查只提示；x2 去掉的图人要用：x2 listing keep <商品稿> <主图 N、详情图 N…>）");
 		let ids = plain(rest);
-		if (!ids.length) ids = (await sql`select id::text from listings where not cancelled and product_id is null and title is not null order by id`).map((r) => r.id as string);
+		if (!ids.length)
+			ids = (await sql`select id::text from listings where not cancelled and product_id is null and title is not null order by id`).map((r) => r.id as string);
 		const checks = await textChecks(sql, ids);
 		return out(checks, checks.map(checkLine).join("\n") || "没有要查的商品稿");
 	}
@@ -293,7 +427,10 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const restored = asked.filter((x) => named.get(x)!.drop?.startsWith(AUDIT_DROP));
 		await sql`update listings set images = ${sql.json(restoreAudited(l.images, ids) as any)}, kept_images = ${sql.json([...new Set([...(l.kept_images ?? []), ...ids])])}, updated_at = now() where id = ${id}`;
 		const checks = await textChecks(sql, [id]);
-		return out({ id, name: listingName(l), kept: asked, restored, audit: checks }, [`${listingName(l)}：${asked.join("、")}记进保留的图${restored.length ? `，${restored.join("、")}放回来了` : ""}`, ...checks.map(checkLine)].join("\n"));
+		return out(
+			{ id, name: listingName(l), kept: asked, restored, audit: checks },
+			[`${listingName(l)}：${asked.join("、")}记进保留的图${restored.length ? `，${restored.join("、")}放回来了` : ""}`, ...checks.map(checkLine)].join("\n"),
+		);
 	}
 
 	if (sub === "drop") {
@@ -311,7 +448,10 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		await sql`update listings set variants = ${sql.json(r.specs)}, removed_variants = ${sql.json(removed)}, updated_at = now() where id = ${id}`;
 		const next = l.problems ? `x2 listing make ${id}（规格的问题要重新算）` : `x2 listing audit ${id}（规格变了，要再查）`;
 		const left = r.specs.variants.length;
-		return out({ id, name: listingName(l), dropped: r.skus, left, merged: r.merged }, `${listingName(l)}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`);
+		return out(
+			{ id, name: listingName(l), dropped: r.skus, left, merged: r.merged },
+			`${listingName(l)}：去掉 ${r.skus.length} 个规格，还剩 ${left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${next}`,
+		);
 	}
 
 	if (sub === "category") {
@@ -322,7 +462,13 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		if (!a.success || extra.length) throw new Usage(usage);
 		const r = await setCategory(sql, a.data.id, a.data.category, (shopId) => inShop(shopId, () => categoryTree()));
 		const notes = [r.cancelled ? "这份已放弃：要上就去掉「放弃」" : "", r.before && r.before !== r.category ? `原来是「${r.before}」` : ""].filter(Boolean);
-		return out(r, [`${r.name}：类目定为「${r.category}」，属性、备货天数清掉了${notes.length ? `（${notes.join("；")}）` : ""}`, `下一步：x2 listing make ${r.id}（照新的类目做属性、备货天数）`].join("\n"));
+		return out(
+			r,
+			[
+				`${r.name}：类目定为「${r.category}」，属性、备货天数清掉了${notes.length ? `（${notes.join("；")}）` : ""}`,
+				`下一步：x2 listing make ${r.id}（照新的类目做属性、备货天数）`,
+			].join("\n"),
+		);
 	}
 
 	if (sub === "publish") {
@@ -335,8 +481,9 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		// 和人在网页上勾「放弃」是同一个勾。已经建了商品的不是放弃，是下架；建商品提交了、还没核清的可能已经建了，先核清。
 		// 原因不存：「备注」是人写的，也没有放原因的列，只回显。勾完马上重算当前步骤（已放弃）
 		const usage = `x2 listing cancel <商品稿…> [--why "原因"]（人在终端里说了「放弃」才用）`;
-		const a = z.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1), why: z.string().trim().min(1).optional() })
-			.safeParse({ ids: plain(rest, "--why"), why: rest.includes("--why") ? flag(rest, "--why") ?? "" : undefined });
+		const a = z
+			.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1), why: z.string().trim().min(1).optional() })
+			.safeParse({ ids: plain(rest, "--why"), why: rest.includes("--why") ? (flag(rest, "--why") ?? "") : undefined });
 		if (!a.success) throw new Usage(usage);
 		const want = [...new Set(a.data.ids)];
 		const name = await namesOf(sql, want);
@@ -357,10 +504,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		await sql`update listings set cancelled = true, updated_at = now() where id in ${sql(want)} and not cancelled and product_id is null and listed_at is null`;
 		const r = await listingsCheck(sql, want);
 		const done = want.map((id) => ({ id, name: name(id), step: r.steps.get(id)?.step ?? null, already: already.has(id), why: a.data.why ?? null }));
-		return out(done, [
-			...done.map((x) => `${x.name}：${x.already ? "已经放弃了" : x.step}`),
-			...(a.data.why ? [`原因：${a.data.why}`] : []),
-		].join("\n"));
+		return out(done, [...done.map((x) => `${x.name}：${x.already ? "已经放弃了" : x.step}`), ...(a.data.why ? [`原因：${a.data.why}`] : [])].join("\n"));
 	}
 
 	if (sub === "noted") {
@@ -372,19 +516,25 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		const missing = want.filter((id) => !rows.some((r) => r.id === id));
 		if (missing.length) throw new Usage(`没有商品稿 ${missing.join("、")}`);
 		const name = await namesOf(sql, want);
-		return out(rows.map((r) => ({ id: r.id, name: name(r.id), note: r.note })), rows.map((r) => `${name(r.id)}：看过备注「${r.note ?? ""}」`).join("\n"));
+		return out(
+			rows.map((r) => ({ id: r.id, name: name(r.id), note: r.note })),
+			rows.map((r) => `${name(r.id)}：看过备注「${r.note ?? ""}」`).join("\n"),
+		);
 	}
 
 	if (sub === "list") {
-		const rows = (await sql`select id::text, shop, nickname, offer_id, offer->>'title' as offer_title, strategy, title, step, step_detail, problems, product_id from listings where not cancelled order by id`)
-			.map((r) => ({ ...r, name: listingName({ ...r, offer: { title: r.offer_title } }) }));
-		const line = (r: any) => `${r.name} ${r.step ?? "（还没检查）"}${r.step_detail ? `：${String(r.step_detail).split("\n")[0]}` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`;
+		const rows = (
+			await sql`select id::text, shop, nickname, offer_id, offer->>'title' as offer_title, strategy, title, step, step_detail, problems, product_id from listings where not cancelled order by id`
+		).map((r) => ({ ...r, name: listingName({ ...r, offer: { title: r.offer_title } }) }));
+		const line = (r: any) =>
+			`${r.name} ${r.step ?? "（还没检查）"}${r.step_detail ? `：${String(r.step_detail).split("\n")[0]}` : ""}${r.problems ? `\n    ${String(r.problems).split("\n").join("\n    ")}` : ""}`;
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | publish | cancel | noted | list（见 docs/listing.md）");
+	throw new Usage(
+		"x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | publish | cancel | noted | list（见 docs/listing.md）",
+	);
 }
-
 
 /** x2 listing publish：人同意了，照检查算出来的写入（建商品、上架）一份商品稿一批记进库，马上执行。有一份不是待批准、待上架就都不做。ops：写操作的声明（测试换成假的） */
 export async function publish(sql: Sql, want: string[], ops: Record<string, WriteOp> = WRITES): Promise<Outcome> {
@@ -426,13 +576,25 @@ export async function setCategory(sql: Sql, id: string, category: string, tree: 
 	if ("error" in found) throw new Usage(`${name}：${found.error}`);
 	const full = found.names.join(" > ");
 	if (s.categories && !s.categories.has(category)) throw new Usage(`${name}：「${full}」不在 ${l.shop} 允许的类目里（店铺设置的「允许的类目」）`);
-	const problems = String(l.problems ?? "").split("\n").filter((x) => x && !CATEGORY_PROBLEM.test(x)).join("\n") || null;
+	const problems =
+		String(l.problems ?? "")
+			.split("\n")
+			.filter((x) => x && !CATEGORY_PROBLEM.test(x))
+			.join("\n") || null;
 	const [done] = await sql`update listings set category_path = ${sql.json(found.path)}, category_id = ${category}, category_name = ${full},
 		attributes = null, attributes_text = null, days_to_ship = null, problems = ${problems}, updated_at = now()
 		where id = ${id} and product_id is null and listed_at is null returning id`;
 	if (!done) throw new Usage(`${name}刚建了商品：不改类目`);
 	const r = await listingsCheck(sql, [id]);
-	return { id, name, category: full, categoryPath: found.path, before: (l.category_name as string | null) ?? null, cancelled: Boolean(l.cancelled), step: r.steps.get(id)?.step ?? null };
+	return {
+		id,
+		name,
+		category: full,
+		categoryPath: found.path,
+		before: (l.category_name as string | null) ?? null,
+		cancelled: Boolean(l.cancelled),
+		step: r.steps.get(id)?.step ?? null,
+	};
 }
 
 /** checked：查过了（false 是查不了，problems 是原因）；issues：挑出的问题（带编号，图写图的名字） */
@@ -464,9 +626,15 @@ async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 	const out: CheckResult[] = [];
 	for (const id of ids) {
 		let c = await listingNow(sql, id);
-		if (!c) { out.push({ id, name: `商品稿 ${id}`, checked: false, problems: ["没有这份商品稿"], issues: [] }); continue; }
+		if (!c) {
+			out.push({ id, name: `商品稿 ${id}`, checked: false, problems: ["没有这份商品稿"], issues: [] });
+			continue;
+		}
 		const name = listingName(c.l);
-		if (!c.r.product) { out.push({ id, name, checked: false, problems: c.r.problems, issues: [] }); continue; }
+		if (!c.r.product) {
+			out.push({ id, name, checked: false, problems: c.r.problems, issues: [] });
+			continue;
+		}
 		let a = c.l.audit as Audit | null;
 		const cached = a?.key === auditKey(c.r.product);
 		if (!cached) {
@@ -479,7 +647,10 @@ async function textChecks(sql: Sql, ids: string[]): Promise<CheckResult[]> {
 				await sql`update listings set images = ${sql.json(dropAudited(c.l.images, drops) as any)}, updated_at = now() where id = ${id}`;
 				c = (await listingNow(sql, id))!;
 			}
-			if (!c.r.product) { out.push({ id, name, checked: false, problems: c.r.problems, issues: [] }); continue; }
+			if (!c.r.product) {
+				out.push({ id, name, checked: false, problems: c.r.problems, issues: [] });
+				continue;
+			}
 			// x2 去掉的图（这一次的、以前的）也记进检查结果：人看得到，要用可以保留
 			a = { ...a!, images: [...auditDropped(c.l.images), ...a!.images] };
 			await sql`update listings set audit = ${sql.json(a as any)}, updated_at = now() where id = ${id}`;

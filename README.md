@@ -126,8 +126,9 @@ x2/
 │ └ selection/SKILL.md    选品：按策略找词和竞品 → 以图搜 1688 同款 → 报价 → 照选品规矩筛 → 写选品理由加成商品稿
 ├ web/                    网页的界面（React、Cloudflare Kumo）：main.tsx 侧栏和路由，view.tsx 表格、卡片、表单，value.tsx 照类型显示和改一格；x2 web 打包进 web/dist
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
+├ biome.json              lint 和格式（Biome）；.githooks/ 提交前跑 pnpm check；.github/workflows/ 推送后 CI 跑 pnpm check、pnpm test
 ├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）；网页的（React、Kumo、Vite、Tailwind）是 devDependencies
-└ tsconfig.json           只做类型检查：Node 24 直接运行 .ts
+└ tsconfig.json           只做类型检查（TypeScript 7，严格）：Node 24 直接运行 .ts
 ```
 
 数据都在库里。本机只留 `~/x2` 下的：`zhixia-usage.json`（知虾最近一小时的请求时间，限流用，几个 x2 进程共用）、`locks/`（几个 x2 进程排队的锁、1688 上一次加载页面的时间）。凭证（库的密码，Gemini、象寄的 key）在环境变量里，或者写在仓库根目录的 `.env`（x2 启动时读，环境里已经有的不覆盖；不进 git）。

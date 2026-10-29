@@ -9,7 +9,10 @@ import { db } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { when } from "../listing/pick.ts";
 
-const flag = (args: string[], name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const flag = (args: string[], name: string) => {
+	const i = args.indexOf(name);
+	return i >= 0 ? args[i + 1] : undefined;
+};
 const STATUS = ["试验中", "使用中", "已停用"] as const;
 const FLAGS = ["--bet", "--how", "--status", "--note", "--why"];
 /** 变更记录里的列 → 中文 */
@@ -18,7 +21,8 @@ type Field = keyof typeof FIELD;
 
 const text = z.string().trim().min(1);
 const addArgs = z.object({ name: text, bet: text, how: text, note: text.optional(), why: text.optional() });
-const setArgs = z.object({ name: text, why: text, status: z.enum(STATUS).optional(), bet: text.optional(), how: text.optional(), note: z.string().trim().optional() })
+const setArgs = z
+	.object({ name: text, why: text, status: z.enum(STATUS).optional(), bet: text.optional(), how: text.optional(), note: z.string().trim().optional() })
 	.refine((a) => a.status !== undefined || a.bet !== undefined || a.how !== undefined || a.note !== undefined);
 
 /** 改了什么：「假设：旧 → 新」 */
@@ -36,26 +40,37 @@ export async function strategyCommand(args: string[], json: boolean): Promise<vo
 		if (!a.success) throw new Usage(`x2 strategy add <名字> --bet "假设" --how "选品方法" [--why "为什么定这个策略"] [--note …]`);
 		const { bet, how, note, why } = a.data;
 		const added = await sql.begin(async (tx) => {
-			const [r] = await tx`insert into strategies (name, bet, how, note) values (${a.data.name}, ${bet}, ${how}, ${note ?? null}) on conflict (name) do nothing returning name`;
+			const [r] =
+				await tx`insert into strategies (name, bet, how, note) values (${a.data.name}, ${bet}, ${how}, ${note ?? null}) on conflict (name) do nothing returning name`;
 			if (!r) return false;
 			await tx`insert into strategy_changes (strategy, version, after, why) values (${a.data.name}, 1, ${tx.json({ status: "试验中", bet, how, ...(note ? { note } : {}) })}, ${why ?? null})`;
 			return true;
 		});
 		if (!added) throw new Usage(`已经有策略「${a.data.name}」了：改状态、假设、选法用 x2 strategy set`);
-		return out({ name: a.data.name, version: 1, bet, how, status: "试验中" },
-			`记下策略「${a.data.name}」（试验中，第 1 版）。上它选出来的货源：x2 listing add <店> <链接…> --strategy ${a.data.name} --why "为什么选它" --evidence "数据"`);
+		return out(
+			{ name: a.data.name, version: 1, bet, how, status: "试验中" },
+			`记下策略「${a.data.name}」（试验中，第 1 版）。上它选出来的货源：x2 listing add <店> <链接…> --strategy ${a.data.name} --why "为什么选它" --evidence "数据"`,
+		);
 	}
 
 	if (sub === "set") {
 		const usage = `x2 strategy set <名字> --why "为什么改" [--status ${STATUS.join("|")}] [--bet "假设"] [--how "选品方法"] [--note …]（--why 必填；至少改一样）`;
-		const a = setArgs.safeParse({ name, why: flag(rest, "--why"), status: flag(rest, "--status"), bet: flag(rest, "--bet"), how: flag(rest, "--how"), note: flag(rest, "--note") });
+		const a = setArgs.safeParse({
+			name,
+			why: flag(rest, "--why"),
+			status: flag(rest, "--status"),
+			bet: flag(rest, "--bet"),
+			how: flag(rest, "--how"),
+			note: flag(rest, "--note"),
+		});
 		if (!a.success) throw new Usage(usage);
 		const { why, ...wanted } = a.data;
 		// 锁住这一行：几个 x2 同时改，版本号不重
 		const r = await sql.begin(async (tx) => {
 			const [old] = await tx`select status, bet, how, note, version from strategies where name = ${wanted.name} for update`;
 			if (!old) return null;
-			const before: Record<string, unknown> = {}, after: Record<string, unknown> = {};
+			const before: Record<string, unknown> = {},
+				after: Record<string, unknown> = {};
 			for (const k of Object.keys(FIELD) as Field[]) {
 				const v = wanted[k];
 				if (v === undefined || v === (old[k] ?? "")) continue;
@@ -69,9 +84,12 @@ export async function strategyCommand(args: string[], json: boolean): Promise<vo
 			return { version, before, after };
 		});
 		if (!r) throw new Usage(`没有策略「${wanted.name}」`);
-		if (!Object.keys(r.after).length) return out({ name: wanted.name, version: r.version, changed: false }, `策略「${wanted.name}」没有变（还是第 ${r.version} 版）`);
-		return out({ name: wanted.name, version: r.version, changed: true, before: r.before, after: r.after, why },
-			`策略「${wanted.name}」改成第 ${r.version} 版：\n  ${changeLines(r.before, r.after).join("\n  ")}\n  为什么：${why}`);
+		if (!Object.keys(r.after).length)
+			return out({ name: wanted.name, version: r.version, changed: false }, `策略「${wanted.name}」没有变（还是第 ${r.version} 版）`);
+		return out(
+			{ name: wanted.name, version: r.version, changed: true, before: r.before, after: r.after, why },
+			`策略「${wanted.name}」改成第 ${r.version} 版：\n  ${changeLines(r.before, r.after).join("\n  ")}\n  为什么：${why}`,
+		);
 	}
 
 	if (sub === "list") {
@@ -82,21 +100,41 @@ export async function strategyCommand(args: string[], json: boolean): Promise<vo
 				count(l.id) filter (where l.cancelled)::int as cancelled
 			from strategies s left join listings l on l.strategy = s.name
 			group by s.name order by s.created_at`;
-		return out(rows, rows.map((r) => `${r.name}（${r.status}，第 ${r.version} 版）：商品稿 ${r.listings} 份，上架 ${r.live} 个${r.cancelled ? `，已放弃 ${r.cancelled}` : ""}\n  假设：${r.bet ?? ""}\n  选品方法：${r.how ?? ""}`).join("\n"));
+		return out(
+			rows,
+			rows
+				.map(
+					(r) =>
+						`${r.name}（${r.status}，第 ${r.version} 版）：商品稿 ${r.listings} 份，上架 ${r.live} 个${r.cancelled ? `，已放弃 ${r.cancelled}` : ""}\n  假设：${r.bet ?? ""}\n  选品方法：${r.how ?? ""}`,
+				)
+				.join("\n"),
+		);
 	}
 
 	if (sub === "log") {
 		if (!name) throw new Usage("x2 strategy log <名字>");
 		const [s] = await sql`select version from strategies where name = ${name}`;
 		if (!s) throw new Usage(`没有策略「${name}」`);
-		const rows = (await sql`select version, before, after, why, changed_at from strategy_changes where strategy = ${name} order by version`)
-			.map((r) => ({ version: r.version as number, before: r.before, after: r.after, why: r.why, changedAt: r.changed_at }));
+		const rows = (await sql`select version, before, after, why, changed_at from strategy_changes where strategy = ${name} order by version`).map((r) => ({
+			version: r.version as number,
+			before: r.before,
+			after: r.after,
+			why: r.why,
+			changedAt: r.changed_at,
+		}));
 		// 加版本号之前记的策略没有第 1 版的记录
 		const first = rows[0]?.version === 1 ? [] : ["第 1 版：加版本号之前记的，没有记录"];
-		return out({ name, version: s.version, changes: rows }, [
-			`策略「${name}」现在是第 ${s.version} 版`, ...first,
-			...rows.map((r) => `第 ${r.version} 版（${when(r.changedAt)}）${r.version === 1 ? "：记下" : ""}\n  ${changeLines(r.before, r.after).join("\n  ")}${r.why ? `\n  为什么：${r.why}` : ""}`),
-		].join("\n"));
+		return out(
+			{ name, version: s.version, changes: rows },
+			[
+				`策略「${name}」现在是第 ${s.version} 版`,
+				...first,
+				...rows.map(
+					(r) =>
+						`第 ${r.version} 版（${when(r.changedAt)}）${r.version === 1 ? "：记下" : ""}\n  ${changeLines(r.before, r.after).join("\n  ")}${r.why ? `\n  为什么：${r.why}` : ""}`,
+				),
+			].join("\n"),
+		);
 	}
 
 	throw new Usage("x2 strategy add | set | list | log（见 docs/listing.md「策略」）");

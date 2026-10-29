@@ -24,7 +24,10 @@ export async function status(_args: string[], json: boolean): Promise<void> {
 	if (json) {
 		console.log(JSON.stringify({ read: reads.results.map((r) => ({ ...r, who: who(r.who) })), human, todo }));
 	} else {
-		const data = reads.results.map((r) => `${r.what}${r.what === "订单" || r.what === "采购账号" ? "" : ` ${who(r.who)}`}${r.ok ? (r.rows !== undefined && r.what !== "采购账号" ? ` ${r.rows} 行` : "") : `：读不了（${String(r.error).split("\n")[0]}）`}`);
+		const data = reads.results.map(
+			(r) =>
+				`${r.what}${r.what === "订单" || r.what === "采购账号" ? "" : ` ${who(r.who)}`}${r.ok ? (r.rows !== undefined && r.what !== "采购账号" ? ` ${r.rows} 行` : "") : `：读不了（${String(r.error).split("\n")[0]}）`}`,
+		);
 		// 中文字占两格：按显示宽度对齐
 		const width = (t: string) => [...t].reduce((n, c) => n + (c.charCodeAt(0) > 0xff ? 2 : 1), 0);
 		const pad = (label: string, lines: string[]) => lines.map((l, i) => `${i === 0 ? label : ""}${" ".repeat(8 - width(i === 0 ? label : ""))}${l}`).join("\n");
@@ -46,7 +49,9 @@ export function report(r: Outcome, json: boolean): void {
 	if (r.unknown) process.exitCode = EXIT.unknown;
 	if (json) console.log(JSON.stringify(r));
 	else {
-		console.log(r.ran.length ? r.ran.map((x) => `[${x.status}] #${x.id} ${x.op} ${x.display}${x.why ? `：${x.why}` : ""}`).join("\n") : "没有要核清、要执行的写入");
+		console.log(
+			r.ran.length ? r.ran.map((x) => `[${x.status}] #${x.id} ${x.op} ${x.display}${x.why ? `：${x.why}` : ""}`).join("\n") : "没有要核清、要执行的写入",
+		);
 		if (r.unknown) console.log("\n结果未知的不会重发：请人到站点上看一眼，x2 resolve <写入> 已核对|被拒");
 	}
 	if (r.blocked) throw new NeedsHuman(r.blocked);
@@ -80,8 +85,10 @@ export async function verifyCommand(_args: string[], json: boolean): Promise<voi
 /** x2 resolve <写入> 已核对|被拒：人到站点上看过结果未知、不一致的写入 */
 export async function resolveCommand(args: string[], json: boolean): Promise<void> {
 	const [id, status] = args;
-	if (!id || !/^\d+$/.test(id) || (status !== "已核对" && status !== "被拒")) throw new Usage("x2 resolve <写入> 已核对|被拒（人到站点上看过了才用：做成了是已核对，没做成是被拒）");
-	const rows = await (await db())`update writes set status = ${status}, finished_at = now() where id = ${id} and status in ('结果未知', '不一致', '已提交') returning id::text, op, display`;
+	if (!id || !/^\d+$/.test(id) || (status !== "已核对" && status !== "被拒"))
+		throw new Usage("x2 resolve <写入> 已核对|被拒（人到站点上看过了才用：做成了是已核对，没做成是被拒）");
+	const rows =
+		await (await db())`update writes set status = ${status}, finished_at = now() where id = ${id} and status in ('结果未知', '不一致', '已提交') returning id::text, op, display`;
 	if (!rows.length) throw new Usage(`写入 #${id} 不是结果未知、不一致`);
 	const w = rows[0]!;
 	console.log(json ? JSON.stringify({ id, status }) : `#${id} ${w.op} ${w.display ?? ""}：${status}`);

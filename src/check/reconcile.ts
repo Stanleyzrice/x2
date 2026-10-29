@@ -6,10 +6,18 @@
 
 export type CartWrite = { id: string; account: string; offerId: string; skuId: string; at: Date; lines: { sn: string; modelId: string; qty: number }[] };
 export type Purchase = {
-	account: string; orderId: string; offerId: string; offerSkuId: string | null; qty: number; createdAt: Date | null; paidAt?: Date | null;
+	account: string;
+	orderId: string;
+	offerId: string;
+	offerSkuId: string | null;
+	qty: number;
+	createdAt: Date | null;
+	paidAt?: Date | null;
 	/** 这一行的状态：waitsellersend 待发货、waitbuyerreceive 已发货、success 已收货、cancel 交易关闭…… */
 	status: string;
-	toChanboss: boolean | null; trackingNo: string | null; signed: boolean;
+	toChanboss: boolean | null;
+	trackingNo: string | null;
+	signed: boolean;
 	/** 这一行的退款：细状态（refundsuccess、refundclose、waitbuyersend……）、1688 的中文、类型（仅退款、退货退款……）；没有是 null */
 	refund?: { status: string; label: string; kind: string | null } | null;
 };
@@ -17,14 +25,29 @@ export type CartLine = { account: string; offerId: string; skuId: string; qty: n
 /** 还没经 x2 付款的订单行：拿剩下的采购单去对。createdAt 是订单的下单时间；until 是取消的时间（取消以后下的采购单不是给它买的） */
 export type Need = { sn: string; modelId: string; qty: number; offerId: string; skuId: string; createdAt: Date; until?: Date | null };
 
-export type Bought = { orderId: string; qty: number; status: string; toChanboss: boolean | null; trackingNo: string | null; signed: boolean; refund: Purchase["refund"] };
+export type Bought = {
+	orderId: string;
+	qty: number;
+	status: string;
+	toChanboss: boolean | null;
+	trackingNo: string | null;
+	signed: boolean;
+	refund: Purchase["refund"];
+};
 export type Line = {
-	sn: string; modelId: string; qty: number; writeId: string; account: string; offerId: string; skuId: string;
+	sn: string;
+	modelId: string;
+	qty: number;
+	writeId: string;
+	account: string;
+	offerId: string;
+	skuId: string;
 	/** 已付款：件数都在采购单里；在购物车：还没付完，差的购物车里有；不见了：采购单、购物车里都没有 */
 	state: "已付款" | "在购物车" | "不见了";
 	/** 外部采购（没有加购的写入对得上） */
 	outside: boolean;
-	paidQty: number; cartQty: number;
+	paidQty: number;
+	cartQty: number;
 	purchases: Bought[];
 };
 
@@ -46,7 +69,8 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 	for (const list of pool.values()) list.sort((a, b) => (a.p.createdAt?.getTime() ?? Infinity) - (b.p.createdAt?.getTime() ?? Infinity));
 	const inCart = new Map<string, number>();
 	for (const c of cart) inCart.set(keyOf(c.account, c.offerId, c.skuId), (inCart.get(keyOf(c.account, c.offerId, c.skuId)) ?? 0) + c.qty);
-	const take = (slots: Slot[], need: number, after: Date): Bought[] => {
+	const take = (slots: Slot[], wanted: number, after: Date): Bought[] => {
+		let need = wanted;
 		const used: Bought[] = [];
 		for (const slot of slots) {
 			if (need === 0) break;
@@ -54,7 +78,15 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 			const n = Math.min(need, slot.left);
 			slot.left -= n;
 			need -= n;
-			used.push({ orderId: slot.p.orderId, qty: n, status: slot.p.status, toChanboss: slot.p.toChanboss, trackingNo: slot.p.trackingNo, signed: slot.p.signed, refund: slot.p.refund ?? null });
+			used.push({
+				orderId: slot.p.orderId,
+				qty: n,
+				status: slot.p.status,
+				toChanboss: slot.p.toChanboss,
+				trackingNo: slot.p.trackingNo,
+				signed: slot.p.signed,
+				refund: slot.p.refund ?? null,
+			});
 		}
 		return used;
 	};
@@ -68,8 +100,18 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 			const cartQty = Math.min(l.qty - paidQty, inCart.get(k) ?? 0);
 			inCart.set(k, (inCart.get(k) ?? 0) - cartQty);
 			out.push({
-				sn: l.sn, modelId: l.modelId, qty: l.qty, writeId: w.id, account: w.account, offerId: w.offerId, skuId: w.skuId, outside: false,
-				state: paidQty === l.qty ? "已付款" : paidQty + cartQty === l.qty ? "在购物车" : "不见了", paidQty, cartQty, purchases: used,
+				sn: l.sn,
+				modelId: l.modelId,
+				qty: l.qty,
+				writeId: w.id,
+				account: w.account,
+				offerId: w.offerId,
+				skuId: w.skuId,
+				outside: false,
+				state: paidQty === l.qty ? "已付款" : paidQty + cartQty === l.qty ? "在购物车" : "不见了",
+				paidQty,
+				cartQty,
+				purchases: used,
 			});
 		}
 	}
@@ -78,13 +120,32 @@ export function reconcile(writes: CartWrite[], purchases: Purchase[], cart: Cart
 	const paid = new Set(out.filter((l) => l.state === "已付款").map((l) => `${l.sn}:${l.modelId}`));
 	for (const n of [...needs].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sn.localeCompare(b.sn))) {
 		if (paid.has(`${n.sn}:${n.modelId}`)) continue;
-		const slots = [...pool.entries()].filter(([k]) => k.endsWith(`|${n.offerId}|${n.skuId}`)).flatMap(([, s]) => s)
+		const slots = [...pool.entries()]
+			.filter(([k]) => k.endsWith(`|${n.offerId}|${n.skuId}`))
+			.flatMap(([, s]) => s)
 			.filter((s) => !n.until || !s.p.createdAt || s.p.createdAt.getTime() <= n.until.getTime());
 		const free = slots.filter((s) => !s.p.createdAt || s.p.createdAt.getTime() >= n.createdAt.getTime() - SKEW_MS).reduce((sum, s) => sum + s.left, 0);
 		if (free < n.qty) continue;
-		const used = take(slots.sort((a, b) => (a.p.createdAt?.getTime() ?? Infinity) - (b.p.createdAt?.getTime() ?? Infinity)), n.qty, n.createdAt);
+		const used = take(
+			slots.sort((a, b) => (a.p.createdAt?.getTime() ?? Infinity) - (b.p.createdAt?.getTime() ?? Infinity)),
+			n.qty,
+			n.createdAt,
+		);
 		const account = slots.find((s) => s.p.orderId === used[0]?.orderId)?.p.account ?? "";
-		out.push({ sn: n.sn, modelId: n.modelId, qty: n.qty, writeId: "", account, offerId: n.offerId, skuId: n.skuId, outside: true, state: "已付款", paidQty: n.qty, cartQty: 0, purchases: used });
+		out.push({
+			sn: n.sn,
+			modelId: n.modelId,
+			qty: n.qty,
+			writeId: "",
+			account,
+			offerId: n.offerId,
+			skuId: n.skuId,
+			outside: true,
+			state: "已付款",
+			paidQty: n.qty,
+			cartQty: 0,
+			purchases: used,
+		});
 	}
 	return out;
 }

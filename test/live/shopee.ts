@@ -1,23 +1,39 @@
 // 对真店跑一遍 Shopee 的读取：只打印字段名和条数，不打印内容（订单、聊聊里有买家的资料）
-import * as seller from "../../src/site/shopee/seller.ts";
+
+import * as chat from "../../src/site/shopee/chat.ts";
+import * as finance from "../../src/site/shopee/finance.ts";
+import * as help from "../../src/site/shopee/help.ts";
+import * as marketing from "../../src/site/shopee/marketing.ts";
+import * as mass from "../../src/site/shopee/mass.ts";
 import * as orders from "../../src/site/shopee/orders.ts";
 import * as products from "../../src/site/shopee/products.ts";
-import * as mass from "../../src/site/shopee/mass.ts";
-import * as finance from "../../src/site/shopee/finance.ts";
 import * as returns from "../../src/site/shopee/returns.ts";
-import * as marketing from "../../src/site/shopee/marketing.ts";
-import * as chat from "../../src/site/shopee/chat.ts";
-import * as help from "../../src/site/shopee/help.ts";
+import * as seller from "../../src/site/shopee/seller.ts";
 
-const shape = (v: any): string => Array.isArray(v) ? `[${v.length}] ${v[0] && typeof v[0] === "object" ? Object.keys(v[0]).slice(0, 12).join(",") : ""}` : v && typeof v === "object" ? `{${Object.keys(v).slice(0, 12).join(",")}}` : typeof v;
+const shape = (v: any): string =>
+	Array.isArray(v)
+		? `[${v.length}] ${v[0] && typeof v[0] === "object" ? Object.keys(v[0]).slice(0, 12).join(",") : ""}`
+		: v && typeof v === "object"
+			? `{${Object.keys(v).slice(0, 12).join(",")}}`
+			: typeof v;
 const run = async (name: string, f: () => Promise<any>) => {
-	try { const v = await f(); console.log("OK ", name.padEnd(22), shape(v?.rows ?? v), v?.total !== undefined ? `total ${v.total}` : ""); return v; }
-	catch (e) { console.log("ERR", name.padEnd(22), (e as Error).message.slice(0, 200)); }
+	try {
+		const v = await f();
+		console.log("OK ", name.padEnd(22), shape(v?.rows ?? v), v?.total !== undefined ? `total ${v.total}` : "");
+		return v;
+	} catch (e) {
+		console.log("ERR", name.padEnd(22), (e as Error).message.slice(0, 200));
+	}
 };
-const now = Math.floor(Date.now() / 1000), day = 86400;
-const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10), monthAgo = new Date(Date.now() + 8 * 3600e3 - 30 * day * 1000).toISOString().slice(0, 10);
+const now = Math.floor(Date.now() / 1000),
+	day = 86400;
+const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10),
+	monthAgo = new Date(Date.now() + 8 * 3600e3 - 30 * day * 1000).toISOString().slice(0, 10);
 
-await run("shop", async () => { const s = await seller.shop(); return { shopId: Boolean(s.shopId), name: Boolean(s.name) }; });
+await run("shop", async () => {
+	const s = await seller.shop();
+	return { shopId: Boolean(s.shopId), name: Boolean(s.name) };
+});
 const idx = await run("orderIndex(all)", () => orders.orderIndex(orders.TAB.all, 1, 5).then((r) => ({ total: r.total, rows: r.refs })));
 const cards = await run("orderCards", () => orders.orderCards(orders.TAB.all, idx?.rows ?? []));
 await run("toShipOrders", () => orders.toShipOrders());
@@ -50,7 +66,7 @@ await run("bundles", () => marketing.bundles());
 await run("discounts", () => marketing.discounts());
 // 帮助中心的分类 id 还不知道：先只确认接口通
 await run("help.articles", () => help.articles(1));
-const un = await run("chat.unreplied", () => chat.unreplied());
+await run("chat.unreplied", () => chat.unreplied());
 const conv = await run("chat.conversations", () => chat.conversations());
 const cid = conv?.[0]?.id;
 if (cid) await run("chat.messages", () => chat.messages(String(cid)));

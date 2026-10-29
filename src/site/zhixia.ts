@@ -4,17 +4,20 @@
 // 限流（lilto 2026-08-29 复盘：5 分钟 1150 次，令牌被作废）：两次请求隔 6～10 秒，每小时最多 200 次，都走 api()；
 // 次数记在 ~/x2/zhixia-usage.json，几个 x2 进程共用：api() 从等限流到发完请求一直拿着知虾的锁（browser.ts 的 hold），几个进程不会同时算、同时发。
 // 回 401、602（没登录、令牌作废）立刻抛错，调用方停下，不换参数重试
+
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 import { hold, page } from "../browser.ts";
 import { NeedsHuman } from "../errors.ts";
 import { all, byPage, get, ints, num, type Ops, parseJson, str } from "./op.ts";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 const ORIGIN = "https://shopee.mobduos.com";
 const PRO = "/api/shopee-report-service/pro";
-const GAP_MS = 6000, JITTER_MS = 4000, PER_HOUR = 200;
+const GAP_MS = 6000,
+	JITTER_MS = 4000,
+	PER_HOUR = 200;
 
 type Usage = { calls: string[] };
 
@@ -22,7 +25,10 @@ type Usage = { calls: string[] };
 const USAGE = join(process.env.X2_HOME ?? join(homedir(), "x2"), "zhixia-usage.json");
 
 async function readUsage(): Promise<Usage> {
-	const text = await readFile(USAGE, "utf8").catch((e: NodeJS.ErrnoException) => { if (e.code === "ENOENT") return null; throw e; });
+	const text = await readFile(USAGE, "utf8").catch((e: NodeJS.ErrnoException) => {
+		if (e.code === "ENOENT") return null;
+		throw e;
+	});
 	return text === null ? { calls: [] } : (JSON.parse(text) as Usage);
 }
 
@@ -52,7 +58,9 @@ async function throttle(): Promise<void> {
 export async function ready(): Promise<void> {
 	const p = await page(ORIGIN);
 	// 首页（/）也有 webpackJsonp，但没有工作台的 store：要在 /workbench/ 下面
-	const ok = await p.run(() => Boolean((window as any).webpackJsonp) && location.pathname.startsWith("/workbench/") && !location.pathname.startsWith("/workbench/login"));
+	const ok = await p.run(
+		() => Boolean((window as any).webpackJsonp) && location.pathname.startsWith("/workbench/") && !location.pathname.startsWith("/workbench/login"),
+	);
 	if (!ok) await p.goto(`${ORIGIN}/workbench/home`);
 }
 
@@ -63,20 +71,33 @@ export async function api<T = any>(path: string, params: Record<string, unknown>
 		await ready();
 		await throttle();
 		const p = await page(ORIGIN);
-		return p.run(async (url: string, params: Record<string, unknown>, method: string) => {
-			if (location.pathname.startsWith("/workbench/login")) return { code: 401, msg: "没有登录" };
-			const w = window as any;
-			if (!w.webpackJsonp) return { code: -1, msg: "页面还没加载好：不是知虾的工作台页面" };
-			if (!w.__x2Http) {
-				const holder: { req: any } = { req: null };
-				const id = `x2-http-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-				w.webpackJsonp.push([[id], { [id]: (_m: unknown, _e: unknown, r: any) => { holder.req = r; } }, [[id]]]);
-				w.__x2Http = holder.req("b775").a;
-			}
-			const siteId = document.querySelector<any>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
-			const all = { siteId, ...params };
-			return w.__x2Http({ url, method, ...(method === "get" ? { params: all } : { data: all }), validateStatus: () => true });
-		}, `${PRO}${path}`, params, method);
+		return p.run(
+			async (url: string, params: Record<string, unknown>, method: string) => {
+				if (location.pathname.startsWith("/workbench/login")) return { code: 401, msg: "没有登录" };
+				const w = window as any;
+				if (!w.webpackJsonp) return { code: -1, msg: "页面还没加载好：不是知虾的工作台页面" };
+				if (!w.__x2Http) {
+					const holder: { req: any } = { req: null };
+					const id = `x2-http-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+					w.webpackJsonp.push([
+						[id],
+						{
+							[id]: (_m: unknown, _e: unknown, r: any) => {
+								holder.req = r;
+							},
+						},
+						[[id]],
+					]);
+					w.__x2Http = holder.req("b775").a;
+				}
+				const siteId = document.querySelector<any>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
+				const all = { siteId, ...params };
+				return w.__x2Http({ url, method, ...(method === "get" ? { params: all } : { data: all }), validateStatus: () => true });
+			},
+			`${PRO}${path}`,
+			params,
+			method,
+		);
 	});
 	const b = body as { code?: number; msg?: string };
 	if (b.code === 401 || b.code === 602) throw new NeedsHuman("知虾没有登录（或令牌失效）：在浏览器里登录知虾再试");
@@ -108,7 +129,15 @@ export async function categories(): Promise<Category[]> {
 
 /** 热销类目榜：path 下一级的各类目，按昨天（DAY）的销量排；path 为空是全站的二级类目（不是一级，2026-10-09 查过） */
 export async function sellWell(path: number[] = [], pageNum = 1, pageSize = 100): Promise<{ total: number; rows: Row[] }> {
-	const b = await api<{ data: Row[]; total: string }>("/industryAnalysis/sellWell", { type: "DAY", field: "sales", sortType: "DESC", isBorder: 0, pageNum, pageSize, ...at(path) });
+	const b = await api<{ data: Row[]; total: string }>("/industryAnalysis/sellWell", {
+		type: "DAY",
+		field: "sales",
+		sortType: "DESC",
+		isBorder: 0,
+		pageNum,
+		pageSize,
+		...at(path),
+	});
 	return { total: Number(b.total ?? 0), rows: b.data ?? [] };
 }
 
@@ -122,7 +151,14 @@ export async function categoryDaily(path: number[]): Promise<Row> {
 
 /** 一个类目的热搜词，最多 1000 个；updateTime 是数据的日期 */
 export async function hotWords(path: number[]): Promise<{ total: number; updateTime: string | null; rows: Row[] }> {
-	const b = await api<{ hotWordList: Row[]; total: string; updateTime?: string }>("/hotWord/hotWordList", { field: "", orderType: "", pageNum: 1, pageSize: 1000, isBorder: 0, ...at(path) });
+	const b = await api<{ hotWordList: Row[]; total: string; updateTime?: string }>("/hotWord/hotWordList", {
+		field: "",
+		orderType: "",
+		pageNum: 1,
+		pageSize: 1000,
+		isBorder: 0,
+		...at(path),
+	});
 	return { total: Number(b.total ?? 0), updateTime: b.updateTime ?? null, rows: b.hotWordList ?? [] };
 }
 
@@ -131,7 +167,14 @@ export async function hotWords(path: number[]): Promise<{ total: number; updateT
  * 页面自己在浏览器里排序、截前 100 个。所以只发一次，在这里排 */
 export async function hotWordItems(hotWordId: number, path: number[]): Promise<{ total: number; rows: Row[] }> {
 	const b = await api<{ itemListInfo: Row[]; total: string }>("/hotWordDetail/hotWordItemSalesDetail", {
-		exampleType: "DAY", word: String(hotWordId), field: "sales", orderType: "DESC", pageNum: 1, pageSize: 200, isBorder: 0, ...at(path),
+		exampleType: "DAY",
+		word: String(hotWordId),
+		field: "sales",
+		orderType: "DESC",
+		pageNum: 1,
+		pageSize: 200,
+		isBorder: 0,
+		...at(path),
 	});
 	return { total: Number(b.total ?? 0), rows: bySales30Day(b.itemListInfo ?? []) };
 }
@@ -144,17 +187,22 @@ export const bySales30Day = (rows: Row[]): Row[] => {
 
 const word = (hotWordId: number) => ({ hotWordId, updateKey: 1 });
 /** 一个词最近 30 天每天的搜索量、销量（charts；顺序不保证，按 timest 排） */
-export const demandChange = async (hotWordId: number): Promise<Row> => (await api<{ data: Row }>("/hotWordChopeeProduct/getDemandChange", word(hotWordId))).data;
+export const demandChange = async (hotWordId: number): Promise<Row> =>
+	(await api<{ data: Row }>("/hotWordChopeeProduct/getDemandChange", word(hotWordId))).data;
 /** 一个词的竞争环境：商品数、店铺数、集中度…… */
-export const competition = async (hotWordId: number): Promise<Row> => (await api<{ data: Row }>("/hotWordChopeeProduct/getCompetitiveEnvironment", word(hotWordId))).data;
+export const competition = async (hotWordId: number): Promise<Row> =>
+	(await api<{ data: Row }>("/hotWordChopeeProduct/getCompetitiveEnvironment", word(hotWordId))).data;
 /** 一个词的价格带：各价格区间的商品数、销量 */
 export const priceLine = async (hotWordId: number): Promise<Row> => (await api<{ data: Row }>("/hotWordChopeeProduct/getPriceLine", word(hotWordId))).data;
 /** 买家对这类商品的吐槽点（差评里说得多的） */
-export const complaints = async (hotWordId: number): Promise<Row[]> => (await api<{ data: Row[] }>("/hotWordChopeeProduct/tucaoPoint", word(hotWordId))).data ?? [];
+export const complaints = async (hotWordId: number): Promise<Row[]> =>
+	(await api<{ data: Row[] }>("/hotWordChopeeProduct/tucaoPoint", word(hotWordId))).data ?? [];
 /** 买家偏好的规格（颜色、尺寸……） */
-export const preferences = async (hotWordId: number): Promise<Row[]> => (await api<{ data: Row[] }>("/hotWordChopeeProduct/preference", word(hotWordId))).data ?? [];
+export const preferences = async (hotWordId: number): Promise<Row[]> =>
+	(await api<{ data: Row[] }>("/hotWordChopeeProduct/preference", word(hotWordId))).data ?? [];
 /** 长尾词（参数是小写 w 的 hotwordId，列表在 payload） */
-export const longTail = async (hotWordId: number): Promise<Row[]> => (await api<{ payload: Row[] }>("/drainageWords/longTailWords", { hotwordId: hotWordId })).payload ?? [];
+export const longTail = async (hotWordId: number): Promise<Row[]> =>
+	(await api<{ payload: Row[] }>("/drainageWords/longTailWords", { hotwordId: hotWordId })).payload ?? [];
 
 // ── 1688 同款 ──
 
@@ -165,8 +213,12 @@ export async function similar1688(imageUrl: string, n = 4): Promise<Candidate[]>
 	const b = await api<{ data?: any[] }>("/similarProduct/query1688", { imgUrl: imageUrl, beginPage: 1, pageSize: n });
 	if (!Array.isArray(b.data)) throw new Error("知虾的 1688 同款没有回列表");
 	return b.data.slice(0, n).map((o) => ({
-		offerId: String(o.offerId), url: `https://detail.1688.com/offer/${o.offerId}.html`, title: o.subject ?? "",
-		price: Number(o.priceInfo?.price ?? 0), monthSold: Number(o.monthSold ?? 0), image: o.imageUrl ?? "",
+		offerId: String(o.offerId),
+		url: `https://detail.1688.com/offer/${o.offerId}.html`,
+		title: o.subject ?? "",
+		price: Number(o.priceInfo?.price ?? 0),
+		monthSold: Number(o.monthSold ?? 0),
+		image: o.imageUrl ?? "",
 	}));
 }
 
@@ -184,7 +236,11 @@ export const ops: Ops = {
 	"category-daily": get("一个类目最近 30 天每天的数据（销量、销售额、商品数……）", z.object({ path }), (p) => categoryDaily(p.path)),
 	"hot-words": get("一个类目的热搜词（最多 1000 个）；searchVal 是全站搜索量，sales30day 是本类目 30 天销量", z.object({ path }), (p) => hotWords(p.path)),
 	// 站点每次回全部商品、不分页：一次读完（以前按页翻，每页都是同样的全部，翻到底会重复好几遍）
-	"hot-word-items": all("一个词在一个类目里的全部商品（竞品），按 30 天销量从高到低", z.object({ word: num("热搜词 id"), path }), async (p) => (await hotWordItems(p.word, p.path)).rows),
+	"hot-word-items": all(
+		"一个词在一个类目里的全部商品（竞品），按 30 天销量从高到低",
+		z.object({ word: num("热搜词 id"), path }),
+		async (p) => (await hotWordItems(p.word, p.path)).rows,
+	),
 	"demand-change": get("一个词最近 30 天每天的搜索量、销量（按 timest 排）", hotWord, (p) => demandChange(p.word)),
 	competition: get("一个词的竞争环境：商品数、店铺数、集中度……", hotWord, (p) => competition(p.word)),
 	"price-line": get("一个词的价格带：各价格区间的商品数、销量", hotWord, (p) => priceLine(p.word)),
@@ -192,8 +248,12 @@ export const ops: Ops = {
 	preferences: all("买家偏好的规格（颜色、尺寸……）", hotWord, (p) => preferences(p.word)),
 	"long-tail": all("长尾词", hotWord, (p) => longTail(p.word)),
 	"similar-1688": all("用一张图在 1688 上找同款", z.object({ image: str("图片地址"), n: num("最多几个").default(4) }), (p) => similar1688(p.image, p.n)),
-	raw: get("逃生口：GET 知虾的任一接口（照样限流），回原样的响应体", z.object({
-		path: str("/api/shopee-report-service/pro 之后的一段，例 /hotWord/hotWordList"),
-		params: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}).describe("参数，JSON 对象"),
-	}), (p) => api(p.path, p.params)),
+	raw: get(
+		"逃生口：GET 知虾的任一接口（照样限流），回原样的响应体",
+		z.object({
+			path: str("/api/shopee-report-service/pro 之后的一段，例 /hotWord/hotWordList"),
+			params: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}).describe("参数，JSON 对象"),
+		}),
+		(p) => api(p.path, p.params),
+	),
 };

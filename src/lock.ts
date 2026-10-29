@@ -46,7 +46,11 @@ function peek(path: string): { owner: Owner | null; ageMs: number } | null {
 	try {
 		const ageMs = Date.now() - statSync(path).mtimeMs;
 		let owner: Owner | null = null;
-		try { owner = JSON.parse(readFileSync(path, "utf8")) as Owner; } catch { /* 刚建好还没写，或写坏了 */ }
+		try {
+			owner = JSON.parse(readFileSync(path, "utf8")) as Owner;
+		} catch {
+			/* 刚建好还没写，或写坏了 */
+		}
 		return { owner, ageMs };
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -59,8 +63,14 @@ function clear(path: string, seen: Owner | null): void {
 	try {
 		const now = JSON.parse(readFileSync(path, "utf8")) as Owner;
 		if (!seen || now.token !== seen.token) return;
-	} catch { /* 读不出：还是坏的，删 */ }
-	try { unlinkSync(path); } catch { /* 已经被删了 */ }
+	} catch {
+		/* 读不出：还是坏的，删 */
+	}
+	try {
+		unlinkSync(path);
+	} catch {
+		/* 已经被删了 */
+	}
 }
 
 const held = new Map<string, { token: string; beat: NodeJS.Timeout }>();
@@ -72,7 +82,9 @@ function release(path: string): void {
 	held.delete(path);
 	try {
 		if ((JSON.parse(readFileSync(path, "utf8")) as Owner).token === h.token) unlinkSync(path);
-	} catch { /* 没了，或已经不是我们的 */ }
+	} catch {
+		/* 没了，或已经不是我们的 */
+	}
 }
 
 let hooked = false;
@@ -80,7 +92,9 @@ let hooked = false;
 function hookExit(): void {
 	if (hooked) return;
 	hooked = true;
-	const all = () => { for (const path of [...held.keys()]) release(path); };
+	const all = () => {
+		for (const path of [...held.keys()]) release(path);
+	};
 	process.on("exit", all);
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 		process.once(signal, () => {
@@ -104,9 +118,19 @@ export async function acquire(name: string, opts: { onWait?: (owner: Owner) => v
 	for (;;) {
 		try {
 			const fd = openSync(path, "wx");
-			try { writeSync(fd, JSON.stringify(me)); } finally { closeSync(fd); }
+			try {
+				writeSync(fd, JSON.stringify(me));
+			} finally {
+				closeSync(fd);
+			}
 			hookExit();
-			const beat = setInterval(() => { try { utimesSync(path, new Date(), new Date()); } catch { /* 被人删了：下一个拿锁的会看到 */ } }, HEARTBEAT_MS);
+			const beat = setInterval(() => {
+				try {
+					utimesSync(path, new Date(), new Date());
+				} catch {
+					/* 被人删了：下一个拿锁的会看到 */
+				}
+			}, HEARTBEAT_MS);
 			beat.unref();
 			held.set(path, { token: me.token, beat });
 			return { release: () => release(path) };
@@ -115,12 +139,18 @@ export async function acquire(name: string, opts: { onWait?: (owner: Owner) => v
 		}
 		const now = peek(path);
 		if (!now) continue;
-		if (stale(now.owner, now.ageMs, alive)) { clear(path, now.owner); continue; }
+		if (stale(now.owner, now.ageMs, alive)) {
+			clear(path, now.owner);
+			continue;
+		}
 		if (Date.now() > until) {
 			const waited = timeoutMs >= 60_000 ? `${Math.round(timeoutMs / 60_000)} 分钟` : `${Math.round(timeoutMs / 1000)} 秒`;
 			throw new Error(`等了 ${waited}还没轮到：${now.owner ? `x2 进程 ${now.owner.pid}（${now.owner.cmd}）一直在用` : "锁文件一直在"}（${path}）`);
 		}
-		if (!told && now.owner) { opts.onWait?.(now.owner); told = true; }
+		if (!told && now.owner) {
+			opts.onWait?.(now.owner);
+			told = true;
+		}
 		await sleep(200);
 	}
 }
@@ -130,9 +160,17 @@ export async function spaced(name: string, gapMs: number): Promise<void> {
 	mkdirSync(lockDir(), { recursive: true });
 	const path = file(name, "last");
 	let last = 0;
-	try { last = statSync(path).mtimeMs; } catch { /* 第一次 */ }
+	try {
+		last = statSync(path).mtimeMs;
+	} catch {
+		/* 第一次 */
+	}
 	const wait = last + gapMs - Date.now();
 	if (wait > 0) await sleep(wait);
 	const now = new Date();
-	try { utimesSync(path, now, now); } catch { writeFileSync(path, ""); }
+	try {
+		utimesSync(path, now, now);
+	} catch {
+		writeFileSync(path, "");
+	}
 }

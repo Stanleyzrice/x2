@@ -36,8 +36,11 @@ type Ref = { order_id: number; shop_id: number; region_id?: string };
 export async function orderIndex(tab: number, pageNo = 1, pageSize = 40): Promise<{ total: number; refs: Ref[] }> {
 	const b = await seller("/api/v3/order/search_order_list_index", {
 		body: {
-			order_list_tab: tab, entity_type: 1, pagination: { from_page_number: pageNo, page_number: pageNo, page_size: pageSize },
-			filter: { fulfillment_type: 0, is_drop_off: 0, fulfillment_source: 0, action_filter: 0 }, sort: { sort_type: 3, ascending: false },
+			order_list_tab: tab,
+			entity_type: 1,
+			pagination: { from_page_number: pageNo, page_number: pageNo, page_size: pageSize },
+			filter: { fulfillment_type: 0, is_drop_off: 0, fulfillment_source: 0, action_filter: 0 },
+			sort: { sort_type: 3, ascending: false },
 		},
 	});
 	if (!Array.isArray(b.data?.index_list)) throw new Error("Shopee 订单列表没有 index_list（不能当成没有订单）");
@@ -51,7 +54,11 @@ export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {
 	if (refs.length > 5) throw new Error("订单详情一次最多 5 张");
 	if (refs.length === 0) return [];
 	const b = await seller("/api/v3/order/get_order_list_card_list", {
-		body: { order_list_tab: tab, need_count_down_desc: false, order_param_list: refs.map((r) => ({ order_id: r.order_id, shop_id: r.shop_id, region_id: r.region_id ?? "TW" })) },
+		body: {
+			order_list_tab: tab,
+			need_count_down_desc: false,
+			order_param_list: refs.map((r) => ({ order_id: r.order_id, shop_id: r.shop_id, region_id: r.region_id ?? "TW" })),
+		},
 	});
 	if (!Array.isArray(b.data?.card_list)) throw new Error("Shopee 订单详情没有 card_list");
 	return (b.data.card_list as any[]).map((w): Order => {
@@ -75,7 +82,9 @@ export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {
 				modelId: String(it.inner_item_ext_info?.model_id ?? ""),
 				name: String(it.name ?? ""),
 				// 「商品規格: L42銀色（最大拉力69kg） [4bd272e…]」：去掉前缀和最后方括号里的编号
-				spec: String(it.description ?? "").replace(/^\s*商品規格\s*[:：]\s*/, "").replace(/\s*\[[^\]]*\]\s*$/, ""),
+				spec: String(it.description ?? "")
+					.replace(/^\s*商品規格\s*[:：]\s*/, "")
+					.replace(/\s*\[[^\]]*\]\s*$/, ""),
 				qty: Number(it.amount ?? 0),
 				image: it.image ? `${IMAGE}${it.image}_tn` : "",
 			})),
@@ -99,7 +108,7 @@ export async function orders(tab: number): Promise<Order[]> {
 		if (refs.length >= total || page.length === 0) break;
 	}
 	const out: Order[] = [];
-	for (let i = 0; i < refs.length; i += 5) out.push(...await orderCards(tab, refs.slice(i, i + 5)));
+	for (let i = 0; i < refs.length; i += 5) out.push(...(await orderCards(tab, refs.slice(i, i + 5))));
 	return out;
 }
 

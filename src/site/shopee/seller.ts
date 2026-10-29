@@ -17,33 +17,48 @@ export type Raw = { kind: "signin" } | { kind: "unknown"; why: string } | { kind
 
 export async function call(path: string, req: Req = {}): Promise<Raw> {
 	const p = await page(ORIGIN);
-	return p.run(async (path: string, method: string, query: Record<string, string>, body: string | null) => {
-		if (/\/account\/signin|\/seller\/login/.test(location.pathname)) return { kind: "signin" as const };
-		const cookie = (n: string) => document.cookie.split("; ").find((c) => c.startsWith(`${n}=`))?.slice(n.length + 1) ?? "";
-		const url = new URL(path, location.origin);
-		for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
-		url.searchParams.set("SPC_CDS", cookie("SPC_CDS"));
-		url.searchParams.set("SPC_CDS_VER", "2");
-		try {
-			// 传字符串，不传 URL 对象：有的页面（例 /edu 帮助中心）包了一层 fetch，只认字符串（e.match is not a function）
-			const r = await fetch(url.href, {
-				method, credentials: "include",
-				headers: { accept: "application/json", "x-csrftoken": cookie("csrftoken"), ...(body === null ? {} : { "content-type": "application/json" }) },
-				body: body ?? undefined,
-			});
-			if (r.url.includes("/account/signin")) return { kind: "signin" as const };
-			const text = await r.text();
-			let json: unknown = null;
-			try { json = JSON.parse(text); } catch { /* 不是 JSON：留下前 300 字给人看 */ }
-			return { kind: "http" as const, status: r.status, json, text: json === null ? text.slice(0, 300) : "" };
-		} catch (e) {
-			return { kind: "unknown" as const, why: String((e as Error)?.message ?? e) };
-		}
-	}, path, req.method ?? (req.body === undefined ? "GET" : "POST"), Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])), req.body === undefined ? null : JSON.stringify(req.body));
+	return p.run(
+		async (path: string, method: string, query: Record<string, string>, body: string | null) => {
+			if (/\/account\/signin|\/seller\/login/.test(location.pathname)) return { kind: "signin" as const };
+			const cookie = (n: string) =>
+				document.cookie
+					.split("; ")
+					.find((c) => c.startsWith(`${n}=`))
+					?.slice(n.length + 1) ?? "";
+			const url = new URL(path, location.origin);
+			for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+			url.searchParams.set("SPC_CDS", cookie("SPC_CDS"));
+			url.searchParams.set("SPC_CDS_VER", "2");
+			try {
+				// 传字符串，不传 URL 对象：有的页面（例 /edu 帮助中心）包了一层 fetch，只认字符串（e.match is not a function）
+				const r = await fetch(url.href, {
+					method,
+					credentials: "include",
+					headers: { accept: "application/json", "x-csrftoken": cookie("csrftoken"), ...(body === null ? {} : { "content-type": "application/json" }) },
+					body: body ?? undefined,
+				});
+				if (r.url.includes("/account/signin")) return { kind: "signin" as const };
+				const text = await r.text();
+				let json: unknown = null;
+				try {
+					json = JSON.parse(text);
+				} catch {
+					/* 不是 JSON：留下前 300 字给人看 */
+				}
+				return { kind: "http" as const, status: r.status, json, text: json === null ? text.slice(0, 300) : "" };
+			} catch (e) {
+				return { kind: "unknown" as const, why: String((e as Error)?.message ?? e) };
+			}
+		},
+		path,
+		req.method ?? (req.body === undefined ? "GET" : "POST"),
+		Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])),
+		req.body === undefined ? null : JSON.stringify(req.body),
+	);
 }
 
 /** 站点的业务码：code，或财务、售后接口的 error；没有这两个字段是 undefined */
-const codeOf = (json: any): number | undefined => (json?.code ?? json?.error) === undefined ? undefined : Number(json.code ?? json.error);
+const codeOf = (json: any): number | undefined => ((json?.code ?? json?.error) === undefined ? undefined : Number(json.code ?? json.error));
 const messageOf = (json: any) => String(json?.user_message ?? json?.message ?? json?.msg ?? json?.error_msg ?? "");
 
 /** 出错的回应里，哪些要人处理：401、403（没登录、token 失效，页面不一定跳登录页），或要再输一次密码、验证（财务区） */
@@ -58,7 +73,8 @@ export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
 	const code = codeOf(r.json);
 	if (r.status < 400 && (code === undefined || code === 0)) return r.json as T;
 	// 出错了才看要不要人处理：成功的响应里也可能出现「驗證」这类字
-	if (needsHuman(r.status, r.json)) throw new NeedsHuman(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}。没登录或要再验证一次：在浏览器里打开卖家中心处理好再试`);
+	if (needsHuman(r.status, r.json))
+		throw new NeedsHuman(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}。没登录或要再验证一次：在浏览器里打开卖家中心处理好再试`);
 	throw new Error(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}`);
 }
 
@@ -70,7 +86,8 @@ export async function write(path: string, req: Req): Promise<Write> {
 	const r = await call(path, req);
 	if (r.kind === "signin") return { kind: "refused", code: undefined, why: "Shopee 卖家中心没有登录" };
 	if (r.kind === "unknown") return { kind: "unknown", why: r.why };
-	if (r.json === null) return r.status >= 500 ? { kind: "unknown", why: `HTTP ${r.status}` } : { kind: "refused", code: undefined, why: `HTTP ${r.status} ${r.text}` };
+	if (r.json === null)
+		return r.status >= 500 ? { kind: "unknown", why: `HTTP ${r.status}` } : { kind: "refused", code: undefined, why: `HTTP ${r.status} ${r.text}` };
 	const code = codeOf(r.json);
 	// 字段校验失败（1000100256）时 msg 里列着全部失败的规则（Rule Type），user_message 只有第一条：都带上
 	const rules = /Rule Type/.test(String(r.json?.msg ?? "")) ? ` | ${String(r.json.msg).slice(0, 800)}` : "";
@@ -84,5 +101,11 @@ export async function shop(): Promise<{ shopId: string; userId: string; name: st
 	const u = await seller("/api/selleraccount/user_info/");
 	const r = await seller("/api/v3/general/get_shop_info/").catch(() => null);
 	if (!s.data?.shop_id) throw new Error("Shopee 没有回店铺 id（/api/selleraccount/shop_info/）");
-	return { shopId: String(s.data.shop_id), userId: String(u.data?.user_id ?? ""), name: String(s.data.name ?? ""), username: String(u.data?.user_name ?? ""), rating: r?.data?.rating_star ?? null };
+	return {
+		shopId: String(s.data.shop_id),
+		userId: String(u.data?.user_id ?? ""),
+		name: String(s.data.name ?? ""),
+		username: String(u.data?.user_name ?? ""),
+		rating: r?.data?.rating_star ?? null,
+	};
 }
