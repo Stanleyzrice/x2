@@ -4,4 +4,4 @@ node_modules/
 
 # Claude Code 子 agent 的临时工作目录
 .claude/worktrees/
-web/dist/
+platform/ui/dist/

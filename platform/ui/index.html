@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>x2</title>
+	<link rel="icon" href="./favicon.svg" />
+	<script>
+		// 深浅色跟系统（shadcn 认 .dark）；先于页面画出来设好，免得闪一下
+		const dark = matchMedia("(prefers-color-scheme: dark)");
+		const mode = () => document.documentElement.classList.toggle("dark", dark.matches);
+		mode();
+		dark.addEventListener("change", mode);
+	</script>
+</head>
+<body>
+	<div id="root"></div>
+	<script type="module" src="./main.tsx"></script>
+</body>
+</html>
