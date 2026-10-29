@@ -10,7 +10,7 @@ const price = z
 	})
 	.refine((p) => p.max === undefined || p.max >= p.min, { message: "max 要不小于 min", path: ["max"] });
 
-const product = z.object({
+const product = z.strictObject({
 	name: z.string().trim().min(1).describe("标题"),
 	images: z.array(z.url()).min(1).max(20).describe("图，第一张是封面，多张左右翻"),
 	price: price.optional(),
@@ -23,7 +23,7 @@ const product = z.object({
 
 export const description =
 	"几张商品卡：图（多张左右翻）、标题、价格（区间）、30 天销量、评分、店名、链接、标签。比竞品、比货源放一个组件里几张卡；只看图（一份商品稿的主图、详情图）也用它，一张卡放几张图";
-export const props = z.object({ title, products: z.array(product).min(1).max(24) });
+export const props = z.strictObject({ title, products: z.array(product).min(1).max(24) });
 export type Props = z.infer<typeof props>;
 export const examples: z.input<typeof props>[] = [
 	{

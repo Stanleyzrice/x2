@@ -4,7 +4,7 @@ import { title } from "../../props.ts";
 
 export const description =
 	"一家店的聊聊（引用，不是数据）：左边是这家店的会话（未回覆的在前面），右边是选中会话的消息，底下输入框，「生成回复」让 Gemini 写草稿进输入框、人改。给了 conversationId 先选中它，不给选第一个。发送还没接上";
-export const props = z.object({
+export const props = z.strictObject({
 	title,
 	shop: z.string().min(1).describe("店铺（账号名，例 ni1206）"),
 	conversationId: z.string().min(1).optional().describe("先选中哪个会话（x2 chat conversations 里的 id）"),

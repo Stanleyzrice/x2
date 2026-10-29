@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Usage } from "../errors.ts";
-import { actParams, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
+import { actParams, invalidOf, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
 
 test("页：没有的组件说有哪些；参数不对说哪一格", () => {
 	assert.throws(
@@ -69,4 +69,13 @@ test("饼图最多 8 块：颜色按顺序用、不循环，多的要并进「�
 		(e: Error) => e instanceof Usage && /pie 最多 8 块/.test(e.message),
 	);
 	parseItem({ component: "chart", props: { type: "pie", data: data.slice(0, 8), x: "店", y: ["销售额"] } });
+});
+
+test("组件的参数是严格的：多出来的、打错的键报错；库里存的旧参数照现在的组件查出对不上，不悄悄丢掉", () => {
+	assert.throws(
+		() => parseItem({ component: "datagrid", props: { table: "writes", filtr: { status: "结果未知" } } }),
+		(e: Error) => e instanceof Usage && /filtr/.test(e.message),
+	);
+	assert.match(invalidOf("datagrid", { table: "writes", view: "全部" }).invalid ?? "", /view/);
+	assert.deepEqual(invalidOf("datagrid", { table: "writes", filter: { status: ["结果未知"] } }), {});
 });

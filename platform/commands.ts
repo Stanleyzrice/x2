@@ -183,7 +183,7 @@ export const page: Toolkit = {
 					`#${s.id} ${s.title}`,
 					...s.items.map(
 						(i) =>
-							`  ${i.id} ${i.component} ${JSON.stringify(i.props).slice(0, 120)}${i.answeredAt ? `\n    答了（${i.answeredAt}）：${JSON.stringify(i.answer)}` : ""}`,
+							`  ${i.id} ${i.component} ${JSON.stringify(i.props).slice(0, 120)}${i.invalid ? `\n    参数和现在的组件对不上：${i.invalid}` : ""}${i.answeredAt ? `\n    答了（${i.answeredAt}）：${JSON.stringify(i.answer)}` : ""}`,
 					),
 				].join("\n"),
 		}),

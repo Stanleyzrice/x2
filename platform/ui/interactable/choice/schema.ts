@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { title } from "../../props.ts";
 
-const option = z.object({
+const option = z.strictObject({
 	label: z.string().trim().min(1).max(80).describe("选项（一页里不重复，答案记的就是它）"),
 	description: z.string().trim().min(1).optional().describe("一句说明"),
 	image: z.url().optional(),
@@ -11,7 +11,7 @@ const option = z.object({
 
 export const description =
 	"让人做一个选择：一个问题、几个选项（可以带图、说明、链接），单选或多选，可以请人写一句理由。人选了存进库，x2 page show 看答案和选的时间";
-export const props = z.object({
+export const props = z.strictObject({
 	title,
 	question: z.string().trim().min(1),
 	options: z

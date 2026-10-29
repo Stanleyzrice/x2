@@ -4,7 +4,7 @@ import { title } from "../../props.ts";
 
 export const description =
 	"库里的一张表（引用，不是数据）：人看现在的行、改人能改的格（照 tables.ts）。只认这张表给人看的列和主键，不写 SQL；同一页上同一个引用只开一个 tab";
-export const props = z.object({
+export const props = z.strictObject({
 	title,
 	table: z.string().describe("表名（每个业务工具的 tables.ts，和写入 writes；不对会说有哪些）"),
 	columns: z.array(z.string()).min(1).optional().describe("给人看哪几列、什么顺序；不给是这张表给人看的全部列"),
@@ -13,7 +13,7 @@ export const props = z.object({
 		.optional()
 		.describe("按列筛：{ 列名: 值 或 [值…] }，几列之间是「而且」；例 { id: ['3', '5'] }"),
 	sort: z
-		.array(z.object({ col: z.string(), desc: z.boolean().optional() }))
+		.array(z.strictObject({ col: z.string(), desc: z.boolean().optional() }))
 		.min(1)
 		.optional()
 		.describe("怎么排：[{ col, desc? }]，前面的先排，空的排最后；不给按主键排"),

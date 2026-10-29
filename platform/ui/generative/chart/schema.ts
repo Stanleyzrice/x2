@@ -4,7 +4,7 @@ import { title } from "../../props.ts";
 
 export const description = "一张图：bar 比大小，line、area 看变化，pie 看占比。data 一行一个点，x 是横轴的列，y 是画的列（最多 8 个）";
 export const props = z
-	.object({
+	.strictObject({
 		title,
 		type: z.enum(["bar", "line", "area", "pie"]),
 		data: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))).min(1),

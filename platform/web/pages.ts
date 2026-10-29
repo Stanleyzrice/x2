@@ -48,7 +48,8 @@ export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise
 /** 引用别处的组件，服务端再查一遍指向的东西在不在（schema.ts 只管形状，不认库） */
 const REFS: Record<string, (props: never) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
 
-export type Item = { id: PageItemId; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null };
+/** invalid：库里存的参数和现在的组件对不上（组件改过、引用过时了）：说哪一格，网页上不画这个组件，免得悄悄变成别的查询 */
+export type Item = { id: PageItemId; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null; invalid?: string };
 export type Page = { id: PageId; title: string; createdAt: string; updatedAt: string; items: Item[] };
 export type PageSummary = Omit<Page, "items">;
 
@@ -61,6 +62,16 @@ export function parseItem(input: unknown): { component: string; props: unknown }
 }
 
 /** 照组件的 schema.ts 校验参数，引用的再查指向的东西在不在；不对说哪一格 */
+/** 库里读出的参数照现在的组件再查一遍：对不上回 { invalid: 原话 } */
+export function invalidOf(component: string, props: unknown): { invalid?: string } {
+	try {
+		parseProps(component, props);
+		return {};
+	} catch (e) {
+		return { invalid: (e as Error).message };
+	}
+}
+
 export function parseProps(component: string, input: unknown): unknown {
 	const c = COMPONENTS.get(component);
 	if (!c) throw new Usage(`没有组件 ${component}（有：${names()}）`);
@@ -120,6 +131,7 @@ export async function showPage(sql: Sql, id: string): Promise<Page> {
 				at: i.created_at.toISOString(),
 				answer: i.answer,
 				answeredAt: i.answered_at?.toISOString() ?? null,
+				...invalidOf(i.component, i.props),
 			}),
 		),
 	};

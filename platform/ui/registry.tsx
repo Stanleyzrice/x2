@@ -17,6 +17,12 @@ export const isInteractable = (item: Item) => INTERACTABLE.has(item.component);
 export const tabOf = (item: Item) => INTERACTABLE.get(item.component)?.tab?.(item.props as never) ?? item.component;
 
 export function Render({ item }: { item: Item }) {
+	if (item.invalid)
+		return (
+			<p className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
+				这个组件的参数和现在的组件对不上，没有画：{item.invalid}（agent 用 x2 page update --item {item.id} 改）
+			</p>
+		);
 	const View = (GENERATIVE.get(item.component) ?? INTERACTABLE.get(item.component))?.View;
 	return View ? <View props={item.props as never} item={item} /> : <p className="text-sm text-destructive">网页不认识组件 {item.component}</p>;
 }
