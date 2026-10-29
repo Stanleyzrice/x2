@@ -1,9 +1,10 @@
 // table：一张小表（数据在组件里）。数字靠右
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { Props } from "../../web/pages.ts";
-import { Title } from "./title.tsx";
 
-export function SnapshotTable({ props }: { props: Props<"table"> }) {
+import { Title } from "@/components/title.tsx";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { Props } from "./schema.ts";
+
+export function View({ props }: { props: Props }) {
 	const numeric = props.columns.map(
 		(_, j) => props.rows.some((r) => typeof r[j] === "number") && props.rows.every((r) => r[j] === null || typeof r[j] === "number"),
 	);

@@ -18,5 +18,5 @@
 		"noUnusedParameters": true
 	},
 	"include": ["x2.ts", "platform", "connectors", "tools", "test"],
-	"exclude": ["platform/ui"]
+	"exclude": ["platform/ui/**/*.tsx", "platform/ui/*.ts", "platform/ui/*/*.ts", "platform/ui/dist"]
 }

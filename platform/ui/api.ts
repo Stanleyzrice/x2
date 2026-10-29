@@ -1,10 +1,10 @@
 // 网页和 x2 web 之间：页、表的说明、表的行、改一格、添一行。出错抛人看得懂的原话（x2 web 回的）
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { Item, Page, PageSummary, Props } from "../web/pages.ts";
+import type { Item, Page, PageSummary } from "../web/pages.ts";
 import type { Grid, Key, Meta, Pic, Row } from "../web/tables.ts";
 
-export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Props, Row };
+export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
 export type Column = Meta["columns"][number];
 export type View = Meta["views"][number];
 export type Filter = Record<string, string | string[]>;

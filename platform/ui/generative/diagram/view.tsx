@@ -1,12 +1,12 @@
 // diagram：一张 Mermaid 图。用到才加载 Mermaid（大）；深浅色跟系统；宽的图在流里会缩小，点「放大」在对话框里看原大；写错了显示 Mermaid 的原话和原文，好让 agent 改
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { Title } from "@/components/title.tsx";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import type { Props } from "../../web/pages.ts";
-import { Title } from "./title.tsx";
+import type { Props } from "./schema.ts";
 
-export function Diagram({ props }: { props: Props<"diagram"> }) {
+export function View({ props }: { props: Props }) {
 	const id = `d${useId().replace(/[^\w]/g, "")}`;
 	const [svg, setSvg] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);

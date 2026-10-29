@@ -12,10 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, fail, keyOf, type Meta, type Props, type Row, meta as readMeta, usePoll, type View } from "../api.ts";
+import { api, fail, keyOf, type Meta, type Row, meta as readMeta, type View as TableView, usePoll } from "../../api.ts";
 import { Edit, type Save, Show } from "./cells.tsx";
+import type { Props } from "./schema.ts";
 
-function groups(rows: Row[], g: View["group"]): [string | null, Row[]][] {
+function groups(rows: Row[], g: TableView["group"]): [string | null, Row[]][] {
 	if (!g) return [[null, rows]];
 	const by = new Map<string, Row[]>();
 	for (const r of rows) {
@@ -29,7 +30,7 @@ function groups(rows: Row[], g: View["group"]): [string | null, Row[]][] {
 	return [...by].sort(([a], [b]) => rank(a) - rank(b));
 }
 
-export function DataGrid({ props }: { props: Props<"datagrid"> }) {
+export function View({ props }: { props: Props }) {
 	const [m, setMeta] = useState<Meta | null>(null);
 	useEffect(() => {
 		readMeta(props.table).then(setMeta, fail);
@@ -213,3 +214,5 @@ function AddForm({ meta, onAdded }: { meta: Meta; onAdded: () => void }) {
 		</Dialog>
 	);
 }
+
+export const tab = (p: Props) => p.title ?? p.table;

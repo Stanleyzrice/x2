@@ -162,7 +162,13 @@ export const page: Toolkit = {
 		},
 		components: {
 			...get("组件的说明和参数（JSON Schema）", undefined, async () => catalog()),
-			text: (c) => c.map((x: any) => `${x.name}（${x.kind}）：${x.description}\n  ${JSON.stringify(x.props)}`).join("\n"),
+			text: (c) =>
+				c
+					.map(
+						(x: any) =>
+							`${x.name}（${x.kind}）：${x.description}\n  参数：${JSON.stringify(x.props)}\n  例：${x.examples.map((e: unknown) => JSON.stringify(e)).join("\n  例：")}`,
+					)
+					.join("\n"),
 		},
 	},
 };

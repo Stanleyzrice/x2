@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import type { Column, Grid, Pic } from "../api.ts";
+import type { Column, Grid, Pic } from "../../api.ts";
 
 export type Save = (value: unknown) => void;
 

@@ -1,40 +1,39 @@
 // 页：agent 开一页（x2 page create），往上放组件（x2 page push）。网页的侧栏是页列表，中间是页上 generative 组件的流，右边是 interactable 组件（一个一个 tab）。
-// generative 是快照：agent 说话那一刻的内容，数据在组件里，人只看。interactable 是引用：组件里只记指向谁（例 一张表的一个视图），数据每次现读，人在上面做的事写回去。
-// 组件的参数在这里声明一次：x2 page push 照它校验（不对说哪一格），x2 page components 照它给 agent 看，网页照它的类型画
+// generative 是快照：agent 说话那一刻的内容，数据在组件里，人只看。interactable 是引用：组件里只记指向谁（例 一张表的哪几行），数据每次现读，人在上面做的事写回去。
+// 文件夹就是分类：组件放在 platform/ui/generative/<名字>/ 或 platform/ui/interactable/<名字>/，参数、说明、例子在它的 schema.ts（只有 zod），网页照 view.tsx 画。
+// 这里照这两个目录收 schema.ts：x2 page push 照它校验（不对说哪一格），x2 page components 照它给 agent 看
+import { readdirSync } from "node:fs";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
+import type { Props as GridProps } from "../ui/interactable/datagrid/schema.ts";
 import { tables } from "./tables.ts";
 
-const title = z.string().trim().min(1).max(60).optional().describe("标题，短的一句；不给就不写");
-const cell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+export const KINDS = ["generative", "interactable"] as const;
+export type Kind = (typeof KINDS)[number];
+export type Component = { name: string; kind: Kind; description: string; props: z.ZodType; examples: unknown[] };
 
-const datagrid = z
-	.object({
-		title,
-		table: z.string().describe("表名（每个业务工具的 tables.ts，和写入 writes；不对会说有哪些）"),
-		view: z.string().optional().describe("表的视图（tables.ts 的 views 的 title）；不给用第一个"),
-		filter: z
-			.record(z.string(), z.union([z.string(), z.array(z.string()).min(1)]))
-			.optional()
-			.describe("按列筛：{ 列名: 值 或 [值…] }，只认这张表给人看的列和主键；例 { id: ['3', '5'] }"),
-	})
-	.superRefine((p, ctx) => {
-		const t = tables().find((x) => x.name === p.table);
-		if (!t)
-			return ctx.addIssue({
-				code: "custom",
-				path: ["table"],
-				message: `没有表 ${p.table}（有：${tables()
-					.map((x) => x.name)
-					.join("、")}）`,
-			});
-		if (p.view && !t.views.some((v) => v.title === p.view))
-			ctx.addIssue({ code: "custom", path: ["view"], message: `${t.title}没有视图「${p.view}」（有：${t.views.map((v) => v.title).join("、")}）` });
-		for (const col of Object.keys(p.filter ?? {}))
-			if (!filterable(t.name).has(col))
-				ctx.addIssue({ code: "custom", path: ["filter", col], message: `${t.title}不能按「${col}」筛（能：${[...filterable(t.name)].join("、")}）` });
-	});
+const UI = new URL("../ui/", import.meta.url);
+
+/** 一类组件：目录下的每个文件夹是一个组件，读它的 schema.ts */
+async function collect(kind: Kind): Promise<Component[]> {
+	const dir = new URL(`${kind}/`, UI);
+	const names = readdirSync(dir, { withFileTypes: true })
+		.filter((d) => d.isDirectory())
+		.map((d) => d.name)
+		.sort();
+	return Promise.all(
+		names.map(async (name) => {
+			const m = await import(new URL(`${name}/schema.ts`, dir).href);
+			return { name, kind, description: m.description, props: m.props, examples: m.examples };
+		}),
+	);
+}
+
+export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise.all(KINDS.map(collect))).flat().map((c) => [c.name, c]));
+
+/** 引用别处的组件，服务端再查一遍指向的东西在不在（schema.ts 只管形状，不认库） */
+const REFS: Record<string, (props: any) => string[]> = { datagrid: checkGrid };
 
 export function filterable(table: string): Set<string> {
 	const t = tables().find((x) => x.name === table);
@@ -42,89 +41,50 @@ export function filterable(table: string): Set<string> {
 	return new Set([...t.key, ...Object.keys(t.columns).filter((c) => !t.computed?.[c])]);
 }
 
-export const COMPONENTS = {
-	markdown: {
-		kind: "generative",
-		description: "一段话（Markdown，可以有标题、列表、表格、链接）：结论、说明、要人知道的",
-		props: z.object({ text: z.string().min(1) }),
-	},
-	table: {
-		kind: "generative",
-		description: "一张小表（数据在组件里，几十行以内）：对比、清单。要人改、要现读库里的用 datagrid",
-		props: z
-			.object({ title, columns: z.array(z.string().min(1)).min(1), rows: z.array(z.array(cell)) })
-			.refine((p) => p.rows.every((r) => r.length === p.columns.length), { message: "每一行的格数要和 columns 一样多", path: ["rows"] }),
-	},
-	chart: {
-		kind: "generative",
-		description: "一张图：bar 比大小，line、area 看变化，pie 看占比。data 一行一个点，x 是横轴的列，y 是画的列（最多 8 个）",
-		props: z
-			.object({
-				title,
-				type: z.enum(["bar", "line", "area", "pie"]),
-				data: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))).min(1),
-				x: z.string(),
-				y: z.array(z.string()).min(1).max(8),
-			})
-			.refine((p) => p.data.some((r) => p.x in r), { message: "data 里没有 x 这一列", path: ["x"] })
-			.refine((p) => p.type !== "pie" || p.y.length === 1, { message: "pie 只画一列", path: ["y"] }),
-	},
-	images: {
-		kind: "generative",
-		description: "一组图（商品图、货源图、竞品图），可以带说明、点了打开的链接",
-		props: z.object({
-			title,
-			images: z.array(z.object({ url: z.url(), caption: z.string().optional(), link: z.url().optional() })).min(1),
-		}),
-	},
-	diagram: {
-		kind: "generative",
-		description:
-			'一张图（Mermaid 的文字）：流程（flowchart）、状态怎么走（stateDiagram-v2）、谁调谁（sequenceDiagram）、表和关系（erDiagram）。节点的字有标点、空格的加引号，例 A["x2 status"]',
-		props: z.object({ title, mermaid: z.string().trim().min(1) }),
-	},
-	stats: {
-		kind: "generative",
-		description: "一排关键数字（最多 8 个）：数、说明；hint 是一句补充（例 和上周比、截至哪天）",
-		props: z.object({
-			title,
-			items: z
-				.array(z.object({ label: z.string().min(1), value: z.union([z.string(), z.number()]), hint: z.string().optional() }))
-				.min(1)
-				.max(8),
-		}),
-	},
-	datagrid: {
-		kind: "interactable",
-		description: "库里的一张表（引用，不是数据）：人看现在的行、改人能改的格（照 tables.ts）。同一页上同一个引用只开一个 tab",
-		props: datagrid,
-	},
-} as const satisfies Record<string, { kind: "generative" | "interactable"; description: string; props: z.ZodType }>;
+function checkGrid(p: GridProps): string[] {
+	const t = tables().find((x) => x.name === p.table);
+	if (!t)
+		return [
+			`table：没有表 ${p.table}（有：${tables()
+				.map((x) => x.name)
+				.join("、")}）`,
+		];
+	const bad: string[] = [];
+	if (p.view && !t.views.some((v) => v.title === p.view)) bad.push(`view：${t.title}没有视图「${p.view}」（有：${t.views.map((v) => v.title).join("、")}）`);
+	for (const col of Object.keys(p.filter ?? {}))
+		if (!filterable(t.name).has(col)) bad.push(`filter.${col}：${t.title}不能按「${col}」筛（能：${[...filterable(t.name)].join("、")}）`);
+	return bad;
+}
 
-export type ComponentName = keyof typeof COMPONENTS;
-export type Props<C extends ComponentName> = z.infer<(typeof COMPONENTS)[C]["props"]>;
-export type GenerativeName = { [C in ComponentName]: (typeof COMPONENTS)[C]["kind"] extends "generative" ? C : never }[ComponentName];
-export type InteractableName = Exclude<ComponentName, GenerativeName>;
-export type Item = { [C in ComponentName]: { id: string; component: C; props: Props<C>; at: string } }[ComponentName];
+export type Item = { id: string; component: string; props: unknown; at: string };
 export type Page = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
 export type PageSummary = Omit<Page, "items">;
 
-export function parseItem(input: unknown): { component: ComponentName; props: unknown } {
+const names = () => [...COMPONENTS.keys()].join("、");
+
+export function parseItem(input: unknown): { component: string; props: unknown } {
 	const spec = z.object({ component: z.string(), props: z.unknown() }).safeParse(input);
-	if (!spec.success) throw new Usage(`组件要写成 { "component": 名字, "props": {…} }（有：${Object.keys(COMPONENTS).join("、")}）`);
-	const c = COMPONENTS[spec.data.component as ComponentName];
-	if (!c) throw new Usage(`没有组件 ${spec.data.component}（有：${Object.keys(COMPONENTS).join("、")}）`);
-	const r = (c.props as z.ZodType).safeParse(spec.data.props ?? {});
-	if (!r.success) throw new Usage(`${spec.data.component} 的参数不对：${r.error.issues.map((x) => `${x.path.join(".") || "props"}：${x.message}`).join("；")}`);
-	return { component: spec.data.component as ComponentName, props: r.data };
+	if (!spec.success) throw new Usage(`组件要写成 { "component": 名字, "props": {…} }（有：${names()}）`);
+	return { component: spec.data.component, props: parseProps(spec.data.component, spec.data.props) };
+}
+
+/** 照组件的 schema.ts 校验参数，引用的再查指向的东西在不在；不对说哪一格 */
+export function parseProps(component: string, input: unknown): unknown {
+	const c = COMPONENTS.get(component);
+	if (!c) throw new Usage(`没有组件 ${component}（有：${names()}）`);
+	const r = c.props.safeParse(input ?? {});
+	const bad = r.success ? (REFS[component]?.(r.data) ?? []) : r.error.issues.map((x) => `${x.path.join(".") || "props"}：${x.message}`);
+	if (bad.length) throw new Usage(`${component} 的参数不对：${bad.join("；")}`);
+	return r.data;
 }
 
 export const catalog = () =>
-	Object.entries(COMPONENTS).map(([name, c]) => ({
-		name,
+	[...COMPONENTS.values()].map((c) => ({
+		name: c.name,
 		kind: c.kind,
 		description: c.description,
-		props: z.toJSONSchema(c.props as z.ZodType, { io: "input", unrepresentable: "any" }),
+		props: z.toJSONSchema(c.props, { io: "input", unrepresentable: "any" }),
+		examples: c.examples,
 	}));
 
 const summary = (r: any): PageSummary => ({
@@ -154,45 +114,43 @@ export async function showPage(sql: Sql, id: string): Promise<Page> {
 	const [s] = await sql`select * from pages where id = ${pageId(id)}`;
 	if (!s) throw new Usage(`没有页 ${id}`);
 	const items = await sql`select * from page_items where page_id = ${s.id} order by id`;
-	return { ...summary(s), items: items.map((i) => ({ id: String(i.id), component: i.component, props: i.props, at: i.created_at.toISOString() }) as Item) };
+	return { ...summary(s), items: items.map((i): Item => ({ id: String(i.id), component: i.component, props: i.props, at: i.created_at.toISOString() })) };
 }
 
-export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: string; component: ComponentName; replaced: boolean }> {
+export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: string; component: string; replaced: boolean }> {
 	const { component, props } = parseItem(input);
-	const sid = pageId(id);
+	const pid = pageId(id);
 	return sql.begin(async (tx) => {
-		const [s] = await tx`select id from pages where id = ${sid} for update`;
+		const [s] = await tx`select id from pages where id = ${pid} for update`;
 		if (!s) throw new Usage(`没有页 ${id}`);
-		await tx`update pages set updated_at = now() where id = ${sid}`;
-		if (COMPONENTS[component].kind === "interactable") {
-			const ref = props as Props<"datagrid">;
-			const same = (await tx`select id, props from page_items where page_id = ${sid} and component = ${component}`).find(
-				(r) => refKey(r.props) === refKey(ref),
+		await tx`update pages set updated_at = now() where id = ${pid}`;
+		if (COMPONENTS.get(component)!.kind === "interactable") {
+			const same = (await tx`select id, props from page_items where page_id = ${pid} and component = ${component}`).find(
+				(r) => refKey(r.props) === refKey(props),
 			);
 			if (same) {
 				await tx`update page_items set props = ${tx.json(props as any)}, created_at = now() where id = ${same.id}`;
 				return { id: String(same.id), component, replaced: true };
 			}
 		}
-		const [r] = await tx`insert into page_items (page_id, component, props) values (${sid}, ${component}, ${tx.json(props as any)}) returning id`;
+		const [r] = await tx`insert into page_items (page_id, component, props) values (${pid}, ${component}, ${tx.json(props as any)}) returning id`;
 		return { id: String(r!.id), component, replaced: false };
 	});
 }
 
 export async function closeItem(sql: Sql, item: string): Promise<void> {
 	if (!/^\d+$/.test(item)) throw new Usage(`没有这个组件：${item}`);
-	await sql`delete from page_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactable"))}`;
+	const interactable = [...COMPONENTS.values()].filter((c) => c.kind === "interactable").map((c) => c.name);
+	await sql`delete from page_items where id = ${item} and component in ${sql(interactable)}`;
 }
 
-/** 一个 datagrid 引用的样子：表、视图、按列名排好的筛选（jsonb 存进去会重排对象的键，不能直接比 JSON） */
-const refKey = (p: Props<"datagrid">) =>
-	JSON.stringify([
-		p.table,
-		p.view ?? null,
-		Object.entries(p.filter ?? {})
-			.map(([k, v]) => [k, Array.isArray(v) ? v : [v]] as const)
-			.sort(([a], [b]) => a.localeCompare(b)),
-	]);
+/** 一个引用的样子：除了标题的参数，对象的键排好（jsonb 存进去会重排对象的键，不能直接比 JSON） */
+export const refKey = (props: unknown) => {
+	const { title: _, ...rest } = props as Record<string, unknown>;
+	return JSON.stringify(rest, (_, v) =>
+		v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v,
+	);
+};
 
 function pageId(id: string): string {
 	if (!/^\d+$/.test(id)) throw new Usage(`页是数字编号：${id}`);

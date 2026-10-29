@@ -1,9 +1,10 @@
 // stats：一排关键数字，一个一张小卡片；数字照中文的千分位写
-import { Card, CardContent } from "@/components/ui/card";
-import type { Props } from "../../web/pages.ts";
-import { Title } from "./title.tsx";
 
-export function Stats({ props }: { props: Props<"stats"> }) {
+import { Title } from "@/components/title.tsx";
+import { Card, CardContent } from "@/components/ui/card";
+import type { Props } from "./schema.ts";
+
+export function View({ props }: { props: Props }) {
 	return (
 		<div>
 			<Title>{props.title}</Title>

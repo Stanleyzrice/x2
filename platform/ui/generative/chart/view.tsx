@@ -1,12 +1,12 @@
 // chart：一张图（shadcn 的 chart，Recharts）。bar、line、area 画 y 的几列，pie 画一列；颜色照主题的 chart-1…5 轮着用
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, Pie, PieChart, XAxis, YAxis } from "recharts";
+import { Title } from "@/components/title.tsx";
 import { type ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
-import type { Props } from "../../web/pages.ts";
-import { Title } from "./title.tsx";
+import type { Props } from "./schema.ts";
 
 const color = (i: number) => `var(--chart-${(i % 5) + 1})`;
 
-export function Chart({ props }: { props: Props<"chart"> }) {
+export function View({ props }: { props: Props }) {
 	const { type, data, x, y } = props;
 	const config: ChartConfig = Object.fromEntries(y.map((k, i) => [k, { label: k, color: color(i) }]));
 	const axes = [

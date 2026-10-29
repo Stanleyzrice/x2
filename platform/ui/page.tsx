@@ -8,9 +8,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { api, fail, usePoll } from "./api.ts";
-import { Generative, isGenerative } from "./generative/index.tsx";
-import { Interactable, type InteractableItem, isInteractable } from "./interactable/index.tsx";
+import { api, fail, type Item, usePoll } from "./api.ts";
+import { isGenerative, isInteractable, Render, tabOf } from "./registry.tsx";
 
 const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
@@ -31,7 +30,7 @@ export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void 
 				stream.map((item) => (
 					<article key={item.id} className="flex flex-col gap-1">
 						<time className="text-xs text-muted-foreground">{at(item.at)}</time>
-						<Generative item={item} />
+						<Render item={item} />
 					</article>
 				))
 			) : (
@@ -81,7 +80,7 @@ export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void 
 	);
 }
 
-function Panel({ items, onClosed }: { items: InteractableItem[]; onClosed: () => void }) {
+function Panel({ items, onClosed }: { items: Item[]; onClosed: () => void }) {
 	const newest = [...items].sort((a, b) => b.at.localeCompare(a.at))[0]!;
 	const [active, setActive] = useState(newest.id);
 	const seen = useRef(newest.at);
@@ -99,7 +98,7 @@ function Panel({ items, onClosed }: { items: InteractableItem[]; onClosed: () =>
 				{items.map((i) => (
 					<div key={i.id} className="flex flex-none items-center">
 						<TabsTrigger value={i.id} className="max-w-56">
-							<span className="truncate">{i.props.title ?? i.props.table}</span>
+							<span className="truncate">{tabOf(i)}</span>
 						</TabsTrigger>
 						<Button size="icon-xs" variant="ghost" aria-label="关掉" className="opacity-50 hover:opacity-100" onClick={() => close(i.id)}>
 							<XIcon />
@@ -109,7 +108,7 @@ function Panel({ items, onClosed }: { items: InteractableItem[]; onClosed: () =>
 			</TabsList>
 			{items.map((i) => (
 				<TabsContent key={i.id} value={i.id} className="min-h-0 flex-1 overflow-y-auto">
-					<Interactable item={i} />
+					<Render item={i} />
 				</TabsContent>
 			))}
 		</Tabs>
