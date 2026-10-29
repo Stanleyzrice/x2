@@ -1,10 +1,29 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
-	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-	"files": { "includes": ["**", "!platform/ui/components/ui"] },
-	"css": { "parser": { "tailwindDirectives": true } },
-	"formatter": { "indentStyle": "tab", "lineWidth": 160 },
-	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["**", "!platform/ui/components/ui"]
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
+	"formatter": {
+		"indentStyle": "tab",
+		"lineWidth": 160
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
 	"linter": {
 		"rules": {
 			"preset": "recommended",
@@ -26,11 +45,146 @@
 			},
 			"suspicious": {
 				"noExplicitAny": "off",
-				"noConsole": { "level": "error", "options": { "allow": ["error", "log"] } }
+				"noConsole": {
+					"level": "error",
+					"options": {
+						"allow": ["error", "log"]
+					}
+				}
 			},
 			"complexity": {
 				"noExcessiveCognitiveComplexity": "off"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["x2.ts"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["./connectors/**", "!./connectors/*/*/index.ts", "./tools/**", "!./tools/*/index.ts"],
+										"message": "x2.ts 是装配：只引 platform 和连接器、业务工具的入口（index.ts）"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["platform/**", "!platform/ui/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["**/connectors/**", "**/tools/**"],
+										"message": "platform 不认识具体的系统和生意：连接器、业务工具靠注册（x2.ts 装配），platform 不引它们"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["platform/ui/*.ts", "platform/ui/*.tsx"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["../**", "!../web/**"],
+										"message": "网页的界面只引自己和网页服务的接口（platform/web，只 import type）：它打包进浏览器，不认库、站点和生意"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["platform/ui/*/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["../../**", "!../../web/**"],
+										"message": "网页的界面只引自己和网页服务的接口（platform/web，只 import type）：它打包进浏览器，不认库、站点和生意"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["connectors/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["**/tools/**"],
+										"message": "connector 不认生意：照网站自己的说法发请求、回原样数据；怎么用它、怎么用数据是业务工具（tools）的事"
+									},
+									{
+										"group": ["**/platform/db/**"],
+										"message": "connector 不碰库：回网站给的原样数据，存不存、存成什么由业务工具定"
+									},
+									{
+										"group": ["../**", "!../../../platform/**"],
+										"message": "一个 connector 只引 platform 和它自己：connector 之间不互相引，把几个系统串起来是业务工具（tools）的事"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["tools/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["../**", "!../../**"],
+										"message": "业务工具之间不互相引：要用别的业务的东西，读它的表（数据上的依赖），或者把代码挪到用它的那一边"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		}
+	]
 }

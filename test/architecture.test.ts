@@ -1,6 +1,6 @@
 // 代码放哪（AGENTS.md「改代码」）：平台（platform）、连接器（connectors：sites 经浏览器、services 用 API key）、业务工具（tools：一类业务一个），skills 只有 md。
-// platform 不 import 连接器和业务工具；连接器只 import platform 和自己；业务工具互相只经 index.ts；网页的界面只引自己；环境变量都写在 .env.example；
-// 每个文件开头一段注释说它做什么；文档只放在几个固定的地方，提到的仓库里的文件都在。破例不加白名单：放错了就搬，规则不对就改这里和 AGENTS.md
+// 谁能 import 谁由 lint 管（biome.json 的 overrides：noRestrictedImports）；这里只放 lint 管不了的：顶层有哪些、网页的界面引网页服务只 import type、
+// 环境变量都写在 .env.example、每个文件开头一段注释、文档放哪、提到的文件都在、skills 只有 md。破例不加白名单：放错了就搬，规则不对就改这里和 AGENTS.md
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -37,58 +37,37 @@ function imports(file: string): { spec: string; typeOnly: boolean }[] {
 const target = (file: string, spec: string) =>
 	spec.startsWith("@/") ? join(ROOT, "platform/ui", spec.slice(2)) : spec.startsWith(".") ? resolve(join(file, ".."), spec) : null;
 
+const TOP = [
+	".claude",
+	".env.example",
+	".githooks",
+	".github",
+	".gitignore",
+	"AGENTS.md",
+	"CLAUDE.md",
+	"README.md",
+	"biome.json",
+	"components.json",
+	"connectors",
+	"package.json",
+	"platform",
+	"pnpm-lock.yaml",
+	"skills",
+	"test",
+	"tools",
+	"tsconfig.json",
+	"x2.ts",
+];
+
 const SHADCN = "platform/ui/components/ui/";
 const CODE = [join(ROOT, "x2.ts"), ...["platform", "connectors", "tools", "test"].flatMap((d) => files(join(ROOT, d)))].filter(
 	(f) => !rel(f).startsWith(SHADCN),
 );
 const UI = CODE.filter((f) => rel(f).startsWith("platform/ui/"));
 
-const layerOf = (f: string) => rel(f).split("/")[0]!;
-const unitOf = (f: string) => {
-	const p = rel(f).split("/");
-	return p[0] === "connectors" ? p.slice(0, 3).join("/") : p[0] === "tools" ? p.slice(0, 2).join("/") : p[0]!;
-};
-const LAYERED = CODE.filter((f) => ["platform", "connectors", "tools"].includes(layerOf(f)) && !f.endsWith(".test.ts") && !rel(f).startsWith("platform/ui/"));
-const edges = (fs: string[]) =>
-	fs.flatMap((f) =>
-		imports(f).flatMap(({ spec }) => {
-			const to = target(f, spec);
-			return to ? [{ from: f, to }] : [];
-		}),
-	);
-
-test("根上的 x2.ts 是装配：只 import platform、连接器和业务工具的入口（index.ts）", () => {
-	const bad = edges([join(ROOT, "x2.ts")]).filter(
-		(e) => !(layerOf(e.to) === "platform" || (["connectors", "tools"].includes(layerOf(e.to)) && rel(e.to) === `${unitOf(e.to)}/index.ts`)),
-	);
+test("顶层只有这几样：代码分 platform、connectors、tools，skills 只有 md，test 是跨层的测试；别的是工具链的配置", () => {
 	assert.deepEqual(
-		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
-		[],
-	);
-});
-
-test("platform 不 import connectors、tools（装配在 x2.ts 里做）", () => {
-	const bad = edges(LAYERED.filter((f) => layerOf(f) === "platform")).filter((e) => ["connectors", "tools"].includes(layerOf(e.to)));
-	assert.deepEqual(
-		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
-		[],
-	);
-});
-
-test("一个连接器只 import platform 和它自己（不 import 业务工具、别的连接器）", () => {
-	const bad = edges(LAYERED.filter((f) => layerOf(f) === "connectors")).filter((e) => layerOf(e.to) !== "platform" && unitOf(e.to) !== unitOf(e.from));
-	assert.deepEqual(
-		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
-		[],
-	);
-});
-
-test("业务工具互相不 import；真要用别的业务工具的，只经它的 index.ts（公开的接口）", () => {
-	const bad = edges(LAYERED.filter((f) => layerOf(f) === "tools")).filter(
-		(e) => layerOf(e.to) === "tools" && unitOf(e.to) !== unitOf(e.from) && !rel(e.to).endsWith("/index.ts"),
-	);
-	assert.deepEqual(
-		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
+		[...new Set(tracked().map((f) => f.split("/")[0]!))].filter((x) => !TOP.includes(x)),
 		[],
 	);
 });
@@ -105,7 +84,7 @@ test("代码里读的每个环境变量都写在 .env.example（只有名字和�
 	assert.ok(!/^[A-Z0-9_]+=.+$/m.test(readFileSync(join(ROOT, ".env.example"), "utf8")), ".env.example 只写名字，不写值");
 });
 
-test("网页的界面（platform/ui）只引自己，别的只 import type", () => {
+test("网页的界面（platform/ui）引网页服务（platform/web）只 import type：界面打包进浏览器，lint 管得了引哪里、管不了是不是 type", () => {
 	const bad = UI.flatMap((f) =>
 		imports(f).flatMap(({ spec, typeOnly }) => {
 			const to = target(f, spec);

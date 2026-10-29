@@ -20,7 +20,7 @@
 
 ## 改代码
 
-- 分四层：`platform` 换哪门生意都一样（工具的注册表和命令行、至多一次写入、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改）；`connectors` 一个外部系统一个（`sites` 经浏览器、用人的登录，`services` 用 API key；写只发一次请求）；`tools` 是我们自己的业务工具，一类业务一个（订单、上品、选品）：生意的规则写成代码，它的代码、表、测试放在一起；`skills` 只有 md（`SKILL.md` 和 `references/`），教 agent 怎么用工具。根上的 `x2.ts` 是装配（把连接器、业务工具登记进平台，唯一同时认识各层的文件）；platform 不 import connectors、tools；连接器只 import platform 和自己；业务工具互相只经对方的 `index.ts`。代码里读的环境变量都写在 `.env.example`。`test/architecture.test.ts` 守着。
+- 分四层：`platform` 换哪门生意都一样（工具的注册表和命令行、至多一次写入、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改）；`connectors` 一个外部系统一个（`sites` 经浏览器、用人的登录，`services` 用 API key；写只发一次请求）；`tools` 是我们自己的业务工具，一类业务一个（订单、上品、选品）：生意的规则写成代码，它的代码、表、测试放在一起；`skills` 只有 md（`SKILL.md` 和 `references/`），教 agent 怎么用工具。根上的 `x2.ts` 是装配（把连接器、业务工具登记进平台，唯一同时认识各层的文件）；platform 不 import connectors、tools；连接器只 import platform 和自己，不碰库（`platform/db`）；业务工具之间不互相 import（要用别的业务的，读它的表）；网页的界面（`platform/ui`）只引自己和 `platform/web` 的类型。这些由 lint 管（`biome.json` 的 overrides，每条写着为什么）；lint 管不了的在 `test/architecture.test.ts`（顶层有哪些、环境变量都写在 `.env.example`……）。
 - 规矩往结构里放：目录结构 > lint > 测试 > 文档。代码看不出的「为什么」写在文件开头；文档只放代码说不清的（skill、连接器的 `NOTES.md`），不写来历和进度。
 - 先做通 happy path；边界多的判断（看图、文案、估重量、选品）先由 agent 填、人能改，攒够数据再写成程序。人定下的做法当场写进代码、测试或 skill。
 - 写法照现有代码：中文注释，zod 声明参数，stdout 只放结果。
