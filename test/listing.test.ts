@@ -1,6 +1,7 @@
+// 上品：核价、规格、图、类目、文案的规矩、Gemini 文字检查的结果、商品稿的检查
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { margin, minPrice, type PriceParams, payout } from "../src/listing/price.ts";
+import { margin, minPrice, type PriceParams, payout } from "../src/domain/listing/price.ts";
 
 // 两家店的参数：lilto 的 landed-cost.json（2026-09-02 依账单和结算截图定）
 const base = {
@@ -56,8 +57,8 @@ import {
 	specsTable,
 	specsText,
 	structureProblems,
-} from "../src/listing/variants.ts";
-import type { Offer } from "../src/site/1688.ts";
+} from "../src/domain/listing/variants.ts";
+import type { Offer } from "../src/sites/1688.ts";
 
 /** 一个货源：props 是 [层名, 取值…]（第一层的取值带图「<取值>.jpg」），skus 是 [各层的取值, 库存]，规格 id 是 s<第几个> */
 const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offer => ({
@@ -489,7 +490,7 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 	assert.equal(priceRange(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 155 : 133)).variants), "NT$133–155");
 });
 
-import { type Product, productInfo, readbackProblems } from "../src/listing/product.ts";
+import { type Product, productInfo, readbackProblems } from "../src/domain/listing/product.ts";
 
 const draft = (): Product => ({
 	parentSku: "LT952803717616",
@@ -622,7 +623,7 @@ test("读回来核对：图片可以是地址；价格、库存、规格对不�
 	assert.deepEqual(readbackProblems(sent, got, channels), ["标题和提交的不一致", "规格 LT952803717616-3 的选项、售价或库存和提交的不一致"]);
 });
 
-import { CATEGORY_PROBLEM, daysToShip, leafPath, pickAttributes, recommendedPath } from "../src/listing/category.ts";
+import { CATEGORY_PROBLEM, daysToShip, leafPath, pickAttributes, recommendedPath } from "../src/domain/listing/category.ts";
 
 test("属性：只送必填的；是 / 否选否，有其他、一般的选它；要填字的交给人", () => {
 	const r = pickAttributes([
@@ -703,7 +704,6 @@ test("人定的类目：在类目树里找叶子，回从根到它的路径和�
 	);
 });
 
-import { checkListings } from "../src/check/listings.ts";
 import {
 	auditDropped,
 	auditIssues,
@@ -715,10 +715,12 @@ import {
 	roleOf,
 	shouldDrop,
 	uniqIssues,
-} from "../src/listing/audit.ts";
-import { type Pics, type TranslatedCheck, translatedDrop } from "../src/listing/images.ts";
-import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "../src/listing/make.ts";
-import { productOf } from "../src/listing/ready.ts";
+} from "../src/domain/listing/audit.ts";
+import { checkListings } from "../src/domain/listing/check.ts";
+import type { Pics } from "../src/domain/listing/pics.ts";
+import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "../src/domain/listing/pricing.ts";
+import { productOf } from "../src/domain/listing/ready.ts";
+import { type TranslatedCheck, translatedDrop } from "../src/flows/listing/images.ts";
 
 const shopRow = {
 	shop: "cheeroutdoor",
@@ -1042,7 +1044,7 @@ test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图）
 	assert.deepEqual(restoreAudited(dropped, ["m2", "d9"]), pics);
 });
 
-import { imageNames, numbered, usedPics } from "../src/listing/product.ts";
+import { imageNames, numbered, usedPics } from "../src/domain/listing/product.ts";
 
 test("图的名字：传好的图排号，人删了的、x2 去掉的也占着号，别的图的名字不变；规格图写选项名；一张图在几处写几个名字", () => {
 	const d = (id: string, width = 800, height = 800) => ({ from: `${id}.jpg`, imageId: id, width, height });
@@ -1216,8 +1218,8 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待 Gemini 文字检查");
 });
 
-import { autoNickname, listingName, nicknameFor, nicknameOpen, nicknameProblems } from "../src/listing/text.ts";
-import { WRITES } from "../src/site/writes.ts";
+import { autoNickname, listingName, nicknameFor, nicknameOpen, nicknameProblems } from "../src/domain/listing/text.ts";
+import { WRITES } from "../src/flows/writes.ts";
 
 test("简称：x2 先填 1688 标题的前 12 个字；空着的、还是自动填的才换，人改过的不动；简体中文、最多 12 字", () => {
 	const title = "浴水生财猫咪浴室地垫硅藻泥卫生间门口防滑脚垫";
@@ -1292,8 +1294,8 @@ test("组商品：太长的详情图（宽高比 < 0.5）不用，后面的补�
 	);
 });
 
-import { NeedsHuman } from "../src/errors.ts";
-import { browserKey, each, lanes, limiter, once } from "../src/listing/queue.ts";
+import { NeedsHuman } from "../src/core/errors.ts";
+import { browserKey, each, lanes, limiter, once } from "../src/flows/listing/queue.ts";
 
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 

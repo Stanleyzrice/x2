@@ -4,9 +4,9 @@
 // x2 rule retire <编号> --why "…"         停用：写结束时间、停用原因
 // x2 rule list [--all]                    在用的规矩（--all：连停用的）
 import { z } from "zod";
-import { db } from "../db/index.ts";
-import { Usage } from "../errors.ts";
-import { when } from "../listing/pick.ts";
+import { db } from "../core/db.ts";
+import { Usage } from "../core/errors.ts";
+import { when } from "../flows/listing/pick.ts";
 
 const flag = (args: string[], name: string) => {
 	const i = args.indexOf(name);

@@ -5,9 +5,9 @@
 // x2 strategy list                                     每个策略第几版、出了几份商品稿、上架了几个
 // x2 strategy log <名字>                               这个策略的变更记录
 import { z } from "zod";
-import { db } from "../db/index.ts";
-import { Usage } from "../errors.ts";
-import { when } from "../listing/pick.ts";
+import { db } from "../core/db.ts";
+import { Usage } from "../core/errors.ts";
+import { when } from "../flows/listing/pick.ts";
 
 const flag = (args: string[], name: string) => {
 	const i = args.indexOf(name);

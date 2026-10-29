@@ -1,4 +1,5 @@
-import * as z from "../../src/site/zhixia.ts";
+// 对真站点跑一遍知虾的读操作（手动跑：node test/live/zhixia.ts），看回来的形状
+import * as z from "../../src/sites/zhixia.ts";
 
 const shape = (v: any): string =>
 	Array.isArray(v)

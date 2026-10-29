@@ -3,13 +3,13 @@
 // 在哪个浏览器里读：按登录选（browser.ts）；Shopee 按店，--shop <店> 选一家（只有一个浏览器登录着 Shopee 时不用给）。
 // x2 <站点> 列出操作，x2 <站点> <操作> --help 列出参数，x2 schema 输出全部操作的参数（JSON Schema）
 import { z } from "zod";
-import { inShopNamed } from "../accounts.ts";
-import { Usage } from "../errors.ts";
-import { ops as alibaba } from "../site/1688.ts";
-import { ops as chanboss } from "../site/chanboss.ts";
-import type { Op, Ops } from "../site/op.ts";
-import { ops as shopee } from "../site/shopee/ops.ts";
-import { ops as zhixia } from "../site/zhixia.ts";
+import { Usage } from "../core/errors.ts";
+import { ops as alibaba } from "../sites/1688.ts";
+import { inShopNamed } from "../sites/accounts.ts";
+import { ops as chanboss } from "../sites/chanboss.ts";
+import type { Op, Ops } from "../sites/op.ts";
+import { ops as shopee } from "../sites/shopee/ops.ts";
+import { ops as zhixia } from "../sites/zhixia.ts";
 
 /** shop：按店选浏览器，命令行收 --shop <店>（账号名或店铺 id） */
 export type Site = { describe: string; ops: Ops; shop?: boolean };

@@ -26,6 +26,22 @@
 - 退出码 4（写的结果未知）：不重试，见上面第 2 步。
 - 别的错误：把原话告诉人。
 
+## 代码放哪
+
+固定的东西放固定的地方，`test/architecture.test.ts` 守着（运行时的 import 只往里指，每个文件开头一段注释说它做什么）：
+
+| 放什么 | 放哪 | 能 import |
+|---|---|---|
+| 纯函数：检查、核价、规格、文案的规矩 | `src/domain/<订单、上品>/` | 只有 domain（和 zod、opencc-js、node:crypto） |
+| 一个站点怎么请求、怎么取数据；接口一览和坑 | `src/sites/<站点>.ts`、同名 `.md` | core、domain、sites |
+| 外部服务（Gemini、象寄、取图） | `src/services/` | core、services |
+| 一件事怎么拼（读写库、站点）；写操作的声明 | `src/flows/`；`src/flows/writes.ts` | 上面几层 |
+| 命令：解析参数、输出 | `src/commands/<一组>.ts`，接到 `bin/x2.ts` | 都能 |
+| 表的结构 | `src/core/schema.sql` | |
+| 网页给人看、给人填哪些格 | `src/web/tables.ts` | |
+
+`import type` 不受限。放不进哪一层的，先想清楚它是什么再放；规则不对，改 `test/architecture.test.ts` 和这张表，不加例外。
+
 ## 改代码
 
 - 先做通 happy path：好复现的关键步骤写成程序；看图、规格名、文案、估重量、选品这类边界多的判断先由 agent 填、人可以改、不挡流程，攒够数据再设计。

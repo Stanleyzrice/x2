@@ -1,8 +1,8 @@
 // x2 web：开网页（docs/loop.md「网页」）。先照 web/ 打包界面，再在 --host、--port 上发；关掉用 Ctrl-C
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { db } from "../db/index.ts";
-import { Usage } from "../errors.ts";
+import { db } from "../core/db.ts";
+import { Usage } from "../core/errors.ts";
 import { serve } from "../web/server.ts";
 
 const flag = (args: string[], name: string) => {

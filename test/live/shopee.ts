@@ -1,14 +1,14 @@
 // 对真店跑一遍 Shopee 的读取：只打印字段名和条数，不打印内容（订单、聊聊里有买家的资料）
 
-import * as chat from "../../src/site/shopee/chat.ts";
-import * as finance from "../../src/site/shopee/finance.ts";
-import * as help from "../../src/site/shopee/help.ts";
-import * as marketing from "../../src/site/shopee/marketing.ts";
-import * as mass from "../../src/site/shopee/mass.ts";
-import * as orders from "../../src/site/shopee/orders.ts";
-import * as products from "../../src/site/shopee/products.ts";
-import * as returns from "../../src/site/shopee/returns.ts";
-import * as seller from "../../src/site/shopee/seller.ts";
+import * as chat from "../../src/sites/shopee/chat.ts";
+import * as finance from "../../src/sites/shopee/finance.ts";
+import * as help from "../../src/sites/shopee/help.ts";
+import * as marketing from "../../src/sites/shopee/marketing.ts";
+import * as mass from "../../src/sites/shopee/mass.ts";
+import * as orders from "../../src/sites/shopee/orders.ts";
+import * as products from "../../src/sites/shopee/products.ts";
+import * as returns from "../../src/sites/shopee/returns.ts";
+import * as seller from "../../src/sites/shopee/seller.ts";
 
 const shape = (v: any): string =>
 	Array.isArray(v)

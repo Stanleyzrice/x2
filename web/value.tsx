@@ -1,7 +1,7 @@
 // 一格：照列的类型显示；人能改的照类型给控件，改完就存（勾、选马上存，字离开输入框时存）。表格和卡片都用它
 import { Badge, Button, Checkbox, Input, InputArea, Link, Select, Table } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
-import type { SpecsTable } from "../src/listing/variants.ts";
+import type { SpecsTable } from "../src/domain/listing/variants.ts";
 import type { Pic } from "../src/web/tables.ts";
 import type { Column } from "./api.ts";
 

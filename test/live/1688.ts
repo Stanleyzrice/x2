@@ -1,4 +1,5 @@
-import * as a from "../../src/site/1688.ts";
+// 对真站点跑一遍 1688 的读操作（手动跑：node test/live/1688.ts），看回来的形状
+import * as a from "../../src/sites/1688.ts";
 
 const run = async (name: string, f: () => Promise<any>) => {
 	try {

@@ -2,15 +2,15 @@
 // 人能改的只有人定的那几格（AGENTS.md「不许做的」）；别的由 x2 写。值的类型从库里读（information_schema），界面照类型显示、照类型收。
 // where、order、when 是这里写死的 SQL 片段，不来自网页
 
-import { listingsCheck } from "../check/index.ts";
-import { LISTING_STEPS } from "../check/listings.ts";
-import { STEPS } from "../check/orders.ts";
-import type { Sql } from "../db/index.ts";
-import { Usage } from "../errors.ts";
-import { addListings } from "../listing/pick.ts";
-import { LABEL, numbered, usedPics } from "../listing/product.ts";
-import { isSingle, removedOf, specsOf, specsTable } from "../listing/variants.ts";
-import { IMAGE } from "../site/shopee/seller.ts";
+import type { Sql } from "../core/db.ts";
+import { Usage } from "../core/errors.ts";
+import { LISTING_STEPS } from "../domain/listing/check.ts";
+import { LABEL, numbered, usedPics } from "../domain/listing/product.ts";
+import { isSingle, removedOf, specsOf, specsTable } from "../domain/listing/variants.ts";
+import { STEPS } from "../domain/orders/check.ts";
+import { listingsCheck } from "../flows/check.ts";
+import { addListings } from "../flows/listing/pick.ts";
+import { IMAGE } from "../sites/shopee/seller.ts";
 
 /** 人能改的一格：options 是可选的值；when 是这一行能改的条件（例 结果未知的写入才能改状态）；set 不是改一列（例 删图） */
 export type Edit = { options?: readonly string[]; when?: string; set?: (sql: Sql, key: Key, value: unknown) => Promise<void> };

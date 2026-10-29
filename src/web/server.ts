@@ -6,8 +6,8 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
-import type { Sql } from "../db/index.ts";
-import { Usage } from "../errors.ts";
+import type { Sql } from "../core/db.ts";
+import { Usage } from "../core/errors.ts";
 import { type ColumnType, type Key, type Meta, type Row, TABLES, type Table } from "./tables.ts";
 
 /** 一个视图最多给几行 */

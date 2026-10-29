@@ -54,7 +54,7 @@
 |---|---|---|---|
 | 备货天数够 | 每个在售商品是预购，备货天数够从 1688 到 chanboss 再到台湾 | 有 `shopee product`、`updateProduct`（没接） | 同意 |
 | 在售商品的货源还在 | 每个在售商品有货源；货源在售、有货、规格配得上、价格没涨过 X% | 有 `shopee products`、`1688 offer` | 换货源 |
-| 每个规格赚钱 | 按现在的货源价和店铺设置核价，含进行中的折扣 | 有核价（`src/listing/price.ts`）、`updateProduct`（没接） | 同意改价 |
+| 每个规格赚钱 | 按现在的货源价和店铺设置核价，含进行中的折扣 | 有核价（`src/domain/listing/price.ts`）、`updateProduct`（没接） | 同意改价 |
 | 没人看的下架 | 没有「最近 30 天点击、加购都是 0」的在售商品；新品、有订单的不算 | 有 `performance`、`setUnlisted` | 同意 |
 | 活动、广告不亏 | 进行中的折扣价核价不亏；投放中的商品都有货、利润已知 | 有 `discounts`、`campaigns`、`gms-items`；只提醒 | 在 Shopee 上改 |
 
@@ -79,7 +79,7 @@ agent 自己定策略、做实验（explore / exploit）：选货源、上品、
 
 ## 表
 
-表名、列名在库里用英文，网页上显示中文。结构在 `src/db/schema.sql`。
+表名、列名在库里用英文，网页上显示中文。结构在 `src/core/schema.sql`。
 
 | 表 | 一行是 | 为什么存 |
 |---|---|---|

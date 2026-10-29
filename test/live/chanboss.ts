@@ -1,5 +1,5 @@
 // 对真站跑一遍 chanboss 的读取：只打印字段名和条数
-import * as c from "../../src/site/chanboss.ts";
+import * as c from "../../src/sites/chanboss.ts";
 
 const shape = (v: any): string =>
 	Array.isArray(v)

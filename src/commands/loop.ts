@@ -1,11 +1,12 @@
 // 循环的命令：x2 status、x2 do、x2 verify、x2 resolve、x2 handled。见 docs/loop.md
-import { addBatch } from "../batch.ts";
-import { check } from "../check/index.ts";
-import type { Reminder, Todo } from "../check/orders.ts";
-import { db } from "../db/index.ts";
-import { EXIT, NeedsHuman, Usage } from "../errors.ts";
-import { readAll } from "../read.ts";
-import { type Outcome, run } from "../run.ts";
+
+import { db } from "../core/db.ts";
+import { EXIT, NeedsHuman, Usage } from "../core/errors.ts";
+import type { Reminder, Todo } from "../domain/orders/check.ts";
+import { addBatch } from "../flows/batch.ts";
+import { check } from "../flows/check.ts";
+import { readAll } from "../flows/read.ts";
+import { type Outcome, run } from "../flows/run.ts";
 
 const readStdin = async () => {
 	const chunks: Buffer[] = [];

@@ -29,11 +29,8 @@
 // x2 listing list                                    所有商品稿走到哪了
 // 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是命令要用的
 import { z } from "zod";
-import { inShop } from "../accounts.ts";
-import { addWrites } from "../batch.ts";
-import { listingsCheck } from "../check/index.ts";
-import { db, type Sql } from "../db/index.ts";
-import { NeedsHuman, Usage } from "../errors.ts";
+import { db, type Sql } from "../core/db.ts";
+import { NeedsHuman, Usage } from "../core/errors.ts";
 import {
 	AUDIT_DROP,
 	type Audit,
@@ -44,21 +41,26 @@ import {
 	dropAudited,
 	issueLine,
 	restoreAudited,
-	textCheck,
-} from "../listing/audit.ts";
-import { CATEGORY_PROBLEM, leafPath } from "../listing/category.ts";
-import { type Pic, type Pics, unmarked } from "../listing/images.ts";
-import { estimateNeeds, freightOf, make, pricingProblems, quote, readOffer1688, savePrices, settingsOf } from "../listing/make.ts";
-import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../listing/pick.ts";
-import { imageNames, LABEL, numbered } from "../listing/product.ts";
-import { each } from "../listing/queue.ts";
-import { productOf } from "../listing/ready.ts";
-import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../listing/text.ts";
-import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../listing/variants.ts";
-import { type Outcome, run } from "../run.ts";
-import { offerIdOf } from "../site/1688.ts";
-import { type Category, categoryTree } from "../site/shopee/products.ts";
-import { WRITES, type WriteOp } from "../site/writes.ts";
+} from "../domain/listing/audit.ts";
+import { CATEGORY_PROBLEM, leafPath } from "../domain/listing/category.ts";
+import type { Pic, Pics } from "../domain/listing/pics.ts";
+import { estimateNeeds, freightOf, pricingProblems, quote, settingsOf } from "../domain/listing/pricing.ts";
+import { imageNames, LABEL, numbered } from "../domain/listing/product.ts";
+import { productOf } from "../domain/listing/ready.ts";
+import { listingName, nicknameOpen, nicknameProblems, textProblems } from "../domain/listing/text.ts";
+import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "../domain/listing/variants.ts";
+import { addWrites } from "../flows/batch.ts";
+import { listingsCheck } from "../flows/check.ts";
+import { unmarked } from "../flows/listing/images.ts";
+import { make, readOffer1688, savePrices } from "../flows/listing/make.ts";
+import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "../flows/listing/pick.ts";
+import { each } from "../flows/listing/queue.ts";
+import { textCheck } from "../flows/listing/textcheck.ts";
+import { type Outcome, run } from "../flows/run.ts";
+import { WRITES, type WriteOp } from "../flows/writes.ts";
+import { offerIdOf } from "../sites/1688.ts";
+import { inShop } from "../sites/accounts.ts";
+import { type Category, categoryTree } from "../sites/shopee/products.ts";
 import { report } from "./loop.ts";
 
 const readStdin = async () => {
@@ -139,7 +141,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 	}
 
 	if (sub === "make") {
-		// 几份同时做（--jobs，默认 3）：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（src/listing/queue.ts）
+		// 几份同时做（--jobs，默认 3）：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（src/flows/listing/queue.ts）
 		const usage = "x2 listing make [商品稿…] [--jobs N]（N：几份同时做，1–10，默认 3）";
 		const jobs = Number(flag(rest, "--jobs") ?? 3);
 		if (!Number.isInteger(jobs) || jobs < 1 || jobs > 10) throw new Usage(usage);

@@ -1,11 +1,12 @@
 // x2 source [商品 id…] [--url 1688 链接]：给店里的商品找货源。不给商品：检查算出来缺货源、货源不可用的都找
 // x2 source <商品 id> --spec "店里的规格名 = 货源的规格名"：记下人定的规格例外（按名字配不上时；人说了才写）
-import { check, snapshot } from "../check/index.ts";
-import { checkOrders } from "../check/orders.ts";
-import { db } from "../db/index.ts";
-import { Usage } from "../errors.ts";
-import { readAll } from "../read.ts";
-import { findSources, setException } from "../source.ts";
+
+import { db } from "../core/db.ts";
+import { Usage } from "../core/errors.ts";
+import { checkOrders } from "../domain/orders/check.ts";
+import { check, snapshot } from "../flows/check.ts";
+import { readAll } from "../flows/read.ts";
+import { findSources, setException } from "../flows/source.ts";
 
 export async function sourceCommand(args: string[], json: boolean): Promise<void> {
 	const flag = (name: string, what: string) => {

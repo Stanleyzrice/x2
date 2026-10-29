@@ -1,12 +1,13 @@
+// 浏览器：选哪个浏览器、排队、在页面里发请求、认出登录页和 1688 的滑块验证
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
 import { z } from "zod";
-import { alibabaCookie, choose } from "../src/accounts.ts";
-import { challengeOf, guarded, loginPage, siteOf } from "../src/browser.ts";
 import { runOp, type Site } from "../src/commands/site.ts";
-import { Challenge, NeedsHuman, Usage } from "../src/errors.ts";
-import { get, str } from "../src/site/op.ts";
+import { Challenge, NeedsHuman, Usage } from "../src/core/errors.ts";
+import { alibabaCookie, choose } from "../src/sites/accounts.ts";
+import { challengeOf, guarded, loginPage, siteOf } from "../src/sites/browser.ts";
+import { get, str } from "../src/sites/op.ts";
 
 test("网址是哪个站点：1688 的各个子域都是 1688，不认识的是 null", () => {
 	assert.equal(siteOf("https://seller.shopee.tw/portal/product/new"), "shopee");

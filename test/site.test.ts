@@ -1,11 +1,12 @@
+// 站点读操作的通用入口：翻页、参数、日期、用法不对、出错分类
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
 import { runOp, type Site } from "../src/commands/site.ts";
-import { Usage } from "../src/errors.ts";
-import { byPage, day, get, ints, parseJson, str } from "../src/site/op.ts";
-import { needsHuman } from "../src/site/shopee/seller.ts";
-import { bySales30Day } from "../src/site/zhixia.ts";
+import { Usage } from "../src/core/errors.ts";
+import { byPage, day, get, ints, parseJson, str } from "../src/sites/op.ts";
+import { needsHuman } from "../src/sites/shopee/seller.ts";
+import { bySales30Day } from "../src/sites/zhixia.ts";
 
 // 一个假的站点：items 一页 2 行，共 5 行
 const seen: unknown[] = [];
