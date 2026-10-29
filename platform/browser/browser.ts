@@ -1,11 +1,11 @@
 // 唯一碰 cdp-relay 的地方：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
 // 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
-// 在哪个浏览器里做（一家店一个浏览器）：using() 指定的（按店、按 1688 账号找浏览器的代码用它，见 accounts.ts）；没指定的用 X2_BROWSER
-// （浏览器在 cdp-relay 里的 id 或名字）；也没设的，只连着一个就用它，连着几个就按登录选（accounts.ts 的 browserFor：Shopee 按店，
-// 1688、知虾、chanboss 用登录着的那个）。
-// 几个 x2 进程同时跑：同一个浏览器的同一个站点一次只让一个进程用（lock.ts 的锁，用完 2 秒没再用就放），1688 的页面两次加载之间隔 3 秒。
+// 站点由连接器注册（SiteDef：首页、主机名、怎么认登录、要不要隔开、有没有滑块验证），这里不认具体站点。
+// 在哪个浏览器里做（一家店一个浏览器）：using() 指定的（按账号找浏览器的代码用它，见 accounts.ts）；没指定的用 X2_BROWSER
+// （浏览器在 cdp-relay 里的 id 或名字）；也没设的，只连着一个就用它，连着几个就按登录选（accounts.ts 的 browserFor）。
+// 几个 x2 进程同时跑：同一个浏览器的同一个站点一次只让一个进程用（lock.ts 的锁，用完 2 秒没再用就放），要隔开的站点两次加载之间隔开。
 // 认登录时开的标签页，没认出就关掉（probe）；跳到别的网站的登录页的标签页 x2 以后找不回来，也关掉，不留下。
-// 1688 跳了滑块验证（整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
+// 有滑块验证的站点跳了验证（整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
 import { AsyncLocalStorage } from "node:async_hooks";
 import { RelayClient } from "@wuwe1/cdp-relay";
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
@@ -27,27 +27,46 @@ export type Page = {
 /** 连着的浏览器：id、名字（cdp-relay 扩展里起的，可能是空的）、已经 attach 的标签页 */
 export type Browser = { id: string; label: string; attached: number[] };
 
-/** x2 的站点：没指定浏览器时按登录着它选浏览器；几个进程按「浏览器 × 站点」排队 */
-export type Site = "shopee" | "1688" | "chanboss" | "zhixia";
-export const SITE_NAMES: Record<Site, string> = { shopee: "Shopee 卖家中心", "1688": "1688", chanboss: "chanboss", zhixia: "知虾" };
-/** 各站点的首页（认登录、看浏览器里有没有开着它） */
-export const SITE_ORIGINS: Record<Site, string> = {
-	shopee: "https://seller.shopee.tw",
-	"1688": "https://www.1688.com",
-	chanboss: "https://c.chanboss.com",
-	zhixia: "https://shopee.mobduos.com",
-};
-/** 页面两次加载之间至少隔多久（几个进程一起算）：1688 读得太密跳滑块验证 */
-const PACE_MS: Partial<Record<string, number>> = { "1688": 3000 };
+/** 登录着的账号：id（例 Shopee 的店铺 id、1688 的 userId），给人看的名字（例 账号名 ni1206、1688 会员名） */
+export type Account = { id: string; name: string };
 
-/** 网址是哪个站点（纯函数）；不认识的回 null */
-export function siteOf(url: string): Site | null {
+/** 站点（经浏览器、用人的登录）：连接器声明（toolkit 的 site），注册进来。没指定浏览器时按登录着它选浏览器；几个进程按「浏览器 × 站点」排队 */
+export type SiteDef = {
+	key: string;
+	/** 给人看的名字（例 Shopee 卖家中心） */
+	title: string;
+	/** 首页（认登录、看浏览器里有没有开着它） */
+	origin: string;
+	/** 网址的主机名是不是这个站点 */
+	hosts: (host: string) => boolean;
+	/** 页面两次加载之间至少隔多久（几个进程一起算），例 1688 读得太密跳滑块验证 */
+	paceMs?: number;
+	/** 阿里系风控的滑块验证（challengeOf）：页面里跑的时候一直看着，认出来就停（Challenge），不等到超时 */
+	slider?: boolean;
+	/** 认登录：identify 在这个浏览器的页面里读登录着的账号（没登录是 null）。
+	 * cookie：先看 cookie 说登录着没有（看不出是 null，再开页面认）；each：几个浏览器都登录着时要人选一个（例 Shopee 一家店一个浏览器，--shop 选） */
+	login: {
+		identify: () => Promise<Account | null>;
+		cookie?: { url: string; signedIn: (jar: Map<string, string> | null) => boolean | null };
+		each?: { flag: string };
+	};
+};
+
+const sites = new Map<string, SiteDef>();
+export function registerSite(d: SiteDef): void {
+	sites.set(d.key, d);
+}
+export function siteDef(key: string): SiteDef {
+	const d = sites.get(key);
+	if (!d) throw new Error(`没有注册站点 ${key}`);
+	return d;
+}
+export const allSites = (): SiteDef[] => [...sites.values()];
+
+/** 网址是哪个站点（注册了的）；不认识的回 null */
+export function siteOf(url: string): string | null {
 	const host = new URL(url).hostname;
-	if (host === "seller.shopee.tw") return "shopee";
-	if (host === "1688.com" || host.endsWith(".1688.com")) return "1688";
-	if (host === "c.chanboss.com") return "chanboss";
-	if (host === "shopee.mobduos.com") return "zhixia";
-	return null;
+	return allSites().find((d) => d.hosts(host))?.key ?? null;
 }
 
 /** 页面上看得到的（在页面里收集，给 challengeOf 判） */
@@ -180,11 +199,11 @@ async function enter(b: Browser, site: string): Promise<() => void> {
 /** 页面里认出了滑块验证（只在这个文件里用：放开锁以后再换成说清楚是哪个浏览器的 Challenge） */
 class Hit extends Error {}
 
-/** 1688 跳了滑块验证：说清楚在哪个浏览器里拉（按登录着的店叫它，例 cheeroutdoor） */
-export async function challenge(browser: string): Promise<Challenge> {
+/** 站点跳了滑块验证：说清楚在哪个浏览器里拉（按登录着的店叫它，例 cheeroutdoor） */
+export async function challenge(browser: string, site: string): Promise<Challenge> {
 	const { browserName } = await import("./accounts.ts");
 	const name = await browserName(browser).catch(() => browser.slice(0, 8));
-	return new Challenge(`1688 要过滑块验证：在 ${name} 的浏览器里拉一下再重试`);
+	return new Challenge(`${sites.get(site)?.title ?? site} 要过滑块验证：在 ${name} 的浏览器里拉一下再重试`);
 }
 
 /** 拿着这个浏览器这个站点的锁做 fn；认出滑块验证的，放开锁以后再说是哪个浏览器（叫它的名字要读 Shopee） */
@@ -197,7 +216,7 @@ async function within<T>(b: Browser, site: string, fn: () => Promise<T>): Promis
 	} finally {
 		exit();
 	}
-	throw await challenge(b.id);
+	throw await challenge(b.id, site);
 }
 
 /** 在这个站点一口气做完 fn（按 origin 选浏览器）：做的时候一直拿着锁，别的 x2 进程等着（例 知虾的限流要在锁里算）；fn 里的 page() 都在这个浏览器里 */
@@ -208,7 +227,7 @@ export async function hold<T>(origin: string, fn: () => Promise<T>): Promise<T> 
 
 /** 页面加载前：这个站点要隔开的，离上一次加载（几个进程一起算）不够就等 */
 async function pace(b: Browser, site: string): Promise<void> {
-	const gap = PACE_MS[site];
+	const gap = sites.get(site)?.paceMs;
 	if (gap) await spaced(`${b.id}-${site}`, gap);
 }
 
@@ -219,7 +238,7 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	let last = "";
 	for (;;) {
 		const s = await c.eval<{ state: string; url: string }>(tabId, "({ state: document.readyState, url: location.href })").catch(() => null);
-		if (s && site === "1688" && challengeOf({ url: s.url, frames: [], slider: false, text: "" })) throw new Hit();
+		if (s && sites.get(site)?.slider && challengeOf({ url: s.url, frames: [], slider: false, text: "" })) throw new Hit();
 		if (s?.state === "complete" && s.url === last) break;
 		last = s?.state === "complete" ? s.url : "";
 		if (Date.now() > until) throw new Error(`页面 ${timeoutMs / 1000} 秒还没加载完`);
@@ -228,7 +247,7 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	if (new URL(last).origin !== origin && loginPage(last)) {
 		await c.send(tabId, "Page.close").catch(() => {});
 		const known = siteOf(origin);
-		throw new NeedsHuman(`${known ? SITE_NAMES[known] : new URL(origin).host} 没有登录（跳到了 ${new URL(last).host} 的登录页）：在浏览器里登录再试`);
+		throw new NeedsHuman(`${known ? siteDef(known).title : new URL(origin).host} 没有登录（跳到了 ${new URL(last).host} 的登录页）：在浏览器里登录再试`);
 	}
 }
 
@@ -289,7 +308,7 @@ export async function page(origin: string): Promise<Page> {
 	});
 	const run = <A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>> =>
 		within(b, site, async (): Promise<Awaited<R>> => {
-			if (site !== "1688") return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
+			if (!sites.get(site)?.slider) return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
 			const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args), { awaitPromise: true });
 			if (r.x2 === "challenge") throw new Hit();
 			return r.value;

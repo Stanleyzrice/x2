@@ -6,7 +6,7 @@
 // 跨进程（两个 x2 同时开）的排队不在这里
 
 import { gemini as ask, geminiJson as askJson, type Image } from "../../connectors/services/gemini/api.ts";
-import { in1688, inShop, scan } from "../../platform/browser/accounts.ts";
+import { inAccount, logins } from "../../platform/browser/accounts.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 
 /** 在某处做 fn（例 在这家店的浏览器里排队做） */
@@ -95,23 +95,27 @@ const lane = lanes();
 /** 两次读 1688 之间隔多久 */
 export const GAP_1688_MS = 3000;
 
-/** 浏览器队的 key：登录着这家店（shopId）或这个 1688 账号（account）的浏览器（seen 是 accounts.ts 的 scan）。同一个浏览器里登录着店和 1688 的，是同一个队 */
-export function browserKey(
-	seen: { browser: string; shop: { shopId: string } | null; alibaba: string | null }[],
-	who: { shopId: string } | { account: string },
-): string {
-	const s = "shopId" in who ? seen.find((x) => x.shop?.shopId === who.shopId) : seen.find((x) => x.alibaba === who.account);
-	return s ? `浏览器 ${s.browser}` : "shopId" in who ? `店铺 ${who.shopId}` : `1688 ${who.account}`;
+/** 浏览器队的 key：登录着这个站点这个账号的浏览器（seen 是各站点的 logins）。同一个浏览器里登录着店和 1688 的，是同一个队 */
+export function browserKey(seen: { site: string; browser: string; account: { id: string } }[], site: string, id: string): string {
+	const s = seen.find((x) => x.site === site && x.account.id === id);
+	return s ? `浏览器 ${s.browser}` : `${site} ${id}`;
 }
+
+/** 认过的登录（一个进程认一次） */
+const seen = async (site: string) => (await logins(site)).map((l) => ({ ...l, site }));
 
 /** 在登录着这家店的浏览器里做 fn（加水印、传图、新增商品页、类目、属性、备货天数），排在这个浏览器的队里 */
 export async function inShopQueued<T>(shopId: string, fn: () => Promise<T>): Promise<T> {
-	return lane(browserKey(await scan(), { shopId }), () => inShop(shopId, fn));
+	return lane(browserKey(await seen("shopee"), "shopee", shopId), () => inAccount("shopee", shopId, fn));
 }
 
 /** 读 1688 的页面（货源）：在登录着这个账号的浏览器里做，排在这个浏览器的队里；两次读 1688 之间隔几秒 */
 export function on1688<T>(account: string, fn: () => Promise<T>): Promise<T> {
-	return lane("1688", async () => lane(browserKey(await scan(), { account }), () => in1688(account, fn)), GAP_1688_MS);
+	return lane(
+		"1688",
+		async () => lane(browserKey([...(await seen("shopee")), ...(await seen("1688"))], "1688", account), () => inAccount("1688", account, fn)),
+		GAP_1688_MS,
+	);
 }
 
 /** 不经浏览器从 1688 取的（详情图的地址）：也算读 1688，和读页面一起隔几秒 */

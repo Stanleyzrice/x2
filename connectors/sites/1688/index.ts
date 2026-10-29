@@ -1,10 +1,31 @@
 // x2 1688 <工具>：1688 的读工具（加购是写，经订单的写工具）
 import { z } from "zod";
 import { Usage } from "../../../platform/errors.ts";
-import { all, byPage, get, str, strs, type Toolkit } from "../../../platform/tool.ts";
-import { account, buyerOrders, cart, offer, offerIdOf, refund, search, traces } from "./api.ts";
+import { all, byPage, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
+import { account, addToCart, alibabaCookie, buyerOrders, type CartLine, cart, offer, offerIdOf, refund, search, traces } from "./api.ts";
+
+const inCart = (lines: CartLine[], offerId: string, skuId: string) =>
+	lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
+
+/** 加购：把货源的一个规格加进这个浏览器登录着的账号的购物车。同一个规格加两次，车里是两倍：结果未知不重发。读回来看车里这个规格多了没有 */
+export const cartAdd: SubmitTool = {
+	kind: "write",
+	description: "加购：把货源的一个规格加进购物车（只经订单的写工具 orders.cart）",
+	params: z.object({ offerId: str("货源 id"), skuId: str("规格的 skuId"), specId: str("规格的 specId"), qty: z.number().int().positive().describe("件数") }),
+	before: async (p) => ({ inCart: inCart(await cart(), p.offerId, p.skuId) }),
+	submit: async (p) => {
+		const r = await addToCart(p.offerId, p.specId, p.qty);
+		return r.kind === "sent" ? { kind: "done" } : r;
+	},
+	check: async (p, before, fresh) => {
+		const now = inCart(await cart(), p.offerId, p.skuId);
+		const d = now - Number(before?.inCart ?? 0);
+		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
+	},
+};
 
 const tools = {
+	"cart-add": cartAdd,
 	account: get("登录着的 1688 账号", undefined, () => account()),
 	offer: get("一家货源：标题、起订量、属性、每个规格的价格和库存", z.object({ id: str("货源 id 或 1688 链接") }), (p) => {
 		const id = offerIdOf(p.id);
@@ -29,4 +50,25 @@ const tools = {
 	traces: all("采购单的物流轨迹", z.object({ orders: strs("采购单号") }), (p) => traces(p.orders.map((orderId) => ({ orderId })))),
 };
 
-export const alibaba: Toolkit = { name: "1688", title: "1688（采购）", kind: "site", tools };
+export const alibaba: Toolkit = {
+	name: "1688",
+	title: "1688（采购）",
+	kind: "site",
+	tools,
+	site: {
+		key: "1688",
+		title: "1688",
+		origin: "https://www.1688.com",
+		hosts: (h) => h === "1688.com" || h.endsWith(".1688.com"),
+		// 读得太密跳滑块验证
+		paceMs: 3000,
+		slider: true,
+		login: {
+			identify: async () => {
+				const a = await account();
+				return { id: a.userId, name: a.loginId || a.userId };
+			},
+			cookie: { url: "https://www.1688.com/", signedIn: alibabaCookie },
+		},
+	},
+};

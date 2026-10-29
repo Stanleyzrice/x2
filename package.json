@@ -12,7 +12,7 @@
 	"scripts": {
 		"check": "tsc && tsc -p platform/ui && biome check",
 		"fix": "biome check --write",
-		"test": "node --test 'test/*.test.ts' 'skills/**/*.test.ts' 'connectors/**/*.test.ts'",
+		"test": "node --test --test-concurrency=1 'test/*.test.ts' 'platform/**/*.test.ts' 'skills/**/*.test.ts' 'connectors/**/*.test.ts'",
 		"prepare": "git config core.hooksPath .githooks"
 	},
 	"dependencies": {

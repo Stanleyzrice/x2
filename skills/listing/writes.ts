@@ -2,17 +2,16 @@
 // prepare 是业务上的保护：建商品前照商品稿现组一遍，和人同意时交给 x2 的一样才建
 import { z } from "zod";
 import { fetchImage } from "../../connectors/services/image/api.ts";
-import { translate } from "../../connectors/services/xiangji/api.ts";
-import { allProducts, channels, createProduct, productInfo, productPage, setUnlisted } from "../../connectors/sites/shopee/products.ts";
-import { inShop } from "../../platform/browser/accounts.ts";
+import type { Outcome } from "../../connectors/services/xiangji/api.ts";
+import { translateImages } from "../../connectors/services/xiangji/index.ts";
+import { productPage } from "../../connectors/sites/shopee/products.ts";
+import { createListing, findByParentSku, listProduct } from "../../connectors/sites/shopee/publish.ts";
+import { inAccount } from "../../platform/browser/accounts.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import type { WriteOp } from "../../platform/writes.ts";
 import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
-import { readbackProblems } from "./product.ts";
 import { productOf } from "./ready.ts";
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const translateParams = z.object({
 	items: z
@@ -57,8 +56,9 @@ const translateOp: WriteOp<TranslateP> = {
 		return items.length ? { params: { items }, before: {} } : { skip: "这几张都译过了" };
 	},
 	async submit(sql, p) {
-		const r = await translate(p.items.map((i) => i.url));
-		if (r.kind !== "done") return r;
+		const w = await translateImages.submit({ urls: p.items.map((i) => i.url) });
+		if (w.kind !== "done") return w;
+		const r = w.data as Extract<Outcome, { kind: "done" }>;
 		const shaOf = new Map(p.items.map((i) => [i.url, i.sha]));
 		const at = new Date().toISOString();
 		for (const t of r.results) await sql`update images set checks = checks || ${sql.json({ 译图: { url: t.url, at } })} where sha256 = ${shaOf.get(t.origin)!}`;
@@ -90,16 +90,6 @@ async function listingNow(sql: Sql, id: string) {
 	return { l, s, r: productOf(l, s) };
 }
 
-/** 建商品结果未知时按货号找：新建的是下架，在售列表里没有，翻全部商品；名字一样的再读详情核对货号 */
-async function findBySku(parentSku: string, name: string): Promise<string | null> {
-	for (let page = 1; page <= 20; page++) {
-		const r = await allProducts(page);
-		for (const p of r.rows.filter((x) => x.name === name)) if ((await productInfo(p.productId)).parent_sku === parentSku) return p.productId;
-		if (page * 48 >= r.total || r.rows.length === 0) break;
-	}
-	return null;
-}
-
 // name：商品稿的叫法「简称（店铺）」，只给人看（x2 status、写入的输出）
 const createParams = z.object({
 	listingId: z.string(),
@@ -120,7 +110,7 @@ const createOp: WriteOp<CreateP> = {
 	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
 	key: (p) => `create:${p.shop}:${p.parentSku}`,
 	display: (p) => `建商品 ${p.name ?? `${p.shop}「${String(p.productInfo.name ?? "").slice(0, 24)}」`}`,
-	where: (_sql, p, fn) => inShop(p.shopId, fn),
+	where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 	async prepare(sql, p) {
 		const now = await listingNow(sql, p.listingId);
 		if (!now || now.l.cancelled) return { skip: "商品稿已放弃" };
@@ -137,32 +127,21 @@ const createOp: WriteOp<CreateP> = {
 		return { params: p, before: {} };
 	},
 	async submit(sql, p) {
-		const w = await createProduct(p.productInfo);
-		if (w.kind === "refused") return { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() };
-		if (w.kind !== "done") return w;
-		const id = String(w.data?.product_id ?? w.data?.id ?? "");
-		if (!/^\d+$/.test(id) || id === "0") return { kind: "unknown", why: "Shopee 说建好了，但没回商品 id" };
-		await sql`update listings set product_id = ${id}, updated_at = now() where id = ${p.listingId}`;
-		return { kind: "done", data: { productId: id } };
+		const w = await createListing.submit({ productInfo: p.productInfo });
+		if (w.kind === "done")
+			await sql`update listings set product_id = ${(w.data as { productId: string }).productId}, updated_at = now() where id = ${p.listingId}`;
+		return w;
 	},
-	async check(p) {
+	async check(p, before, fresh) {
+		// 商品 id 记在商品稿上；结果未知的（没回 id）按货号找
 		const sql = await db();
 		let [{ product_id: id }] = (await sql`select product_id from listings where id = ${p.listingId}`) as any;
 		if (!id) {
-			id = await findBySku(p.parentSku, String(p.productInfo.name));
+			id = await findByParentSku(p.parentSku, String(p.productInfo.name));
 			if (!id) return { done: null, readback: { found: false } };
 			await sql`update listings set product_id = ${id}, updated_at = now() where id = ${p.listingId}`;
 		}
-		// 刚建完读得到要几秒：对不上就隔 3 秒再读，最多 3 次
-		let problems: string[] = [];
-		for (let i = 0; i < 3; i++) {
-			if (i) await sleep(3000);
-			const info = await productInfo(id);
-			const path = (p.productInfo.category_path as number[]) ?? [];
-			problems = readbackProblems(p.productInfo, info, await channels(id, path[path.length - 1]!));
-			if (!problems.length) break;
-		}
-		return { done: problems.length === 0, readback: { productId: id, problems } };
+		return createListing.check!({ productInfo: p.productInfo, productId: String(id) }, before, fresh);
 	},
 };
 
@@ -184,7 +163,7 @@ const liveOp: WriteOp<LiveP> = {
 	target: (p) => `shopee:${p.shopId}:${p.parentSku}`,
 	key: (p) => `live:${p.shop}:${p.parentSku}`,
 	display: (p) => `上架 ${p.name ?? `${p.shop}「${String(p.title ?? p.parentSku).slice(0, 24)}」`}`,
-	where: (_sql, p, fn) => inShop(p.shopId, fn),
+	where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 	async prepare(sql, p) {
 		const [l] = await sql`select product_id, listed_at, cancelled from listings where id = ${p.listingId}`;
 		if (!l || l.cancelled) return { skip: "商品稿已放弃" };
@@ -192,21 +171,8 @@ const liveOp: WriteOp<LiveP> = {
 		if (l.listed_at) return { skip: "已经上架了" };
 		return { params: { ...p, productId: String(l.product_id) }, before: {} };
 	},
-	async submit(_sql, p) {
-		const w = await setUnlisted(p.productId!, false);
-		return w.kind === "done" ? { kind: "done" } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
-	},
-	async check(p, _before, fresh) {
-		// 翻在售以后要十几秒才读得到：隔 3 秒读一次，最多 6 次
-		let info: any = null;
-		for (let i = 0; i < (fresh ? 6 : 1); i++) {
-			if (i) await sleep(3000);
-			info = await productInfo(p.productId!);
-			if (Number(info.status) === 1 && !info.is_unlisted) return { done: true, readback: { status: info.status } };
-			if (Number(info.status) === 3) return { done: false, readback: { status: info.status, why: "禁卖" } };
-		}
-		return { done: null, readback: { status: info?.status ?? null, unlisted: info?.is_unlisted ?? null } };
-	},
+	submit: (_sql, p) => listProduct.submit({ productId: p.productId! }),
+	check: (p, before, fresh) => listProduct.check!({ productId: p.productId! }, before, fresh),
 	async after(sql, p) {
 		await sql`update listings set listed_at = now(), updated_at = now() where id = ${p.listingId}`;
 	},

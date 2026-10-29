@@ -490,7 +490,8 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 	assert.equal(priceRange(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 155 : 133)).variants), "NT$133–155");
 });
 
-import { type Product, productInfo, readbackProblems } from "./product.ts";
+import { readbackProblems } from "../../connectors/sites/shopee/publish.ts";
+import { type Product, productInfo } from "./product.ts";
 
 const draft = (): Product => ({
 	parentSku: "LT952803717616",
@@ -1356,12 +1357,13 @@ test("按浏览器排队：同一个浏览器一次只做一件、先来先做�
 	assert.ok(at[1]! - at[0]! >= 38 && at[2]! - at[1]! >= 38, `隔了 ${at[1]! - at[0]!}、${at[2]! - at[1]!} ms`);
 	// 哪个队：登录着店和 1688 的是同一个浏览器就是同一个队；找不到浏览器的按店、按账号各一个
 	const seen = [
-		{ browser: "b1", shop: { shopId: "1554182542" }, alibaba: "2221" },
-		{ browser: "b2", shop: { shopId: "348425" }, alibaba: null },
+		{ site: "shopee", browser: "b1", account: { id: "1554182542" } },
+		{ site: "1688", browser: "b1", account: { id: "2221" } },
+		{ site: "shopee", browser: "b2", account: { id: "348425" } },
 	];
-	assert.equal(browserKey(seen, { shopId: "1554182542" }), browserKey(seen, { account: "2221" }));
-	assert.notEqual(browserKey(seen, { shopId: "348425" }), browserKey(seen, { account: "2221" }));
-	assert.deepEqual([browserKey(seen, { shopId: "9" }), browserKey(seen, { account: "x" })], ["店铺 9", "1688 x"]);
+	assert.equal(browserKey(seen, "shopee", "1554182542"), browserKey(seen, "1688", "2221"));
+	assert.notEqual(browserKey(seen, "shopee", "348425"), browserKey(seen, "1688", "2221"));
+	assert.deepEqual([browserKey(seen, "shopee", "9"), browserKey(seen, "1688", "x")], ["shopee 9", "1688 x"]);
 });
 
 test("同一件事同时要的只做一次；几份一起做：结果照顺序，要人处理以后没开始的不再开始", async () => {

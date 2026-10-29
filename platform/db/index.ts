@@ -1,5 +1,5 @@
 // 库：Postgres，唯一的数据。地址在 X2_DATABASE_URL（先在本机开发，以后指到 NAS）；凭证留在环境变量里，不进库。
-// 表的结构在 schema.sql：每个进程第一次用库时跑一遍（只建没有的、加没有的列）
+// 表的结构：平台的在 schema.sql，每个 skill 的在它自己的 schema.sql（toolkit 的 schema，注册时记下）。每个进程第一次用库时按先后跑一遍（只建没有的、加没有的列）
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";
@@ -13,8 +13,15 @@ let ready: Promise<void> | null = null;
 /** 哪台电脑：写进写入，换一台电脑接着做时看得出是谁做的 */
 export const host = hostname();
 
+const schemas: URL[] = [new URL("./schema.sql", import.meta.url)];
+
+/** 注册一个 skill 的表结构（tool.ts 的 register 调） */
+export function addSchema(file: URL): void {
+	if (!schemas.some((s) => s.href === file.href)) schemas.push(file);
+}
+
 export async function migrate(sql: Sql): Promise<void> {
-	await sql.unsafe(await readFile(new URL("./schema.sql", import.meta.url), "utf8"));
+	for (const file of schemas) await sql.unsafe(await readFile(file, "utf8"));
 }
 
 export async function db(): Promise<Sql> {

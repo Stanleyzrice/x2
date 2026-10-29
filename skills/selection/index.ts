@@ -5,6 +5,7 @@ import { db } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, str, type Toolkit } from "../../platform/tool.ts";
 import { when } from "./pick.ts";
+import { SELECTION_TABLES } from "./tables.ts";
 
 export { type Added, addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
 
@@ -182,4 +183,6 @@ export const selection: Toolkit = {
 			text: (rows) => (rows.length ? rows.map(ruleLine).join("\n") : "没有选品规矩（x2 selection rule-list --all 看停用的；x2 selection rule-add 记一条）"),
 		},
 	},
+	tables: SELECTION_TABLES,
+	schema: new URL("./schema.sql", import.meta.url),
 };

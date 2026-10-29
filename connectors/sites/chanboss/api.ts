@@ -139,6 +139,13 @@ export type Write = { kind: "done"; data: any } | { kind: "refused"; why: string
 /** 「无单号」预报的快递单号：chanboss 页面上的常量（打拣货单时的自动预报就填它），站上存成 reserved 开头的一串 */
 export const NO_TRACKING = "reserved";
 
+/** 现读这几张订单（最近 90 天里按 Shopee 订单号找） */
+export async function ordersBySn(sns: string[]): Promise<Map<string, any>> {
+	const now = Math.floor(Date.now() / 1000);
+	const r = await orders(now - 90 * 86400, now, 1, sns, 100);
+	return new Map(r.rows.map((o: any) => [String(o.sn), o]));
+}
+
 export type Forecast = {
 	/** chanboss 上这张订单的 id、下单时间（秒）：订单列表的 id、platform_create_time */
 	orderId: string;

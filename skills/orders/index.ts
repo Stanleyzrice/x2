@@ -7,6 +7,7 @@ import { checkOrders } from "./check.ts";
 import { readAll } from "./read.ts";
 import { findSources, setException } from "./source.ts";
 import { current, ordersCheck, snapshot } from "./status.ts";
+import { ORDER_TABLES } from "./tables.ts";
 import { cartParams, forecastParams, ORDER_WRITES } from "./writes.ts";
 
 /** 加购只收检查算出来该加购的订单行（加过了、还没核清、货源不齐的不收），只往采购账号加 */
@@ -97,4 +98,6 @@ export const orders: Toolkit = {
 	},
 	check: async (sql) => ordersCheck(sql, await readAll(sql)),
 	writes: ORDER_WRITES,
+	tables: ORDER_TABLES,
+	schema: new URL("./schema.sql", import.meta.url),
 };

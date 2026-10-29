@@ -1,23 +1,19 @@
 // 订单的写操作：加购（1688 购物车）、预报（chanboss）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
-// prepare 是业务上的保护：现读还该不该做（订单取消了、货源下架了、已经买了就不做）
+// prepare 是业务上的保护：现读还该不该做（订单取消了、货源下架了、已经买了就不做）；提交和读回来核对是连接器的写工具（1688 的 cart-add、chanboss 的 forecast）
 import { z } from "zod";
-import { addToCart, type CartLine, Gone, cart as readCart, offer as readOffer } from "../../connectors/sites/1688/api.ts";
-import { orders as chanbossOrders, forecast, NO_TRACKING } from "../../connectors/sites/chanboss/api.ts";
-import { buyAccount, in1688 } from "../../platform/browser/accounts.ts";
+import { Gone, offer as readOffer } from "../../connectors/sites/1688/api.ts";
+import { cartAdd } from "../../connectors/sites/1688/index.ts";
+import { ordersBySn as liveOrders, NO_TRACKING } from "../../connectors/sites/chanboss/api.ts";
+import { forecastOrder } from "../../connectors/sites/chanboss/index.ts";
+import { inAccount } from "../../platform/browser/accounts.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import type { WriteOp } from "../../platform/writes.ts";
+import { buyAccount } from "./read.ts";
 import { current } from "./status.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const inCart = (lines: CartLine[], offerId: string, skuId: string) =>
-	lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
-
-/** 现读 chanboss 上这几张订单 */
-async function liveOrders(sns: string[]): Promise<Map<string, any>> {
-	const now = Math.floor(Date.now() / 1000);
-	const r = await chanbossOrders(now - 90 * 86400, now, 1, sns, 100);
-	return new Map(r.rows.map((o: any) => [String(o.sn), o]));
-}
+/** 1688 加购工具的参数 */
+const cartAddOf = (p: CartP) => ({ offerId: p.offerId, skuId: p.skuId, specId: p.specId ?? "", qty: p.qty });
 
 export const cartParams = z.object({
 	offerId: z.string(),
@@ -52,7 +48,7 @@ const cart: WriteOp<CartP> = {
 	where: async (sql, p, fn) => {
 		const a = await buyAccount(sql);
 		if (!a) throw new NeedsHuman("订单设置里没填采购账号（1688 会员名）");
-		return in1688(p.account ?? a.userId, fn);
+		return inAccount("1688", p.account ?? a.userId, fn);
 	},
 	async prepare(sql, p) {
 		const account = (await buyAccount(sql))!.userId;
@@ -84,17 +80,11 @@ const cart: WriteOp<CartP> = {
 		if (sku.stock < p.qty) return { skip: `1688 库存 ${sku.stock}，要 ${p.qty}` };
 		if (p.price !== null && sku.price > p.price * 1.1) return { skip: `1688 价格从 ¥${p.price} 涨到 ¥${sku.price}（超过 10%）` };
 		await sleep(1500);
-		return { params: { ...p, account, specId: sku.specId }, before: { inCart: inCart(await readCart(), p.offerId, p.skuId) } };
+		const params = { ...p, account, specId: sku.specId };
+		return { params, before: await cartAdd.before!(cartAddOf(params)) };
 	},
-	async submit(_sql, p) {
-		const r = await addToCart(p.offerId, p.specId ?? "", p.qty);
-		return r.kind === "sent" ? { kind: "done" } : r;
-	},
-	async check(p, before, fresh) {
-		const now = inCart(await readCart(), p.offerId, p.skuId);
-		const d = now - Number(before?.inCart ?? 0);
-		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
-	},
+	submit: (_sql, p) => cartAdd.submit(cartAddOf(p)),
+	check: (p, before, fresh) => cartAdd.check!(cartAddOf(p), before, fresh),
 	// 随这次加购一起定下的新货源（店里的商品 id）：那一行标成「选用」（这个商品还没定货源时）
 	async after(sql, p) {
 		for (const itemId of p.newSources) {
@@ -131,7 +121,8 @@ const forecastOp: WriteOp<ForecastP> = {
 	async submit(sql, p) {
 		// 线路、仓库在订单设置里
 		const [s] = await sql`select sendway_id, line_id, warehouse_id from order_settings where id = 1`;
-		return forecast({
+		return forecastOrder.submit({
+			sn: p.sn,
 			orderId: p.chanbossId,
 			orderTime: p.chanbossTime,
 			sendwayId: Number(s!.sendway_id),
@@ -140,11 +131,7 @@ const forecastOp: WriteOp<ForecastP> = {
 			lines: p.lines.map((l) => ({ platformModelId: l.modelId, modelId: l.chanbossModelId, count: l.qty, trackNum: l.trackingNo ?? NO_TRACKING })),
 		});
 	},
-	async check(p, _before, fresh) {
-		const o = (await liveOrders([p.sn])).get(p.sn);
-		const done = o && o.status !== "paid" && o.status !== "other" ? true : fresh && o?.status === "paid" ? false : null;
-		return { done, readback: { status: o?.status ?? null, sendway: o?.sendway_name ?? null } };
-	},
+	check: (p, before, fresh) => forecastOrder.check!({ sn: p.sn }, before, fresh),
 };
 
 /** 订单的写操作（写入表的 op → 声明） */

@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { closeItem, deleteSession, filterable, listSessions, showSession } from "./sessions.ts";
-import { type ColumnType, type Key, type Meta, type Row, TABLES, type Table } from "./tables.ts";
+import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
 
 /** 一个视图最多给几行 */
 const LIMIT = 1000;
@@ -36,7 +36,7 @@ function typeOf(dataType: string): ColumnType {
 async function types(sql: Sql): Promise<Map<string, Map<string, ColumnType>>> {
 	const rows = await sql`select table_name, column_name, data_type from information_schema.columns where table_schema = current_schema()`;
 	const out = new Map<string, Map<string, ColumnType>>();
-	for (const t of TABLES) {
+	for (const t of tables()) {
 		const cols = new Map(rows.filter((r) => r.table_name === t.name).map((r) => [r.column_name as string, typeOf(r.data_type)]));
 		for (const c of t.images ?? []) cols.set(c, "image");
 		for (const c of t.links ?? []) cols.set(c, "link");
@@ -93,7 +93,7 @@ export async function serve(
 ): Promise<{ port: number; stop: () => Promise<void> }> {
 	const colTypes = await types(sql);
 	const table = (name: unknown) => {
-		const t = TABLES.find((x) => x.name === name);
+		const t = tables().find((x) => x.name === name);
 		if (!t) throw new Usage(`没有表 ${String(name)}`);
 		return t;
 	};
@@ -116,7 +116,7 @@ export async function serve(
 	const api: Record<string, (body: any, url: URL) => Promise<unknown>> = {
 		"GET /api/meta": async () =>
 			Promise.all(
-				TABLES.map(async (t): Promise<Meta> => {
+				tables().map(async (t): Promise<Meta> => {
 					const cols = colTypes.get(t.name)!;
 					return {
 						name: t.name,

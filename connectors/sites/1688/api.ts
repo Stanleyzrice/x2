@@ -206,7 +206,7 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 		api,
 		data,
 	);
-	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser)).message, challenge: true } : r;
+	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser, "1688")).message, challenge: true } : r;
 }
 
 /** 读的接口：不是 ok 就抛错 */
@@ -221,6 +221,12 @@ async function read(url: string, api: string, data: Record<string, string>, what
 // ── 账号 ──
 
 /** 登录着的 1688 账号：userId 唯一且不变；loginId 是会员名（能改，只给人看）。首页服务端渲染的 loginStore */
+/** cookie __cn_logon__ 说登录着没有（纯函数）：true、false；没有这个 cookie（读不了、没去过 1688）是 null */
+export function alibabaCookie(jar: Map<string, string> | null): boolean | null {
+	const v = jar?.get("__cn_logon__");
+	return v === "true" ? true : v === "false" ? false : null;
+}
+
 export async function account(): Promise<{ userId: string; loginId: string }> {
 	const p = await page("https://www.1688.com");
 	await p.goto("https://www.1688.com/");

@@ -6,7 +6,7 @@
 
 import { detailImages, Gone, type Offer, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../../connectors/sites/shopee/products.ts";
-import { alibabaAccounts } from "../../platform/browser/accounts.ts";
+import { logins } from "../../platform/browser/accounts.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
@@ -44,9 +44,9 @@ async function categoryNames(): Promise<Map<string, string>> {
 
 /** 读 1688 货源：在一个登录着 1688 的浏览器里（读货源不用采购账号），排在这个浏览器的队里，和上一次读 1688 隔几秒 */
 export async function readOffer1688(offerId: string): Promise<Offer> {
-	const a = (await alibabaAccounts())[0];
+	const a = (await logins("1688"))[0];
 	if (!a) throw new NeedsHuman("没有登录着 1688 的浏览器：读不了货源");
-	return on1688(a.userId, () => readOffer(offerId));
+	return on1688(a.account.id, () => readOffer(offerId));
 }
 
 /** 做一份商品稿。回这一轮的问题（给人看的） */

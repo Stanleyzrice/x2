@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
 import { z } from "zod";
-import { alibabaCookie, choose } from "../platform/browser/accounts.ts";
+import { TOOLKITS } from "../bin/toolkits.ts";
+import { alibabaCookie } from "../connectors/sites/1688/api.ts";
+import { choose } from "../platform/browser/accounts.ts";
 import { challengeOf, guarded, loginPage, siteOf } from "../platform/browser/browser.ts";
 import { runTool } from "../platform/cli.ts";
 import { Challenge, NeedsHuman, Usage } from "../platform/errors.ts";
-import { get, str, type Toolkit } from "../platform/tool.ts";
+import { get, register, str, type Toolkit } from "../platform/tool.ts";
+
+// 站点由连接器注册（认网址、认登录）
+register(...TOOLKITS);
 
 test("网址是哪个站点：1688 的各个子域都是 1688，不认识的是 null", () => {
 	assert.equal(siteOf("https://seller.shopee.tw/portal/product/new"), "shopee");

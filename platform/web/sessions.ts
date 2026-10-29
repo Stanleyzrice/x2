@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { TABLES } from "./tables.ts";
+import { tables } from "./tables.ts";
 
 const title = z.string().trim().min(1).max(60).optional().describe("标题，短的一句；不给就不写");
 const cell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -13,7 +13,7 @@ const cell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const datagrid = z
 	.object({
 		title,
-		table: z.string().describe(`tables.ts 里的表：${TABLES.map((t) => `${t.name}（${t.title}）`).join("、")}`),
+		table: z.string().describe("表名（每个 skill 的 tables.ts，和写入 writes；不对会说有哪些）"),
 		view: z.string().optional().describe("表的视图（tables.ts 的 views 的 title）；不给用第一个"),
 		filter: z
 			.record(z.string(), z.union([z.string(), z.array(z.string()).min(1)]))
@@ -21,8 +21,15 @@ const datagrid = z
 			.describe("按列筛：{ 列名: 值 或 [值…] }，只认这张表给人看的列和主键；例 { id: ['3', '5'] }"),
 	})
 	.superRefine((p, ctx) => {
-		const t = TABLES.find((x) => x.name === p.table);
-		if (!t) return ctx.addIssue({ code: "custom", path: ["table"], message: `没有表 ${p.table}（有：${TABLES.map((x) => x.name).join("、")}）` });
+		const t = tables().find((x) => x.name === p.table);
+		if (!t)
+			return ctx.addIssue({
+				code: "custom",
+				path: ["table"],
+				message: `没有表 ${p.table}（有：${tables()
+					.map((x) => x.name)
+					.join("、")}）`,
+			});
 		if (p.view && !t.views.some((v) => v.title === p.view))
 			ctx.addIssue({ code: "custom", path: ["view"], message: `${t.title}没有视图「${p.view}」（有：${t.views.map((v) => v.title).join("、")}）` });
 		for (const col of Object.keys(p.filter ?? {}))
@@ -32,7 +39,7 @@ const datagrid = z
 
 /** 一张表能筛的列：主键和给人看的库里的列（算出来的不算） */
 export function filterable(table: string): Set<string> {
-	const t = TABLES.find((x) => x.name === table);
+	const t = tables().find((x) => x.name === table);
 	if (!t) return new Set();
 	return new Set([...t.key, ...Object.keys(t.columns).filter((c) => !t.computed?.[c])]);
 }

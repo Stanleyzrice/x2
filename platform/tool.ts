@@ -6,7 +6,9 @@
 // - write：改外面的系统，经写入引擎（writes.ts）：skill 的写工具校验完（业务上的保护）排成一批或几批写入（plan），引擎现读、记意图、提交一次、读回来；
 //   连接器的写工具是站点、服务上的一次提交（submit），只经 skill 的写工具调
 import { z } from "zod";
-import type { Sql } from "./db/index.ts";
+import { registerSite, type SiteDef } from "./browser/browser.ts";
+import { addSchema, type Sql } from "./db/index.ts";
+import type { Table } from "./web/tables.ts";
 import type { Ran, Submitted, WriteOp } from "./writes.ts";
 
 export type Page = { rows: unknown[]; next: string | null };
@@ -17,7 +19,13 @@ export type ReadTool = Common & { kind: "read" } & ({ run: (p: any) => Promise<u
 /** 一项写入：写入表的 op（引擎认的写操作）和它的参数 */
 export type Planned = { op: string; params: unknown };
 export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: any) => Promise<Planned[][]> };
-export type SubmitTool = Common & { kind: "write"; submit: (p: any) => Promise<Submitted> };
+/** 连接器的写工具：before 现读做之前的样子，submit 提交一次，check 读回来和 before 比（fresh：刚提交完就读）；没有 check 的由 skill 自己核（例 记在库里的） */
+export type SubmitTool = Common & {
+	kind: "write";
+	before?: (p: any) => Promise<unknown>;
+	submit: (p: any) => Promise<Submitted>;
+	check?: (p: any, before: any, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
+};
 export type Tool = ReadTool | WriteTool | SubmitTool;
 
 /** status 里要人做的一件事。key 是「类别:对象」：x2 看不到结果的，人做完用 x2 handled 记下，不再提醒 */
@@ -34,8 +42,14 @@ export type Toolkit = {
 	title: string;
 	kind: "platform" | "site" | "service" | "skill";
 	tools: Record<string, Tool>;
+	/** 站点：首页、怎么认登录……（浏览器按它选、排队） */
+	site?: SiteDef;
 	/** 每个工具都收的选浏览器的参数（例 shopee 的 --shop <店>）：在 run 里跑工具 */
 	scope?: { flag: string; description: string; run: <T>(value: string, fn: () => Promise<T>) => Promise<T> };
+	/** skill：自己的表结构（schema.sql），连库时跑 */
+	schema?: URL;
+	/** skill：给网页的表（datagrid 引用它们） */
+	tables?: Table[];
 	/** skill：x2 status 问它（现读、检查） */
 	check?: (sql: Sql) => Promise<Checked>;
 	/** 引擎认的写操作：写入表的 op → 怎么现读、提交、读回来 */
@@ -48,7 +62,12 @@ const kits: Toolkit[] = [];
 
 /** 注册 toolkit（bin/x2.ts 接线；测试注册自己要的） */
 export function register(...add: Toolkit[]): void {
-	for (const k of add) if (!kits.some((x) => x.name === k.name)) kits.push(k);
+	for (const k of add) {
+		if (kits.some((x) => x.name === k.name)) continue;
+		kits.push(k);
+		if (k.site) registerSite(k.site);
+		if (k.schema) addSchema(k.schema);
+	}
 }
 export const toolkits = (): readonly Toolkit[] => kits;
 

@@ -5,9 +5,10 @@
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
 import { orders as chanbossOrders } from "../../connectors/sites/chanboss/api.ts";
-import { alibabaAccounts, buyAccount, in1688, shopNames } from "../../platform/browser/accounts.ts";
+import { challengeIn, inAccount, logins } from "../../platform/browser/accounts.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
+import type { Read } from "../../platform/tool.ts";
 import type { CartLine, Purchase } from "./reconcile.ts";
 import { refreshChosen } from "./source.ts";
 
@@ -80,7 +81,7 @@ export const signedOf = (status: string) => /签收/.test(status);
 
 /** 一个 1688 账号的采购单（最近 pages 页 + 「退款售后」里更早的）→ 采购单分给订单用的行。有进行中退款的行再读退款详情 */
 export async function readPurchases(account: string, pages = 3): Promise<Purchase[]> {
-	return in1688(account, async () => {
+	return inAccount("1688", account, async () => {
 		const byId = new Map<string, BuyerOrder>();
 		for (let n = 1; n <= pages; n++) {
 			const r = await buyerOrders(n);
@@ -131,7 +132,16 @@ export async function readPurchases(account: string, pages = 3): Promise<Purchas
 	});
 }
 
-export type Read = { what: string; who: string; ok: boolean; rows?: number; error?: string; blocked?: boolean };
+/** 采购账号（订单设置里写的 1688 会员名）现在登录着的 userId；没设是 null，设了没登录要人处理 */
+export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: string } | null> {
+	const [s] = await sql`select buy_account from order_settings where id = 1`;
+	const name = s?.buy_account as string | null;
+	if (!name) return null;
+	const a = (await logins("1688")).find((x) => x.account.name === name || x.account.id === name);
+	if (!a) throw (await challengeIn("1688")) ?? new NeedsHuman(`采购账号「${name}」没有登录：在浏览器里登录这个 1688 账号，确认 cdp-relay 扩展已连接`);
+	return { userId: a.account.id, loginId: a.account.name };
+}
+
 export type Reads = {
 	cart: CartLine[];
 	purchases: Purchase[];
@@ -204,7 +214,7 @@ export async function readAll(sql: Sql, log: (s: string) => void = console.error
 
 /** 1688：每个登录着的账号的购物车、采购单（带物流、进行中的退款）。加购前只读这些：订单、货源用库里的 */
 export async function read1688(sql: Sql, log: (s: string) => void = console.error, results: Read[] = []): Promise<Reads> {
-	const accounts = new Map((await alibabaAccounts().catch(() => [])).map((a) => [a.userId, a.loginId]));
+	const accounts = new Map((await logins("1688").catch(() => [])).map((l) => [l.account.id, l.account.name]));
 	const buy = await attempt(
 		results,
 		"采购账号",
@@ -220,7 +230,7 @@ export async function read1688(sql: Sql, log: (s: string) => void = console.erro
 			results,
 			"购物车",
 			userId,
-			() => reuse(`购物车:${userId}`, () => in1688(userId, () => readCart())),
+			() => reuse(`购物车:${userId}`, () => inAccount("1688", userId, () => readCart())),
 			(v) => v.length,
 		);
 		if (c) cart.push(...c.map((l) => ({ account: userId, offerId: l.offerId, skuId: l.skuId, qty: l.quantity })));
@@ -246,7 +256,9 @@ async function writeOrders(sql: Sql): Promise<number> {
 		raw.push(...page.rows);
 		if (n >= page.pageCount || page.rows.length === 0) break;
 	}
-	const names = await shopNames().catch(() => new Map<string, string>());
+	const names = await logins("shopee")
+		.then((all) => new Map(all.map((l) => [l.account.id, l.account.name])))
+		.catch(() => new Map<string, string>());
 	const rows = raw.map(orderRow);
 	await sql.begin(async (tx) => {
 		for (const { shop_name, items, ...o } of rows) {

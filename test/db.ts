@@ -1,0 +1,45 @@
+// 连库的测试共用的：X2_TEST_DATABASE_URL 指的库（每个测试文件开头清空它的 public schema、建表），没设就跳过（skip）。
+// 注册全部 toolkit，订单的检查用假的现读（不碰站点）；tool 照命令行的参数跑一个工具，回 --json 的样子
+import assert from "node:assert/strict";
+import { after, before } from "node:test";
+import postgres from "postgres";
+import { TOOLKITS } from "../bin/toolkits.ts";
+import { runTool } from "../platform/cli.ts";
+import { close, migrate } from "../platform/db/index.ts";
+import { status } from "../platform/status.ts";
+import { register, type Toolkit } from "../platform/tool.ts";
+import { orders } from "../skills/orders/index.ts";
+import type { Reads } from "../skills/orders/read.ts";
+import { ordersCheck } from "../skills/orders/status.ts";
+
+export const url = process.env.X2_TEST_DATABASE_URL;
+export const sql = url ? postgres(url, { onnotice: () => {}, max: 2 }) : null;
+export const skip = !sql && "没设 X2_TEST_DATABASE_URL";
+
+/** 这一轮现读的结果（假的）：只读了 chanboss 订单 */
+const reads = (): Reads => ({ cart: [], purchases: [], accounts: new Map(), buyAccount: null, results: [{ what: "订单", who: "chanboss", ok: true }] });
+register({ ...orders, check: (s) => ordersCheck(s, reads()) }, ...TOOLKITS);
+
+before(async () => {
+	if (!sql) return;
+	await sql.unsafe("drop schema public cascade; create schema public");
+	await migrate(sql);
+});
+after(async () => {
+	await sql?.end();
+	await close();
+});
+
+/** x2 status：问每个 skill 的检查 */
+export async function check(db: postgres.Sql) {
+	const r = await status(db);
+	return { reminders: r.human, todo: r.todo };
+}
+
+/** 跑一个工具（命令行的参数），回它的输出（照 --json 的样子） */
+export async function tool(kit: Toolkit, args: string[]): Promise<any> {
+	process.env.X2_DATABASE_URL = url!;
+	const r = await runTool(kit, args);
+	assert.ok("value" in r);
+	return JSON.parse(JSON.stringify(r.value));
+}

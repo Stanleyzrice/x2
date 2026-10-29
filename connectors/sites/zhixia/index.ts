@@ -51,4 +51,22 @@ const tools = {
 	),
 };
 
-export const zhixia: Toolkit = { name: "zhixia", title: "知虾（Shopee 的数据平台；限流：每次隔 6～10 秒、每小时 200 次）", kind: "site", tools };
+export const zhixia: Toolkit = {
+	name: "zhixia",
+	title: "知虾（Shopee 的数据平台；限流：每次隔 6～10 秒、每小时 200 次）",
+	kind: "site",
+	tools,
+	site: {
+		key: "zhixia",
+		title: "知虾",
+		origin: "https://shopee.mobduos.com",
+		hosts: (h) => h === "shopee.mobduos.com",
+		// 读得到类目树就是登录着（知虾不给账号）
+		login: {
+			identify: async () => {
+				await categories();
+				return { id: "zhixia", name: "知虾" };
+			},
+		},
+	},
+};

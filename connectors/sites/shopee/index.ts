@@ -1,7 +1,7 @@
-// x2 shopee <工具>：卖家中心的读工具（建商品、上架是写，经上品的写工具）
+// x2 shopee <工具>：卖家中心的工具。读的直接跑；建商品、上架是写（publish.ts），只经上品的写工具
 import { writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { inShopNamed } from "../../../platform/browser/accounts.ts";
+import { inAccount } from "../../../platform/browser/accounts.ts";
 import { all, byPage, day, flag, get, list, num, parseJson, str, type Toolkit } from "../../../platform/tool.ts";
 import { conversations, messages, unreplied } from "./chat.ts";
 import { income, incomeComponents } from "./finance.ts";
@@ -35,6 +35,7 @@ import {
 	recommendedCategory,
 	shippingDays,
 } from "./products.ts";
+import { createListing, listProduct } from "./publish.ts";
 import { cases } from "./returns.ts";
 import { seller, shop } from "./seller.ts";
 
@@ -48,6 +49,8 @@ async function save(b64: string, out: string) {
 }
 
 const tools = {
+	"create-product": createListing,
+	"list-product": listProduct,
 	shop: get("当前登录的店铺：shopId（店铺 id）、userId（卖家账号 id）、店名、账号名、评分", undefined, () => shop()),
 
 	// ── 订单 ──
@@ -219,10 +222,24 @@ export const shopee: Toolkit = {
 	title: "Shopee 卖家中心（台湾站）",
 	kind: "site",
 	tools,
+	site: {
+		key: "shopee",
+		title: "Shopee 卖家中心",
+		origin: "https://seller.shopee.tw",
+		hosts: (h) => h === "seller.shopee.tw",
+		// 一家店一个浏览器：认登录着哪家店（店铺 id、账号名）；几家都连着要 --shop 选
+		login: {
+			identify: async () => {
+				const s = await shop();
+				return { id: s.shopId, name: s.username };
+			},
+			each: { flag: "shop" },
+		},
+	},
 	// 在登录着这家店的浏览器里读；没给的，按登录选（只有一个浏览器登录着 Shopee 时不用给）
 	scope: {
 		flag: "shop",
 		description: "在登录着这家店的浏览器里读（账号名，例 ni1206；也可以给店铺 id）；只有一个浏览器登录着 Shopee 时不用给",
-		run: inShopNamed,
+		run: (shop, fn) => inAccount("shopee", shop, fn),
 	},
 };

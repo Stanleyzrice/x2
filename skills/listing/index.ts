@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { offerIdOf } from "../../connectors/sites/1688/api.ts";
 import { type Category, categoryTree } from "../../connectors/sites/shopee/products.ts";
-import { inShop } from "../../platform/browser/accounts.ts";
+import { inAccount } from "../../platform/browser/accounts.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import { NeedsHuman, Usage } from "../../platform/errors.ts";
 import { flag, get, parseJson, str, strs, type Toolkit } from "../../platform/tool.ts";
@@ -19,6 +19,7 @@ import { imageNames, LABEL, numbered } from "./product.ts";
 import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import { listingsCheck } from "./status.ts";
+import { LISTING_TABLES } from "./tables.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
 import { textCheck } from "./textcheck.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "./variants.ts";
@@ -467,7 +468,7 @@ export const listing: Toolkit = {
 			...get(
 				"人在终端里定了类目：写成人定的类目（要是叶子、在本店允许的类目里；建了商品的不改），属性、备货天数清掉，再 x2 listing make（有类目就不再问 Shopee 推荐）。类目 id 见 x2 shopee category-tree",
 				z.object({ id, category: z.string().regex(/^\d+$/).describe("叶子类目 id") }),
-				async (p) => setCategory(await db(), p.id, p.category, (shopId) => inShop(shopId, () => categoryTree())),
+				async (p) => setCategory(await db(), p.id, p.category, (shopId) => inAccount("shopee", shopId, () => categoryTree())),
 			),
 			text: (r) => {
 				const notes = [r.cancelled ? "这份已放弃：要上就去掉「放弃」" : "", r.before && r.before !== r.category ? `原来是「${r.before}」` : ""].filter(Boolean);
@@ -549,6 +550,8 @@ export const listing: Toolkit = {
 	},
 	writes: LISTING_WRITES,
 	written,
+	tables: LISTING_TABLES,
+	schema: new URL("./schema.sql", import.meta.url),
 };
 
 /** 人定的类目（x2 listing category）：要是 Shopee 类目树里的叶子（tree 读这家店的类目树），在本店允许的类目里；已经建了商品的不改。
