@@ -1,4 +1,4 @@
-// 一份商品稿的图：收图 → 取字节、量尺寸、剔掉占位图 → 筛字（Gemini）→ 要译的交象寄（写入「译图」）
+// 一份商品稿的图：收图 → 取字节、量尺寸、剔掉占位图 → 筛字（Gemini）→ 要译的交象寄
 // → 译图检查（Gemini 分两次问）→ 本店水印 → 传 Shopee。都按字节的 sha256 记在 images、shop_images 表里：重跑不重复付钱、不重复传。
 // 每张图单独判，同时做：取图、问 Gemini 不排队（上限在 queue.ts），同一张图同时要的只做一次；
 // 加水印（在页面的 canvas 里画）、传图（用页面的 UploadService）碰浏览器，在这家店的浏览器里排队（调用方给的 browser）
@@ -7,13 +7,12 @@ import { type Image, model } from "../../connectors/services/gemini/api.ts";
 import { type Bytes, fetchImage, inspect } from "../../connectors/services/image/api.ts";
 import { uploadImages } from "../../connectors/sites/shopee/products.ts";
 import type { Sql } from "../../platform/db/index.ts";
-import { run } from "../../platform/writes.ts";
 import type { Mark, Pic, Pics, Verdict } from "./pics.ts";
 import { detailFits, MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { download, geminiJson, limiter, once, type Runner } from "./queue.ts";
 import { SCREEN_VERSION, screen } from "./screen.ts";
 import { markKey, watermark } from "./watermark.ts";
-import { saveTranslation, translationState } from "./writes.ts";
+import { saveTranslation, translate, translationState } from "./writes.ts";
 
 /** 原图：取字节，记一行（来源、宽高）；同一个进程里取过的不再取（取不到的下次再取） */
 const fetched = new Map<string, Promise<Bytes>>();
@@ -158,21 +157,9 @@ export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promi
 	return inspect(new Uint8Array(row.bytes), "译图");
 }
 
-/** 把要译的交象寄：一批 5 张记成写入「译图」，马上执行（不用问人）。同一批图交过、核清了还没有结果的（人核对成已核对，象寄的地址没拿到），
- * 防重复的 key 后面加次数，重交 */
+/** 把要译的交象寄，一批 5 张（translate：答复了的记下结果，没答复的记成结果未定、不再交）。交不成的那几张这次不用，不挡商品稿 */
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
-	const [{ batch }] = (await sql`select nextval('batch_seq')::text as batch`) as any;
-	for (let i = 0; i < items.length; i += 5) {
-		const chunk = items.slice(i, i + 5);
-		const base = `xiangji:${chunk
-			.map((x) => x.sha)
-			.sort()
-			.join(",")}`;
-		const [{ n }] = (await sql`select count(*)::int as n from writes where key = ${base} or key like ${`${base}#%`}`) as any;
-		const key = n > 0 ? `${base}#${n + 1}` : base;
-		await sql`insert into writes (batch, op, target, params, display, key, status) values (${batch}, '译图', ${`xiangji:${chunk.map((x) => x.sha.slice(0, 12)).join(",")}`}, ${sql.json({ items: chunk })}, ${`译图 ${chunk.length} 张`}, ${key}, '待执行')`;
-	}
-	await run(sql, { batch, only: true });
+	for (let i = 0; i < items.length; i += 5) await translate(sql, items.slice(i, i + 5)).catch((e: Error) => console.error(`译图：${e.message}`));
 }
 
 /** 同一个进程里正在交象寄的图（原图 sha → 那一次交的，交完了才去掉）：几份商品稿同时做、有同一张图时，后来的等它，不重交 */
@@ -225,7 +212,7 @@ export async function makeImages(
 		}),
 	);
 
-	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；结果未知的这张先不用（不挡商品稿），人核清以后再做商品稿就用上
+	// 2. 译图：m 和带简体字的 r。译过的、象寄给过地址的直接用；结果未定的这张先不用（不挡商品稿），不重交
 	const toTranslate = all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
 	const shas = [...new Set(toTranslate.map((p) => p.sha!))];
 	if (shas.length) {
@@ -233,13 +220,8 @@ export async function makeImages(
 		let job = null as Promise<void> | null;
 		const { fresh, others } = await deciding(async () => {
 			const state = await translationState(sql, shas);
-			const flying = new Set(
-				(await sql`select params from writes where op = '译图' and status in ('待执行', '已提交', '结果未知', '不一致')`).flatMap((w) =>
-					(w.params.items as { sha: string }[]).map((i) => i.sha),
-				),
-			);
 			const others = [...new Set(shas.flatMap((s) => (translating.has(s) ? [translating.get(s)!] : [])))];
-			const fresh = shas.filter((s) => !state.has(s) && !flying.has(s) && !translating.has(s));
+			const fresh = shas.filter((s) => !state.has(s) && !translating.has(s));
 			if (fresh.length) {
 				job = translateNow(
 					sql,
@@ -269,11 +251,6 @@ export async function makeImages(
 			}),
 		);
 		state = await translationState(sql, shas);
-		const still = new Map(
-			(await sql`select id::text, params from writes where op = '译图' and status in ('已提交', '结果未知', '不一致') order by id`).flatMap((w) =>
-				(w.params.items as { sha: string }[]).map((i) => [i.sha, w.id as string] as const),
-			),
-		);
 		await Promise.all(
 			toTranslate.map(async (p) => {
 				const t = state.get(p.sha!);
@@ -281,7 +258,7 @@ export async function makeImages(
 					const [row] = await sql`select sha256 from images where kind = '译图' and from_sha = ${p.sha!} limit 1`;
 					p.translated = row!.sha256;
 				} else if (t?.failed) p.drop = `象寄译不成：${t.failed}`;
-				else if (still.has(p.sha!)) p.drop = `译图结果未知（写入 #${still.get(p.sha!)}）：先不用，在「写入」里核清以后再做商品稿就会用上`;
+				else if (t?.unknown) p.drop = `译图结果未定（${t.unknown}）：先不用，不重交`;
 				else p.drop = "还没译好";
 			}),
 		);

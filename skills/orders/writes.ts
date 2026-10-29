@@ -1,7 +1,7 @@
 // 订单的写操作：加购（1688 购物车）、预报（chanboss）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
-// prepare 是业务上的保护：现读还该不该做（订单取消了、货源下架了、已经买了就不做）；提交和读回来核对是连接器的写工具（1688 的 cart-add、chanboss 的 forecast）
+// prepare 是业务上的保护：现读还该不该做（订单取消了、货源下架了、已经买了就不做）；提交是连接器的写（1688 的 cart-add、chanboss 的 forecast），读回对账用连接器的读（购物车、订单）
 import { z } from "zod";
-import { Gone, offer as readOffer } from "../../connectors/sites/1688/api.ts";
+import { type CartLine, Gone, cart as readCart, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { cartAdd } from "../../connectors/sites/1688/index.ts";
 import { ordersBySn as liveOrders, NO_TRACKING } from "../../connectors/sites/chanboss/api.ts";
 import { forecastOrder } from "../../connectors/sites/chanboss/index.ts";
@@ -12,8 +12,9 @@ import { buyAccount } from "./read.ts";
 import { current } from "./status.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-/** 1688 加购工具的参数 */
-const cartAddOf = (p: CartP) => ({ offerId: p.offerId, skuId: p.skuId, specId: p.specId ?? "", qty: p.qty });
+/** 购物车里这个规格几件（读回对账：加购前后比） */
+const inCart = (lines: CartLine[], offerId: string, skuId: string) =>
+	lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
 
 export const cartParams = z.object({
 	offerId: z.string(),
@@ -80,11 +81,15 @@ const cart: WriteOp<CartP> = {
 		if (sku.stock < p.qty) return { skip: `1688 库存 ${sku.stock}，要 ${p.qty}` };
 		if (p.price !== null && sku.price > p.price * 1.1) return { skip: `1688 价格从 ¥${p.price} 涨到 ¥${sku.price}（超过 10%）` };
 		await sleep(1500);
-		const params = { ...p, account, specId: sku.specId };
-		return { params, before: await cartAdd.before!(cartAddOf(params)) };
+		return { params: { ...p, account, specId: sku.specId }, before: { inCart: inCart(await readCart(), p.offerId, p.skuId) } };
 	},
-	submit: (_sql, p) => cartAdd.submit(cartAddOf(p)),
-	check: (p, before, fresh) => cartAdd.check!(cartAddOf(p), before, fresh),
+	submit: (_sql, p) => cartAdd.submit({ offerId: p.offerId, specId: p.specId ?? "", qty: p.qty }),
+	// 读回对账：车里这个规格多了 qty 件是做了；刚提交完一件没多是没做
+	async check(p, before, fresh) {
+		const now = inCart(await readCart(), p.offerId, p.skuId);
+		const d = now - Number(before?.inCart ?? 0);
+		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
+	},
 	// 随这次加购一起定下的新货源（店里的商品 id）：那一行标成「选用」（这个商品还没定货源时）
 	async after(sql, p) {
 		for (const itemId of p.newSources) {
@@ -131,7 +136,12 @@ const forecastOp: WriteOp<ForecastP> = {
 			lines: p.lines.map((l) => ({ platformModelId: l.modelId, modelId: l.chanbossModelId, count: l.qty, trackNum: l.trackingNo ?? NO_TRACKING })),
 		});
 	},
-	check: (p, before, fresh) => forecastOrder.check!({ sn: p.sn }, before, fresh),
+	// 读回对账：chanboss 上这张单不再是待处理（paid）是做了；刚提交完还是 paid 是没做
+	async check(p, _before, fresh) {
+		const o = (await liveOrders([p.sn])).get(p.sn);
+		const done = o && o.status !== "paid" && o.status !== "other" ? true : fresh && o?.status === "paid" ? false : null;
+		return { done, readback: { status: o?.status ?? null, sendway: o?.sendway_name ?? null } };
+	},
 };
 
 /** 订单的写操作（写入表的 op → 声明） */

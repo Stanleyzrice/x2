@@ -1,31 +1,28 @@
-// 上品的写操作：译图（象寄）、建商品、上架（Shopee）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
+// 上品的写：建商品、上架（Shopee，经至多一次写入）；译图（象寄，直接调）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
 // prepare 是业务上的保护：建商品前照商品稿现组一遍，和人同意时交给 x2 的一样才建
 import { z } from "zod";
 import { fetchImage } from "../../connectors/services/image/api.ts";
 import type { Outcome } from "../../connectors/services/xiangji/api.ts";
 import { translateImages } from "../../connectors/services/xiangji/index.ts";
-import { productPage } from "../../connectors/sites/shopee/products.ts";
+import { channels, productInfo, productPage } from "../../connectors/sites/shopee/products.ts";
 import { createListing, findByParentSku, listProduct } from "../../connectors/sites/shopee/publish.ts";
 import { inAccount } from "../../platform/browser/accounts.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import type { WriteOp } from "../../platform/writes.ts";
 import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
+import { readbackProblems } from "./product.ts";
 import { productOf } from "./ready.ts";
 
-const translateParams = z.object({
-	items: z
-		.array(z.object({ sha: z.string(), url: z.string() }))
-		.min(1)
-		.max(5),
-});
-type TranslateP = z.infer<typeof translateParams>;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）或 { failed }（象寄说译不成） */
-export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; saved: boolean }>> {
+/** 原图的译图结果记在它那一行的 checks.译图：{ url }（象寄给的地址，付过钱了）、{ failed }（象寄说译不成）或 { unknown }（结果未定，不重交） */
+export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; unknown?: string; saved: boolean }>> {
 	const rows =
 		await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
-	return new Map(rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, saved: Boolean(r.saved) }]));
+	return new Map(
+		rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, unknown: r.t?.unknown, saved: Boolean(r.saved) }]),
+	);
 }
 
 /** 象寄的地址大约 80 天失效：拿到就取回来存进库 */
@@ -34,50 +31,27 @@ export async function saveTranslation(sql: Sql, origin: string, url: string): Pr
 	await sql`insert into images ${sql({ sha256: b.sha256, kind: "译图", source: url, from_sha: origin, mime: b.mime, width: b.width, height: b.height, bytes: Buffer.from(b.bytes) })} on conflict (sha256) do nothing`;
 }
 
-/** 译图：交象寄把图上的简体字译成繁体。交一次收一次钱：先记意图再交；象寄说译不成的记在原图上（那张图不用了）；
- * 答复里没有的、没拿到答复的是结果未知，不重交。做商品稿时马上执行（一张约 0.025 元） */
-const translateOp: WriteOp<TranslateP> = {
-	describe: "交象寄把图上的简体字译成繁体（收费）",
-	params: translateParams,
-	target: (p) => `xiangji:${p.items.map((i) => i.sha.slice(0, 12)).join(",")}`,
-	key: (p) =>
-		`xiangji:${p.items
-			.map((i) => i.sha)
-			.sort()
-			.join(",")}`,
-	display: (p) => `译图 ${p.items.length} 张`,
-	where: (_sql, _p, fn) => fn(),
-	async prepare(sql, p) {
-		const state = await translationState(
-			sql,
-			p.items.map((i) => i.sha),
-		);
-		const items = p.items.filter((i) => !state.has(i.sha));
-		return items.length ? { params: { items }, before: {} } : { skip: "这几张都译过了" };
-	},
-	async submit(sql, p) {
-		const w = await translateImages.submit({ urls: p.items.map((i) => i.url) });
-		if (w.kind !== "done") return w;
-		const r = w.data as Extract<Outcome, { kind: "done" }>;
-		const shaOf = new Map(p.items.map((i) => [i.url, i.sha]));
-		const at = new Date().toISOString();
-		for (const t of r.results) await sql`update images set checks = checks || ${sql.json({ 译图: { url: t.url, at } })} where sha256 = ${shaOf.get(t.origin)!}`;
-		for (const f of r.failed)
-			await sql`update images set checks = checks || ${sql.json({ 译图: { failed: f.why, at } })} where sha256 = ${shaOf.get(f.origin)!}`;
-		// 记下了地址再取图：取不回来下次照地址再取，不用再付钱
-		for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
-		if (r.missing.length) return { kind: "unknown", why: `象寄的答复里没有 ${r.missing.length} 张（不知道扣没扣钱）` };
-		return { kind: "done", data: { translated: r.results.length, failed: r.failed } };
-	},
-	async check(p) {
-		const state = await translationState(
-			await db(),
-			p.items.map((i) => i.sha),
-		);
-		const done = p.items.every((i) => state.get(i.sha)?.url || state.get(i.sha)?.failed || state.get(i.sha)?.saved);
-		return { done: done ? true : null, readback: Object.fromEntries(state) };
-	},
-};
+/** 译图：交象寄把一批（最多 5 张）图上的简体字译成繁体。不经至多一次写入（钱少、能重来），但不白重交：
+ * 答复了的照原图记下结果（象寄给的地址：付过钱了，记下了再取图；译不成的原因）；答复里没有的、没拿到答复的记成结果未定，这张不再自动交
+ * （人在网页上看过、在库里去掉这条记录才重交）。象寄明说这批没做的不记，下次照常交 */
+export async function translate(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
+	const w = await translateImages.submit({ urls: items.map((i) => i.url) });
+	const at = new Date().toISOString();
+	const mark = async (sha: string, v: Record<string, string>) =>
+		sql`update images set checks = checks || ${sql.json({ 译图: { ...v, at } })} where sha256 = ${sha}`;
+	if (w.kind === "refused") throw new Error(`象寄没译：${w.why}`);
+	if (w.kind !== "done") {
+		for (const i of items) await mark(i.sha, { unknown: w.why });
+		throw new Error(`象寄没答复，这 ${items.length} 张记成结果未定、不重交：${w.why}`);
+	}
+	const r = w.data as Extract<Outcome, { kind: "done" }>;
+	const shaOf = new Map(items.map((i) => [i.url, i.sha]));
+	for (const t of r.results) await mark(shaOf.get(t.origin)!, { url: t.url });
+	for (const f of r.failed) await mark(shaOf.get(f.origin)!, { failed: f.why });
+	for (const m of r.missing) await mark(shaOf.get(m)!, { unknown: "象寄的答复里没有这张（不知道扣没扣钱）" });
+	// 记下了地址再取图：取不回来下次照地址再取，不用再付钱
+	for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
+}
 
 // ── 上品：建商品、上架 ──
 
@@ -132,7 +106,7 @@ const createOp: WriteOp<CreateP> = {
 			await sql`update listings set product_id = ${(w.data as { productId: string }).productId}, updated_at = now() where id = ${p.listingId}`;
 		return w;
 	},
-	async check(p, before, fresh) {
+	async check(p) {
 		// 商品 id 记在商品稿上；结果未知的（没回 id）按货号找
 		const sql = await db();
 		let [{ product_id: id }] = (await sql`select product_id from listings where id = ${p.listingId}`) as any;
@@ -141,7 +115,16 @@ const createOp: WriteOp<CreateP> = {
 			if (!id) return { done: null, readback: { found: false } };
 			await sql`update listings set product_id = ${id}, updated_at = now() where id = ${p.listingId}`;
 		}
-		return createListing.check!({ productInfo: p.productInfo, productId: String(id) }, before, fresh);
+		// 读回对账：读回来和提交的 product_info 逐项比。刚建完读得到要几秒：对不上就隔 3 秒再读，最多 3 次
+		let problems: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			if (i) await sleep(3000);
+			const info = await productInfo(id);
+			const path = (p.productInfo.category_path as number[]) ?? [];
+			problems = readbackProblems(p.productInfo, info, await channels(id, path[path.length - 1]!));
+			if (!problems.length) break;
+		}
+		return { done: problems.length === 0, readback: { productId: id, problems } };
 	},
 };
 
@@ -172,11 +155,21 @@ const liveOp: WriteOp<LiveP> = {
 		return { params: { ...p, productId: String(l.product_id) }, before: {} };
 	},
 	submit: (_sql, p) => listProduct.submit({ productId: p.productId! }),
-	check: (p, before, fresh) => listProduct.check!({ productId: p.productId! }, before, fresh),
+	// 读回对账：在售是做了，禁卖是没做。翻在售以后要十几秒才读得到：隔 3 秒读一次，最多 6 次
+	async check(p, _before, fresh) {
+		let info: any = null;
+		for (let i = 0; i < (fresh ? 6 : 1); i++) {
+			if (i) await sleep(3000);
+			info = await productInfo(p.productId!);
+			if (Number(info.status) === 1 && !info.is_unlisted) return { done: true, readback: { status: info.status } };
+			if (Number(info.status) === 3) return { done: false, readback: { status: info.status, why: "禁卖" } };
+		}
+		return { done: null, readback: { status: info?.status ?? null, unlisted: info?.is_unlisted ?? null } };
+	},
 	async after(sql, p) {
 		await sql`update listings set listed_at = now(), updated_at = now() where id = ${p.listingId}`;
 	},
 };
 
 /** 上品的写操作（写入表的 op → 声明） */
-export const LISTING_WRITES: Record<string, WriteOp> = { 译图: translateOp, 建商品: createOp, 上架: liveOp };
+export const LISTING_WRITES: Record<string, WriteOp> = { 建商品: createOp, 上架: liveOp };

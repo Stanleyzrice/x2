@@ -1,12 +1,12 @@
 // x2 chanboss <工具>：chanboss（货代）的读工具（预报是写，经订单的写工具）
 import { z } from "zod";
 import { byPage, day, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
-import { balance, forecast, identity, orders, ordersBySn, putaway, returnChanges, returns, stock } from "./api.ts";
+import { balance, forecast, identity, orders, putaway, returnChanges, returns, stock } from "./api.ts";
 
 // 和 shopee 一样叫 --start、--end
 const range = { start: day("开始"), end: day("结束", true) };
 
-/** 预报一张订单。读回来看 chanboss 上这张单不再是待处理（paid） */
+/** 预报一张订单：发一次、回结果（经订单的写操作「预报」保护；读回对账用订单的读） */
 export const forecastOrder: SubmitTool = {
 	kind: "write",
 	description: "预报一张订单（只经订单的写工具 orders.forecast）",
@@ -20,11 +20,6 @@ export const forecastOrder: SubmitTool = {
 		lines: z.array(z.object({ platformModelId: z.string(), modelId: z.string(), count: z.number().int().positive(), trackNum: z.string() })).min(1),
 	}),
 	submit: async ({ sn: _, ...body }) => forecast(body),
-	check: async (p, _before, fresh) => {
-		const o = (await ordersBySn([p.sn])).get(p.sn);
-		const done = o && o.status !== "paid" && o.status !== "other" ? true : fresh && o?.status === "paid" ? false : null;
-		return { done, readback: { status: o?.status ?? null, sendway: o?.sendway_name ?? null } };
-	},
 };
 
 const tools = {

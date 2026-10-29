@@ -1,24 +1,22 @@
-// 写入引擎：改外面的系统（站点、服务）都经它。skill 的写工具排好一批或几批（tool.ts 的 plan），人在终端里同意了 agent 才调；x2 verify 只做第 1 步。
-// 写操作（WriteOp，toolkit 的 writes 注册）分四步，这里按顺序调：
-// - prepare：现读，看还该不该做（订单取消了、货源下架了就不做），记下做之前站点上是什么样（before）
-// - 记意图：把写入改成「已提交」再提交（进程这时挂了，下一轮当结果未知，先读回来）
-// - submit：提交一次，回三态：做了、被拒、结果未知（没拿到答复）
-// - check：读回来，和 before 比：做了、没做、看不出（看不出就是结果未知，不重发）
-// 执行：
-// 1. 先核清：已提交（记了意图、进程挂了）、结果未知的写入，读回来；还核不清的，同一个对象上的这次不做
-// 2. 这一批一个一个执行：现读 → 记意图 → 提交一次 → 读回来。结果未知就停下这一批，不重发；没做的标成未执行，写明原因
+// 至多一次写入（at-most-once）：要保护的写（同一个写两次会出事的：加购两次车里是两倍、建商品两次是两个商品、预报两次……）都经它。
+// 引擎不认识网站和业务：skill 给写操作（WriteOp：防重复的 key、对象、显示的一行、现读还该不该做、调哪个连接器的写、拿哪个读来对账、怎么比），
+// 连接器的写只发一次请求、回结果。每一项：
+// - 记意图（write-ahead log）：先把写入改成「已提交」再提交（进程这时挂了，下一轮当结果未定，先读回来）
+// - 只提交一次：回做了、被拒、结果未定（没拿到答复）
+// - 读回对账（reconciliation）：和 before 比：做了、没做、看不出。看不出是结果未定（in-doubt，库里的状态叫「结果未知」），不重发
+// 执行（run）：
+// 1. 先对账：已提交、结果未定的写入读回来；还看不出的，同一个对象上的这次不做（x2 verify 只做这一步）
+// 2. 这一批一个一个执行：prepare 现读还该不该做 → 记意图 → 提交一次 → 读回对账。结果未定就停下这一批，不重发；没做的标成未执行，写明原因
 // 3. 执行完：告诉注册了 written 的 skill（例 上品重算碰过的商品稿的当前步骤）
+// 不花钱、能重来的写不经它（skill 直接调连接器的写）
 import type postgres from "postgres";
 import type { z } from "zod";
 import { host, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
-import { type Planned, toolkits, writeOps } from "./tool.ts";
+import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
 
-export type Submitted =
-	| { kind: "done"; data?: unknown }
-	| { kind: "refused"; why: string }
-	| { kind: "blocked"; why: string }
-	| { kind: "unknown"; why: string };
+/** 一次提交的结果（连接器的写回的） */
+export type Submitted = Sent;
 export type Prepared<P> = { skip: string } | { params: P; before: unknown };
 
 export type WriteOp<P = any> = {
@@ -34,7 +32,7 @@ export type WriteOp<P = any> = {
 	link?: string;
 	/** 还没在真站点上跑过：第一次要和运营约好一个对象，一起跑（写工具加 --try） */
 	untried?: string;
-	/** 在哪个浏览器里做 */
+	/** 在哪里做（例 在登录着这个账号的浏览器里） */
 	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
 	prepare: (sql: Sql, p: P) => Promise<Prepared<P>>;
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
@@ -54,8 +52,8 @@ async function set(sql: Sql, id: string, fields: Record<string, unknown>) {
 	await sql`update writes set ${sql(fields as any)} where id = ${id}`;
 }
 
-/** batch：要执行的那一批（不给只核清）；only：只核清这一批的（做商品稿时译图跑自己那一批，不顺带去读 1688 的购物车）；tryOps：还没在真站点上跑过、和运营约好一起跑的写操作 */
-type Opts = { batch?: string; only?: boolean; tryOps?: string[] };
+/** batch：要执行的那一批（不给只对账）；tryOps：还没在真站点上跑过、和运营约好一起跑的写操作 */
+type Opts = { batch?: string; tryOps?: string[] };
 export type Outcome = { ran: Ran[]; unknown: boolean; blocked: string | null };
 
 /** ops：写操作的声明（不给是注册了的；测试换成假的） */
@@ -116,7 +114,7 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 
 	// 1. 核清
 	const unsure =
-		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') ${opts.only && opts.batch ? sql`and batch = ${opts.batch}` : sql``} order by writes.id`) as unknown as Row[];
+		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') order by writes.id`) as unknown as Row[];
 	for (const w of unsure) {
 		const op = ops[w.op];
 		if (!op) continue;

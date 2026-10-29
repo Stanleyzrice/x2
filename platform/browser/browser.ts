@@ -1,11 +1,11 @@
 // 唯一碰 cdp-relay 的地方：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
 // 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
-// 站点由连接器注册（SiteDef：首页、主机名、怎么认登录、要不要隔开、有没有滑块验证），这里不认具体站点。
+// 站点由连接器注册（SiteDef：首页、主机名、怎么认登录、要不要隔开、怎么认人机验证），这里不认具体站点。
 // 在哪个浏览器里做（一家店一个浏览器）：using() 指定的（按账号找浏览器的代码用它，见 accounts.ts）；没指定的用 X2_BROWSER
 // （浏览器在 cdp-relay 里的 id 或名字）；也没设的，只连着一个就用它，连着几个就按登录选（accounts.ts 的 browserFor）。
 // 几个 x2 进程同时跑：同一个浏览器的同一个站点一次只让一个进程用（lock.ts 的锁，用完 2 秒没再用就放），要隔开的站点两次加载之间隔开。
 // 认登录时开的标签页，没认出就关掉（probe）；跳到别的网站的登录页的标签页 x2 以后找不回来，也关掉，不留下。
-// 有滑块验证的站点跳了验证（整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
+// 注册了人机验证的站点跳了验证（例 整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
 import { AsyncLocalStorage } from "node:async_hooks";
 import { RelayClient } from "@wuwe1/cdp-relay";
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
@@ -27,7 +27,10 @@ export type Page = {
 /** 连着的浏览器：id、名字（cdp-relay 扩展里起的，可能是空的）、已经 attach 的标签页 */
 export type Browser = { id: string; label: string; attached: number[] };
 
-/** 登录着的账号：id（例 Shopee 的店铺 id、1688 的 userId），给人看的名字（例 账号名 ni1206、1688 会员名） */
+/** 认人机验证：look、seen 要自给自足（整个放进页面里跑） */
+export type Challenger = { look: () => unknown; seen: (l: any) => boolean; url: (url: string) => boolean };
+
+/** 登录着的账号：id（例 店铺 id、会员 id），给人看的名字（例 账号名） */
 export type Account = { id: string; name: string };
 
 /** 站点（经浏览器、用人的登录）：连接器声明（toolkit 的 site），注册进来。没指定浏览器时按登录着它选浏览器；几个进程按「浏览器 × 站点」排队 */
@@ -39,10 +42,11 @@ export type SiteDef = {
 	origin: string;
 	/** 网址的主机名是不是这个站点 */
 	hosts: (host: string) => boolean;
-	/** 页面两次加载之间至少隔多久（几个进程一起算），例 1688 读得太密跳滑块验证 */
+	/** 页面两次加载之间至少隔多久（几个进程一起算），例 读得太密会跳人机验证的站点 */
 	paceMs?: number;
-	/** 阿里系风控的滑块验证（challengeOf）：页面里跑的时候一直看着，认出来就停（Challenge），不等到超时 */
-	slider?: boolean;
+	/** 人机验证（例 滑块）：在页面里跑的时候一直看着，认出来就停（Challenge），不等到超时。
+	 * look 在页面里收集要看的，seen 判（两个都整个放进页面里跑：不引用外面的东西）；落地的地址就看得出的，url 判 */
+	challenge?: Challenger;
 	/** 认登录：identify 在这个浏览器的页面里读登录着的账号（没登录是 null）。
 	 * cookie：先看 cookie 说登录着没有（看不出是 null，再开页面认）；each：几个浏览器都登录着时要人选一个（例 Shopee 一家店一个浏览器，--shop 选） */
 	login: {
@@ -67,37 +71,6 @@ export const allSites = (): SiteDef[] => [...sites.values()];
 export function siteOf(url: string): string | null {
 	const host = new URL(url).hostname;
 	return allSites().find((d) => d.hosts(host))?.key ?? null;
-}
-
-/** 页面上看得到的（在页面里收集，给 challengeOf 判） */
-export type Look = { url: string; frames: string[]; slider: boolean; text: string };
-
-/** 阿里系风控（1688）的滑块验证（纯函数，也整个放进页面里跑：不引用外面的东西）。认这几样：
- * 页面、或页面上看得见的 iframe 落在验证页（/_____tmd_____/punish，2026-10-10 三个 agent 同时搜 1688 时落到的：整页跳到
- * s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=…，或页面上弹一层，iframe 是 h5api.m.1688.com/…/_____tmd_____/punish?…）；
- * 页面上有看得见的滑块（#nc_1_wrapper、.nc_wrapper、.baxia-dialog）；整页字很少、写着拖动滑块、通过验证以确保正常访问（登录页上的滑块不算）。
- * 没登录时跳转经过的 /_____tmd_____/page/login_jump 不算 */
-export function challengeOf(p: Look): boolean {
-	const punish = (u: string) => /\/_____tmd_____\/punish/.test(u);
-	if (punish(p.url) || p.frames.some(punish) || p.slider) return true;
-	return p.text.length > 0 && p.text.length <= 2000 && /拖动.{0,8}滑块|滑块验证|通过验证以确保正常访问/.test(p.text) && !/登录|登陆|密码/.test(p.text);
-}
-
-/** 在页面里收集 challengeOf 要看的（整个放进页面里跑）：地址、看得见的 iframe 的地址、看得见的滑块、整页的字（页面小才取） */
-export function look(): Look {
-	const shown = (el: Element) => {
-		const r = el.getBoundingClientRect();
-		return r.width > 0 && r.height > 0;
-	};
-	const body = document.body;
-	return {
-		url: location.href,
-		frames: Array.from(document.querySelectorAll("iframe"))
-			.filter(shown)
-			.map((f) => f.src),
-		slider: Array.from(document.querySelectorAll("#nc_1_wrapper, .nc_wrapper, .baxia-dialog")).some(shown),
-		text: body && (body.textContent ?? "").length < 20000 ? body.innerText.slice(0, 5000) : "",
-	};
 }
 
 /** 站点没登录时跳去的登录页（纯函数）：主机名是 login.、passport.、signin.、account(s). 开头的，或路径里有 login、signin、passport */
@@ -206,7 +179,7 @@ export async function challenge(browser: string, site: string): Promise<Challeng
 	return new Challenge(`${sites.get(site)?.title ?? site} 要过滑块验证：在 ${name} 的浏览器里拉一下再重试`);
 }
 
-/** 拿着这个浏览器这个站点的锁做 fn；认出滑块验证的，放开锁以后再说是哪个浏览器（叫它的名字要读 Shopee） */
+/** 拿着这个浏览器这个站点的锁做 fn；认出人机验证的，放开锁以后再说是哪个浏览器（叫它的名字要认登录） */
 async function within<T>(b: Browser, site: string, fn: () => Promise<T>): Promise<T> {
 	const exit = await enter(b, site);
 	try {
@@ -231,14 +204,14 @@ async function pace(b: Browser, site: string): Promise<void> {
 	if (gap) await spaced(`${b.id}-${site}`, gap);
 }
 
-/** 等页面加载完（加载完、地址也不再变）。1688 落到验证页就停（Hit）；
+/** 等页面加载完（加载完、地址也不再变）。落到人机验证页就停（Hit）；
  * 跳到了别的网站的登录页（没登录）：这个标签页 x2 以后按网址找不回来，关掉，要人登录 */
 async function settle(c: RelayClient, tabId: number, origin: string, site: string, timeoutMs = 30_000): Promise<void> {
 	const until = Date.now() + timeoutMs;
 	let last = "";
 	for (;;) {
 		const s = await c.eval<{ state: string; url: string }>(tabId, "({ state: document.readyState, url: location.href })").catch(() => null);
-		if (s && sites.get(site)?.slider && challengeOf({ url: s.url, frames: [], slider: false, text: "" })) throw new Hit();
+		if (s && sites.get(site)?.challenge?.url(s.url)) throw new Hit();
 		if (s?.state === "complete" && s.url === last) break;
 		last = s?.state === "complete" ? s.url : "";
 		if (Date.now() > until) throw new Error(`页面 ${timeoutMs / 1000} 秒还没加载完`);
@@ -251,13 +224,13 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	}
 }
 
-/** 1688 的页面里跑 fn 的表达式：先看有没有滑块验证（有就不跑），跑的时候每 0.5 秒再看（验证框弹出来就不等 fn 了）。
+/** 注册了人机验证的站点，页面里跑 fn 的表达式：先看有没有验证（有就不跑），跑的时候每 0.5 秒再看（验证框弹出来就不等 fn 了）。
  * 回 { x2: "challenge" } 或 { x2: "ok", value } */
-export function guarded(fn: (...args: any[]) => unknown, args: readonly unknown[]): string {
+export function guarded(fn: (...args: any[]) => unknown, args: readonly unknown[], challenge: Challenger): string {
 	const call = `(${fn.toString()})(${args.map((a) => JSON.stringify(a) ?? "undefined").join(",")})`;
 	return `(async () => {
-		const look = ${look.toString()};
-		const challengeOf = ${challengeOf.toString()};
+		const look = ${challenge.look.toString()};
+		const challengeOf = ${challenge.seen.toString()};
 		if (challengeOf(look())) return { x2: "challenge" };
 		let timer;
 		const seen = new Promise((resolve) => { timer = setInterval(() => { if (challengeOf(look())) resolve({ x2: "challenge" }); }, 500); });
@@ -308,8 +281,9 @@ export async function page(origin: string): Promise<Page> {
 	});
 	const run = <A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>> =>
 		within(b, site, async (): Promise<Awaited<R>> => {
-			if (!sites.get(site)?.slider) return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
-			const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args), { awaitPromise: true });
+			const challenge = sites.get(site)?.challenge;
+			if (!challenge) return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
+			const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args, challenge), { awaitPromise: true });
 			if (r.x2 === "challenge") throw new Hit();
 			return r.value;
 		});

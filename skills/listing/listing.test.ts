@@ -490,8 +490,7 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 	assert.equal(priceRange(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 155 : 133)).variants), "NT$133–155");
 });
 
-import { readbackProblems } from "../../connectors/sites/shopee/publish.ts";
-import { type Product, productInfo } from "./product.ts";
+import { type Product, productInfo, readbackProblems } from "./product.ts";
 
 const draft = (): Product => ({
 	parentSku: "LT952803717616",

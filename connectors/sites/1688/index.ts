@@ -2,25 +2,17 @@
 import { z } from "zod";
 import { Usage } from "../../../platform/errors.ts";
 import { all, byPage, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
-import { account, addToCart, alibabaCookie, buyerOrders, type CartLine, cart, offer, offerIdOf, refund, search, traces } from "./api.ts";
+import { account, addToCart, alibabaCookie, buyerOrders, cart, offer, offerIdOf, refund, search, traces } from "./api.ts";
+import { SLIDER } from "./challenge.ts";
 
-const inCart = (lines: CartLine[], offerId: string, skuId: string) =>
-	lines.filter((c) => c.offerId === offerId && c.skuId === skuId).reduce((n, c) => n + c.quantity, 0);
-
-/** 加购：把货源的一个规格加进这个浏览器登录着的账号的购物车。同一个规格加两次，车里是两倍：结果未知不重发。读回来看车里这个规格多了没有 */
+/** 加购：把货源的一个规格加进这个浏览器登录着的账号的购物车，发一次、回结果（同一个规格加两次，车里是两倍：经订单的写操作「加购」保护） */
 export const cartAdd: SubmitTool = {
 	kind: "write",
 	description: "加购：把货源的一个规格加进购物车（只经订单的写工具 orders.cart）",
-	params: z.object({ offerId: str("货源 id"), skuId: str("规格的 skuId"), specId: str("规格的 specId"), qty: z.number().int().positive().describe("件数") }),
-	before: async (p) => ({ inCart: inCart(await cart(), p.offerId, p.skuId) }),
+	params: z.object({ offerId: str("货源 id"), specId: str("规格的 specId"), qty: z.number().int().positive().describe("件数") }),
 	submit: async (p) => {
 		const r = await addToCart(p.offerId, p.specId, p.qty);
 		return r.kind === "sent" ? { kind: "done" } : r;
-	},
-	check: async (p, before, fresh) => {
-		const now = inCart(await cart(), p.offerId, p.skuId);
-		const d = now - Number(before?.inCart ?? 0);
-		return { done: d >= p.qty ? true : fresh && d === 0 ? false : null, readback: { inCart: now } };
 	},
 };
 
@@ -62,7 +54,7 @@ export const alibaba: Toolkit = {
 		hosts: (h) => h === "1688.com" || h.endsWith(".1688.com"),
 		// 读得太密跳滑块验证
 		paceMs: 3000,
-		slider: true,
+		challenge: SLIDER,
 		login: {
 			identify: async () => {
 				const a = await account();

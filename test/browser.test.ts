@@ -5,8 +5,9 @@ import vm from "node:vm";
 import { z } from "zod";
 import { TOOLKITS } from "../bin/toolkits.ts";
 import { alibabaCookie } from "../connectors/sites/1688/api.ts";
+import { challengeOf, SLIDER } from "../connectors/sites/1688/challenge.ts";
 import { choose } from "../platform/browser/accounts.ts";
-import { challengeOf, guarded, loginPage, siteOf } from "../platform/browser/browser.ts";
+import { guarded, loginPage, siteOf } from "../platform/browser/browser.ts";
 import { runTool } from "../platform/cli.ts";
 import { Challenge, NeedsHuman, Usage } from "../platform/errors.ts";
 import { get, register, str, type Toolkit } from "../platform/tool.ts";
@@ -119,14 +120,14 @@ test("1688 页面里跑的表达式：没有验证照常跑；有验证（整页
 	const run = async (code: string, ctx: vm.Context) => JSON.parse(JSON.stringify(await vm.runInContext(code, ctx)));
 	assert.deepEqual(
 		await run(
-			guarded((a: number, b: string) => `${a + 1}${b}`, [41, "!"]),
+			guarded((a: number, b: string) => `${a + 1}${b}`, [41, "!"], SLIDER),
 			fakePage("https://s.1688.com/x"),
 		),
 		{ x2: "ok", value: "42!" },
 	);
 	assert.deepEqual(
 		await run(
-			guarded(async () => "x", []),
+			guarded(async () => "x", [], SLIDER),
 			fakePage("https://s.1688.com/x", [{ src: PUNISH, width: 0 }]),
 		),
 		{ x2: "ok", value: "x" },
@@ -136,10 +137,10 @@ test("1688 页面里跑的表达式：没有验证照常跑；有验证（整页
 		ran = true;
 		return "跑了";
 	};
-	assert.deepEqual(await run(guarded(never, []), fakePage("https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xxx")), {
+	assert.deepEqual(await run(guarded(never, [], SLIDER), fakePage("https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xxx")), {
 		x2: "challenge",
 	});
-	assert.deepEqual(await run(guarded(never, []), fakePage("https://s.1688.com/x", [{ src: PUNISH, width: 300 }])), { x2: "challenge" });
+	assert.deepEqual(await run(guarded(never, [], SLIDER), fakePage("https://s.1688.com/x", [{ src: PUNISH, width: 300 }])), { x2: "challenge" });
 	assert.equal(ran, false);
 	// 请求挂着（lib.mtop 等人过验证）：0.2 秒后弹出验证框，1 秒内就回
 	const frames: { src: string; width: number }[] = [];
@@ -147,7 +148,7 @@ test("1688 页面里跑的表达式：没有验证照常跑；有验证（整页
 	setTimeout(() => frames.push({ src: PUNISH, width: 300 }), 200);
 	assert.deepEqual(
 		await run(
-			guarded(() => new Promise(() => {}), []),
+			guarded(() => new Promise(() => {}), [], SLIDER),
 			fakePage("https://air.1688.com/x", frames),
 		),
 		{ x2: "challenge" },

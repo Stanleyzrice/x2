@@ -3,13 +3,13 @@
 // 一个工具：说明、参数（zod：命令行的 --名字 值经它校验、转换）、怎么做。两种：
 // - read：不改外面的系统，直接跑（读站点、服务；读写库里的东西也算）。回一个值（run），或一页一页的行（page：这一页和下一页的 cursor，null 是到底了；
 //   命令行按 --pages 翻，输出 { rows, next }。先例 steampipe 的表：参数是 key columns，翻页藏在工具里）
-// - write：改外面的系统，经写入引擎（writes.ts）：skill 的写工具校验完（业务上的保护）排成一批或几批写入（plan），引擎现读、记意图、提交一次、读回来；
-//   连接器的写工具是站点、服务上的一次提交（submit），只经 skill 的写工具调
+// - write：改外面的系统。skill 的写工具决定做什么、该不该做（业务上的保护），排成一批或几批写入（plan），交至多一次写入（writes.ts）：记意图、只提交一次、读回对账；
+//   连接器的写工具只发一次请求、回结果（submit），只经 skill 调
 import { z } from "zod";
 import { registerSite, type SiteDef } from "./browser/browser.ts";
 import { addSchema, type Sql } from "./db/index.ts";
 import type { Table } from "./web/tables.ts";
-import type { Ran, Submitted, WriteOp } from "./writes.ts";
+import type { Ran, WriteOp } from "./writes.ts";
 
 export type Page = { rows: unknown[]; next: string | null };
 
@@ -19,13 +19,9 @@ export type ReadTool = Common & { kind: "read" } & ({ run: (p: any) => Promise<u
 /** 一项写入：写入表的 op（引擎认的写操作）和它的参数 */
 export type Planned = { op: string; params: unknown };
 export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: any) => Promise<Planned[][]> };
-/** 连接器的写工具：before 现读做之前的样子，submit 提交一次，check 读回来和 before 比（fresh：刚提交完就读）；没有 check 的由 skill 自己核（例 记在库里的） */
-export type SubmitTool = Common & {
-	kind: "write";
-	before?: (p: any) => Promise<unknown>;
-	submit: (p: any) => Promise<Submitted>;
-	check?: (p: any, before: any, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
-};
+/** 连接器的写：只发一次请求、回结果；不记意图、不读回、不管重不重复（要保护的经至多一次写入 writes.ts，由 skill 的写操作调） */
+export type Sent = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
+export type SubmitTool = Common & { kind: "write"; submit: (p: any) => Promise<Sent> };
 export type Tool = ReadTool | WriteTool | SubmitTool;
 
 /** status 里要人做的一件事。key 是「类别:对象」：x2 看不到结果的，人做完用 x2 handled 记下，不再提醒 */

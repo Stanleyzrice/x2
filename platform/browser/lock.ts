@@ -2,7 +2,7 @@
 // 锁是 ~/x2/locks/ 下的一个文件（X2_HOME 可以改目录）：独占创建（wx）成功的进程拿到锁，文件里写着是谁（pid、哪台电脑、什么命令）。
 // 进程正常退出、被 Ctrl-C、被 kill（TERM、HUP）时删掉自己的锁；被 kill -9 的，pid 不在了，别的进程直接清掉。
 // 拿着锁的进程每 10 秒摸一下文件（mtime）；超过 1 分钟没摸的算过期（进程卡死了、pid 被别的进程用了），也清掉。
-// spaced：拿着锁的时候用，两次之间至少隔多久（1688 的页面加载），上一次的时间是 locks/ 下另一个文件的 mtime，几个进程共用
+// spaced：拿着锁的时候用，两次之间至少隔多久（例 页面加载），上一次的时间是 locks/ 下另一个文件的 mtime，几个进程共用
 import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, hostname } from "node:os";
@@ -21,7 +21,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const lockDir = () => join(process.env.X2_HOME ?? join(homedir(), "x2"), "locks");
 
-/** 文件名里只留字母、数字和 . _ -（浏览器 id 是 uuid，站点是 1688、shopee 这类） */
+/** 文件名里只留字母、数字和 . _ -（浏览器 id 是 uuid，站点是注册的 key） */
 const file = (name: string, ext: string) => join(lockDir(), `${name.replace(/[^\w.-]/g, "_")}.${ext}`);
 
 /** 这个进程还在不在（kill 0 只看不杀；EPERM 是在、只是不归我们管） */
