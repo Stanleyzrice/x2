@@ -1,7 +1,7 @@
 // 现读：同一个进程里读过的复用，过期了重读，读失败的不留
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reuse } from "../src/flows/read.ts";
+import { reuse } from "../src/orders/read.ts";
 
 test("同一个进程里读过的复用，过期了重读；读失败的不留", async () => {
 	let n = 0;

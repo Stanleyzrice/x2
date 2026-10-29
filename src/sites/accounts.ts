@@ -5,8 +5,8 @@
 // 没在 using() 里、也没设 X2_BROWSER 的读写，browser.ts 按站点来问 browserFor：Shopee 按店（连着几家店时要给 --shop），
 // 1688、知虾、chanboss 用登录着的那个
 
-import type { Sql } from "../core/db.ts";
-import { Challenge, NeedsHuman, Usage } from "../core/errors.ts";
+import type { Sql } from "../db/index.ts";
+import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { account as alibabaAccount } from "./1688.ts";
 import { type Browser, browsers, cookies, hasTab, probe, SITE_NAMES, SITE_ORIGINS, type Site, using } from "./browser.ts";
 import { identity as chanbossIdentity } from "./chanboss.ts";

@@ -4,7 +4,7 @@
 // 响应的外壳多数是 { code, message, data }，code 0 是成功；财务、售后的是 { error, error_msg, data }，error 0 是成功。
 // 接口一览、各自的坑在 shopee.md
 
-import { NeedsHuman } from "../../core/errors.ts";
+import { NeedsHuman } from "../../errors.ts";
 import { page } from "../browser.ts";
 
 export const ORIGIN = "https://seller.shopee.tw";

@@ -8,8 +8,8 @@
 // 1688 跳了滑块验证（整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
 import { AsyncLocalStorage } from "node:async_hooks";
 import { RelayClient } from "@wuwe1/cdp-relay";
-import { Challenge, NeedsHuman, Usage } from "../core/errors.ts";
-import { acquire, type Lock, spaced } from "../core/lock.ts";
+import { Challenge, NeedsHuman, Usage } from "../errors.ts";
+import { acquire, type Lock, spaced } from "./lock.ts";
 
 const MARK = "x2";
 /** 一个站点用完多久没再用就放锁（让别的进程用） */

@@ -5,7 +5,7 @@
 // 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee；
 // freightInfo.totalCost 是寄到账号默认地址（recieveAddress）买 1 件的运费（页面上的「运费¥8起」）
 import { z } from "zod";
-import { Challenge, NeedsHuman, Usage } from "../core/errors.ts";
+import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { challenge, page } from "./browser.ts";
 import { all, byPage, get, type Ops, str, strs } from "./op.ts";
 

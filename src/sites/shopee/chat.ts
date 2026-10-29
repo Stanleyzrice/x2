@@ -6,7 +6,7 @@
 //   旧研究里的 agent/send_message 是跟 Shopee 官方客服聊的，不是跟买家
 // - 不调 conversation/enter、conversation/open：会把消息标成已读
 
-import { NeedsHuman } from "../../core/errors.ts";
+import { NeedsHuman } from "../../errors.ts";
 import { page } from "../browser.ts";
 import { ORIGIN, shop } from "./seller.ts";
 

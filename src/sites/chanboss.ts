@@ -3,7 +3,7 @@
 // 这个站不按登录的账号过滤：每个列表都要带 seller_id，换一个 id 能读到别的卖家（lilto 查到的越权）。所以 seller_id 只用 identity() 读到的自己的 id。
 // 频率：两次请求隔 2 秒以上（lilto 的上限每秒 0.5 次）
 import { z } from "zod";
-import { NeedsHuman } from "../core/errors.ts";
+import { NeedsHuman } from "../errors.ts";
 import { page } from "./browser.ts";
 import { byPage, day, get, type Ops, strs } from "./op.ts";
 

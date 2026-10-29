@@ -1,8 +1,8 @@
 // 外部服务：认图、象寄的签名和结果对图、筛字的回答
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inspect, mimeOf, sizeOf } from "../src/services/image.ts";
-import { form, parse, sign } from "../src/services/xiangji.ts";
+import { inspect, mimeOf, sizeOf } from "../src/sites/image.ts";
+import { form, parse, sign } from "../src/sites/xiangji.ts";
 
 const png = (w: number, h: number) => {
 	const b = new Uint8Array(33);
@@ -111,7 +111,7 @@ test("象寄：结果按原图地址对（原样或解码后），不按位置�
 });
 
 test("筛字的回答：整个是一个字母（可以重复、带标点反引号）才算", async () => {
-	const { parseVerdict } = await import("../src/flows/listing/screen.ts");
+	const { parseVerdict } = await import("../src/listing/screen.ts");
 	assert.equal(parseVerdict("m"), "m");
 	assert.equal(parseVerdict(" `m`。\n"), "m");
 	assert.equal(parseVerdict("dd"), "d");

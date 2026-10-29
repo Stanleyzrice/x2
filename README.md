@@ -8,8 +8,8 @@ x2（小二）帮一个人经营网店：到各个网站上读数据、做事，
 
 | 概念 | 是什么 | 例 |
 |---|---|---|
-| **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `src/flows/writes.ts`，只经 `x2 do`、`x2 listing publish` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
-| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、到货问题、商品稿、已处理的提醒）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/core/schema.sql`，x2 建和改；人在网页上（`x2 web`）看和填 | 写入、货源、订单、商品稿 |
+| **site** | 读、写一个网站。经运营已登录的浏览器（cdp-relay）发请求，一个站点一个模块；读操作声明成 `ops`（参数 + 怎么读），命令行直接能用；写操作声明在 `src/loop/writes.ts`，只经 `x2 do`、`x2 listing publish` 执行 | `x2 shopee orders`、`x2 1688 offer --id …` |
+| **库** | Postgres（`X2_DATABASE_URL`），唯一的数据：人定的（货源、设置、到货问题、商品稿、已处理的提醒）、写入的记录、给团队看的订单进度。站点上有的（购物车、采购单、货源的详情）不存，每次现读。表的结构在 `src/db/schema.sql`，x2 建和改；人在网页上（`x2 web`）看和填 | 写入、货源、订单、商品稿 |
 | **循环** | 现读站点 → 检查（算出要人做的和 agent 要做的）→ agent 准备写入给人看、人做和同意 → `x2 do` 执行、读回来 → 下一轮。做完 = `x2 status` 里没有要做的（[docs/loop.md](docs/loop.md)） | `x2 status`、`x2 do`、`x2 verify` |
 | **skill** | 告诉 agent 一件事怎么做：按什么顺序调哪些命令，哪一步等人 | `.claude/skills/orders/SKILL.md`、`.claude/skills/listing/SKILL.md` |
 
@@ -96,35 +96,21 @@ x2/
 ├ bin/x2.ts               命令行入口：x2 <命令> …
 ├ AGENTS.md               agent 开起来做什么、不许做什么（CLAUDE.md 引它）
 ├ docs/                   loop.md 循环怎么转；orders.md 订单；listing.md 上品；glossary.md 词
-├ src/                     分层，运行时的 import 只往里指（test/architecture.test.ts 守着；AGENTS.md「代码放哪」）
-│ ├ core/                 运行环境：env.ts 读 .env；errors.ts 错误分类和退出码；lock.ts 跨进程的锁（~/x2/locks/）；db.ts、schema.sql 库
-│ ├ domain/               纯函数，只算：不碰库、站点、外部服务
-│ │ ├ orders/             check.ts 订单的检查（当前步骤、提醒、一批加购和预报）；reconcile.ts 采购单分给订单；similar.ts 规格名的比较和配对
-│ │ └ listing/            check.ts 商品稿的检查；price.ts、pricing.ts 核价、报价；variants.ts 规格；product.ts 建商品的 product_info；ready.ts 商品稿 → 要建的商品；
-│ │                       category.ts 类目属性；text.ts 文案的规矩；audit.ts Gemini 文字检查的结果；pics.ts 图的类型
-│ ├ sites/                一个站点一个文件（大的一个目录），只管「怎么请求、怎么从响应里取出数据」；接口一览和坑在同目录的 .md
-│ │ ├ browser.ts          唯一碰 cdp-relay 的地方：选浏览器、排队、在页面里发请求、认出登录页和 1688 的滑块验证
-│ │ ├ accounts.ts         按登录找浏览器：每个浏览器里登录着哪家店、哪个 1688 账号，知虾、chanboss 登录在哪个里
-│ │ ├ op.ts               读操作的声明（get、list）和参数的类型
-│ │ ├ shopee/             卖家中心（shopee.md）；ops.ts 是它的读操作
-│ │ ├ 1688.ts             1688：货源、搜索、购物车和加购、采购单、物流、退款（1688.md）
-│ │ ├ zhixia.ts           知虾：类目、热搜词、竞品、1688 同款（zhixia.md）
-│ │ └ chanboss.ts         chanboss：订单、预报、库存、退件、扣款流水（chanboss.md）
-│ ├ services/             外部服务：gemini.ts、xiangji.ts（象寄译图，收费）、image.ts（取图、认格式、宽高、sha256）
-│ ├ flows/                把上面几层拼成一件事（读写库、站点）
-│ │ ├ read.ts             现读：chanboss 订单（写回库）、1688 的购物车和采购单、要买的商品的货源；同一个进程 2 分钟内读过的复用
-│ │ ├ check.ts            拼快照（现读的 + 库里人定的），跑 domain 的检查，算出提醒、todo，写回订单的进度
-│ │ ├ writes.ts           写操作的声明：加购、预报、译图、建商品、上架（现读 → 提交 → 读回来）
-│ │ ├ batch.ts、run.ts    x2 do 校验一批写入、记进库；执行：先核清结果未知的，再一个一个做、读回来
-│ │ ├ source.ts           x2 source：选货源，更新货源快照
-│ │ └ listing/            做商品稿（make.ts）、图（images.ts、screen.ts 筛字、watermark.ts 水印）、textcheck.ts 问 Gemini 文字检查、pick.ts 选品、queue.ts 同时做的上限和排队
-│ ├ commands/             x2 的子命令，一个文件一组：只解析参数、调 flows、照输出约定输出
-│ └ web/                  x2 web 的服务：tables.ts 哪些表、列给人看，人能改哪几格；server.ts 照它读写库、发界面
+├ src/                    命令行和业务（AGENTS.md「代码放哪」，test/architecture.test.ts 守着）
+│ ├ sites/                外面的网站和服务：browser.ts 唯一碰 cdp-relay 的地方（选浏览器、排队、在页面里发请求、认出滑块）；accounts.ts 按登录找浏览器；
+│ │                       lock.ts 跨进程的锁；op.ts 读操作的声明；shopee/、1688.ts、chanboss.ts、zhixia.ts（接口一览和坑在同名 .md）；gemini.ts、xiangji.ts、image.ts
+│ ├ orders/               订单：check.ts 检查；reconcile.ts 采购单分给订单；similar.ts 规格配对；read.ts 现读；source.ts 找货源
+│ ├ listing/              上品和选品：make.ts 做商品稿；pricing.ts、price.ts 核价、报价；variants.ts 规格；images.ts、screen.ts、watermark.ts 图；
+│ │                       product.ts、ready.ts 要建的商品；category.ts 类目属性；text.ts 文案的规矩；audit.ts、textcheck.ts Gemini 文字检查；check.ts 商品稿的检查；pick.ts 选品
+│ ├ loop/                 循环：status.ts 拼快照、检查、算提醒；batch.ts、run.ts 记进库、执行写入；writes.ts 写操作的声明
+│ ├ db/                   库：schema.sql 表结构；index.ts 连接
+│ ├ cli/                  x2 的子命令，一组一个文件
+│ └ env.ts、errors.ts     读 .env；错误分类和退出码
 ├ .claude/skills/
 │ ├ orders/SKILL.md       订单：找货源 → 加购 → 人付款 → 采购单分给订单 → 预报 → 人打包
 │ ├ listing/SKILL.md      上品：贴货源 → 做商品稿 → 写文案 → Gemini 文字检查 → 人审稿、说批准 → 建商品、上架
 │ └ selection/SKILL.md    选品：按策略找词和竞品 → 以图搜 1688 同款 → 报价 → 照选品规矩筛 → 写选品理由加成商品稿
-├ web/                    网页的界面（React、Cloudflare Kumo）：main.tsx 侧栏和路由，view.tsx 表格、卡片、表单，value.tsx 照类型显示和改一格；x2 web 打包进 web/dist
+├ web/                    网页：server.ts 服务；tables.ts 表给人看哪些列、人能改哪几格；sessions.ts 会话和组件；ui/ 界面（React、shadcn、Base UI），x2 web 打包进 web/ui/dist
 ├ test/                   pnpm test 跑的单元测试（loop.test.ts 连库：设 X2_TEST_DATABASE_URL，会清空那个库）；live/ 是对真站点跑一遍读取的脚本
 ├ biome.json              lint 和格式（Biome）；.githooks/ 提交前跑 pnpm check；.github/workflows/ 推送后 CI 跑 pnpm check、pnpm test
 ├ package.json            依赖：@wuwe1/cdp-relay、postgres、zod、opencc-js（简体转台湾繁体）；网页的（React、Kumo、Vite、Tailwind）是 devDependencies

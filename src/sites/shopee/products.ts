@@ -8,7 +8,7 @@
 // - 1000100256 是通用的字段校验失败码（缺尺码表也回它），不等于重复
 // - 直接开卖的发布路径回 10025；成功的配方是先发成下架（unlisted: true），人看过再上架
 
-import { NeedsHuman } from "../../core/errors.ts";
+import { NeedsHuman } from "../../errors.ts";
 import { page } from "../browser.ts";
 import { IMAGE, ORIGIN, seller, type Write, write } from "./seller.ts";
 

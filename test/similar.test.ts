@@ -1,7 +1,7 @@
 // 规格名的比较：在货源的规格里配店里的规格、规格例外
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compare, matchSku, rank } from "../src/domain/orders/similar.ts";
+import { compare, matchSku, rank } from "../src/orders/similar.ts";
 
 // 例子都是 2026-09-30 真实订单里的规格名和它们的 1688 货源
 const rack = [

@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
-import { runOp, type Site } from "../src/commands/site.ts";
-import { Usage } from "../src/core/errors.ts";
+import { runOp, type Site } from "../src/cli/site.ts";
+import { Usage } from "../src/errors.ts";
 import { byPage, day, get, ints, parseJson, str } from "../src/sites/op.ts";
 import { needsHuman } from "../src/sites/shopee/seller.ts";
 import { bySales30Day } from "../src/sites/zhixia.ts";

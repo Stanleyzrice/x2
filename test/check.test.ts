@@ -1,8 +1,8 @@
 // 订单的检查（纯函数）：当前步骤、提醒人的、agent 要做的一批加购和预报；采购单分给订单
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type CartParams, checkOrders, type ForecastParams, type Order, type Snapshot, type Source } from "../src/domain/orders/check.ts";
-import { reconcile } from "../src/domain/orders/reconcile.ts";
+import { type CartParams, checkOrders, type ForecastParams, type Order, type Snapshot, type Source } from "../src/orders/check.ts";
+import { reconcile } from "../src/orders/reconcile.ts";
 
 // docs/orders.md 的例子：订单 1 买红T ×1，订单 2 买红T ×2；红T 的货源是 1688 的 O1 / S1
 const T0 = new Date("2026-10-09T02:00:00Z");

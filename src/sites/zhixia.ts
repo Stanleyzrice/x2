@@ -9,7 +9,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { NeedsHuman } from "../core/errors.ts";
+import { NeedsHuman } from "../errors.ts";
 import { hold, page } from "./browser.ts";
 import { all, byPage, get, ints, num, type Ops, parseJson, str } from "./op.ts";
 

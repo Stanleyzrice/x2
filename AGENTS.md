@@ -28,25 +28,26 @@
 
 ## 代码放哪
 
-固定的东西放固定的地方，`test/architecture.test.ts` 守着（运行时的 import 只往里指，每个文件开头一段注释说它做什么）：
+按「是什么事」放，`test/architecture.test.ts` 守着：
 
-| 放什么 | 放哪 | 能 import |
-|---|---|---|
-| 纯函数：检查、核价、规格、文案的规矩 | `src/domain/<订单、上品>/` | 只有 domain（和 zod、opencc-js、node:crypto） |
-| 一个站点怎么请求、怎么取数据；接口一览和坑 | `src/sites/<站点>.ts`、同名 `.md` | core、domain、sites |
-| 外部服务（Gemini、象寄、取图） | `src/services/` | core、services |
-| 一件事怎么拼（读写库、站点）；写操作的声明 | `src/flows/`；`src/flows/writes.ts` | 上面几层 |
-| 命令：解析参数、输出 | `src/commands/<一组>.ts`，接到 `bin/x2.ts` | 都能 |
-| 表的结构 | `src/core/schema.sql` | |
-| 网页给人看、给人填哪些格 | `src/web/tables.ts` | |
+| 文件夹 | 放什么 |
+|---|---|
+| `src/sites/` | 外面的网站和服务（Shopee、1688、chanboss、知虾、Gemini、象寄）：怎么请求、怎么取数据；浏览器、锁。一个站点一个文件，接口一览和坑在同名 `.md`。不引业务 |
+| `src/orders/` | 订单：检查（当前步骤、提醒、一批加购和预报）、采购单分给订单、规格配对、现读、找货源 |
+| `src/listing/` | 上品和选品：商品稿、核价、规格、图、文案、Gemini 文字检查 |
+| `src/loop/` | 循环：`x2 status` 拼快照和检查、`x2 do` 执行写入、写操作的声明（`writes.ts`） |
+| `src/db/` | 库：表结构（`schema.sql`）、连接 |
+| `src/cli/` | 一组 `x2` 子命令一个文件：解析参数、调上面的、照输出约定输出。接到 `bin/x2.ts` |
+| `web/` | 网页的服务：`server.ts`；`tables.ts` 哪些表给人看、人能改哪几格；`sessions.ts` 会话和组件的参数 |
+| `web/ui/` | 网页的界面：`components/ui/` 是 shadcn 拷来的（不手改，`npx shadcn add` 加）；`generative/`、`interactive/` 是我们的组件 |
 
-`import type` 不受限。放不进哪一层的，先想清楚它是什么再放；规则不对，改 `test/architecture.test.ts` 和这张表，不加例外。
+业务（orders、listing、loop）不引 `cli`、`web`；`sites` 不引业务；`web/ui` 只引自己（别的只 import type）。检查、核价这类只算的写成纯函数，好测。放不进哪个文件夹的，先想清楚它是什么；规则不对，改测试和这张表，不加例外。
 
 ## 改代码
 
 - 先做通 happy path：好复现的关键步骤写成程序；看图、规格名、文案、估重量、选品这类边界多的判断先由 agent 填、人可以改、不挡流程，攒够数据再设计。
 - 人定下的做法当场写进代码、文档或 skill，不只留在会话里。
-- 一切以数据为核心：先把数据存对，界面为数据服务。网页照 `src/web/tables.ts` 的说明显示和收人改的格，加列、改视图只改它；没有数据要给人看、要人填，就不做界面。
+- 一切以数据为核心：先把数据存对，界面为数据服务。网页照 `web/tables.ts` 的说明显示和收人改的格，加列、改视图只改它；没有数据要给人看、要人填，就不做界面。
 - 写法照现有代码：中文注释，zod 声明参数，输出约定照 README（stdout 只放结果，退出码 2/3/4）。行为和文档不一致时，同步改文档。
 - 文档只写现在的情况，越短越好：不写日期、来历、改了什么、旧文档（这些在 git log 里）。
 - 每做完一块跑 `pnpm check`（tsc 严格模式 + Biome 的 lint 和格式；格式、能自动改的用 `pnpm fix`）、`pnpm test`（连库的测试要设 `X2_TEST_DATABASE_URL`，会清空那个库）；动了读站点的代码，用 `x2 <站点> <操作>` 对真站点跑一遍。提交前 git hook 跑 `pnpm check`，推送后 CI 跑两样。lint 规则不随手关：确实要破例的写 `biome-ignore` 和理由。

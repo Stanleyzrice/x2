@@ -10,7 +10,6 @@
 		"verbatimModuleSyntax": true,
 		"skipLibCheck": true,
 		"lib": ["es2024", "dom", "dom.iterable"],
-		"jsx": "react-jsx",
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true,
 		"noFallthroughCasesInSwitch": true,
@@ -18,5 +17,5 @@
 		"noUnusedLocals": true,
 		"noUnusedParameters": true
 	},
-	"include": ["bin", "src", "test", "web", "vite.config.ts"]
+	"include": ["bin", "src", "test", "web/*.ts", "vite.config.ts"]
 }
