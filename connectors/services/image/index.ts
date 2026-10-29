@@ -1,4 +1,4 @@
-// x2 image <工具>：取图（不经浏览器）：认格式、量尺寸、算 sha256。上品存图、传图经它
+// x2 image <工具>：取图（不经浏览器）：认格式、量尺寸、算 sha256
 import { z } from "zod";
 import { get, type Toolkit } from "../../../platform/tool.ts";
 import { fetchImage } from "./api.ts";

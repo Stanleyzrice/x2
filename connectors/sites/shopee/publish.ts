@@ -1,5 +1,5 @@
-// 建商品、上架（写）：只发一次请求、回结果；读回对账用 products.ts 的读（商品详情、物流渠道），怎么比是上品的事。
-// 只经上品的写工具（listing.publish）调：照商品稿组 product_info、看还该不该建也是上品的事
+// 建商品、上架（写）：只发一次请求、回结果；读回对账用 products.ts 的读（商品详情、物流渠道）。
+// 只经业务工具的写工具调：组 product_info、看还该不该建、读回来怎么比都是业务工具的事
 import { z } from "zod";
 import type { SubmitTool } from "../../../platform/tool.ts";
 import { allProducts, createProduct, productInfo, setUnlisted } from "./products.ts";
@@ -16,7 +16,7 @@ export async function findByParentSku(parentSku: string, name: string): Promise<
 
 export const createListing: SubmitTool = {
 	kind: "write",
-	description: "建商品（先建成下架；只经上品的写工具 listing.publish）",
+	description: "建商品（先建成下架；只经业务工具的写工具调）",
 	params: z.object({ productInfo: z.record(z.string(), z.unknown()).describe("create_product_info 的 product_info") }),
 	submit: async (p) => {
 		const w = await createProduct(p.productInfo);
@@ -30,7 +30,7 @@ export const createListing: SubmitTool = {
 
 export const listProduct: SubmitTool = {
 	kind: "write",
-	description: "上架：下架 → 在售（只经上品的写工具 listing.publish）",
+	description: "上架：下架 → 在售（只经业务工具的写工具调）",
 	params: z.object({ productId: z.string().regex(/^\d+$/).describe("商品 id") }),
 	submit: async (p) => {
 		const w = await setUnlisted(p.productId, false);

@@ -29,7 +29,7 @@ export async function reviews(pageNo = 1, cursor = "0", orderSn?: string): Promi
 }
 
 // 顺序：账户和余额 → 各类广告能不能开（setup status）→ 计划列表（一页 20）→ 每个计划的详情（店铺广告 shop_auto、shop_manual 没有详情接口，用列表里的）
-// → 表现曲线（time graph）→ 自动选品广告（product_gms）里每个商品的表现（一页只能 10，多了被拒）
+// → 表现曲线（time graph）→ 自动广告（product_gms：Shopee 自己挑商品投放）里每个商品的表现（一页只能 10，多了被拒）
 
 const pas = (path: string, body: unknown) => seller(`/api/pas/v1/${path}/`, { body });
 
@@ -71,7 +71,7 @@ export async function campaignGraph(campaignId: string, type: string, start: num
 	).data;
 }
 
-/** 自动选品广告里各商品的表现，一页 10 个（只能 10）；翻页用回的 next_page_token，空的是到底。
+/** 自动广告（product_gms）里各商品的表现，一页 10 个（只能 10）；翻页用回的 next_page_token，空的是到底。
  * withImpressionOnly 为 false 时回的是全店能投的商品，不是这个计划的 */
 export async function gmsItems(
 	campaignId: string,

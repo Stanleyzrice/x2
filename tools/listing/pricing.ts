@@ -51,6 +51,13 @@ export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg
 	});
 }
 
+/** 1688 给的重量小于 20 克的当作没给（见过填 0.001 kg 的，照它核价会定得太低）：空着，交给 agent 往重了估 */
+export const MIN_WEIGHT_KG = 0.02;
+export const usableWeights = (o: Offer): Offer => ({
+	...o,
+	skus: o.skus.map((k) => ({ ...k, weightKg: k.weightKg != null && k.weightKg >= MIN_WEIGHT_KG ? k.weightKg : null })),
+});
+
 export const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
 
 export const freightOf = (offer: Partial<Offer> | null | undefined, column: unknown): number | null =>

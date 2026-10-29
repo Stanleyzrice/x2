@@ -1,4 +1,4 @@
-// x2 chanboss <工具>：chanboss（货代）的读工具（预报是写，经订单的写工具）
+// x2 chanboss <工具>：chanboss（货代）的读工具（预报是写，只经业务工具的写工具调）
 import { z } from "zod";
 import { byPage, day, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
 import { balance, forecast, identity, orders, putaway, returnChanges, returns, stock } from "./api.ts";
@@ -7,7 +7,7 @@ const range = { start: day("开始"), end: day("结束", true) };
 
 export const forecastOrder: SubmitTool = {
 	kind: "write",
-	description: "预报一张订单（只经订单的写工具 orders.forecast）",
+	description: "预报一张订单（只经业务工具的写工具调）",
 	params: z.object({
 		sn: str("Shopee 订单号"),
 		orderId: str("chanboss 上这张订单的 id"),

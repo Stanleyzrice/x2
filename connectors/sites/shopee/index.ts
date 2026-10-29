@@ -1,4 +1,4 @@
-// x2 shopee <工具>：卖家中心的工具。读的直接跑；建商品、上架是写（publish.ts），只经上品的写工具
+// x2 shopee <工具>：卖家中心的工具。读的直接跑；建商品、上架是写（publish.ts），只经业务工具的写工具调
 import { writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { inAccount } from "../../../platform/browser/browser.ts";
@@ -124,7 +124,7 @@ const tools = {
 		(p) => campaignGraph(p.id, p.type, p.start, p.end),
 	),
 	"gms-items": list(
-		"自动选品广告里各商品的表现",
+		"自动广告（product_gms：Shopee 自己挑商品投放）里各商品的表现",
 		z.object({ id: str("计划 id"), start: day("开始"), end: day("结束", true), all: flag("回全店能投的商品，不只是有曝光的").default(false) }),
 		async (p, cursor) => {
 			const r = await gmsItems(p.id, p.start, p.end, cursor ?? "", !p.all);

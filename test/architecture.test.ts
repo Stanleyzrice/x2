@@ -173,3 +173,13 @@ test("skill 提到的 references 都在，references 里的每份都有人提到
 	}
 	assert.deepEqual(bad, []);
 });
+
+const BUSINESS_WORDS = ["货源", "商品稿", "核价", "选品", "采购账号", "毛利"];
+
+test(`connector 不用业务词（${BUSINESS_WORDS.join("、")}）：照网站自己的说法，回原样数据，不替业务做判断`, () => {
+	const bad: string[] = [];
+	for (const f of CODE.filter((x) => rel(x).startsWith("connectors/")))
+		for (const [i, line] of readFileSync(f, "utf8").split("\n").entries())
+			for (const w of BUSINESS_WORDS) if (line.includes(w)) bad.push(`${rel(f)}:${i + 1}：${w}`);
+	assert.deepEqual(bad, []);
+});

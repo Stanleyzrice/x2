@@ -1,6 +1,6 @@
-// 1688：货源详情、购物车、加购。货源详情是服务端渲染进页面的全局变量（window.context.result.global.globalData.model），打开商品页读它，不用签名。
+// 1688：商品（offer）详情、购物车、加购。商品详情是服务端渲染进页面的全局变量（window.context.result.global.globalData.model），打开商品页读它，不用签名。
 // 查过的事实（2026-09-30）：tradeModel.skuMap 是规格（specAttrs 用「&gt;」连接几个属性，例「kitty猫款式5&gt;20*30cm【硅藻泥】3mm」）；
-// offerDetail.skuProps 是属性（prop，例「颜色」「尺寸」）和它的取值（value: {name, imageUrl}），第一个属性的取值带图片；只有一个规格的货源没有 skuMap。
+// offerDetail.skuProps 是属性（prop，例「颜色」「尺寸」）和它的取值（value: {name, imageUrl}），第一个属性的取值带图片；只有一个规格的商品没有 skuMap。
 // 2026-10-10 核对过：mainImageList 是 { fullPathImageURI }；detailDescription.freightInfo.skuWeight 按 skuId 记运费重量（kg），没有的用 unitWeight；
 // 详情图在 offerDetail.detailUrl（itemcdn.tmall.com，服务端取，见 detailImages）；48 小时发货是 deliveryLimit ≤ 2；包邮是 freeDeliverFee；
 // freightInfo.totalCost 是寄到账号默认地址（recieveAddress）买 1 件的运费（页面上的「运费¥8起」）
@@ -49,11 +49,8 @@ export async function offer(offerId: string): Promise<Offer> {
 		const https = (u: unknown) => (typeof u === "string" ? u.replace(/^\/\//, "https://") : "");
 		const unescapeHtml = (s: string) => s.replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 		const freight = m.detailDescription?.freightInfo ?? {};
-		// 小于 20 克的当作没给（见过填 0.001 kg 的，照它核价会定得太低）：交给 agent 往重了估
-		const weightOf = (skuId: unknown) => {
-			const w = Number(freight.skuWeight?.[String(skuId)]) || Number(freight.unitWeight) || null;
-			return w !== null && w >= 0.02 ? w : null;
-		};
+		// 规格自己的重量，没有的用整个商品的（unitWeight）；都没有是 null。kg，照 1688 填的原样回
+		const weightOf = (skuId: unknown) => Number(freight.skuWeight?.[String(skuId)]) || Number(freight.unitWeight) || null;
 		let json = "";
 		try {
 			json = JSON.stringify(m);
@@ -129,8 +126,8 @@ export async function offer(offerId: string): Promise<Offer> {
 			freight: freightOut,
 		};
 	}, url);
-	if ("error" in got) throw new NeedsHuman(`读 1688 货源 ${offerId}：${got.error}`);
-	if ("gone" in got) throw new Gone(`1688 货源 ${offerId} 不存在或已下架`);
+	if ("error" in got) throw new NeedsHuman(`读 1688 商品 ${offerId}：${got.error}`);
+	if ("gone" in got) throw new Gone(`1688 商品 ${offerId} 不存在或已下架`);
 	return got;
 }
 
@@ -245,7 +242,7 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 			return {
 				hits: cards
 					.map((card) => {
-						// 广告卡片的链接里没有货源 id：跳过
+						// 广告卡片的链接里没有商品 id（offer id）：跳过
 						const offerId = card.href.match(/\/offer\/(\d+)\.html/)?.[1] ?? card.href.match(/offerId=(\d+)/)?.[1] ?? "";
 						const descs = [...card.querySelectorAll('[class*="descText--"], .desc-text')].map(text);
 						const min = descs.find((v) => /^[≥>]\s*\d/.test(v) || /\d+\s*件起批/.test(v)) || text(card.querySelector('[class*="hoverPriceQty--"]'));
@@ -316,7 +313,7 @@ export async function cart(): Promise<CartLine[]> {
 
 export type AddResult = { kind: "sent" } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
 
-/** 把一个规格加进购物车（addCargo，在这个货源的商品页里发）。只有一个规格的货源 specId 是空字符串。
+/** 把一个规格加进购物车（addCargo，在这个商品的详情页里发）。只有一个规格的商品 specId 是空字符串。
  * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发。 */
 export async function addToCart(offerId: string, specId: string, quantity: number): Promise<AddResult> {
 	const r = await mtop(`https://detail.1688.com/offer/${offerId}.html`, "com.alibaba.china.buy.service.purchase.MtopPurchaseService.addCargo", {

@@ -12,7 +12,7 @@ import { NeedsHuman } from "../../platform/errors.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages } from "./images.ts";
 import type { Pics } from "./pics.ts";
-import { freightOf, num, reprice, type Settings, settingsOf, specsAndPrices } from "./pricing.ts";
+import { freightOf, num, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import { nicknameFor } from "./text.ts";
 import { specsOf } from "./variants.ts";
@@ -43,7 +43,7 @@ async function categoryNames(): Promise<Map<string, string>> {
 export async function readOffer1688(offerId: string): Promise<Offer> {
 	const a = (await logins("1688"))[0];
 	if (!a) throw new NeedsHuman("没有登录着 1688 的浏览器：读不了货源");
-	return on1688(a.account.id, () => readOffer(offerId));
+	return usableWeights(await on1688(a.account.id, () => readOffer(offerId)));
 }
 
 /** 候选的图：最后用主图 9 张、详情图 12 张（product.ts），多看几张给筛掉的留余地，再多就白花筛字和译图的钱 */

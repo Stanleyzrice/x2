@@ -682,7 +682,7 @@ import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine
 import { checkListings } from "./check.ts";
 import { type TranslatedCheck, translatedDrop } from "./images.ts";
 import type { Pics } from "./pics.ts";
-import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf } from "./pricing.ts";
+import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf, usableWeights } from "./pricing.ts";
 import { productOf } from "./ready.ts";
 
 const shopRow = {
@@ -1072,6 +1072,20 @@ test("估重量、国内运费：1688 有的用 1688 的；1688 没给、「重�
 	assert.equal(freightOf({ freight: { costRmb: 8 } } as any, "12"), 12);
 	assert.equal(freightOf({ tags: { freeShipping: true } } as any, null), 0);
 	assert.deepEqual(estimateNeeds({ offer: null, variants: null }), []);
+});
+
+test("1688 的重量：小于 20 克的当作没给（照它核价会定得太低），交给 agent 往重了估；20 克以上照用", () => {
+	const sku = (skuId: string, weightKg: number | null | undefined) => ({ skuId, specId: "", name: skuId, attrs: [], price: 1, stock: 1, image: "", weightKg });
+	const o = {
+		offerId: "1",
+		title: "t",
+		props: [],
+		skus: [sku("a", 0.001), sku("b", 0.02), sku("c", 0.5), sku("d", null), sku("e", undefined)],
+	} as unknown as Offer;
+	assert.deepEqual(
+		usableWeights(o).skus.map((k) => k.weightKg),
+		[null, 0.02, 0.5, null, null],
+	);
 });
 
 test("重新核价（不读 1688）：1688 给的重量照用，没给的用「重量」；「重量」「国内运费」变了才要存", () => {

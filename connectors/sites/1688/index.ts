@@ -1,4 +1,4 @@
-// x2 1688 <工具>：1688 的读工具（加购是写，经订单的写工具）
+// x2 1688 <工具>：1688 的读工具（加购是写，只经业务工具的写工具调）
 import { z } from "zod";
 import { Usage } from "../../../platform/errors.ts";
 import { all, byPage, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
@@ -7,8 +7,8 @@ import { SLIDER } from "./challenge.ts";
 
 export const cartAdd: SubmitTool = {
 	kind: "write",
-	description: "加购：把货源的一个规格加进购物车（只经订单的写工具 orders.cart）",
-	params: z.object({ offerId: str("货源 id"), specId: str("规格的 specId"), qty: z.number().int().positive().describe("件数") }),
+	description: "加购：把商品的一个规格加进购物车（只经业务工具的写工具调）",
+	params: z.object({ offerId: str("商品 id（offer id）"), specId: str("规格的 specId"), qty: z.number().int().positive().describe("件数") }),
 	submit: async (p) => {
 		const r = await addToCart(p.offerId, p.specId, p.qty);
 		return r.kind === "sent" ? { kind: "done" } : r;
@@ -18,12 +18,12 @@ export const cartAdd: SubmitTool = {
 const tools = {
 	"cart-add": cartAdd,
 	account: get("登录着的 1688 账号", undefined, () => account()),
-	offer: get("一家货源：标题、起订量、属性、每个规格的价格和库存", z.object({ id: str("货源 id 或 1688 链接") }), (p) => {
+	offer: get("一个商品（offer）：标题、起订量、属性、每个规格的价格和库存", z.object({ id: str("商品 id（offer id）或 1688 链接") }), (p) => {
 		const id = offerIdOf(p.id);
-		if (!id) throw new Usage(`认不出货源：${p.id}`);
+		if (!id) throw new Usage(`认不出 1688 商品：${p.id}`);
 		return offer(id);
 	}),
-	search: all("按关键词搜货源（第一页）", z.object({ keyword: str("关键词") }), (p) => search(p.keyword)),
+	search: all("按关键词搜商品（第一页）", z.object({ keyword: str("关键词") }), (p) => search(p.keyword)),
 	cart: all("购物车里的全部规格和件数", undefined, () => cart()),
 	orders: byPage(
 		"采购单（在 1688 买的订单），新的在前；金额是元",

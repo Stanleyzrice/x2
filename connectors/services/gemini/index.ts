@@ -1,4 +1,4 @@
-// x2 gemini <工具>：Gemini（看图、看字；GEMINI_API_KEY）。上品的筛字、译图检查、文字检查经它；这里给 agent 一个直接问的工具
+// x2 gemini <工具>：Gemini（看图、看字；GEMINI_API_KEY）。业务工具经它看图、看字；这里也给 agent 一个直接问的工具
 import { z } from "zod";
 import { get, type Toolkit } from "../../../platform/tool.ts";
 import { gemini as ask, model } from "./api.ts";
