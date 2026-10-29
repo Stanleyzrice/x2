@@ -13,6 +13,7 @@ import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
 import { readbackProblems } from "./product.ts";
 import { productOf } from "./ready.ts";
+import type { ListingRow, ShopSettingsRow } from "./row.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -43,10 +44,10 @@ export async function translate(sql: Sql, items: { sha: string; url: string }[])
 }
 
 async function listingNow(sql: Sql, id: string) {
-	const [l] = await sql`select * from listings where id = ${id}`;
+	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) return null;
-	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
-	const s = settingsOf(row);
+	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
+	const s = settingsOf(row!);
 	return { l, s, r: productOf(l, s) };
 }
 

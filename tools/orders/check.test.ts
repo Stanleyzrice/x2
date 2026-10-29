@@ -32,7 +32,7 @@ const order = (sn: string, qty: number, o: Partial<Order> = {}): Order => ({
 const cartWrite = (status = "已核对") => ({
 	id: "1",
 	batch: "1",
-	op: "加购",
+	op: "加购" as const,
 	status,
 	finishedAt: T0,
 	params: {
@@ -40,6 +40,10 @@ const cartWrite = (status = "已核对") => ({
 		offerId: "O1",
 		skuId: "S1",
 		qty: 3,
+		title: "货源",
+		sku: "规格",
+		price: null,
+		newSources: [],
 		lines: [
 			{ sn: "1", modelId: "M1", qty: 1 },
 			{ sn: "2", modelId: "M1", qty: 2 },

@@ -19,6 +19,7 @@ import { estimateNeeds, pricingProblems, quote, settingsOf } from "./pricing.ts"
 import { imageNames } from "./product.ts";
 import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
+import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
@@ -142,7 +143,7 @@ export const listing: Toolkit = {
 					const offerId = offerIdOf(p.link);
 					if (!offerId) throw new Usage(`认不出 1688 链接：${p.link}`);
 					const sql = await db();
-					const [row] = await sql`select * from shop_settings where shop = ${p.shop}`;
+					const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${p.shop}`;
 					if (!row) throw new Usage(`没有「${p.shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
 					return quote(await readOffer1688(offerId), settingsOf(row), { weightKg: p.weight, freightRmb: p.freight });
 				},
@@ -183,7 +184,7 @@ export const listing: Toolkit = {
 					const before = await namesOf(sql, want);
 					const settled = await each(want, p.jobs, async (id) => {
 						const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`));
-						const [l] = await sql`select * from listings where id = ${id}`;
+						const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 						const specs = l ? specsOf(l.variants) : null;
 						const needs = l ? estimateNeeds(l) : [];
 						return { ...r, name: l ? listingName(l) : `商品稿 ${id}`, needs, problems: [...r.problems, ...(specs ? pricingProblems(specs, needs) : [])] };
@@ -226,7 +227,7 @@ export const listing: Toolkit = {
 					if (p.weight === undefined && p.freight === undefined)
 						throw new Usage("x2 listing estimate --id <商品稿> --weight <kg> --freight <元/件>：至少给一样");
 					const sql = await db();
-					const [l] = await sql`select * from listings where id = ${p.id}`;
+					const [l] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
 					if (!l) throw new Usage(`没有商品稿 ${p.id}`);
 					if (!l.offer || !specsOf(l.variants)) throw new Usage(`${listingName(l)}还没做好：先 x2 listing make --ids ${p.id}`);
 					const { set, notes } = estimateFill(l as any, estimateNeeds(l), p);
@@ -234,10 +235,10 @@ export const listing: Toolkit = {
 						await sql`update listings set weight_kg = ${set.weight_kg}, updated_at = now() where id = ${p.id} and weight_kg is null`;
 					if (set.freight_rmb !== undefined)
 						await sql`update listings set freight_rmb = ${set.freight_rmb}, updated_at = now() where id = ${p.id} and freight_rmb is null`;
-					const [now] = await sql`select * from listings where id = ${p.id}`;
-					const [row] = await sql`select * from shop_settings where shop = ${now!.shop}`;
-					await savePrices(sql, now, settingsOf(row));
-					const left = estimateNeeds(now);
+					const [now] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
+					const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${now!.shop}`;
+					await savePrices(sql, now!, settingsOf(row!));
+					const left = estimateNeeds(now!);
 					const problems = [
 						...String(now!.problems ?? "")
 							.split("\n")
@@ -259,7 +260,7 @@ export const listing: Toolkit = {
 			"写文案要用的事实：货源标题、规格的层和选项（1688 原文、现在的名字、售价）、类目、属性、服务，和现在的标题、描述、简称",
 			z.object({ id }),
 			async (p) => {
-				const [l] = await (await db())`select * from listings where id = ${p.id}`;
+				const [l] = await (await db())<ListingRow[]>`select * from listings where id = ${p.id}`;
 				if (!l) throw new Usage(`没有商品稿 ${p.id}`);
 				const specs = specsOf(l.variants);
 				const tiers =
@@ -398,7 +399,7 @@ export const listing: Toolkit = {
 					const sql = await db();
 					const asked = [...new Set([...p.images.join(" ").matchAll(/(主图|详情图)\s*(\d+)/g)].map((m) => `${m[1]} ${m[2]}`))];
 					if (!asked.length) throw new Usage("x2 listing keep --id <商品稿> --images 主图 N,详情图 N（图的名字，见商品稿的说明；人说了才用）");
-					const [l] = await sql`select * from listings where id = ${p.id}`;
+					const [l] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
 					if (!l) throw new Usage(`没有商品稿 ${p.id}`);
 					const k = keepImages(listingName(l), asked, l.images ?? {}, l.removed_images ?? [], AUDIT_DROP);
 					if ("error" in k) throw new Usage(k.error);
@@ -518,12 +519,12 @@ export const listing: Toolkit = {
 };
 
 export async function setCategory(sql: Sql, id: string, category: string, tree: (shopId: string) => Promise<Category[]>) {
-	const [l] = await sql`select * from listings where id = ${id}`;
+	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Usage(`没有商品稿 ${id}`);
 	const name = listingName(l);
 	const built = categoryBlock(name, l as any, category, "", null);
 	if (built) throw new Usage(built);
-	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	if (!row) throw new Usage(`店铺设置里没有「${l.shop}」`);
 	const s = settingsOf(row);
 	const found = leafPath(await tree(s.shopId), category);
@@ -564,10 +565,10 @@ const checkLine = (c: CheckResult) => {
 };
 
 async function productNow(sql: Sql, id: string) {
-	const [l] = await sql`select * from listings where id = ${id}`;
+	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) return null;
-	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
-	return { l, kept: (l.kept_images ?? []) as string[], r: productOf(l, settingsOf(row)) };
+	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
+	return { l, kept: l.kept_images ?? [], r: productOf(l, settingsOf(row!)) };
 }
 
 const MAX_RECHECK = 2;

@@ -678,14 +678,68 @@ test("人定的类目：在类目树里找叶子，回从根到它的路径和�
 	);
 });
 
-import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop, uniqIssues } from "./audit.ts";
+import {
+	type Audit,
+	auditDropped,
+	auditIssues,
+	auditKey,
+	auditNotes,
+	dropAudited,
+	issueLine,
+	restoreAudited,
+	roleOf,
+	shouldDrop,
+	uniqIssues,
+} from "./audit.ts";
 import { checkListings } from "./check.ts";
 import { type TranslatedCheck, translatedDrop } from "./images.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf, usableWeights } from "./pricing.ts";
 import { productOf } from "./ready.ts";
+import type { ListingRow, OfferLike, ShopSettingsRow } from "./row.ts";
 
-const shopRow = {
+/** 一行商品稿：没给的格是空的 */
+const BLANK: ListingRow = {
+	id: "",
+	shop: "",
+	offer_id: "",
+	strategy: "人选",
+	cancelled: false,
+	weight_kg: null,
+	freight_rmb: null,
+	title: null,
+	description: null,
+	note: null,
+	noted: null,
+	nickname: null,
+	offer: null,
+	offer_read_at: null,
+	category_id: null,
+	category_path: null,
+	category_name: null,
+	attributes: null,
+	attributes_text: null,
+	days_to_ship: null,
+	variants: null,
+	images: {},
+	pricing: null,
+	audit: null,
+	problems: null,
+	step: null,
+	step_detail: null,
+	product_id: null,
+	listed_at: null,
+	removed_images: null,
+	removed_variants: null,
+	kept_images: null,
+	pick_why: null,
+	pick_evidence: null,
+	pick_snapshot: null,
+	created_at: new Date(0),
+	updated_at: new Date(0),
+};
+
+const shopRow: ShopSettingsRow = {
 	shop: "cheeroutdoor",
 	shop_id: "1554182542",
 	fx: "4.4",
@@ -736,10 +790,13 @@ const colors = (): Specs => ({
 		priceTwd: 295,
 	})),
 });
-const ready = (o: Record<string, unknown> = {}) => {
+/** 测试的货源只给用到的格 */
+const asOffer = (o: OfferLike) => o as Offer;
+const ready = (o: Partial<ListingRow> = {}): ListingRow => {
 	const variants = o.variants ?? colors();
 	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({ skuId: v.skuId, attrs: [v.sku], weightKg: v.weightKg }));
 	return {
+		...BLANK,
 		id: "7",
 		shop: "cheeroutdoor",
 		offer_id: "952803717616",
@@ -749,7 +806,7 @@ const ready = (o: Record<string, unknown> = {}) => {
 		problems: null,
 		weight_kg: null,
 		freight_rmb: null,
-		offer: { title: "雨衣", tags: { freeShipping: true }, skus },
+		offer: asOffer({ title: "雨衣", tags: { freeShipping: true, onePsale: false, ship48h: false, deliveryDays: null }, skus }),
 		title: "輕便雨衣 成人連身 防水透氣 騎車通勤",
 		description: "防水雨衣，騎車通勤用",
 		category_path: [100637, 101324],
@@ -982,7 +1039,7 @@ test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图）
 		{ id: "d9", issues: ["「干」"] },
 	]);
 	assert.deepEqual(
-		[...dropped.main, ...dropped.detail].map((x) => x.drop ?? null),
+		[...(dropped.main ?? []), ...(dropped.detail ?? [])].map((x) => x.drop ?? null),
 		[null, "Gemini 文字检查：「产品」是簡體；「质量」", null, "Gemini 文字检查：「产品」是簡體；「质量」", "超过张数，不用"],
 	);
 	assert.equal(pics.main[1]!.drop, undefined);
@@ -1029,7 +1086,7 @@ test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明�
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const l = ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("d2")], options: [pic("o1", "k.jpg")] } });
 	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
-	const audit = {
+	const audit: Audit = {
 		key,
 		at: "t0",
 		textIssues: ["規格名「綠色」寫成「绿色」"],
@@ -1129,9 +1186,9 @@ test("重新核价（不读 1688）：1688 给的重量照用，没给的用「�
 
 test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估（带着 1688 的标题和规格），不提醒人", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
-	const l = {
+	const l: ListingRow = {
 		...ready(),
-		offer: {
+		offer: asOffer({
 			title: "可爱猫咪地垫",
 			skus: [
 				{ skuId: "1", attrs: ["黑猫", "40*60"], weightKg: 0.3 },
@@ -1139,7 +1196,7 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 			],
 			freight: null,
 			tags: { freeShipping: false },
-		},
+		}),
 	};
 	const r = checkListings([l], s, []);
 	assert.deepEqual(r.steps.get("7"), { step: "待做商品稿", detail: "缺重量、国内运费：agent 估" });

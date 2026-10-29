@@ -14,10 +14,11 @@ import { makeImages } from "./images.ts";
 import type { Pics } from "./pics.ts";
 import { freightOf, num, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
+import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import { nicknameFor } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
-export async function savePrices(sql: Sql, l: any, s: Settings): Promise<boolean> {
+export async function savePrices(sql: Sql, l: ListingRow, s: Settings): Promise<boolean> {
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
 	const fields = { variants: r.specs, pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
@@ -51,9 +52,9 @@ const CANDIDATE_MAIN = 12,
 	CANDIDATE_DETAIL = 16;
 
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
-	const [l] = await sql`select * from listings where id = ${id}`;
+	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
-	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
 	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 

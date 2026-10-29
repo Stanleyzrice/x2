@@ -31,7 +31,12 @@ export type Source = {
 	broken: string | null;
 	exceptions?: string | null;
 };
-export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null; error?: string | null };
+/** 库里的一条写入；params 是写的时候照这个写操作的 zod 校验过的（platform/writes.ts），按 op 分 */
+export type Write = { id: string; batch: string; status: string; finishedAt: Date | null; error?: string | null } & (
+	| { op: "加购"; params: CartParams }
+	| { op: "预报"; params: ForecastParams }
+	| { op: "取消预报"; params: unknown }
+);
 export type Issue = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
 export type Settings = { lateDays: number; channel: string; buyAccount: string | null; shipWaitHours?: number };
 
@@ -120,9 +125,11 @@ export function checkOrders(s: Snapshot): Result {
 	const chosenOf = new Map(s.sources.filter((x) => x.chosen).map((x) => [x.itemId, x]));
 	const offerOf = new Map(s.sources.map((x) => [x.offerId, x]));
 
-	const cartWrites: CartWrite[] = s.writes
-		.filter((w) => w.op === "加购" && DONE.has(w.status) && w.params.account)
-		.map((w) => ({ id: w.id, account: w.params.account, offerId: w.params.offerId, skuId: w.params.skuId, at: w.finishedAt ?? s.now, lines: w.params.lines }));
+	const cartWrites: CartWrite[] = s.writes.flatMap((w) =>
+		w.op === "加购" && DONE.has(w.status) && w.params.account
+			? [{ id: w.id, account: w.params.account, offerId: w.params.offerId, skuId: w.params.skuId, at: w.finishedAt ?? s.now, lines: w.params.lines }]
+			: [],
+	);
 	const needs: Need[] = s.orders.flatMap((o) =>
 		o.items.flatMap((i) => {
 			const src = chosenOf.get(i.itemId);
@@ -141,12 +148,8 @@ export function checkOrders(s: Snapshot): Result {
 		if (!had || rank[l.state] < rank[had.state]) lineOf.set(k, l);
 	}
 	const boughtOutside = new Set(lines.filter((l) => l.outside).map((l) => `${l.sn}:${l.modelId}`));
-	const flying = new Set(
-		s.writes
-			.filter((w) => w.op === "加购" && IN_FLIGHT.has(w.status))
-			.flatMap((w) => (w.params.lines as CartParams["lines"]).map((l) => `${l.sn}:${l.modelId}`)),
-	);
-	const forecastFlying = new Set(s.writes.filter((w) => w.op === "预报" && IN_FLIGHT.has(w.status)).map((w) => w.params.sn as string));
+	const flying = new Set(s.writes.flatMap((w) => (w.op === "加购" && IN_FLIGHT.has(w.status) ? w.params.lines.map((l) => `${l.sn}:${l.modelId}`) : [])));
+	const forecastFlying = new Set(s.writes.flatMap((w) => (w.op === "预报" && IN_FLIGHT.has(w.status) ? [w.params.sn] : [])));
 
 	type SourceState = { state: "有" | "新" | "待选" | "没有" | "失效" | "规格不匹配"; src?: Source; sku?: SourceSku; why?: string };
 	const sourceOf = (i: Item): SourceState => {

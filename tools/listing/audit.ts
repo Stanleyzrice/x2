@@ -45,13 +45,13 @@ export const uniqIssues = (issues: string[]) => [
 	),
 ];
 
-export function dropAudited(pics: Pics, drops: AuditImage[]): Pics {
+export function dropAudited(pics: Partial<Pics>, drops: AuditImage[]): Partial<Pics> {
 	const why = new Map(drops.map((x) => [x.id, `${AUDIT_DROP}${x.issues.join("；")}`]));
 	const mark = (list: Pic[] = []) => list.map((p) => (p.imageId && why.has(p.imageId) && !p.drop ? { ...p, drop: why.get(p.imageId)! } : p));
 	return { ...pics, main: mark(pics.main), detail: mark(pics.detail) };
 }
 
-export function restoreAudited(pics: Pics, ids: Iterable<string>): Pics {
+export function restoreAudited(pics: Partial<Pics>, ids: Iterable<string>): Partial<Pics> {
 	const back = new Set(ids);
 	const clear = (list: Pic[] = []) =>
 		list.map((p) => {
@@ -62,7 +62,7 @@ export function restoreAudited(pics: Pics, ids: Iterable<string>): Pics {
 	return { ...pics, main: clear(pics.main), detail: clear(pics.detail) };
 }
 
-export function auditDropped(pics: Pics): AuditImage[] {
+export function auditDropped(pics: Partial<Pics>): AuditImage[] {
 	const out = new Map<string, AuditImage>();
 	for (const [list, role] of [
 		[pics.main ?? [], "主图"],

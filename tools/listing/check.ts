@@ -5,13 +5,23 @@ import { auditIssues, auditKey, auditNotes } from "./audit.ts";
 import { estimateNeeds, type Settings } from "./pricing.ts";
 import { imageNames } from "./product.ts";
 import { productOf } from "./ready.ts";
+import type { ListingRow } from "./row.ts";
 import { listingName, textProblems } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
 export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待 Gemini 文字检查", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
 
-export type Write = { id: string; batch: string; op: string; status: string; params: any; finishedAt: Date | null; error?: string | null };
+/** 库里的一条建商品、上架的写入（params 写的时候照写操作的 zod 校验过，都带 listingId） */
+export type Write = {
+	id: string;
+	batch: string;
+	op: string;
+	status: string;
+	params: { listingId?: string } | null;
+	finishedAt: Date | null;
+	error?: string | null;
+};
 
 export type EstimateItem = {
 	id: string;
@@ -33,8 +43,8 @@ export type Todo =
 
 const IN_FLIGHT = new Set(["待执行", "已提交", "结果未知", "不一致"]);
 
-function estimateItem(l: any, needs: EstimateItem["needs"]): EstimateItem {
-	const skus = new Map(((l.offer?.skus ?? []) as any[]).map((k) => [String(k.skuId), k]));
+function estimateItem(l: ListingRow, needs: EstimateItem["needs"]): EstimateItem {
+	const skus = new Map((l.offer?.skus ?? []).map((k) => [String(k.skuId), k]));
 	return {
 		id: String(l.id),
 		name: listingName(l),
@@ -44,9 +54,9 @@ function estimateItem(l: any, needs: EstimateItem["needs"]): EstimateItem {
 		specs: (specsOf(l.variants)?.variants ?? []).map((v) => {
 			const k = skus.get(v.skuId);
 			return {
-				spec: ((k?.attrs ?? []) as string[]).filter(Boolean).join(" / ") || String(k?.name ?? v.sku),
+				spec: (k?.attrs ?? []).filter(Boolean).join(" / ") || String(k?.name ?? v.sku),
 				priceRmb: v.costRmb,
-				weightKg: k?.weightKg > 0 ? Number(k.weightKg) : null,
+				weightKg: k?.weightKg && k.weightKg > 0 ? Number(k.weightKg) : null,
 			};
 		}),
 		freight: l.offer?.freight ?? null,
@@ -61,7 +71,7 @@ export type ListingsChecked = {
 	ready: { id: string; writes: { op: string; params: Record<string, unknown> }[] }[];
 };
 
-export function checkListings(listings: any[], settings: Map<string, Settings>, writes: Write[]): ListingsChecked {
+export function checkListings(listings: ListingRow[], settings: Map<string, Settings>, writes: Write[]): ListingsChecked {
 	const reminders: Reminder[] = [],
 		steps = new Map<string, { step: ListingStep; detail: string | null }>();
 	const ready: ListingsChecked["ready"] = [];
