@@ -62,6 +62,7 @@ export function specsGrid({ tiers, rows, removed }: SpecsTable): Grid {
 		summary: `${rows.length > 1 || tiers.length ? `${rows.length} 个规格 · ` : ""}${range}`,
 		caption: [`${rows.length} 个规格`, ...same.map((f) => `${f.label}${rows.length > 1 ? "都是" : ""} ${rows[0] ? f.of(rows[0]) : "—"}`)].join(" · "),
 		columns: tiers.length ? [...tiers.map((label) => ({ label })), ...varying.map((f) => ({ label: f.label, numeric: true }))] : [],
+		imageLabel: "规格图",
 		rows: rows.map((r) => ({ key: r.sku, image: r.image, cells: [...r.options, ...varying.map((f) => f.of(r))] })),
 		note: removed.length ? `已移除：${removed.map((x) => `${x.name}（${x.count} 个规格）`).join("、")}` : null,
 	};

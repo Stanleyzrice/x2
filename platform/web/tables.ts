@@ -36,6 +36,8 @@ export type Grid = {
 	summary: string;
 	caption: string;
 	columns: { label: string; numeric?: boolean }[];
+	/** 每行带图时，图那一列的表头 */
+	imageLabel?: string;
 	rows: { key: string; image: string | null; cells: string[] }[];
 	note: string | null;
 };

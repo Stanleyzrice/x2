@@ -128,7 +128,7 @@ function GridCell({ grid, compact }: { grid: Grid; compact?: boolean | undefined
 					<Table>
 						<TableHeader>
 							<TableRow>
-								{images && <TableHead className="w-16" />}
+								{images && <TableHead className="w-16">{grid.imageLabel}</TableHead>}
 								{grid.columns.map((c) => (
 									<TableHead key={c.label} className={c.numeric ? "text-right" : undefined}>
 										{c.label}

@@ -1427,6 +1427,7 @@ test("规格表给网页的小表格：每层一列，一样的写在表上面�
 		summary: "2 个规格 · NT$133–155",
 		caption: "2 个规格 · 进价都是 ¥10 · 库存都是 9 · 重量都是 0.5 kg",
 		columns: [{ label: "尺寸" }, { label: "售价", numeric: true }],
+		imageLabel: "规格图",
 		rows: [
 			{ key: "40×60cm", image: null, cells: ["40×60cm", "NT$133"] },
 			{ key: "50×80cm", image: null, cells: ["50×80cm", "NT$155"] },
