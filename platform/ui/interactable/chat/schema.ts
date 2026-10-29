@@ -11,4 +11,6 @@ export const props = z.object({
 });
 export type Props = z.infer<typeof props>;
 export const actions = { conversations: "chat.conversations", messages: "chat.messages", draft: "chat.draft" };
+/** 网页能填的只有选中哪个会话；店照引用，网页换不了 */
+export const inputs = ["conversationId"];
 export const examples: z.input<typeof props>[] = [{ shop: "ni1206" }, { title: "问尺寸的买家", shop: "cheeroutdoor", conversationId: "1234567890" }];

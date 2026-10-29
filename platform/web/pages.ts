@@ -13,7 +13,7 @@ import { tables } from "./tables.ts";
 export const KINDS = ["generative", "interactable"] as const;
 export type Kind = (typeof KINDS)[number];
 /** 一个组件的 schema.ts：参数、说明、例子；要人回答的（例 choice）还有 answer：照这一个组件的参数，人的答案长什么样；
- * 要现读站点的（例 chat）还有 actions：网页能替它调哪几个工具（名字 → 注册表里的工具 id） */
+ * 要现读站点的（例 chat）还有 actions：网页能替它调哪几个工具（名字 → 注册表里的工具 id），和 inputs：调的时候网页能填哪几个参数（别的都照引用） */
 export type Component = {
 	name: string;
 	kind: Kind;
@@ -22,6 +22,7 @@ export type Component = {
 	examples: unknown[];
 	answer?: (props: any) => z.ZodType;
 	actions?: Record<string, string>;
+	inputs?: string[];
 };
 
 const UI = new URL("../ui/", import.meta.url);
@@ -36,7 +37,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 	return Promise.all(
 		names.map(async (name) => {
 			const m = await import(new URL(`${name}/schema.ts`, dir).href);
-			return { name, kind, description: m.description, props: m.props, examples: m.examples, answer: m.answer, actions: m.actions };
+			return { name, kind, description: m.description, props: m.props, examples: m.examples, answer: m.answer, actions: m.actions, inputs: m.inputs };
 		}),
 	);
 }
@@ -179,8 +180,14 @@ export async function act(sql: Sql, item: string, action: string, input: unknown
 	if (!i) throw new Usage(`没有组件 ${item}`);
 	const tool = COMPONENTS.get(i.component)?.actions?.[action];
 	if (!tool) throw new Usage(`${i.component} 没有 ${action}`);
-	const { title: _, ...ref } = i.props as Record<string, unknown>;
-	return invoke(tool, { ...ref, ...(input && typeof input === "object" ? input : {}) });
+	return invoke(tool, actParams(i.props, input, COMPONENTS.get(i.component)?.inputs ?? []));
+}
+
+/** 替组件调工具的参数：引用说了算（例 chat 的店），网页只能填组件声明过的 inputs（例 换一个会话）；别的网页发来的不要 */
+export function actParams(props: unknown, input: unknown, inputs: readonly string[]): Record<string, unknown> {
+	const { title: _, ...ref } = props as Record<string, unknown>;
+	const given = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+	return { ...ref, ...Object.fromEntries(inputs.filter((k) => k in given).map((k) => [k, given[k]])) };
 }
 
 export async function closeItem(sql: Sql, item: string): Promise<void> {
@@ -192,9 +199,12 @@ export async function closeItem(sql: Sql, item: string): Promise<void> {
 /** 一个引用的样子：除了标题的参数，对象的键排好（jsonb 存进去会重排对象的键，不能直接比 JSON） */
 export const refKey = (props: unknown) => {
 	const { title: _, ...rest } = props as Record<string, unknown>;
-	return JSON.stringify(rest, (_, v) =>
-		v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v,
-	);
+	return JSON.stringify(rest, (k, v) => {
+		if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+		const entries = Object.entries(v).sort(([a], [b]) => a.localeCompare(b));
+		// filter 里一个值和只有它的一列算同一个（{ shop: "x" } 和 { shop: ["x"] }）
+		return Object.fromEntries(k === "filter" ? entries.map(([c, x]) => [c, Array.isArray(x) ? x : [x]]) : entries);
+	});
 };
 
 function pageId(id: string): string {

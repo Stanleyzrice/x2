@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Usage } from "../errors.ts";
-import { parseAnswer, parseItem, parseProps } from "./pages.ts";
+import { actParams, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
 
 test("页：没有的组件说有哪些；参数不对说哪一格", () => {
 	assert.throws(
@@ -47,4 +47,17 @@ test("choice 的答案：只认它的选项；单选只能一个；没请人写�
 		() => parseAnswer("markdown", { text: "x" }, {}),
 		(e: Error) => e instanceof Usage && /markdown 不收答案/.test(e.message),
 	);
+});
+
+test("替组件调工具：引用说了算，网页只能填声明过的参数（chat 能换会话，换不了店）", () => {
+	const ref = { title: "问尺寸的买家", shop: "ni1206", conversationId: "1" };
+	assert.deepEqual(actParams(ref, { conversationId: "2", shop: "cheeroutdoor" }, ["conversationId"]), { shop: "ni1206", conversationId: "2" });
+	assert.deepEqual(actParams(ref, { shop: "cheeroutdoor" }, []), { shop: "ni1206", conversationId: "1" });
+	assert.deepEqual(actParams({ shop: "ni1206" }, "不是对象", ["conversationId"]), { shop: "ni1206" });
+});
+
+test("同一个引用：键的先后、标题、筛选里一个值写不写成数组都不算不同", () => {
+	const a = refKey({ title: "审稿", table: "listings", filter: { step: "待批准", shop: ["ni1206"] } });
+	assert.equal(a, refKey({ filter: { shop: "ni1206", step: ["待批准"] }, table: "listings" }));
+	assert.notEqual(a, refKey({ table: "listings", filter: { step: "待批准" } }));
 });
