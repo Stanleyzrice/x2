@@ -1,4 +1,4 @@
-// x2 strategy：选品的策略（docs/listing.md「策略」）。agent 定策略、做实验；每份商品稿记下从哪个策略来、按的是第几版，按策略看效果。
+// x2 strategy：选品的策略。agent 定策略、做实验；每份商品稿记下从哪个策略来、按的是第几版，按策略看效果。
 // x2 strategy add <名字> --bet "假设" --how "选品方法" [--why "…"]   记一个策略（试验中，第 1 版）
 // x2 strategy set <名字> --why "…" [--status 使用中|已停用|试验中] [--bet "假设"] [--how "选品方法"] [--note …]
 //                                                      改状态，或者边试边改假设、选法：版本号加 1，变更记录记一行（改之前、改之后、为什么）
@@ -137,5 +137,5 @@ export async function strategyCommand(args: string[], json: boolean): Promise<vo
 		);
 	}
 
-	throw new Usage("x2 strategy add | set | list | log（见 docs/listing.md「策略」）");
+	throw new Usage("x2 strategy add | set | list | log");
 }

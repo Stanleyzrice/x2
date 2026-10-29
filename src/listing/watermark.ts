@@ -1,6 +1,7 @@
 // 水印：在浏览器里用 canvas 画（不加原生依赖，用系统的中文和 emoji 字体）。照 lilto 的 page/shopee/image-render.ts（快照 1c8a7926）：
 // 字号、边距按短边 / 800 缩放，位置五选一，文字太长横向压缩。和 lilto 不一样：字加一圈白色描边（lilto 的 #222 字在深色图上看不见，整个商品卡住过）；
-// 先铺白底再画（透明的 PNG 转 JPEG 不变黑）；出 JPEG（比 PNG 小，传得快）。图用 data URL 传进页面，canvas 不会被跨域污染
+// 先铺白底再画（透明的 PNG 转 JPEG 不变黑）；出 JPEG（比 PNG 小，传得快）。每家店一套水印，两家店的封面因此不一样（Shopee 跨店标题和封面一样会禁卖）；
+// 加了水印不再让 Gemini 看：水印是我们画的，供应商痕迹筛字时已经挑过。图用 data URL 传进页面，canvas 不会被跨域污染
 
 import { page } from "../sites/browser.ts";
 import { type Bytes, inspect } from "../sites/image.ts";

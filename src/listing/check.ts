@@ -1,4 +1,4 @@
-// 检查商品稿（docs/listing.md「每一步怎样算做完」）：每份的当前步骤、要提醒人的、agent 能做的进 todo、人同意了就能建商品、上架的（ready）。纯函数，读写库在 index.ts
+// 检查商品稿：每份的当前步骤、要提醒人的、agent 能做的进 todo、人同意了就能建商品、上架的（ready）。纯函数，读写库在 index.ts
 
 import type { EstimateItem, Reminder, Todo, Write } from "../orders/check.ts";
 import { auditIssues, auditKey, auditNotes } from "./audit.ts";

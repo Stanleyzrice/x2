@@ -1,4 +1,4 @@
-// x2 rule：选品规矩（docs/listing.md「策略」）。所有策略共用的规矩，一行一条；旧的不删，停用时写结束时间和停用原因。
+// x2 rule：选品规矩。所有策略共用的规矩，一行一条；旧的不删，停用时写结束时间和停用原因。
 // 商品稿加进来时，在用的规矩记进它的选品快照
 // x2 rule add "<规矩>" --why "…"          记一条规矩（从现在起在用）
 // x2 rule retire <编号> --why "…"         停用：写结束时间、停用原因
@@ -15,7 +15,7 @@ const flag = (args: string[], name: string) => {
 const plain = (args: string[], ...flags: string[]) => args.filter((a, j) => !a.startsWith("--") && !flags.includes(args[j - 1] ?? ""));
 
 const text = z.string().trim().min(1);
-const USAGE = `x2 rule add "<规矩>" --why "为什么" | retire <编号> --why "为什么停用" | list [--all]（见 docs/listing.md「策略」）`;
+const USAGE = `x2 rule add "<规矩>" --why "为什么" | retire <编号> --why "为什么停用" | list [--all]`;
 
 type Rule = { id: string; rule: string; why: string; started_at: Date; ended_at: Date | null; retire_why: string | null };
 const ruleLine = (r: Rule) =>

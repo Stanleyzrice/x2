@@ -1,4 +1,4 @@
-// 选品可追溯（docs/listing.md「策略」）：商品稿加进来那一刻按的是哪一版策略、哪些选品规矩
+// 选品可追溯：商品稿加进来那一刻按的是哪一版策略、哪些选品规矩
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { offerIdOf } from "../sites/1688.ts";

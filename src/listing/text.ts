@@ -1,4 +1,4 @@
-// 文案的硬规矩（docs/listing.md「文案」）：标题 10–60 字、描述 3–3000 字、不写采购端和卖家话术；简称简体中文、最多 12 字。
+// 文案的硬规矩：标题 10–60 字、描述 3–3000 字、不写采购端和卖家话术；简称简体中文、最多 12 字。
 // 写得好不好由 Gemini 文字检查和人审稿看
 import * as OpenCC from "opencc-js";
 
@@ -40,7 +40,7 @@ export function listingName(
 	return `${name}（${[l.shop, withId && l.id !== undefined ? `#${l.id}` : ""].filter(Boolean).join("，")}）`;
 }
 
-/** 标题、描述的硬规矩（docs/listing.md「文案」）；回问题 */
+/** 标题、描述的硬规矩；回问题 */
 export function textProblems(title: string, description: string): string[] {
 	const p: string[] = [];
 	if (title.length < 10 || title.length > 60) p.push(`标题 ${title.length} 字，要 10–60 字`);

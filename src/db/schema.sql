@@ -2,7 +2,7 @@
 -- 表建好以后再加列：不改 create table，在最后「加列」一节写 alter table … add column if not exists（已有的库里 create table 不会再跑）。
 -- 表名、列名用英文（网页上显示中文，见 web/tables.ts）；给人看的值（类别、状态）用中文。
 --
--- 只存三类（docs/loop.md「怎样工作」）：站点上没有的（人的决定、设置）；写入的记录；给团队在网页上看的（订单的进度）。
+-- 只存三类：站点上没有的（人的决定、设置）；写入的记录；给团队在网页上看的（订单的进度）。
 -- 站点上有的（购物车、采购单、1688 商品详情、店里的商品、登录着的账号）不存：每次 x2 status 经浏览器现读。
 
 -- ── 设置 ──
@@ -138,7 +138,7 @@ create table if not exists orders (
 	checked_at timestamptz
 );
 
--- ── 上品（docs/listing.md） ──
+-- ── 上品 ──
 
 -- 店铺设置：一家店一行，人定的：核价参数、上品的默认值、允许的类目、水印、暂停上品。在网页上改；比例在 0–1、汇率大于 0，填错存不进
 -- 核价参数的默认值是 lilto 的 landed-cost.json（2026-09-02 依账单和结算截图定）
@@ -146,7 +146,7 @@ create table if not exists shop_settings (
 	shop text primary key,
 	-- Shopee 的店铺 id：x2 按它找这家店的浏览器（不是卖家账号 id，两个不一样）
 	shop_id text not null unique,
-	-- 核价（docs/listing.md「核价」）
+	-- 核价
 	fx numeric not null default 4.4 check (fx > 0),
 	price_per_kg_rmb numeric not null default 10.8 check (price_per_kg_rmb >= 0),
 	label_fee_rmb numeric not null default 1.5 check (label_fee_rmb >= 0),
@@ -206,7 +206,7 @@ create table if not exists listings (
 	attributes jsonb,
 	attributes_text text,
 	days_to_ship int,
-	-- 规格（docs/listing.md「规格」）：层和规格一起存，{ tiers: [{ source（1688 的层名）, name, options: [{ source（1688 的原值）, name, image }] }],
+	-- 规格：层和规格一起存，{ tiers: [{ source（1688 的层名）, name, options: [{ source（1688 的原值）, name, image }] }],
 	-- variants: [{ sku, skuId, specId, options（每层一个选项的下标）, costRmb, stock, weightKg, priceTwd }] }。做商品稿时从货源生成，以后都改它；空是还没做
 	variants jsonb,
 	-- 图：{ main: [...], detail: [...], options: {...}, sizeChart }，每张 { from（原图地址）, sha（原图）, final（成品）, imageId, width, height, verdict }
@@ -254,7 +254,7 @@ create table if not exists shop_images (
 	primary key (shop, sha256)
 );
 
--- 策略：选品的一个做法（docs/listing.md「策略」）。agent 定、做实验（explore / exploit）；商品稿的 strategy 写它的名字
+-- 策略：选品的一个做法。agent 定、做实验（explore / exploit）；商品稿的 strategy 写它的名字
 create table if not exists strategies (
 	name text primary key,
 	-- 假设：押的是什么
@@ -305,7 +305,7 @@ alter table arrival_issues alter column kind set default '损坏';
 -- 写文案的 agent 写标题时一起写（只在空着、还是自动填的那个值时写）；人在网页上改过的 agent 不再改
 alter table listings add column if not exists nickname text;
 
--- ── 选品可追溯（docs/listing.md「策略」）：每份商品稿为什么选、按的是哪一版策略和选品规矩 ──
+-- ── 选品可追溯：每份商品稿为什么选、按的是哪一版策略和选品规矩 ──
 
 -- 策略的版本号：x2 strategy add 是第 1 版，每次 x2 strategy set 加 1（加版本号之前记的策略都算第 1 版）
 alter table strategies add column if not exists version int not null default 1;
@@ -338,7 +338,7 @@ alter table listings add column if not exists pick_why text;
 alter table listings add column if not exists pick_evidence text;
 alter table listings add column if not exists pick_snapshot jsonb;
 
--- ── 备注（docs/listing.md「审稿」） ──
+-- ── 备注 ──
 
 -- 看过的备注：agent 照人写的「备注」做完，记下当时的备注原文（x2 listing noted）；备注再改，x2 status 的 todo 又给出来
 alter table listings add column if not exists noted text;

@@ -1,4 +1,4 @@
-// x2 web：开网页（docs/loop.md「网页」）。先照 web/ 打包界面，再在 --host、--port 上发；关掉用 Ctrl-C
+// x2 web：开网页。先照 web/ 打包界面，再在 --host、--port 上发；关掉用 Ctrl-C
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { serve } from "../../web/server.ts";

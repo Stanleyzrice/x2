@@ -103,7 +103,7 @@ function loopReminders(reads: Reads, writes: any[]): Reminder[] {
 
 export type Checked = { todo: Todo[]; reminders: Reminder[] };
 
-/** 商品稿（docs/listing.md）：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点。
+/** 商品稿：只看库里的（商品稿、店铺设置、建商品和上架的写入），不读站点。
  * 还没建的「重量」「国内运费」改过的重新核价（不读 1688）；当前步骤、说明写回库。
  * ids：只看这几份（执行完写入马上更新涉及的商品稿）；不给是全部（x2 status） */
 export async function listingsCheck(sql: Sql, ids?: string[]) {

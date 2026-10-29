@@ -1,5 +1,5 @@
 // 建商品的 product_info，和建完以后读回来逐项核对。照 lilto 的 build_product_info、submitted_content_problems（快照 1c8a7926）：
-// 9-01 卖家中心新增商品页提交的成功样本逐字段照抄。docs/listing.md「建商品、上架」。
+// 9-01 卖家中心新增商品页提交的成功样本逐字段照抄。
 // 也定商品里用哪几张主图、详情图，和图的名字（主图 N、详情图 N、规格图：选项名；网页上、说明里、x2 listing keep 都用它）
 import type { Pic, Pics } from "./pics.ts";
 import { isSingle, type Specs, structureProblems, type Tier, type Variant } from "./variants.ts";

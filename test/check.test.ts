@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { type CartParams, checkOrders, type ForecastParams, type Order, type Snapshot, type Source } from "../src/orders/check.ts";
 import { reconcile } from "../src/orders/reconcile.ts";
 
-// docs/orders.md 的例子：订单 1 买红T ×1，订单 2 买红T ×2；红T 的货源是 1688 的 O1 / S1
+// 例子：订单 1 买红T ×1，订单 2 买红T ×2；红T 的货源是 1688 的 O1 / S1
 const T0 = new Date("2026-10-09T02:00:00Z");
 const hours = (h: number) => new Date(T0.getTime() + h * 3600_000);
 const item = (modelId: string, qty: number) => ({

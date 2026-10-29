@@ -1,6 +1,6 @@
 # x2：给 agent 的说明
 
-读者是在 x2 里推进两家店（ni1206、cheeroutdoor）日常工作的 agent（Claude Code、Codex）。命令在仓库根目录运行：`node bin/x2.ts <命令>`（下面简写成 `x2`），加 `--json` 读结果。循环怎么转在 [docs/loop.md](docs/loop.md)，订单在 [docs/orders.md](docs/orders.md)，上品在 [docs/listing.md](docs/listing.md)，用词照 [docs/glossary.md](docs/glossary.md)。
+读者是在 x2 里推进两家店（ni1206、cheeroutdoor）日常工作的 agent（Claude Code、Codex）。命令在仓库根目录运行：`node bin/x2.ts <命令>`（下面简写成 `x2`），加 `--json` 读结果，`x2 --help` 列出全部命令。订单、上品、选品怎么做在 `.claude/skills/` 里，用词照 [docs/glossary.md](docs/glossary.md)。
 
 ## 开起来做什么
 
@@ -47,9 +47,9 @@
 ## 改代码
 
 - 先做通 happy path：好复现的关键步骤写成程序；看图、规格名、文案、估重量、选品这类边界多的判断先由 agent 填、人可以改、不挡流程，攒够数据再设计。
-- 人定下的做法当场写进代码、文档或 skill，不只留在会话里。
+- 人定下的做法当场写进代码、测试或 skill，不只留在会话里。
 - 一切以数据为核心：先把数据存对，界面为数据服务。网页的 datagrid 照 `web/tables.ts` 的说明显示和收人改的格，加列、改视图只改它；组件和参数在 `web/sessions.ts`；没有数据要给人看、要人填，就不做界面。
-- 写法照现有代码：中文注释，zod 声明参数，输出约定照 README（stdout 只放结果，退出码 2/3/4）。行为和文档不一致时，同步改文档。
-- 文档只写现在的情况，越短越好：不写日期、来历、改了什么、旧文档（这些在 git log 里）。
+- 写法照现有代码：中文注释，zod 声明参数，输出约定照 README（stdout 只放结果，退出码 2/3/4）。
+- 规矩往结构里放，按这个先后：能放进目录结构的不写成 lint，能写成 lint 的不写成测试，能写成测试的不写成文档。代码看不出来的「为什么」写在实现它的文件开头。文档只放代码说不清的：用词在 `docs/glossary.md`，站点接口的坑在 `src/sites` 的同名 `.md`，agent 怎么做事在 skill。不写来历、路线图、进度（在 git log 里）。
 - 每做完一块跑 `pnpm check`（tsc 严格模式 + Biome 的 lint 和格式；格式、能自动改的用 `pnpm fix`）、`pnpm test`（连库的测试要设 `X2_TEST_DATABASE_URL`，会清空那个库）；动了读站点的代码，用 `x2 <站点> <操作>` 对真站点跑一遍。提交前 git hook 跑 `pnpm check`，推送后 CI 跑两样。lint 规则不随手关：确实要破例的写 `biome-ignore` 和理由。
 - 一块一个提交，提交信息照 git log 的写法（中文，「区域：说明」）。不推送、不合进 main，除非人说。

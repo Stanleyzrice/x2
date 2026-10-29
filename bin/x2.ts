@@ -37,7 +37,7 @@ const commands: Record<string, () => Promise<void>> = {
 
 const help = [
 	"x2 <命令> [参数…] [--json]",
-	"推进（见 docs/loop.md）：",
+	"推进：",
 	"  x2 status                      现读站点 → 检查 → 说要人做的、agent 能做的",
 	"  x2 do [--try 操作] < 一批.json   人在终端里同意了：执行一批写入（x2 status --json 的 todo 里有现成的）：先核清结果未知的，再一个一个做、读回来",
 	"  x2 verify                      读回来核清结果未知的写入",
@@ -45,7 +45,7 @@ const help = [
 	"  x2 handled <key…> [--note 说明]  x2 看不到结果的事，人说做完了：不再提醒",
 	"  x2 source [商品…] [--url 链接]   给店里的商品找货源（以图搜图）；不给商品就找检查算出来缺的",
 	'  x2 source <商品> --spec "店里的规格名 = 货源的规格名"   记下人定的规格例外（按名字配不上时）',
-	"上品（见 docs/listing.md）：",
+	"上品：",
 	"  x2 listing quote <1688 链接> [--shop 店] [--weight kg] [--freight 元/件]   报价（选品用）：售价区间、每个规格的价格和重量；不做图、不存库",
 	'  x2 listing add <店> <1688 链接…> [--strategy 名字 --why "选品理由"] [--evidence "依据"]   添加货源；按策略选的要写理由，记下当时的策略和选品规矩',
 	'  x2 listing why <商品稿> --why "选品理由" [--evidence "依据"] [--force]   给加进来的商品稿补记理由（已有理由的要 --force 才覆盖）',

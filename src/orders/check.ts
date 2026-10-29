@@ -1,4 +1,5 @@
-// 检查订单：拿 docs/orders.md「每一步怎样算做完」和「异常」对一遍库，算出要提醒人的、agent 要做的，和订单上「当前步骤」等列。
+// 检查订单：一张订单从进来到 chanboss「已打包」（选货源 → 加购 → 付款 → 预报 → 到齐 → 打包），每一步怎样算做完、出了岔子提醒谁，
+// 算出要提醒人的、agent 要做的，和订单上「当前步骤」等列。
 // 纯函数：输入是从库里读出来的一份快照，输出要写回库的东西；读写库在 index.ts
 
 import { type CartLine, type CartWrite, type Line, type Need, type Purchase, reconcile } from "./reconcile.ts";
@@ -82,7 +83,7 @@ export type Todo =
 	| { kind: "加购" | "预报"; why: string; batch: Batch }
 	| { kind: "取消预报"; why: string; orders: string[] }
 	| { kind: "核清"; why: string; writes: string[]; command: string }
-	// 上品（docs/listing.md）：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；备注：照人写的备注做
+	// 上品：做商品稿、写文案、Gemini 文字检查是 agent 跑命令；备注：照人写的备注做
 	| { kind: "做商品稿" | "写文案" | "Gemini 文字检查"; why: string; ids: string[]; command: string }
 	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[]; command: string }
 	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; command: string };
@@ -383,7 +384,7 @@ export function checkOrders(s: Snapshot): Result {
 		};
 	}
 
-	// 买家取消：看货走到了哪（docs/orders.md「买家取消」）。
+	// 买家取消：看货走到了哪。
 	// 购物车里的：删掉（x2 看得到删没删）。货的去处（退款、退回卖家、合并给新订单、台湾仓）：x2 看不到结果，人做完 x2 handled 记下。
 	// chanboss 上的预报：不重要了，agent 去取消
 	function checkCancelled(o: Order) {

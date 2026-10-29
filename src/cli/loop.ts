@@ -1,4 +1,4 @@
-// 循环的命令：x2 status、x2 do、x2 verify、x2 resolve、x2 handled。见 docs/loop.md
+// 循环的命令：x2 status、x2 do、x2 verify、x2 resolve、x2 handled。
 
 import { db } from "../db/index.ts";
 import { EXIT, NeedsHuman, Usage } from "../errors.ts";

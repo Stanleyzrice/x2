@@ -207,7 +207,7 @@ export async function saveTranslation(sql: Sql, origin: string, url: string): Pr
 	await sql`insert into images ${sql({ sha256: b.sha256, kind: "译图", source: url, from_sha: origin, mime: b.mime, width: b.width, height: b.height, bytes: Buffer.from(b.bytes) })} on conflict (sha256) do nothing`;
 }
 
-/** 译图：交象寄把图上的简体字译成繁体（docs/listing.md「图」）。交一次收一次钱：先记意图再交；象寄说译不成的记在原图上（那张图不用了）；
+/** 译图：交象寄把图上的简体字译成繁体。交一次收一次钱：先记意图再交；象寄说译不成的记在原图上（那张图不用了）；
  * 答复里没有的、没拿到答复的是结果未知，不重交。做商品稿时马上执行（一张约 0.025 元） */
 const translateOp: WriteOp<TranslateP> = {
 	describe: "交象寄把图上的简体字译成繁体（收费）",
@@ -251,7 +251,7 @@ const translateOp: WriteOp<TranslateP> = {
 	},
 };
 
-// ── 上品：建商品、上架（docs/listing.md「建商品、上架」） ──
+// ── 上品：建商品、上架 ──
 
 /** 现在的商品稿：库里的一行、店铺设置、现组的 product_info */
 async function listingNow(sql: Sql, id: string) {

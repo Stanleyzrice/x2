@@ -1,4 +1,4 @@
-// x2 listing：上品（docs/listing.md）。
+// x2 listing：上品。
 // x2 listing add <店> <1688 链接…> [--strategy 名字 --why "选品理由"] [--evidence "依据"]
 //                                                    添加货源：一个货源 × 一家店一份商品稿；记下选品理由、依据和选品快照（当时的策略、在用的选品规矩）。
 //                                                    按策略选的（带 --strategy）--why 必填；几个链接一起加的理由是同一份
@@ -523,9 +523,7 @@ export async function listingCommand(args: string[], json: boolean): Promise<voi
 		return out(rows, rows.length ? rows.map(line).join("\n") : "还没有商品稿：x2 listing add <店> <1688 链接>");
 	}
 
-	throw new Usage(
-		"x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | publish | cancel | noted | list（见 docs/listing.md）",
-	);
+	throw new Usage("x2 listing add | why | quote | make | estimate | show | text | audit | keep | drop | category | publish | cancel | noted | list");
 }
 
 /** x2 listing publish：人同意了，照检查算出来的写入（建商品、上架）一份商品稿一批记进库，马上执行。有一份不是待批准、待上架就都不做。ops：写操作的声明（测试换成假的） */
