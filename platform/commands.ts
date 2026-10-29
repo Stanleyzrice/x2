@@ -89,7 +89,7 @@ export const platform: Toolkit = {
 				try {
 					if (scratch) {
 						setDatabase(scratch.url);
-						console.error(`临时库：${scratch.name}（真库的拷贝，关掉时删掉）`);
+						console.error(`临时库：${scratch.name}（真库的拷贝，关掉时删掉；别的命令要用它，把 X2_DATABASE_URL 的库名换成它）`);
 					}
 					const { build } = await import("vite");
 					await build({ configFile: `${root}platform/ui/vite.config.ts`, logLevel: "warn" });
