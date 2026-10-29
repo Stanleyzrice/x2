@@ -61,3 +61,12 @@ test("同一个引用：键的先后、标题、筛选里一个值写不写成�
 	assert.equal(a, refKey({ filter: { shop: "ni1206", step: ["待批准"] }, table: "listings" }));
 	assert.notEqual(a, refKey({ table: "listings", filter: { step: "待批准" } }));
 });
+
+test("饼图最多 8 块：颜色按顺序用、不循环，多的要并进「其他」", () => {
+	const data = Array.from({ length: 9 }, (_, i) => ({ 店: `店${i}`, 销售额: i + 1 }));
+	assert.throws(
+		() => parseItem({ component: "chart", props: { type: "pie", data, x: "店", y: ["销售额"] } }),
+		(e: Error) => e instanceof Usage && /pie 最多 8 块/.test(e.message),
+	);
+	parseItem({ component: "chart", props: { type: "pie", data: data.slice(0, 8), x: "店", y: ["销售额"] } });
+});

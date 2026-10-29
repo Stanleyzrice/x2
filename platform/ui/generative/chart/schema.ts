@@ -12,7 +12,8 @@ export const props = z
 		y: z.array(z.string()).min(1).max(8),
 	})
 	.refine((p) => p.data.some((r) => p.x in r), { message: "data 里没有 x 这一列", path: ["x"] })
-	.refine((p) => p.type !== "pie" || p.y.length === 1, { message: "pie 只画一列", path: ["y"] });
+	.refine((p) => p.type !== "pie" || p.y.length === 1, { message: "pie 只画一列", path: ["y"] })
+	.refine((p) => p.type !== "pie" || p.data.length <= 8, { message: "pie 最多 8 块（颜色不循环）：小的并进「其他」", path: ["data"] });
 export type Props = z.infer<typeof props>;
 export const examples: z.input<typeof props>[] = [
 	{
