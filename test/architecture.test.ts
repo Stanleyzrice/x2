@@ -130,6 +130,7 @@ const DOCS = [
 	/^AGENTS\.md$/,
 	/^CLAUDE\.md$/,
 	/^skills\/[^/]+\/SKILL\.md$/,
+	/^skills\/[^/]+\/references\/[^/]+\.md$/,
 	/^\.claude\/agents\/[^/]+\.md$/,
 	/^connectors\/(sites|services)\/[^/]+\/NOTES\.md$/,
 ];
@@ -149,6 +150,47 @@ test("代码、文档里提到的仓库里的文件都在（改名、删了文�
 			if (!existsSync(join(ROOT, m[1]!))) bad.push(`${f} → ${m[1]}`);
 		if (f.endsWith(".md"))
 			for (const m of text.matchAll(/\]\(([^)#:\s]+)(?:#[^)]*)?\)/g)) if (!existsSync(resolve(ROOT, dirname(f), m[1]!))) bad.push(`${f} → ${m[1]}`);
+	}
+	assert.deepEqual(bad, []);
+});
+
+const SKILL_LINES = 40;
+const SKILL_CHARS = 2000;
+const skillDirs = () => readdirSync(join(ROOT, "skills"), { withFileTypes: true }).filter((e) => e.isDirectory());
+
+test("skills 只有 md：每个 skill 一份 SKILL.md，细节放 references/*.md（代码、表、测试在 tools）", () => {
+	assert.deepEqual(
+		tracked().filter((f) => f.startsWith("skills/") && !/^skills\/[^/]+\/(SKILL\.md|references\/[^/]+\.md)$/.test(f)),
+		[],
+	);
+});
+
+test(`SKILL.md 有 frontmatter（name 和目录名一样、description）；正文最多 ${SKILL_LINES} 行、${SKILL_CHARS} 字，细节走到那一步再读 references`, () => {
+	const bad: string[] = [];
+	for (const d of skillDirs()) {
+		const text = readFileSync(join(ROOT, "skills", d.name, "SKILL.md"), "utf8");
+		const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+		if (!m) {
+			bad.push(`${d.name}：没有 frontmatter`);
+			continue;
+		}
+		if (!new RegExp(`^name: ${d.name}$`, "m").test(m[1]!)) bad.push(`${d.name}：name 要是 ${d.name}`);
+		if (!/^description: \S/m.test(m[1]!)) bad.push(`${d.name}：没有 description`);
+		const body = m[2]!.trim();
+		if (body.split("\n").length > SKILL_LINES) bad.push(`${d.name}：正文 ${body.split("\n").length} 行`);
+		if (body.length > SKILL_CHARS) bad.push(`${d.name}：正文 ${body.length} 字`);
+	}
+	assert.deepEqual(bad, []);
+});
+
+test("skill 提到的 references 都在，references 里的每份都有人提到（SKILL.md 或别的 reference）", () => {
+	const bad: string[] = [];
+	for (const d of skillDirs()) {
+		const dir = join(ROOT, "skills", d.name);
+		const refs = existsSync(join(dir, "references")) ? readdirSync(join(dir, "references")).map((f) => `references/${f}`) : [];
+		const texts = ["SKILL.md", ...refs].map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
+		for (const m of texts.matchAll(/(?<![\w/])references\/[\w.-]+\.md/g)) if (!existsSync(join(dir, m[0]))) bad.push(`skills/${d.name} → ${m[0]}`);
+		for (const r of refs) if (!texts.includes(r)) bad.push(`skills/${d.name}/${r} 没人提到`);
 	}
 	assert.deepEqual(bad, []);
 });
