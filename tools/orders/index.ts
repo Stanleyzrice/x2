@@ -42,7 +42,7 @@ const json = <T extends z.ZodType>(t: T, describe: string) => z.preprocess(parse
 export const orders: Toolkit = {
 	name: "orders",
 	title: "订单：找货源、加购、预报",
-	kind: "skill",
+	kind: "tool",
 	tools: {
 		source: {
 			...get(

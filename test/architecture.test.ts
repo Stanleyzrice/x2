@@ -1,5 +1,5 @@
-// 代码放哪（AGENTS.md「改代码」）：三层，平台（platform）、连接器（connectors：sites 经浏览器、services 用 API key）、skill（skills：一个 skill 管一类事）。
-// platform 不 import 连接器和 skill；连接器只 import platform 和自己；skill 互相只经 index.ts；网页的界面只引自己；环境变量都写在 .env.example；
+// 代码放哪（AGENTS.md「改代码」）：平台（platform）、连接器（connectors：sites 经浏览器、services 用 API key）、业务工具（tools：一类业务一个），skills 只有 md。
+// platform 不 import 连接器和业务工具；连接器只 import platform 和自己；业务工具互相只经 index.ts；网页的界面只引自己；环境变量都写在 .env.example；
 // 每个文件开头一段注释说它做什么；文档只放在几个固定的地方，提到的仓库里的文件都在。破例不加白名单：放错了就搬，规则不对就改这里和 AGENTS.md
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -38,7 +38,7 @@ const target = (file: string, spec: string) =>
 	spec.startsWith("@/") ? join(ROOT, "platform/ui", spec.slice(2)) : spec.startsWith(".") ? resolve(join(file, ".."), spec) : null;
 
 const SHADCN = "platform/ui/components/ui/";
-const CODE = [join(ROOT, "x2.ts"), ...["platform", "connectors", "skills", "test"].flatMap((d) => files(join(ROOT, d)))].filter(
+const CODE = [join(ROOT, "x2.ts"), ...["platform", "connectors", "tools", "test"].flatMap((d) => files(join(ROOT, d)))].filter(
 	(f) => !rel(f).startsWith(SHADCN),
 );
 const UI = CODE.filter((f) => rel(f).startsWith("platform/ui/"));
@@ -46,9 +46,9 @@ const UI = CODE.filter((f) => rel(f).startsWith("platform/ui/"));
 const layerOf = (f: string) => rel(f).split("/")[0]!;
 const unitOf = (f: string) => {
 	const p = rel(f).split("/");
-	return p[0] === "connectors" ? p.slice(0, 3).join("/") : p[0] === "skills" ? p.slice(0, 2).join("/") : p[0]!;
+	return p[0] === "connectors" ? p.slice(0, 3).join("/") : p[0] === "tools" ? p.slice(0, 2).join("/") : p[0]!;
 };
-const LAYERED = CODE.filter((f) => ["platform", "connectors", "skills"].includes(layerOf(f)) && !f.endsWith(".test.ts") && !rel(f).startsWith("platform/ui/"));
+const LAYERED = CODE.filter((f) => ["platform", "connectors", "tools"].includes(layerOf(f)) && !f.endsWith(".test.ts") && !rel(f).startsWith("platform/ui/"));
 const edges = (fs: string[]) =>
 	fs.flatMap((f) =>
 		imports(f).flatMap(({ spec }) => {
@@ -57,9 +57,9 @@ const edges = (fs: string[]) =>
 		}),
 	);
 
-test("根上的 x2.ts 是装配：只 import platform、连接器和 skill 的入口（index.ts）", () => {
+test("根上的 x2.ts 是装配：只 import platform、连接器和业务工具的入口（index.ts）", () => {
 	const bad = edges([join(ROOT, "x2.ts")]).filter(
-		(e) => !(layerOf(e.to) === "platform" || (["connectors", "skills"].includes(layerOf(e.to)) && rel(e.to) === `${unitOf(e.to)}/index.ts`)),
+		(e) => !(layerOf(e.to) === "platform" || (["connectors", "tools"].includes(layerOf(e.to)) && rel(e.to) === `${unitOf(e.to)}/index.ts`)),
 	);
 	assert.deepEqual(
 		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
@@ -67,15 +67,15 @@ test("根上的 x2.ts 是装配：只 import platform、连接器和 skill 的�
 	);
 });
 
-test("platform 不 import connectors、skills（装配在 x2.ts 里做）", () => {
-	const bad = edges(LAYERED.filter((f) => layerOf(f) === "platform")).filter((e) => ["connectors", "skills"].includes(layerOf(e.to)));
+test("platform 不 import connectors、tools（装配在 x2.ts 里做）", () => {
+	const bad = edges(LAYERED.filter((f) => layerOf(f) === "platform")).filter((e) => ["connectors", "tools"].includes(layerOf(e.to)));
 	assert.deepEqual(
 		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
 		[],
 	);
 });
 
-test("一个连接器只 import platform 和它自己（不 import skill、别的连接器）", () => {
+test("一个连接器只 import platform 和它自己（不 import 业务工具、别的连接器）", () => {
 	const bad = edges(LAYERED.filter((f) => layerOf(f) === "connectors")).filter((e) => layerOf(e.to) !== "platform" && unitOf(e.to) !== unitOf(e.from));
 	assert.deepEqual(
 		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
@@ -83,9 +83,9 @@ test("一个连接器只 import platform 和它自己（不 import skill、别�
 	);
 });
 
-test("skill 互相不 import；真要用别的 skill 的，只经它的 index.ts（公开的接口）", () => {
-	const bad = edges(LAYERED.filter((f) => layerOf(f) === "skills")).filter(
-		(e) => layerOf(e.to) === "skills" && unitOf(e.to) !== unitOf(e.from) && !rel(e.to).endsWith("/index.ts"),
+test("业务工具互相不 import；真要用别的业务工具的，只经它的 index.ts（公开的接口）", () => {
+	const bad = edges(LAYERED.filter((f) => layerOf(f) === "tools")).filter(
+		(e) => layerOf(e.to) === "tools" && unitOf(e.to) !== unitOf(e.from) && !rel(e.to).endsWith("/index.ts"),
 	);
 	assert.deepEqual(
 		bad.map((e) => `${rel(e.from)} → ${rel(e.to)}`),
@@ -145,7 +145,7 @@ test("代码、文档里提到的仓库里的文件都在（改名、删了文�
 	const bad: string[] = [];
 	for (const f of tracked().filter((x) => /\.(ts|tsx|md|sql)$/.test(x))) {
 		const text = readFileSync(join(ROOT, f), "utf8");
-		for (const m of text.matchAll(/(?<![\w./-])((?:platform|connectors|skills|test|bin|src|web|docs|\.claude)\/[\w./-]+\.(?:md|ts|tsx|sql|json))/g))
+		for (const m of text.matchAll(/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude)\/[\w./-]+\.(?:md|ts|tsx|sql|json))/g))
 			if (!existsSync(join(ROOT, m[1]!))) bad.push(`${f} → ${m[1]}`);
 		if (f.endsWith(".md"))
 			for (const m of text.matchAll(/\]\(([^)#:\s]+)(?:#[^)]*)?\)/g)) if (!existsSync(resolve(ROOT, dirname(f), m[1]!))) bad.push(`${f} → ${m[1]}`);

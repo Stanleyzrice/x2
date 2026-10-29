@@ -70,7 +70,7 @@ async function written(sql: Sql, ran: Ran[]): Promise<void> {
 export const listing: Toolkit = {
 	name: "listing",
 	title: "上品：贴货源、做商品稿、写文案、建商品、上架",
-	kind: "skill",
+	kind: "tool",
 	tools: {
 		add: {
 			...get(

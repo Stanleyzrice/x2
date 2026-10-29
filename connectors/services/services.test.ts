@@ -1,4 +1,4 @@
-// 外部服务：认图、象寄的签名和结果对图、筛字的回答
+// 外部服务：认图、象寄的签名和结果对图
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inspect, mimeOf, sizeOf } from "./image/api.ts";
@@ -108,14 +108,4 @@ test("象寄：结果按原图地址对（原样或解码后），不按位置�
 	});
 	assert.ok(twice.kind === "done" && twice.missing.length === 1);
 	assert.equal(parse([b], { Code: 401, Message: "签名错误" }).kind, "refused");
-});
-
-test("筛字的回答：整个是一个字母（可以重复、带标点反引号）才算", async () => {
-	const { parseVerdict } = await import("../../skills/listing/screen.ts");
-	assert.equal(parseVerdict("m"), "m");
-	assert.equal(parseVerdict(" `m`。\n"), "m");
-	assert.equal(parseVerdict("dd"), "d");
-	assert.equal(parseVerdict("marketing"), null);
-	assert.equal(parseVerdict("m or p"), null);
-	assert.equal(parseVerdict(""), null);
 });

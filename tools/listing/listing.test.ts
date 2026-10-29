@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { margin, minPrice, type PriceParams, payout } from "./price.ts";
+import { parseVerdict } from "./screen.ts";
 
 const base = {
 	fx: 4.4,
@@ -1402,4 +1403,13 @@ test("规格表（网页）：一个规格一行，按选项排，每层的选�
 		],
 	);
 	assert.deepEqual(t.removed, [{ name: "定製", count: 3 }]);
+});
+
+test("筛字的回答：整个是一个字母（可以重复、带标点反引号）才算", () => {
+	assert.equal(parseVerdict("m"), "m");
+	assert.equal(parseVerdict(" `m`。\n"), "m");
+	assert.equal(parseVerdict("dd"), "d");
+	assert.equal(parseVerdict("marketing"), null);
+	assert.equal(parseVerdict("m or p"), null);
+	assert.equal(parseVerdict(""), null);
 });

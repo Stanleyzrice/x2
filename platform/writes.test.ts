@@ -24,7 +24,7 @@ const fake: WriteOp<{ n: number }> = {
 	check: async (p) => ({ done: outcome.has(p.n) ? outcome.get(p.n)!.done : true, readback: { n: p.n } }),
 };
 const ops = { 试写: fake };
-register({ name: "test", title: "试", kind: "skill", tools: {}, writes: ops });
+register({ name: "test", title: "试", kind: "tool", tools: {}, writes: ops });
 const perform1 = (db: NonNullable<typeof sql>, writes: { op: string; params: unknown }[]) => perform(db, [writes], {}, ops);
 
 test("写入：写工具交的一批马上做；结果未知停下这一批（剩下的未执行），不重发；没核清的同一个对象不再做；x2 verify 核清", {

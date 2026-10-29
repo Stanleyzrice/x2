@@ -1,7 +1,7 @@
 // 命令行：照注册表（tool.ts）生成。x2 <toolkit> <工具> [--参数 值…] [--json]；平台的工具直接是命令（x2 status）；x2 orders.cart 和 x2 orders cart 一样。
 // 参数经工具的 zod 声明校验、转换：--kebab-case 对上 camelCase，单独的 --名字 是开关，值写 - 从 stdin 读（例 JSON）。
 // 读一页一页的：默认翻到底，--pages N 只翻 N 页，--cursor 从上次输出的 next 接着翻，输出 { rows, next }。
-// 写（skill 的写工具）：照它排的一批或几批交给写入引擎执行，--try 跑还没在真站点上跑过的写操作；连接器的写工具只经 skill 的写工具调。
+// 写（业务工具的写工具）：照它排的一批或几批交给写入引擎执行，--try 跑还没在真站点上跑过的写操作；连接器的写工具只经业务工具的写工具调。
 // 输出约定：stdout 只放结果（--json 时是一个 JSON 值，出错是 { "error": { "kind", "message" } }）；stderr 只放进度。
 // 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先 x2 verify）
 import { z } from "zod";
@@ -70,7 +70,7 @@ export function toolHelp(kit: Toolkit, name: string, t: Tool): string {
 		: isWrite(t)
 			? "写：人在终端里同意了才调。每一项先现读还该不该做、记意图、提交一次、读回来；结果未知退出码 4，不重发（x2 verify）"
 			: t.kind === "write"
-				? "连接器的写工具：只经 skill 的写工具调"
+				? "连接器的写工具：只经业务工具的写工具调"
 				: "输出一个值";
 	return [`${call(kit, name)}：${t.description}`, ...(params.length ? table(params) : ["  （没有参数）"]), tail].join("\n");
 }
@@ -95,7 +95,7 @@ function help(): string {
 		"平台：",
 		...table(top.flatMap((k) => Object.entries(k.tools).map(([n, t]): [string, string] => [`x2 ${n}`, t.description]))),
 		...group("platform", "会话（网页）："),
-		...group("skill", "skill："),
+		...group("tool", "业务工具（生意的规则写成代码）："),
 		...group("site", "站点（经浏览器、用人的登录）："),
 		...group("service", "服务（用 API key）："),
 		"x2 <toolkit> --help 列工具；x2 <toolkit> <工具> --help 看参数；x2 schema 全部工具的说明和参数（JSON Schema）",
@@ -113,7 +113,7 @@ export function schema(): Record<string, unknown> {
 				description: t.description,
 				kind: t.kind,
 				output: paged(t) ? "{ rows, next }" : isWrite(t) ? "写入的结果 { ran, unknown, blocked }" : "一个值",
-				...(t.kind === "write" && !isWrite(t) ? { via: "只经 skill 的写工具调" } : {}),
+				...(t.kind === "write" && !isWrite(t) ? { via: "只经业务工具的写工具调" } : {}),
 				params,
 			};
 		}
@@ -128,7 +128,7 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	if (!t) throw new Usage(`${kit.name} 没有 ${name} 这个工具\n${kitHelp(kit)}`);
 	const usage = () => toolHelp(kit, name, t);
 	if (rest.includes("--help") || rest.includes("-h")) return { help: usage() };
-	if (t.kind === "write" && !isWrite(t)) throw new Usage(`${call(kit, name)} 是连接器的写工具，只经 skill 的写工具调（x2 schema 看有哪些）`);
+	if (t.kind === "write" && !isWrite(t)) throw new Usage(`${call(kit, name)} 是连接器的写工具，只经业务工具的写工具调（x2 schema 看有哪些）`);
 
 	const { flags, bare } = await parseFlags(rest);
 	const { pages, cursor, try: tryFlag, ...given } = flags;

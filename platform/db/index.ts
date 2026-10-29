@@ -1,5 +1,5 @@
 // 库：Postgres，唯一的数据。地址在 X2_DATABASE_URL（先在本机开发，以后指到 NAS）；凭证留在环境变量里，不进库。
-// 表的结构：平台的在 schema.sql，每个 skill 的在它自己的 schema.sql（toolkit 的 schema，注册时记下）。每个进程第一次用库时按先后跑一遍（只建没有的、加没有的列）
+// 表的结构：平台的在 schema.sql，每个业务工具（tools/<名字>）的在它自己的 schema.sql（toolkit 的 schema，注册时记下）。每个进程第一次用库时按先后跑一遍（只建没有的、加没有的列）
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";

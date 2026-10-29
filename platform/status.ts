@@ -1,4 +1,4 @@
-// x2 status：问每个 skill 的检查（toolkit 的 check：现读站点、跑检查），合起来说三件事：读到了什么、要人做的、agent 能做的。
+// x2 status：问每个业务工具的检查（toolkit 的 check：现读站点、跑检查），合起来说三件事：读到了什么、要人做的、agent 能做的。
 // 加上写入的：结果未知、不一致的提醒人去站点上看，已提交、结果未知的 agent 先核清（x2 verify）。人说做完了的（x2 handled）不再提醒
 import type { Sql } from "./db/index.ts";
 import { type Checked, type Reminder, type Todo, toolkits, writeOps } from "./tool.ts";

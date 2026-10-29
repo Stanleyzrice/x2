@@ -1,10 +1,10 @@
-// 工具：x2 能做的每一件事都声明成一个工具，按外部系统、按 skill 分成 toolkit，注册进平台（x2.ts 装配），命令行（cli.ts）、x2 schema 都照注册表生成。
-// 先例 Composio：平台通用；一个外部系统一个连接器（connectors，site 经浏览器、service 用 API key）；一个 skill 管一类事（skills，例 处理订单、上品、选品）：它的 SKILL.md、代码、表、测试放在一起。
+// 工具：x2 能做的每一件事都声明成一个工具，按外部系统、按一类业务分成 toolkit，注册进平台（x2.ts 装配），命令行（cli.ts）、x2 schema 都照注册表生成。
+// 先例 Composio：平台通用；一个外部系统一个连接器（connectors，site 经浏览器、service 用 API key）；一类业务一个业务工具（tools，例 订单、上品、选品）：它的代码、表、测试放在一起；教 agent 怎么用的 SKILL.md 在 skills/<名字>/，只有 md。
 // 一个工具：说明、参数（zod：命令行的 --名字 值经它校验、转换）、怎么做。两种：
 // - read：不改外面的系统，直接跑（读站点、服务；读写库里的东西也算）。回一个值（run），或一页一页的行（page：这一页和下一页的 cursor，null 是到底了；
 //   命令行按 --pages 翻，输出 { rows, next }。先例 steampipe 的表：参数是 key columns，翻页藏在工具里）
-// - write：改外面的系统。skill 的写工具决定做什么、该不该做（业务上的保护），排成一批或几批写入（plan），交至多一次写入（writes.ts）：记意图、只提交一次、读回对账；
-//   连接器的写工具只发一次请求、回结果（submit），只经 skill 调
+// - write：改外面的系统。业务工具的写工具决定做什么、该不该做（业务上的保护），排成一批或几批写入（plan），交至多一次写入（writes.ts）：记意图、只提交一次、读回对账；
+//   连接器的写工具只发一次请求、回结果（submit），只经业务工具调
 import { z } from "zod";
 import { registerSite, type SiteDef } from "./browser/browser.ts";
 import { addSchema, type Sql } from "./db/index.ts";
@@ -29,7 +29,7 @@ export type Checked = { read: Read[]; human: Reminder[]; todo: Todo[] };
 export type Toolkit = {
 	name: string;
 	title: string;
-	kind: "platform" | "site" | "service" | "skill";
+	kind: "platform" | "site" | "service" | "tool";
 	tools: Record<string, Tool>;
 	site?: SiteDef;
 	scope?: { flag: string; description: string; run: <T>(value: string, fn: () => Promise<T>) => Promise<T> };

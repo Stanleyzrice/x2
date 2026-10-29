@@ -1,5 +1,5 @@
 // 选品（x2 selection <工具>）：策略（假设、选品方法、版本号；每份商品稿记下从哪个策略来、按的是第几版，按策略看效果）和选品规矩（所有策略共用，旧的不删）。
-// 别的 skill 用的（添加货源、选品快照）从这里拿
+// 别的业务工具用的（添加货源、选品快照）从这里拿
 import { z } from "zod";
 import { db } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
@@ -24,7 +24,7 @@ const ruleLine = (r: Rule) =>
 export const selection: Toolkit = {
 	name: "selection",
 	title: "选品：策略、选品规矩",
-	kind: "skill",
+	kind: "tool",
 	tools: {
 		"strategy-add": {
 			...get(

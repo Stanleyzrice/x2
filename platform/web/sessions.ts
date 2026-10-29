@@ -12,7 +12,7 @@ const cell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const datagrid = z
 	.object({
 		title,
-		table: z.string().describe("表名（每个 skill 的 tables.ts，和写入 writes；不对会说有哪些）"),
+		table: z.string().describe("表名（每个业务工具的 tables.ts，和写入 writes；不对会说有哪些）"),
 		view: z.string().optional().describe("表的视图（tables.ts 的 views 的 title）；不给用第一个"),
 		filter: z
 			.record(z.string(), z.union([z.string(), z.array(z.string()).min(1)]))
