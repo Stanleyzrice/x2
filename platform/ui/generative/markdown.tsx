@@ -1,7 +1,7 @@
 // markdown：一段话（标题、列表、表格、链接）。链接在新窗口开
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Props } from "../../web/sessions.ts";
+import type { Props } from "../../web/pages.ts";
 
 export function Markdown({ props }: { props: Props<"markdown"> }) {
 	return (

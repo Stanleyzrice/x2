@@ -3,7 +3,7 @@ import { Maximize2Icon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import type { Props } from "../../web/sessions.ts";
+import type { Props } from "../../web/pages.ts";
 import { Title } from "./title.tsx";
 
 export function Diagram({ props }: { props: Props<"diagram"> }) {

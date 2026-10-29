@@ -1,4 +1,4 @@
-// 网页（x2 web）：侧栏是会话列表（agent 开的，每 5 秒重读），地址 #会话编号；打开一个会话见 session.tsx。深浅色跟系统
+// 网页（x2 web）：侧栏是页列表（agent 开的，每 5 秒重读），地址 #页编号；打开一页见 page.tsx。深浅色跟系统
 import "./app.css";
 import { MessageSquareIcon } from "lucide-react";
 import { StrictMode, useEffect, useState } from "react";
@@ -19,26 +19,26 @@ import {
 } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { api, type SessionSummary, usePoll } from "./api.ts";
-import { SessionView } from "./session.tsx";
+import { api, type PageSummary, usePoll } from "./api.ts";
+import { PageView } from "./page.tsx";
 
 const route = () => decodeURIComponent(location.hash.slice(1));
 
 function App() {
 	const [id, setId] = useState(route);
-	const [sessions, , reload] = usePoll(api.sessions, 5000, []);
+	const [pages, , reload] = usePoll(api.pages, 5000, []);
 	useEffect(() => {
 		const on = () => setId(route());
 		window.addEventListener("hashchange", on);
 		return () => window.removeEventListener("hashchange", on);
 	}, []);
-	const current = id || sessions?.[0]?.id || "";
+	const current = id || pages?.[0]?.id || "";
 	return (
 		<SidebarProvider>
-			<Nav sessions={sessions ?? []} active={current} />
+			<Nav pages={pages ?? []} active={current} />
 			<SidebarInset className="min-w-0">
 				{current ? (
-					<SessionView
+					<PageView
 						key={current}
 						id={current}
 						onDeleted={() => {
@@ -51,7 +51,7 @@ function App() {
 						<header className="flex h-12 items-center border-b px-3">
 							<SidebarTrigger />
 						</header>
-						<p className="p-12 text-center text-sm text-muted-foreground">还没有会话：agent 用 x2 session create 开一个</p>
+						<p className="p-12 text-center text-sm text-muted-foreground">还没有页：agent 用 x2 page create 开一个</p>
 					</div>
 				)}
 			</SidebarInset>
@@ -59,7 +59,7 @@ function App() {
 	);
 }
 
-function Nav({ sessions, active }: { sessions: SessionSummary[]; active: string }) {
+function Nav({ pages, active }: { pages: PageSummary[]; active: string }) {
 	const { setOpenMobile } = useSidebar();
 	return (
 		<Sidebar>
@@ -68,9 +68,9 @@ function Nav({ sessions, active }: { sessions: SessionSummary[]; active: string 
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarGroup>
-					<SidebarGroupLabel>会话</SidebarGroupLabel>
+					<SidebarGroupLabel>页</SidebarGroupLabel>
 					<SidebarMenu>
-						{sessions.map((s) => (
+						{pages.map((s) => (
 							<SidebarMenuItem key={s.id}>
 								<SidebarMenuButton isActive={s.id === active} render={<a href={`#${s.id}`} />} onClick={() => setOpenMobile(false)}>
 									<MessageSquareIcon />

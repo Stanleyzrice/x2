@@ -1,7 +1,7 @@
 // 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。只读写库，不碰站点。
-// GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=&filter=：一个视图的行（filter 是 JSON，只认 sessions.ts 的 filterable 的列）；
+// GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=&filter=：一个视图的行（filter 是 JSON，只认 pages.ts 的 filterable 的列）；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
-// GET /api/sessions：会话列表；GET /api/session?id=：一个会话和它的组件；DELETE /api/session?id=：删会话；DELETE /api/session/item?id=：关掉右边的一个 tab
+// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -9,7 +9,7 @@ import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { closeItem, deleteSession, filterable, listSessions, showSession } from "./sessions.ts";
+import { closeItem, deletePage, filterable, listPages, showPage } from "./pages.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
 
 const LIMIT = 1000;
@@ -164,13 +164,13 @@ export async function serve(
 			return rows.map((r) => shape(t, colTypes.get(t.name)!, r));
 		},
 
-		"GET /api/sessions": async () => listSessions(sql),
-		"GET /api/session": async (_, url) => showSession(sql, url.searchParams.get("id") ?? ""),
-		"DELETE /api/session": async (_, url) => {
-			await deleteSession(sql, url.searchParams.get("id") ?? "");
+		"GET /api/pages": async () => listPages(sql),
+		"GET /api/page": async (_, url) => showPage(sql, url.searchParams.get("id") ?? ""),
+		"DELETE /api/page": async (_, url) => {
+			await deletePage(sql, url.searchParams.get("id") ?? "");
 			return { ok: true };
 		},
-		"DELETE /api/session/item": async (_, url) => {
+		"DELETE /api/page/item": async (_, url) => {
 			await closeItem(sql, url.searchParams.get("id") ?? "");
 			return { ok: true };
 		},

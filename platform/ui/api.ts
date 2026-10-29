@@ -1,10 +1,10 @@
-// 网页和 x2 web 之间：会话、表的说明、表的行、改一格、添一行。出错抛人看得懂的原话（x2 web 回的）
+// 网页和 x2 web 之间：页、表的说明、表的行、改一格、添一行。出错抛人看得懂的原话（x2 web 回的）
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { Item, Props, Session, SessionSummary } from "../web/sessions.ts";
+import type { Item, Page, PageSummary, Props } from "../web/pages.ts";
 import type { Grid, Key, Meta, Pic, Row } from "../web/tables.ts";
 
-export type { Grid, Item, Key, Meta, Pic, Props, Row, Session, SessionSummary };
+export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Props, Row };
 export type Column = Meta["columns"][number];
 export type View = Meta["views"][number];
 export type Filter = Record<string, string | string[]>;
@@ -18,10 +18,10 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 const q = encodeURIComponent;
 
 export const api = {
-	sessions: () => call<SessionSummary[]>("GET", "/api/sessions"),
-	session: (id: string) => call<Session>("GET", `/api/session?id=${q(id)}`),
-	deleteSession: (id: string) => call<unknown>("DELETE", `/api/session?id=${q(id)}`),
-	closeItem: (id: string) => call<unknown>("DELETE", `/api/session/item?id=${q(id)}`),
+	pages: () => call<PageSummary[]>("GET", "/api/pages"),
+	page: (id: string) => call<Page>("GET", `/api/page?id=${q(id)}`),
+	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
+	closeItem: (id: string) => call<unknown>("DELETE", `/api/page/item?id=${q(id)}`),
 	rows: (table: string, view: string | undefined, filter: Filter | undefined) =>
 		call<Row[]>("GET", `/api/rows?table=${q(table)}&view=${q(view ?? "")}&filter=${q(JSON.stringify(filter ?? {}))}`),
 	set: (table: string, key: Key, col: string, value: unknown) => call<Row | null>("PATCH", "/api/rows", { table, key, col, value }),

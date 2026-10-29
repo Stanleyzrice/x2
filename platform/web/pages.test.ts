@@ -1,10 +1,10 @@
-// 会话：push 照组件的参数校验，说哪一格不对
+// 页：push 照组件的参数校验，说哪一格不对
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Usage } from "../errors.ts";
-import { parseItem } from "./sessions.ts";
+import { parseItem } from "./pages.ts";
 
-test("会话：没有的组件说有哪些；参数不对说哪一格", () => {
+test("页：没有的组件说有哪些；参数不对说哪一格", () => {
 	assert.throws(
 		() => parseItem({ component: "nope", props: {} }),
 		(e: Error) => e instanceof Usage && /没有组件 nope/.test(e.message),

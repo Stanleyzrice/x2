@@ -1,4 +1,4 @@
-// 平台自己的命令（x2 status、verify、resolve、handled、schema、web、migrate）和会话（x2 session <工具>）：换哪门生意都一样
+// 平台自己的命令（x2 status、verify、resolve、handled、schema、web、migrate）和页（x2 page <工具>）：换哪门生意都一样
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { outcomeText, schema } from "./cli.ts";
@@ -6,8 +6,8 @@ import { db } from "./db/index.ts";
 import { Usage } from "./errors.ts";
 import { status } from "./status.ts";
 import { type Checked, findTool, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
+import { catalog, createPage, deletePage, listPages, parseItem, push, showPage } from "./web/pages.ts";
 import { serve } from "./web/server.ts";
-import { catalog, createSession, deleteSession, listSessions, parseItem, push, showSession } from "./web/sessions.ts";
 import { run } from "./writes.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -78,7 +78,7 @@ export const platform: Toolkit = {
 		schema: get("全部工具的说明和参数（JSON Schema）", undefined, async () => schema()),
 		web: {
 			...get(
-				"开网页（Ctrl-C 关掉）：侧栏是会话，中间是 generative 组件，右边是 interactive 组件",
+				"开网页（Ctrl-C 关掉）：侧栏是页，中间是 generative 组件，右边是 interactive 组件",
 				z.object({
 					host: z.string().min(1).default("127.0.0.1").describe("0.0.0.0：同一个网络里别的电脑也能开"),
 					port: z.coerce.number().int().min(1).max(65535).default(5170).describe("端口"),
@@ -107,40 +107,40 @@ export const platform: Toolkit = {
 };
 
 const link = (id: string) => `http://127.0.0.1:5170/#${id}`;
-const sessionId = z.object({ id: str("会话编号") });
+const pageId = z.object({ id: str("页编号") });
 
-export const session: Toolkit = {
-	name: "session",
-	title: "会话：agent 开会话、往里放组件给人看（generative）、让人在上面做事（interactive），人在网页上（x2 web）看",
+export const page: Toolkit = {
+	name: "page",
+	title: "页：agent 开页、往上放组件给人看（generative）、让人在上面做事（interactive），人在网页上（x2 web）看",
 	kind: "platform",
 	tools: {
 		list: {
-			...get("会话列表", undefined, async () => listSessions(await db())),
-			text: (l) => (l.length ? l.map((s: any) => `#${s.id} ${s.title}`).join("\n") : "还没有会话：x2 session create --title <标题>"),
+			...get("页列表", undefined, async () => listPages(await db())),
+			text: (l) => (l.length ? l.map((s: any) => `#${s.id} ${s.title}`).join("\n") : "还没有页：x2 page create --title <标题>"),
 		},
 		create: {
-			...get("开一个会话，回编号和网页地址", z.object({ title: z.string().default("").describe("标题") }), async (p) => {
-				const s = await createSession(await db(), p.title);
+			...get("开一页，回编号和网页地址", z.object({ title: z.string().default("").describe("标题") }), async (p) => {
+				const s = await createPage(await db(), p.title);
 				return { ...s, url: link(s.id) };
 			}),
 			text: (s) => `#${s.id} ${s.title}\n${s.url}（x2 web 开着时）`,
 		},
 		delete: {
-			...get("删会话", sessionId, async (p) => {
-				await deleteSession(await db(), p.id);
+			...get("删页", pageId, async (p) => {
+				await deletePage(await db(), p.id);
 				return { id: p.id };
 			}),
-			text: (r) => `删了会话 #${r.id}`,
+			text: (r) => `删了页 #${r.id}`,
 		},
 		show: {
-			...get("会话里的组件", sessionId, async (p) => showSession(await db(), p.id)),
+			...get("这一页上的组件", pageId, async (p) => showPage(await db(), p.id)),
 			text: (s) => [`#${s.id} ${s.title}`, ...s.items.map((i: any) => `  ${i.id} ${i.component} ${JSON.stringify(i.props).slice(0, 120)}`)].join("\n"),
 		},
 		push: {
 			...get(
-				"放组件：{ component: 名字, props: {…} }，或几个组成的数组（x2 session components 看有哪些、参数）；同一个会话里同一个引用再放是换掉",
+				"放组件：{ component: 名字, props: {…} }，或几个组成的数组（x2 page components 看有哪些、参数）；同一页上同一个引用再放是换掉",
 				z.object({
-					id: str("会话编号"),
+					id: str("页编号"),
 					items: z.preprocess(parseJson, z.unknown()).describe("组件的 JSON；写 - 从 stdin 读"),
 				}),
 				async (p) => {

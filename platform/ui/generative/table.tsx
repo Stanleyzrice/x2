@@ -1,6 +1,6 @@
 // table：一张小表（数据在组件里）。数字靠右
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { Props } from "../../web/sessions.ts";
+import type { Props } from "../../web/pages.ts";
 import { Title } from "./title.tsx";
 
 export function SnapshotTable({ props }: { props: Props<"table"> }) {

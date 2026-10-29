@@ -4,7 +4,7 @@
 
 ## 开审稿视图
 
-`x2 session create` 开会话，`x2 session push` 放：
+`x2 page create` 开一页，`x2 page push` 放上去：
 
 ```json
 { "component": "datagrid", "props": { "table": "listings", "view": "审稿" } }

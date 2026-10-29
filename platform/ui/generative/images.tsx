@@ -1,5 +1,5 @@
 // images：一组图，带说明；给了链接的点了在新窗口开。不带 Referer（1688 的图挡别站的 Referer）
-import type { Props } from "../../web/sessions.ts";
+import type { Props } from "../../web/pages.ts";
 import { Title } from "./title.tsx";
 
 export function Images({ props }: { props: Props<"images"> }) {

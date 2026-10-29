@@ -1,6 +1,6 @@
-// generative 组件：agent 说话那一刻的快照，数据在组件里，只给人看。一个组件一个文件，名字和 platform/web/sessions.ts 的 COMPONENTS 对上（少了、多了类型检查报错）
+// generative 组件：agent 说话那一刻的快照，数据在组件里，只给人看。一个组件一个文件，名字和 platform/web/pages.ts 的 COMPONENTS 对上（少了、多了类型检查报错）
 import type { ReactNode } from "react";
-import type { GenerativeName, Item, Props } from "../../web/sessions.ts";
+import type { GenerativeName, Item, Props } from "../../web/pages.ts";
 import { Chart } from "./chart.tsx";
 import { Diagram } from "./diagram.tsx";
 import { Images } from "./images.tsx";

@@ -7,7 +7,7 @@
 1. `x2 status`：现读站点、跑检查，跟人说读到了什么、要人做的、你能做的。状态在站点和库里，不在你的记忆里。
 2. 有结果未知的写入，先 `x2 verify`；还核不清的请人去站点上看，人说了结果用 `x2 resolve --id <写入> --status 已核对|被拒`。
 3. 按 skill 做你能做的：`todo` 里每一项写着要调的工具（`tool`）和参数（`params`）。改站点只经写工具（`x2 --help` 里标着「写」：`orders cart`、`orders forecast`、`listing publish`），都要人在终端里先同意。把每一行结果原样告诉人。
-4. 要人看、要人填的，开会话（`x2 session create`、`x2 session push`），把地址告诉人。组件和参数看 `x2 session components`。
+4. 要人看、要人填的，开一页（`x2 page create`、`x2 page push`），把地址告诉人。组件和参数看 `x2 page components`。
 5. x2 看不到结果的事，人说做完了用 `x2 handled --keys <key>`。
 
 ## 不许做的

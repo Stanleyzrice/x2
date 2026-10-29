@@ -1,5 +1,5 @@
-// 一个会话：中间是 generative 组件的流（agent 放进来的先后），右边是 interactive 组件，一个一个 tab（新放进来的那个打开；人能关掉）。
-// 每 3 秒重读会话（agent 随时会往里放）。手机上两边换成上面的两个 tab
+// 一页：中间是 generative 组件的流（agent 放进来的先后），右边是 interactive 组件，一个一个 tab（新放进来的那个打开；人能关掉）。
+// 每 3 秒重读这一页（agent 随时会往里放）。手机上两边换成上面的两个 tab
 import { Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -14,15 +14,15 @@ import { Interactive, type InteractiveItem, isInteractive } from "./interactive/
 
 const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function SessionView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
-	const [session, error, reload] = usePoll(() => api.session(id), 3000, [id]);
+export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
+	const [page, error, reload] = usePoll(() => api.page(id), 3000, [id]);
 	const mobile = useIsMobile();
 	if (error) return <p className="p-6 text-sm text-destructive">{error}</p>;
-	if (!session) return <Skeleton className="m-6 h-40" />;
-	const stream = session.items.filter(isGenerative);
-	const panel = session.items.filter(isInteractive);
+	if (!page) return <Skeleton className="m-6 h-40" />;
+	const stream = page.items.filter(isGenerative);
+	const panel = page.items.filter(isInteractive);
 	const remove = () => {
-		if (confirm(`删掉会话「${session.title}」？`)) api.deleteSession(id).then(onDeleted, fail);
+		if (confirm(`删掉这一页「${page.title}」？`)) api.deletePage(id).then(onDeleted, fail);
 	};
 
 	const flow = (
@@ -45,9 +45,9 @@ export function SessionView({ id, onDeleted }: { id: string; onDeleted: () => vo
 		<div className="flex h-svh min-w-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
 				<SidebarTrigger />
-				<h1 className="truncate text-sm font-medium">{session.title}</h1>
+				<h1 className="truncate text-sm font-medium">{page.title}</h1>
 				<div className="grow" />
-				<Button size="icon-sm" variant="ghost" aria-label="删掉会话" onClick={remove}>
+				<Button size="icon-sm" variant="ghost" aria-label="删掉这一页" onClick={remove}>
 					<Trash2Icon />
 				</Button>
 			</header>

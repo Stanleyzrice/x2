@@ -1,4 +1,4 @@
-// datagrid：会话里引用的一张表（table、view、filter），不存数据：行现读（每 15 秒、回到页面时再读），人改一格马上存（照 tables.ts 收），存不进说原话。
+// datagrid：页上引用的一张表（table、view、filter），不存数据：行现读（每 15 秒、回到页面时再读），人改一格马上存（照 tables.ts 收），存不进说原话。
 // 视图是卡片的一行一张卡片（例 商品稿的审稿），别的是表格，点一行在右边滑出整行（能改的格在这改）；视图分组的按组排；表有表单的能添一行
 import { PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";

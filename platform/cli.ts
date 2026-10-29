@@ -94,7 +94,7 @@ function help(): string {
 		"x2 <命令> [--参数 值…] [--json]",
 		"平台：",
 		...table(top.flatMap((k) => Object.entries(k.tools).map(([n, t]): [string, string] => [`x2 ${n}`, t.description]))),
-		...group("platform", "会话（网页）："),
+		...group("platform", "页（网页）："),
 		...group("tool", "业务工具（生意的规则写成代码）："),
 		...group("site", "站点（经浏览器、用人的登录）："),
 		...group("service", "服务（用 API key）："),

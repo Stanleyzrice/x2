@@ -1,6 +1,6 @@
-// 会话：agent 开一个会话（x2 session create），往里放组件（x2 session push）。网页的侧栏是会话列表，中间是会话里 generative 组件的流，右边是 interactive 组件（一个一个 tab）。
+// 页：agent 开一页（x2 page create），往上放组件（x2 page push）。网页的侧栏是页列表，中间是页上 generative 组件的流，右边是 interactive 组件（一个一个 tab）。
 // generative 是快照：agent 说话那一刻的内容，数据在组件里，人只看。interactive 是引用：组件里只记指向谁（例 一张表的一个视图），数据每次现读，人在上面做的事写回去。
-// 组件的参数在这里声明一次：x2 session push 照它校验（不对说哪一格），x2 session components 照它给 agent 看，网页照它的类型画
+// 组件的参数在这里声明一次：x2 page push 照它校验（不对说哪一格），x2 page components 照它给 agent 看，网页照它的类型画
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
@@ -96,7 +96,7 @@ export const COMPONENTS = {
 	},
 	datagrid: {
 		kind: "interactive",
-		description: "库里的一张表（引用，不是数据）：人看现在的行、改人能改的格（照 tables.ts）。同一个会话里同一个引用只开一个 tab",
+		description: "库里的一张表（引用，不是数据）：人看现在的行、改人能改的格（照 tables.ts）。同一页上同一个引用只开一个 tab",
 		props: datagrid,
 	},
 } as const satisfies Record<string, { kind: "generative" | "interactive"; description: string; props: z.ZodType }>;
@@ -106,8 +106,8 @@ export type Props<C extends ComponentName> = z.infer<(typeof COMPONENTS)[C]["pro
 export type GenerativeName = { [C in ComponentName]: (typeof COMPONENTS)[C]["kind"] extends "generative" ? C : never }[ComponentName];
 export type InteractiveName = Exclude<ComponentName, GenerativeName>;
 export type Item = { [C in ComponentName]: { id: string; component: C; props: Props<C>; at: string } }[ComponentName];
-export type Session = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
-export type SessionSummary = Omit<Session, "items">;
+export type Page = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
+export type PageSummary = Omit<Page, "items">;
 
 export function parseItem(input: unknown): { component: ComponentName; props: unknown } {
 	const spec = z.object({ component: z.string(), props: z.unknown() }).safeParse(input);
@@ -127,61 +127,61 @@ export const catalog = () =>
 		props: z.toJSONSchema(c.props as z.ZodType, { io: "input", unrepresentable: "any" }),
 	}));
 
-const summary = (r: any): SessionSummary => ({
+const summary = (r: any): PageSummary => ({
 	id: String(r.id),
 	title: r.title,
 	createdAt: r.created_at.toISOString(),
 	updatedAt: r.updated_at.toISOString(),
 });
 
-export async function listSessions(sql: Sql): Promise<SessionSummary[]> {
-	return (await sql`select * from sessions order by updated_at desc`).map(summary);
+export async function listPages(sql: Sql): Promise<PageSummary[]> {
+	return (await sql`select * from pages order by updated_at desc`).map(summary);
 }
 
-export async function createSession(sql: Sql, title: string): Promise<SessionSummary> {
+export async function createPage(sql: Sql, title: string): Promise<PageSummary> {
 	const t = title.trim();
-	if (!t) throw new Usage("会话要有标题");
-	const [r] = await sql`insert into sessions (title) values (${t}) returning *`;
+	if (!t) throw new Usage("页要有标题");
+	const [r] = await sql`insert into pages (title) values (${t}) returning *`;
 	return summary(r);
 }
 
-export async function deleteSession(sql: Sql, id: string): Promise<void> {
-	const r = await sql`delete from sessions where id = ${sessionId(id)} returning id`;
-	if (!r.length) throw new Usage(`没有会话 ${id}`);
+export async function deletePage(sql: Sql, id: string): Promise<void> {
+	const r = await sql`delete from pages where id = ${pageId(id)} returning id`;
+	if (!r.length) throw new Usage(`没有页 ${id}`);
 }
 
-export async function showSession(sql: Sql, id: string): Promise<Session> {
-	const [s] = await sql`select * from sessions where id = ${sessionId(id)}`;
-	if (!s) throw new Usage(`没有会话 ${id}`);
-	const items = await sql`select * from session_items where session_id = ${s.id} order by id`;
+export async function showPage(sql: Sql, id: string): Promise<Page> {
+	const [s] = await sql`select * from pages where id = ${pageId(id)}`;
+	if (!s) throw new Usage(`没有页 ${id}`);
+	const items = await sql`select * from page_items where page_id = ${s.id} order by id`;
 	return { ...summary(s), items: items.map((i) => ({ id: String(i.id), component: i.component, props: i.props, at: i.created_at.toISOString() }) as Item) };
 }
 
 export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: string; component: ComponentName; replaced: boolean }> {
 	const { component, props } = parseItem(input);
-	const sid = sessionId(id);
+	const sid = pageId(id);
 	return sql.begin(async (tx) => {
-		const [s] = await tx`select id from sessions where id = ${sid} for update`;
-		if (!s) throw new Usage(`没有会话 ${id}`);
-		await tx`update sessions set updated_at = now() where id = ${sid}`;
+		const [s] = await tx`select id from pages where id = ${sid} for update`;
+		if (!s) throw new Usage(`没有页 ${id}`);
+		await tx`update pages set updated_at = now() where id = ${sid}`;
 		if (COMPONENTS[component].kind === "interactive") {
 			const ref = props as Props<"datagrid">;
-			const same = (await tx`select id, props from session_items where session_id = ${sid} and component = ${component}`).find(
+			const same = (await tx`select id, props from page_items where page_id = ${sid} and component = ${component}`).find(
 				(r) => refKey(r.props) === refKey(ref),
 			);
 			if (same) {
-				await tx`update session_items set props = ${tx.json(props as any)}, created_at = now() where id = ${same.id}`;
+				await tx`update page_items set props = ${tx.json(props as any)}, created_at = now() where id = ${same.id}`;
 				return { id: String(same.id), component, replaced: true };
 			}
 		}
-		const [r] = await tx`insert into session_items (session_id, component, props) values (${sid}, ${component}, ${tx.json(props as any)}) returning id`;
+		const [r] = await tx`insert into page_items (page_id, component, props) values (${sid}, ${component}, ${tx.json(props as any)}) returning id`;
 		return { id: String(r!.id), component, replaced: false };
 	});
 }
 
 export async function closeItem(sql: Sql, item: string): Promise<void> {
 	if (!/^\d+$/.test(item)) throw new Usage(`没有这个组件：${item}`);
-	await sql`delete from session_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactive"))}`;
+	await sql`delete from page_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactive"))}`;
 }
 
 /** 一个 datagrid 引用的样子：表、视图、按列名排好的筛选（jsonb 存进去会重排对象的键，不能直接比 JSON） */
@@ -194,7 +194,7 @@ const refKey = (p: Props<"datagrid">) =>
 			.sort(([a], [b]) => a.localeCompare(b)),
 	]);
 
-function sessionId(id: string): string {
-	if (!/^\d+$/.test(id)) throw new Usage(`会话是数字编号：${id}`);
+function pageId(id: string): string {
+	if (!/^\d+$/.test(id)) throw new Usage(`页是数字编号：${id}`);
 	return id;
 }
