@@ -2,6 +2,7 @@
 import type { Pic, Pics } from "./pics.ts";
 import { freightOf, type Need } from "./pricing.ts";
 import { LABEL, numbered } from "./product.ts";
+import type { OfferLike } from "./row.ts";
 
 /** 放弃：已上架的是下架、建了商品的是不 publish，都不是放弃；建商品、上架还没核清的可能已经建了，先核清 */
 export function cancelBlock(
@@ -51,7 +52,7 @@ export function keepImages(
 
 /** 估重量、国内运费：只填空着的（人填过的、估过的不动），1688 给了的不用估 */
 export function estimateFill(
-	l: { weight_kg: unknown; freight_rmb: unknown; offer: any },
+	l: { weight_kg: unknown; freight_rmb: unknown; offer: OfferLike | null },
 	needs: Need[],
 	given: { weight?: number | undefined; freight?: number | undefined },
 ): { set: { weight_kg?: number; freight_rmb?: number }; notes: string[] } {
@@ -68,7 +69,7 @@ export function estimateFill(
 	if (given.freight !== undefined) {
 		const known = freightOf(l.offer, null);
 		if (l.freight_rmb !== null) notes.push(`国内运费：已有 ${Number(l.freight_rmb)} 元/件（人填的或估过的），不改`);
-		else if (known !== null) notes.push(`国内运费：${l.offer.tags?.freeShipping ? "货源包邮" : `1688 读得到（${known} 元/件）`}，不用估`);
+		else if (known !== null) notes.push(`国内运费：${l.offer?.tags?.freeShipping ? "货源包邮" : `1688 读得到（${known} 元/件）`}，不用估`);
 		else {
 			set.freight_rmb = given.freight;
 			notes.push(`国内运费：记为 ${given.freight} 元/件`);

@@ -7,7 +7,7 @@ import { ChanbossOrderId, ordersBySn as liveOrders, NO_TRACKING, OrderSn } from 
 import { forecastOrder } from "../../connectors/sites/chanboss/index.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
-import type { WriteOp } from "../../platform/writes.ts";
+import { type WriteOp, writeOp } from "../../platform/writes.ts";
 import { buyAccount } from "./read.ts";
 import { current } from "./status.ts";
 
@@ -29,7 +29,7 @@ export const cartParams = z.object({
 });
 type CartP = z.infer<typeof cartParams>;
 
-const cart: WriteOp<CartP> = {
+const cart: WriteOp<CartP, { inCart: number }> = {
 	describe: "把货源的一个规格加进购物车",
 	link: "https://cart.1688.com/cart.htm",
 	params: cartParams,
@@ -96,7 +96,7 @@ export const forecastParams = z.object({
 });
 type ForecastP = z.infer<typeof forecastParams>;
 
-const forecastOp: WriteOp<ForecastP> = {
+const forecastOp: WriteOp<ForecastP, { status: string | null | undefined }> = {
 	describe: "在 chanboss 上预报一张订单",
 	params: forecastParams,
 	target: (p) => `chanboss:${p.sn}`,
@@ -130,4 +130,4 @@ const forecastOp: WriteOp<ForecastP> = {
 	},
 };
 
-export const ORDER_WRITES: Record<string, WriteOp> = { 加购: cart, 预报: forecastOp };
+export const ORDER_WRITES: Record<string, WriteOp> = { 加购: writeOp(cart), 预报: writeOp(forecastOp) };

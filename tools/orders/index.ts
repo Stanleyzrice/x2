@@ -12,7 +12,8 @@ import { cartParams, forecastParams, ORDER_WRITES } from "./writes.ts";
 
 async function planCart(sql: Sql, items: z.infer<typeof cartParams>[]) {
 	const ok = (await current(sql)).planned;
-	const [{ buy }] = (await sql`select buy_account as buy from order_settings where id = 1`) as any;
+	const [s] = await sql<{ buy: string | null }[]>`select buy_account as buy from order_settings where id = 1`;
+	const buy = s!.buy;
 	return [
 		items.map((params, i) => {
 			if (buy) {

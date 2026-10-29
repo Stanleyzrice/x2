@@ -20,9 +20,10 @@ export const WriteId = z.string().regex(/^\d+$/, "写入的编号是数字").bra
 export type WriteId = z.output<typeof WriteId>;
 
 export type Submitted = Sent;
-export type Prepared<P> = { skip: string } | { params: P; before: unknown };
+export type Prepared<P, B = unknown> = { skip: string } | { params: P; before: B };
 
-export type WriteOp<P = any> = {
+/** 一个写操作。P 是参数的样子，B 是提交前现读的（对账用；记在库里，再读回来时还是它） */
+export type WriteOp<P = unknown, B = unknown> = {
 	describe: string;
 	params: z.ZodType<P>;
 	target: (p: P) => string;
@@ -31,20 +32,35 @@ export type WriteOp<P = any> = {
 	link?: string;
 	untried?: string;
 	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
-	prepare: (sql: Sql, p: P) => Promise<Prepared<P>>;
+	prepare: (sql: Sql, p: P) => Promise<Prepared<P, B>>;
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
-	check: (p: P, before: any, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
+	check: (p: P, before: B | undefined, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
 	after?: (sql: Sql, p: P) => Promise<void>;
 };
+
+/** 登记写操作：各个操作的参数、现读的样子不一样，进注册表（Toolkit 的 writes）时一律看成 unknown。
+ * 引擎只把照这个操作自己的 params 解析过的参数、它自己的 prepare 回的 before（存进库再读回来）传回给它，所以这一处的转换是对的 */
+export const writeOp = <P, B>(op: WriteOp<P, B>): WriteOp => op as unknown as WriteOp;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type Ran = { id: WriteId; batch: string; op: string; display: string; status: string; why?: string };
 
-type Row = { id: WriteId; batch: string; op: string; target: string; key: string; params: any; display: string; status: string; readback: any };
+type Row = {
+	id: WriteId;
+	batch: string;
+	op: string;
+	target: string;
+	key: string;
+	params: unknown;
+	display: string;
+	status: string;
+	readback: { before?: unknown; after?: unknown } | null;
+};
 
-async function set(sql: Sql, id: WriteId, fields: Record<string, unknown>) {
-	await sql`update writes set ${sql(fields as any)} where id = ${id}`;
+/** 改一条写入的几列（值是 jsonb 的已经 sql.json 过） */
+async function set(sql: Sql, id: WriteId, fields: Record<string, postgres.ParameterOrJSON<never> | Date | string | null>) {
+	await sql`update writes set ${sql(fields)} where id = ${id}`;
 }
 
 type Opts = { batch?: string; tryOps?: string[] };
@@ -97,7 +113,7 @@ export const stuck = (status: string) => status === "结果未知" || status ===
 type NewRow = { op: string; params: unknown; target: string; key: string; display: string };
 
 export async function addWrites(tx: Sql | postgres.TransactionSql, rows: NewRow[]): Promise<string> {
-	const [{ batch }] = (await tx`select nextval('batch_seq')::text as batch`) as any;
+	const [{ batch }] = (await tx`select nextval('batch_seq')::text as batch`) as unknown as [{ batch: string }];
 	for (const r of rows) {
 		const same = (await tx`select id::text, status from writes where key = ${r.key} or key like ${`${r.key}#%`} order by id`) as unknown as {
 			id: string;

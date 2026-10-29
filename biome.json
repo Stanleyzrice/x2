@@ -44,7 +44,7 @@
 				"useBlockStatements": "off"
 			},
 			"suspicious": {
-				"noExplicitAny": "off",
+				"noExplicitAny": "error",
 				"noConsole": {
 					"level": "error",
 					"options": {

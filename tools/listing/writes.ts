@@ -4,14 +4,14 @@ import { z } from "zod";
 import { fetchImage } from "../../connectors/services/image/api.ts";
 import type { Outcome } from "../../connectors/services/xiangji/api.ts";
 import { translateImages } from "../../connectors/services/xiangji/index.ts";
-import { channels, productInfo, productPage } from "../../connectors/sites/shopee/products.ts";
+import { channels, type ProductInfo, productInfo, productPage } from "../../connectors/sites/shopee/products.ts";
 import { createListing, findByParentSku, listProduct } from "../../connectors/sites/shopee/publish.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
-import type { WriteOp } from "../../platform/writes.ts";
+import { type WriteOp, writeOp } from "../../platform/writes.ts";
 import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
-import { readbackProblems } from "./product.ts";
+import { readbackProblems, type SentInfo } from "./product.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 
@@ -56,7 +56,8 @@ const createParams = z.object({
 	shop: z.string(),
 	shopId: z.string(),
 	parentSku: z.string(),
-	productInfo: z.record(z.string(), z.unknown()),
+	// 检查时照 productInfo() 组的（ready.ts），存进写入再读出来还是它
+	productInfo: z.record(z.string(), z.unknown()).pipe(z.custom<SentInfo>()),
 	hash: z.string(),
 	name: z.string().optional(),
 });
@@ -92,7 +93,8 @@ const createOp: WriteOp<CreateP> = {
 	},
 	async check(p) {
 		const sql = await db();
-		let [{ product_id: id }] = (await sql`select product_id from listings where id = ${p.listingId}`) as any;
+		const [row] = await sql<{ product_id: string | null }[]>`select product_id from listings where id = ${p.listingId}`;
+		let id = row!.product_id;
 		if (!id) {
 			id = await findByParentSku(p.parentSku, String(p.productInfo.name));
 			if (!id) return { done: null, readback: { found: false } };
@@ -139,7 +141,7 @@ const liveOp: WriteOp<LiveP> = {
 	submit: (_sql, p) => listProduct.submit({ productId: p.productId! }),
 	// 读回对账：在售是做了，禁卖是没做。翻在售以后要十几秒才读得到：隔 3 秒读一次，最多 6 次
 	async check(p, _before, fresh) {
-		let info: any = null;
+		let info: ProductInfo | null = null;
 		for (let i = 0; i < (fresh ? 6 : 1); i++) {
 			if (i) await sleep(3000);
 			info = await productInfo(p.productId!);
@@ -153,4 +155,4 @@ const liveOp: WriteOp<LiveP> = {
 	},
 };
 
-export const LISTING_WRITES: Record<string, WriteOp> = { 建商品: createOp, 上架: liveOp };
+export const LISTING_WRITES: Record<string, WriteOp> = { 建商品: writeOp(createOp), 上架: writeOp(liveOp) };

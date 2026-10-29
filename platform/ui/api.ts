@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
-import type { Grid, Key, Meta, Pic, Row } from "../web/tables.ts";
+import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
 
 export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
 export type Column = Meta["columns"][number];

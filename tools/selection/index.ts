@@ -78,12 +78,14 @@ export const selection: Toolkit = {
 				.refine((a) => a.status !== undefined || a.bet !== undefined || a.how !== undefined || a.note !== undefined, { message: "至少改一样" }),
 			async ({ why, ...wanted }) => {
 				const r = await (await db()).begin(async (tx) => {
-					const [old] = await tx`select status, bet, how, note, version from strategies where name = ${wanted.name} for update`;
+					const [old] = await tx<
+						{ status: string | null; bet: string | null; how: string | null; note: string | null; version: number }[]
+					>`select status, bet, how, note, version from strategies where name = ${wanted.name} for update`;
 					if (!old) return null;
-					const { before, after } = strategyDiff(old as any, wanted);
-					if (!Object.keys(after).length) return { version: old.version as number, before, after };
-					const version = (old.version as number) + 1;
-					await tx`update strategies set ${tx(after as any)}, version = ${version}, updated_at = now() where name = ${wanted.name}`;
+					const { before, after } = strategyDiff(old, wanted);
+					if (!Object.keys(after).length) return { version: old.version, before, after };
+					const version = old.version + 1;
+					await tx`update strategies set ${tx(after as Record<string, Json>)}, version = ${version}, updated_at = now() where name = ${wanted.name}`;
 					await tx`insert into strategy_changes (strategy, version, before, after, why) values (${wanted.name}, ${version}, ${tx.json(before as Json)}, ${tx.json(after as Json)}, ${why})`;
 					return { version, before, after };
 				});

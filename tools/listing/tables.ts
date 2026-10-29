@@ -2,14 +2,16 @@
 import { IMAGE } from "../../connectors/sites/shopee/seller.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
-import type { Grid, Key, Pic, Row, Table } from "../../platform/web/tables.ts";
+import type { Grid, Key, Pic, Table } from "../../platform/web/tables.ts";
 import { LISTING_STEPS } from "./check.ts";
 import { addListings } from "./pick.ts";
 import { LABEL, numbered, usedPics } from "./product.ts";
+import type { ListingRow } from "./row.ts";
 import { listingsCheck } from "./status.ts";
 import { isSingle, removedOf, type SpecsTable, specsOf, specsTable } from "./variants.ts";
 
-function picsOf(l: Row): Pic[] {
+type PicsRow = Pick<ListingRow, "images" | "removed_images" | "variants">;
+function picsOf(l: PicsRow): Pic[] {
 	if (!l.images?.main) return [];
 	const removed = new Set<string>(l.removed_images ?? []);
 	const out: Pic[] = [];
@@ -22,7 +24,7 @@ function picsOf(l: Row): Pic[] {
 		}
 	}
 	const specs = specsOf(l.variants);
-	const option = new Map(((l.images.options ?? []) as any[]).filter((p) => !p.drop && p.imageId).map((p) => [p.from as string, p.imageId as string]));
+	const option = new Map((l.images.options ?? []).filter((p) => !p.drop && p.imageId).map((p) => [p.from, p.imageId!]));
 	if (specs && !isSingle(specs))
 		for (const o of specs.tiers[0]!.options) {
 			const id = o.image ? option.get(o.image) : undefined;
@@ -34,7 +36,7 @@ function picsOf(l: Row): Pic[] {
 async function setPic(sql: Sql, key: Key, value: unknown): Promise<void> {
 	const v = value as { id?: unknown; removed?: unknown };
 	if (typeof v?.id !== "string" || typeof v.removed !== "boolean") throw new Usage("图：要 { id, removed }");
-	const [l] = await sql`select images, variants, removed_images from listings where id = ${key.id!}`;
+	const [l] = await sql<PicsRow[]>`select images, variants, removed_images from listings where id = ${key.id!}`;
 	if (!l) throw new Usage(`没有商品稿 ${key.id}`);
 	if (!picsOf(l).some((p) => p.id === v.id && p.role !== "option")) throw new Usage(`商品稿 ${key.id} 的主图、详情图里没有这张图`);
 	const removed = new Set<string>(l.removed_images ?? []);
@@ -68,10 +70,10 @@ export function specsGrid({ tiers, rows, removed }: SpecsTable): Grid {
 	};
 }
 
-function specsRows(l: Row): Grid | null {
+function specsRows(l: Pick<ListingRow, "images" | "variants" | "offer" | "removed_variants">): Grid | null {
 	const s = specsOf(l.variants);
 	if (!s) return null;
-	const shopee = new Map(((l.images?.options ?? []) as any[]).filter((p) => p.imageId).map((p) => [p.from as string, `${IMAGE}${p.imageId}`]));
+	const shopee = new Map((l.images?.options ?? []).filter((p) => p.imageId).map((p) => [p.from, `${IMAGE}${p.imageId}`]));
 	return specsGrid(specsTable(s, removedOf(l.offer, l.removed_variants), (from) => shopee.get(from) ?? from));
 }
 

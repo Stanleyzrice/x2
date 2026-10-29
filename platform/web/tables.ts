@@ -19,7 +19,8 @@ export type Table = {
 	title: string;
 	key: string[];
 	columns: Record<string, string>;
-	computed?: Record<string, { type: ColumnType; of: (row: Row) => unknown }>;
+	/** 算出来的列：of 拿到的是这张表库里的一行（照这张表的列；业务工具按自己的行的类型写，server.ts 原样传给它） */
+	computed?: Record<string, { type: ColumnType; of: (row: never) => unknown }>;
 	images?: string[];
 	links?: string[];
 	edit?: Record<string, Edit>;
@@ -28,7 +29,9 @@ export type Table = {
 	recheck?: (sql: Sql, key: Key) => Promise<unknown>;
 	form?: Form;
 };
-export type Row = Record<string, any>;
+export type Row = Record<string, unknown>;
+/** 给网页的一行：主键（_key）、这一行现在不能改的列（_readonly），和给人看的列 */
+export type Shown = Row & { _key: Key; _readonly: string[] };
 export type Key = Record<string, string>;
 export type ColumnType = "bool" | "number" | "time" | "text" | "json" | "image" | "link" | "pics" | "grid";
 

@@ -17,7 +17,9 @@ const table = (rows: [string, string][]) => {
 	return rows.map(([a, b]) => `  ${a.padEnd(width)}  ${b}`);
 };
 
-const schemaOf = (t: Tool) => z.toJSONSchema(t.params, { io: "input", unrepresentable: "any" }) as { properties?: Record<string, any>; required?: string[] };
+/** 命令行帮助用到的 JSON Schema 的几格（placeholder 是 tool.ts 的 meta 加的） */
+type Prop = { type?: string; enum?: unknown[]; default?: unknown; description?: string; placeholder?: string };
+const schemaOf = (t: Tool) => z.toJSONSchema(t.params, { io: "input", unrepresentable: "any" }) as { properties?: Record<string, Prop>; required?: string[] };
 const isWrite = (t: Tool): t is WriteTool => t.kind === "write" && "plan" in t;
 const paged = (t: Tool) => t.kind === "read" && "page" in t;
 const call = (kit: Toolkit, name: string) => (kit.name ? `x2 ${kit.name} ${name}` : `x2 ${name}`);
@@ -58,8 +60,8 @@ export function toolHelp(kit: Toolkit, name: string, t: Tool): string {
 	const params = Object.entries(s.properties ?? {}).map(([k, p]): [string, string] => {
 		const value = p.placeholder ?? (p.enum ? p.enum.join("|") : (p.type ?? "值"));
 		// JSON Schema 里没有 preprocess 过的参数的默认值：从 zod 的声明里取
-		const def = (t.params.shape[k] as any)?.def;
-		const fallback = def?.type === "default" ? def.defaultValue : undefined;
+		const def = (t.params.shape[k] as z.ZodType | undefined)?.def;
+		const fallback = def?.type === "default" ? (def as z.core.$ZodDefaultDef).defaultValue : undefined;
 		const note = required.has(k) ? "必填" : (p.default ?? fallback) !== undefined ? `默认 ${JSON.stringify(p.default ?? fallback)}` : "可选";
 		return [`--${kebab(k)} <${value}>`, `${note}。${p.description ?? ""}`];
 	});

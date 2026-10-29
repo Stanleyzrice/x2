@@ -226,7 +226,7 @@ export const listing: Toolkit = {
 				const [l] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
 				if (!l) throw new Usage(`没有商品稿 ${p.id}`);
 				if (!l.offer || !specsOf(l.variants)) throw new Usage(`${listingName(l)}还没做好：先 x2 listing make --ids ${p.id}`);
-				const { set, notes } = estimateFill(l as any, estimateNeeds(l), p);
+				const { set, notes } = estimateFill(l, estimateNeeds(l), p);
 				if (set.weight_kg !== undefined)
 					await sql`update listings set weight_kg = ${set.weight_kg}, updated_at = now() where id = ${p.id} and weight_kg is null`;
 				if (set.freight_rmb !== undefined)
@@ -348,7 +348,7 @@ export const listing: Toolkit = {
 					}
 					const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs) } : {};
 					const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
-					await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() } as any)} where id = ${it.id}`;
+					await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() })} where id = ${it.id}`;
 					results.push({
 						id: it.id,
 						saved: true,
@@ -456,13 +456,21 @@ export const listing: Toolkit = {
 				const sql = await db();
 				const want = [...new Set(p.ids as string[])];
 				const name = await namesOf(sql, want);
-				const rows = await sql`select id::text, cancelled, product_id, listed_at from listings where id in ${sql(want)}`;
-				const writes = await sql`select id::text, params->>'listingId' as listing, op, status from writes
+				const rows = await sql<
+					Pick<ListingRow, "id" | "cancelled" | "product_id" | "listed_at">[]
+				>`select id::text, cancelled, product_id, listed_at from listings where id in ${sql(want)}`;
+				const writes = await sql<
+					{ id: string; listing: string; op: string; status: string }[]
+				>`select id::text, params->>'listingId' as listing, op, status from writes
 						where op in ('建商品', '上架') and status in ('待执行', '已提交', '结果未知', '不一致') and params->>'listingId' in ${sql(want)} order by id`;
 				const bad = want.flatMap((id) => {
 					const r = rows.find((x) => x.id === id);
 					if (!r) return [`没有商品稿 ${id}`];
-					const no = cancelBlock(name(id), r as any, writes.filter((w) => w.listing === id) as any);
+					const no = cancelBlock(
+						name(id),
+						r,
+						writes.filter((w) => w.listing === id),
+					);
 					return no ? [no] : [];
 				});
 				if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没放弃`);
@@ -527,7 +535,7 @@ export async function setCategory(sql: Sql, id: ListingId, category: string, tre
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Usage(`没有商品稿 ${id}`);
 	const name = listingName(l);
-	const built = categoryBlock(name, l as any, category, "", null);
+	const built = categoryBlock(name, l, category, "", null);
 	if (built) throw new Usage(built);
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	if (!row) throw new Usage(`店铺设置里没有「${l.shop}」`);
@@ -535,7 +543,7 @@ export async function setCategory(sql: Sql, id: ListingId, category: string, tre
 	const found = leafPath(await tree(s.shopId), category);
 	if ("error" in found) throw new Usage(`${name}：${found.error}`);
 	const full = found.names.join(" > ");
-	const no = categoryBlock(name, l as any, category, full, s.categories);
+	const no = categoryBlock(name, l, category, full, s.categories);
 	if (no) throw new Usage(no);
 	const problems =
 		String(l.problems ?? "")

@@ -29,7 +29,8 @@ export type Page = {
 export type Browser = { id: string; label: string; attached: number[] };
 
 /** 认人机验证：look、seen 要自给自足（整个放进页面里跑） */
-export type Challenger = { look: () => unknown; seen: (l: any) => boolean; url: (url: string) => boolean };
+// seen 拿到的是 look 回的（两个在页面里配对跑，参数写成 never：哪个站的 look 回什么由它自己定）
+export type Challenger = { look: () => unknown; seen: (l: never) => boolean; url: (url: string) => boolean };
 
 export type Account = { id: string; name: string };
 
@@ -197,7 +198,7 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	}
 }
 
-export function guarded(fn: (...args: any[]) => unknown, args: readonly unknown[], challenge: Challenger): string {
+export function guarded(fn: (...args: never[]) => unknown, args: readonly unknown[], challenge: Challenger): string {
 	const call = `(${fn.toString()})(${args.map((a) => JSON.stringify(a) ?? "undefined").join(",")})`;
 	return `(async () => {
 		const look = ${challenge.look.toString()};

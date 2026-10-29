@@ -9,11 +9,14 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
-import type { Sql } from "../db/index.ts";
+import type { Json, Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
 import { type Ref, refQuery } from "./grid.ts";
 import { act, answer, closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
-import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
+import { type ColumnType, type Key, type Meta, type Row, type Shown, type Table, tables } from "./tables.ts";
+
+/** 网页发来的请求体：一个 JSON 对象（各个接口再照自己要的格解析） */
+const body = z.record(z.string(), z.unknown());
 
 const LIMIT = 1000;
 const MIME: Record<string, string> = {
@@ -68,8 +71,8 @@ const guarded = (t: Table) =>
 		.filter(([, e]) => e.when)
 		.map(([c, e]) => [c, e.when!] as const);
 
-function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly string[] = Object.keys(t.columns)): Row {
-	const out: Row = {
+function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly string[] = Object.keys(t.columns)): Shown {
+	const out: Shown = {
 		_key: Object.fromEntries(t.key.map((k) => [k, String(row[k])])),
 		_readonly: guarded(t)
 			.filter(([c]) => !row[`_can_${c}`])
@@ -77,7 +80,7 @@ function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly
 	};
 	for (const c of only) {
 		const computed = t.computed?.[c];
-		const v = computed ? computed.of(row) : row[c];
+		const v = computed ? computed.of(row as never) : row[c];
 		out[c] = cols.get(c) === "number" && v !== null && v !== undefined ? Number(v) : v;
 	}
 	return out;
@@ -108,7 +111,7 @@ export async function serve(
 		return row ? shape(t, colTypes.get(t.name)!, row) : null;
 	};
 
-	const api: Record<string, (body: any, url: URL) => Promise<unknown>> = {
+	const api: Record<string, (body: Record<string, unknown>, url: URL) => Promise<unknown>> = {
 		"GET /api/meta": async () =>
 			Promise.all(
 				tables().map(async (t): Promise<Meta> => {
@@ -190,7 +193,7 @@ export async function serve(
 			if (edit.set) await edit.set(sql, key, b.value);
 			else {
 				const value = cellValue(colTypes.get(t.name)!.get(col)!, edit.options, b.value);
-				const r = await sql`update ${sql(t.name)} set ${sql({ [col]: value } as Record<string, any>)} where ${where(t, key)} returning 1`;
+				const r = await sql`update ${sql(t.name)} set ${sql({ [col]: value as Json })} where ${where(t, key)} returning 1`;
 				if (!r.length) throw new Usage(`${t.title}里没有这一行`);
 			}
 			await t.recheck?.(sql, key);
@@ -202,8 +205,9 @@ export async function serve(
 			const f = t.form;
 			if (!f) throw new Usage(`${t.title}不能在网页上添加`);
 			const values: Record<string, string> = {};
+			const given = body.safeParse(b.values).data ?? {};
 			for (const name of Object.keys(f.fields)) {
-				const v = b.values?.[name];
+				const v = given[name];
 				if (v === undefined || v === null || String(v).trim() === "") {
 					if (f.required.includes(name)) throw new Usage(`要填「${t.columns[name] ?? name}」`);
 					continue;
@@ -213,7 +217,7 @@ export async function serve(
 			if (f.insert) return { key: await f.insert(sql, values) };
 			const cols = colTypes.get(t.name)!;
 			const row = Object.fromEntries(Object.entries(values).map(([c, v]) => [c, cellValue(cols.get(c)!, undefined, cols.get(c) === "number" ? Number(v) : v)]));
-			const [r] = await sql`insert into ${sql(t.name)} ${sql(row as Record<string, any>)} returning *`;
+			const [r] = await sql`insert into ${sql(t.name)} ${sql(row as Record<string, Json>)} returning *`;
 			return { key: shape(t, cols, r!)._key };
 		},
 	};
@@ -229,7 +233,9 @@ export async function serve(
 			try {
 				let raw = "";
 				for await (const c of req) raw += c;
-				send(res, 200, "application/json", JSON.stringify(await route(raw ? JSON.parse(raw) : null, url)));
+				const b = body.safeParse(raw ? JSON.parse(raw) : {});
+				if (!b.success) throw new Usage("请求体要是一个 JSON 对象");
+				send(res, 200, "application/json", JSON.stringify(await route(b.data, url)));
 			} catch (e) {
 				const told =
 					e instanceof Usage || e instanceof NeedsHuman || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";

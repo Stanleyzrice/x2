@@ -157,6 +157,6 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 async function save(sql: Sql, id: string, fields: Record<string, unknown>, problems: string[]): Promise<{ id: string; problems: string[] }> {
 	const json = new Set(["images", "offer", "variants", "pricing", "attributes", "category_path"]);
 	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as Json) : v]));
-	await sql`update listings set ${sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() } as any)} where id = ${id}`;
+	await sql`update listings set ${sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() })} where id = ${id}`;
 	return { id, problems };
 }

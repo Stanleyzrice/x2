@@ -1,6 +1,8 @@
 // 建商品的 product_info，和建完以后读回来逐项核对。照 lilto 的 build_product_info、submitted_content_problems（快照 1c8a7926）：
 // 9-01 卖家中心新增商品页提交的成功样本逐字段照抄。
 // 也定商品里用哪几张主图、详情图，和图的名字（主图 N、详情图 N、规格图：选项名；网页上、说明里、x2 listing keep 都用它）
+
+import type { Channel, ProductInfo } from "../../connectors/sites/shopee/products.ts";
 import type { Pic, Pics } from "./pics.ts";
 import { isSingle, type Specs, structureProblems, type Tier, type Variant } from "./variants.ts";
 
@@ -75,7 +77,10 @@ export function imageNames(pics: Partial<Pics>, specs: Specs | null): Map<string
 	return new Map([...names].map(([id, list]) => [id, list.join("、")]));
 }
 
-export function productInfo(p: Product): Record<string, unknown> {
+/** 要建的商品（create_product_info 的 product_info）：读回对账照它比 */
+export type SentInfo = ReturnType<typeof productInfo>;
+
+export function productInfo(p: Product) {
 	const bad = structureProblems({ tiers: p.tiers, variants: p.variants });
 	if (bad.length) throw new Error(bad.join("；"));
 	const std = p.tiers.map((t, a) => ({
@@ -150,6 +155,22 @@ export function productInfo(p: Product): Record<string, unknown> {
 	};
 }
 
+/** 读回对账用到的提交的几格 */
+type SentFields = Pick<
+	SentInfo,
+	| "name"
+	| "parent_sku"
+	| "category_path"
+	| "weight"
+	| "images"
+	| "size_chart_info"
+	| "pre_order_info"
+	| "logistics_channels"
+	| "description_info"
+	| "model_list"
+	| "std_tier_variation_list"
+>;
+
 /** 图片 id：平台可能回地址，取最后一段、去掉查询串 */
 const imageId = (v: unknown) =>
 	String(v ?? "")
@@ -159,7 +180,8 @@ const imageId = (v: unknown) =>
 		.pop()!;
 const num = (v: unknown) => Number(v);
 
-export function readbackProblems(sent: any, got: any, channels: any[]): string[] {
+/** 读回来的商品资料（ProductInfo）、物流渠道和提交的（SentInfo）逐项比；sent 只看比对用到的几格（存在写入里再读出来的也是它） */
+export function readbackProblems(sent: SentFields, got: ProductInfo, channels: Channel[]): string[] {
 	const problems: string[] = [];
 	const check = (name: string, ok: boolean) => {
 		if (!ok) problems.push(`${name}和提交的不一致`);
@@ -175,38 +197,41 @@ export function readbackProblems(sent: any, got: any, channels: any[]): string[]
 		Object.entries(sent.pre_order_info).every(([k, v]) => got?.pre_order_info?.[k] === v),
 	);
 	const enabled = new Set(channels.filter((c) => c.enabled).map((c) => String(c.channel_id ?? c.channelid ?? "")));
-	const wanted = new Set((sent.logistics_channels as any[]).filter((c) => c.enabled).map((c) => String(c.channelid)));
+	const wanted = new Set(sent.logistics_channels.filter((c) => c.enabled).map((c) => String(c.channelid)));
 	check("物流渠道", enabled.size === wanted.size && [...wanted].every((c) => enabled.has(c)));
-	const fieldsOf = (info: any) =>
-		(JSON.parse(String(info?.description ?? "{}")).field_list ?? []).map((x: any) => [Number(x.type), Number(x.type) === 1 ? imageId(x.value) : x.value]);
+	const fieldsOf = (info: { description?: string | null } | null | undefined) =>
+		((JSON.parse(String(info?.description ?? "{}")) as { field_list?: { type: unknown; value: unknown }[] }).field_list ?? []).map((x) => [
+			Number(x.type),
+			Number(x.type) === 1 ? imageId(x.value) : x.value,
+		]);
 	let desc = false;
 	try {
 		desc = JSON.stringify(fieldsOf(got?.description_info)) === JSON.stringify(fieldsOf(sent.description_info));
 	} catch {}
 	check("描述（字和详情图）", desc);
-	const models = (got?.model_list ?? []) as any[];
+	const models = got?.model_list ?? [];
 	const bySku = new Map(models.map((m) => [String(m.sku ?? ""), m]));
-	check("规格货号", models.length === bySku.size && bySku.size === sent.model_list.length && (sent.model_list as any[]).every((m) => bySku.has(m.sku)));
-	for (const m of sent.model_list as any[]) {
+	check("规格货号", models.length === bySku.size && bySku.size === sent.model_list.length && sent.model_list.every((m) => bySku.has(m.sku)));
+	for (const m of sent.model_list) {
 		const g = bySku.get(m.sku);
-		const stock =
-			g?.stock_detail?.total_seller_stock ?? ((g?.stock_detail?.seller_stock_info ?? []) as any[]).reduce((n, s) => n + Number(s.sellable_stock ?? 0), 0);
+		const stock = g?.stock_detail?.total_seller_stock ?? (g?.stock_detail?.seller_stock_info ?? []).reduce((n, s) => n + Number(s.sellable_stock ?? 0), 0);
 		const price = g?.price_info?.input_normal_price ?? g?.price_info?.normal_price;
 		if (
 			!g ||
 			JSON.stringify((g.tier_index ?? []).map(Number)) !== JSON.stringify(m.tier_index) ||
 			num(price) !== num(m.price) ||
-			num(stock) !== m.stock_setting_list[0].sellable_stock
+			num(stock) !== m.stock_setting_list[0]!.sellable_stock
 		) {
 			problems.push(`规格 ${m.sku} 的选项、售价或库存和提交的不一致`);
 		}
 	}
-	const tiers = (got?.std_tier_variation_list ?? []) as any[];
-	const opts = (list: any[]) => JSON.stringify((list ?? []).map((o) => [o.custom_value ?? "", o.image_id ? imageId(o.image_id) : ""]));
+	const tiers = got?.std_tier_variation_list ?? [];
+	const opts = (list: { custom_value?: string | null; image_id?: string | null }[] | null | undefined) =>
+		JSON.stringify((list ?? []).map((o) => [o.custom_value ?? "", o.image_id ? imageId(o.image_id) : ""]));
 	check(
 		"规格名称和规格图",
 		tiers.length === sent.std_tier_variation_list.length &&
-			(sent.std_tier_variation_list as any[]).every((t, i) => tiers[i]?.custom_value === t.custom_value && opts(tiers[i]?.value_list) === opts(t.value_list)),
+			sent.std_tier_variation_list.every((t, i) => tiers[i]?.custom_value === t.custom_value && opts(tiers[i]?.value_list) === opts(t.value_list)),
 	);
 	return problems;
 }

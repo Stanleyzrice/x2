@@ -20,7 +20,8 @@ export type Component = {
 	description: string;
 	props: z.ZodType;
 	examples: unknown[];
-	answer?: (props: any) => z.ZodType;
+	/** 拿到的 props 是照这个组件的 props 解析过的（各个组件不一样，写成 never） */
+	answer?: (props: never) => z.ZodType;
 	actions?: Record<string, string>;
 	inputs?: string[];
 };
@@ -45,7 +46,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise.all(KINDS.map(collect))).flat().map((c) => [c.name, c]));
 
 /** 引用别处的组件，服务端再查一遍指向的东西在不在（schema.ts 只管形状，不认库） */
-const REFS: Record<string, (props: any) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
+const REFS: Record<string, (props: never) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
 
 export type Item = { id: PageItemId; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null };
 export type Page = { id: PageId; title: string; createdAt: string; updatedAt: string; items: Item[] };
@@ -64,7 +65,7 @@ export function parseProps(component: string, input: unknown): unknown {
 	const c = COMPONENTS.get(component);
 	if (!c) throw new Usage(`没有组件 ${component}（有：${names()}）`);
 	const r = c.props.safeParse(input ?? {});
-	const bad = r.success ? (REFS[component]?.(r.data) ?? []) : r.error.issues.map((x) => `${x.path.join(".") || "props"}：${x.message}`);
+	const bad = r.success ? (REFS[component]?.(r.data as never) ?? []) : r.error.issues.map((x) => `${x.path.join(".") || "props"}：${x.message}`);
 	if (bad.length) throw new Usage(`${component} 的参数不对：${bad.join("；")}`);
 	return r.data;
 }
@@ -162,7 +163,7 @@ export async function update(sql: Sql, item: string, input: unknown): Promise<{ 
 export function parseAnswer(component: string, props: unknown, input: unknown): unknown {
 	const c = COMPONENTS.get(component);
 	if (!c?.answer) throw new Usage(`${component} 不收答案`);
-	const r = c.answer(c.props.parse(props)).safeParse(input);
+	const r = c.answer(c.props.parse(props) as never).safeParse(input);
 	if (!r.success) throw new Usage(`答案不对：${r.error.issues.map((x) => `${x.path.join(".") || "answer"}：${x.message}`).join("；")}`);
 	return r.data;
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import { ChanbossOrderId, OrderSn } from "../../connectors/sites/chanboss/api.ts";
-import { allocate } from "./allocate.ts";
+import { allocate, type Purchase } from "./allocate.ts";
 import { checkOrders, type Order, type Snapshot, type Source } from "./check.ts";
 
 const T0 = new Date("2026-10-09T02:00:00Z");
@@ -330,7 +330,7 @@ test("取消的货到了台湾：过了 30 天就不再提醒", () => {
 
 test("买家取消、货已经买了：退款进度 x2 读得到，退成了就不再提醒", () => {
 	const o = order("1", 1, { platformStatus: "不成立", cancelledAt: hours(1) });
-	const bought = (refund: any) =>
+	const bought = (refund: Purchase["refund"]) =>
 		checkOrders(snap({ orders: [o], purchases: [{ ...purchase(1), status: "waitbuyerreceive", refund }] })).reminders.find((i) => i.key === "cancel-goods:1")
 			?.title ?? "";
 	assert.match(bought(null), /退回 1688 卖家/);
