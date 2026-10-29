@@ -21,8 +21,12 @@ export function addSchema(file: URL): void {
 	if (!schemas.some((s) => s.href === file.href)) schemas.push(file);
 }
 
+/** 几个进程同时第一次连库时排着队跑（同时跑 alter table 会死锁）：一个事务里先拿 advisory lock，跑完提交时放 */
 export async function migrate(sql: Sql): Promise<void> {
-	for (const file of schemas) await sql.unsafe(await readFile(file, "utf8"));
+	await sql.begin(async (tx) => {
+		await tx`select pg_advisory_xact_lock(hashtext('x2 schema'))`;
+		for (const file of schemas) await tx.unsafe(await readFile(file, "utf8"));
+	});
 }
 
 export async function db(): Promise<Sql> {
