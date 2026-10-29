@@ -107,6 +107,14 @@ export function settle(sent: Exclude<Sent, { kind: "blocked" }>, done: boolean |
 	return { status: "结果未知", why: `读回来看不出做没做${sent.kind === "unknown" ? `（${sent.why}）` : ""}` };
 }
 
+/** 执行、核清一条写入时抛了错：照库里它现在的状态定改成什么。还是待执行的（没记意图、没提交）是未执行；已提交、结果未知的是结果未知；
+ * 已经有结果的（做成了以后 after 更新库出错）不改：改成未执行，业务会当没做过再做一次（加购的会再加一次） */
+export function failed(now: string | undefined): "未执行" | "结果未知" | null {
+	if (now === "待执行") return "未执行";
+	if (now === "已提交" || now === "结果未知") return "结果未知";
+	return null;
+}
+
 /** 这个状态要停下同一批、同一个对象上的写入 */
 export const stuck = (status: string) => status === "结果未知" || status === "不一致";
 
@@ -171,6 +179,11 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 			if (e instanceof NeedsHuman) {
 				blocked = e.message;
 				break;
+			}
+			const [now] = await sql`select status from writes where id = ${w.id}`;
+			if (failed(now?.status) !== "结果未知") {
+				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: String(now?.status), why: `之后出错（状态不改）：${(e as Error).message}` });
+				continue;
 			}
 			await set(sql, w.id, { status: "结果未知", error: (e as Error).message });
 		}
@@ -263,17 +276,20 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 			}
 		} catch (e) {
 			const [now] = await sql`select status from writes where id = ${w.id}`;
+			const to = failed(now?.status);
 			if (e instanceof NeedsHuman) {
 				blocked = e.message;
-				if (now?.status !== "已提交") await skip(`没做：${blocked}`);
+				if (to === "未执行") await skip(`没做：${blocked}`);
 				continue;
 			}
-			if (now?.status === "已提交") {
+			if (to === "结果未知") {
 				await set(sql, w.id, { status: "结果未知", error: (e as Error).message });
 				halted.batches.add(w.batch);
 				halted.targets.add(w.target);
 				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: "结果未知", why: (e as Error).message });
-			} else await skip((e as Error).message);
+			} else if (to === "未执行") await skip((e as Error).message);
+			else
+				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: String(now?.status), why: `之后出错（状态不改）：${(e as Error).message}` });
 		}
 	}
 	return { ran, unknown: ran.some((r) => stuck(r.status)), blocked };
