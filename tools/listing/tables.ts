@@ -3,7 +3,6 @@ import { IMAGE } from "../../connectors/sites/shopee/seller.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { Grid, Key, Pic, Row, Table } from "../../platform/web/tables.ts";
-import { LISTING_STEPS } from "./check.ts";
 import { addListings } from "./pick.ts";
 import { LABEL, numbered, usedPics } from "./product.ts";
 import { listingsCheck } from "./status.ts";
@@ -119,10 +118,6 @@ export const LISTING_TABLES: Table[] = [
 			pics: { set: setPic },
 		},
 		recheck: (sql, key) => listingsCheck(sql, [key.id!]),
-		views: [
-			{ title: "审稿", where: "step in ('待批准', '待补充')", order: "id", cards: true, empty: "没有等你看的商品稿" },
-			{ title: "全部", order: "id", group: { col: "step", values: LISTING_STEPS } },
-		],
 		form: {
 			title: "添加货源",
 			fields: { shop: "上品的店铺", offer_id: "1688 商品链接（完整粘贴）", pick_why: "为什么选它（可以不写）" },
@@ -191,6 +186,5 @@ export const LISTING_TABLES: Table[] = [
 			),
 			watermark_position: { options: ["bottom-right", "bottom-left", "top-right", "top-left", "center"] },
 		},
-		views: [{ title: "设置", order: "shop", cards: true }],
 	},
 ];

@@ -1,12 +1,12 @@
-// 网页（x2 web）上的表：每个业务工具在自己的 tables.ts 里声明它的表（toolkit 的 tables），平台的写入表在这里。库里哪些表、哪些列给人看（中文名、顺序），怎么看（筛选、排序、分组、卡片），人能改哪几格。
+// 网页（x2 web）上的表：每个业务工具在自己的 tables.ts 里声明它的表（toolkit 的 tables），平台的写入表在这里。库里哪些表、哪些列给人看（中文名、顺序）、算出来的列、图和链接的列，人能改哪几格，表单。
+// 怎么看（要哪些行、哪几列、怎么排、分组、表格还是卡片）不写在这里：agent 在 datagrid 的参数里拼（platform/web/grid.ts）。
 // 人能改的只有人定的那几格（AGENTS.md「不许做的」）；别的由 x2 写。值的类型从库里读（information_schema），界面照类型显示、照类型收。
-// where、order、when 是这里写死的 SQL 片段，不来自网页
+// when（这一行现在能不能改这一格）是这里写死的 SQL 片段：业务规则和安全线，agent、网页都放不开
 
 import type { Sql } from "../db/index.ts";
 import { toolkits } from "../tool.ts";
 
 export type Edit = { options?: readonly string[]; when?: string; set?: (sql: Sql, key: Key, value: unknown) => Promise<void> };
-export type View = { title: string; where?: string; order: string; group?: { col: string; values?: readonly string[] }; cards?: boolean; empty?: string };
 export type Form = {
 	title: string;
 	fields: Record<string, string>;
@@ -19,7 +19,6 @@ export type Table = {
 	title: string;
 	key: string[];
 	columns: Record<string, string>;
-	views: View[];
 	computed?: Record<string, { type: ColumnType; of: (row: Row) => unknown }>;
 	images?: string[];
 	links?: string[];
@@ -46,7 +45,6 @@ export type Meta = {
 	name: string;
 	title: string;
 	key: string[];
-	views: View[];
 	columns: { name: string; label: string; type: ColumnType; edit?: { options?: readonly string[] } }[];
 	form?: { title: string; fields: { name: string; label: string; hint: string; type: ColumnType; required: boolean; options?: readonly string[] }[] };
 };
@@ -70,7 +68,6 @@ const WRITES: Table = {
 		cost: "费用",
 	},
 	edit: { status: { options: ["已核对", "被拒"], when: "status in ('结果未知', '不一致')" } },
-	views: [{ title: "全部", order: "id desc" }],
 };
 
 export const tables = (): Table[] => [...toolkits().flatMap((k) => k.tables ?? []), WRITES];

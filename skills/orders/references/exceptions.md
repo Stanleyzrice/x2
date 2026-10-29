@@ -8,7 +8,7 @@ x2 看得到结果的，处理完就不再提醒；看不到的，人说做完�
 - **错货、少件、损坏**：开一页放「到货问题」表，请打包的人用表单「上报到货问题」填；人找卖家退换或重新采购，处理完勾「已处理」。没处理完之前 x2 不提醒打包。
 
   ```json
-  { "component": "datagrid", "props": { "table": "arrival_issues" } }
+  { "component": "datagrid", "props": { "table": "arrival_issues", "sort": [{ "col": "done" }, { "col": "reported_at", "desc": true }] } }
   ```
 
 - **买家取消**：看货走到了哪。在购物车里的删掉；付了款 1688 没发货的申请退款；发了货的退回卖家（退款、退货的进度 x2 读得到）；在 chanboss 仓库的合并给新订单或退回卖家；到了台湾的在 chanboss 台湾仓上架、30 天内给别的订单用。取消的订单在 chanboss 上的预报不用请人去取消。

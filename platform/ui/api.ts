@@ -6,8 +6,6 @@ import type { Grid, Key, Meta, Pic, Row } from "../web/tables.ts";
 
 export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
 export type Column = Meta["columns"][number];
-export type View = Meta["views"][number];
-export type Filter = Record<string, string | string[]>;
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const r = await fetch(path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -22,8 +20,7 @@ export const api = {
 	page: (id: string) => call<Page>("GET", `/api/page?id=${q(id)}`),
 	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
 	closeItem: (id: string) => call<unknown>("DELETE", `/api/page/item?id=${q(id)}`),
-	rows: (table: string, view: string | undefined, filter: Filter | undefined) =>
-		call<Row[]>("GET", `/api/rows?table=${q(table)}&view=${q(view ?? "")}&filter=${q(JSON.stringify(filter ?? {}))}`),
+	rows: (ref: unknown) => call<Row[]>("GET", `/api/rows?ref=${q(JSON.stringify(ref))}`),
 	set: (table: string, key: Key, col: string, value: unknown) => call<Row | null>("PATCH", "/api/rows", { table, key, col, value }),
 	add: (table: string, values: Record<string, unknown>) => call<{ key: unknown }>("POST", "/api/rows", { table, values }),
 };

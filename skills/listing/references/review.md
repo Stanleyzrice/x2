@@ -7,10 +7,10 @@
 `x2 page create` 开一页，`x2 page push` 放上去：
 
 ```json
-{ "component": "datagrid", "props": { "table": "listings", "view": "审稿" } }
+{ "component": "datagrid", "props": { "title": "审稿", "table": "listings", "filter": { "step": ["待批准", "待补充"] }, "sort": [{ "col": "id" }], "layout": "cards" } }
 ```
 
-只给这几份就加 `"filter": { "id": ["3", "5"] }`。把地址告诉运营，她在右边看标题、主图、详情图、规格和价格、规格图。运营自己贴货源用「全部」视图（`"view": "全部"`）的表单「添加货源」。
+只给这几份就在 `filter` 里加 `"id": ["3", "5"]`。把地址告诉运营，她在右边看标题、主图、详情图、规格和价格、规格图。运营自己贴货源：放 `{ "table": "listings", "group": { "col": "step" } }`，右上角有表单「添加货源」。
 
 ## 她做的、你记的
 

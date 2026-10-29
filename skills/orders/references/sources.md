@@ -6,7 +6,7 @@
 - 拿不准的：写进「货源」，`x2 status` 提醒「选货源」。开一页（`x2 page create`），放「货源」表，把地址告诉运营，请她勾「选用」（按店里的商品分组，一组里没勾的就是还没选）：
 
   ```json
-  { "component": "datagrid", "props": { "table": "sources", "filter": { "item_id": ["<商品 id>"] } } }
+  { "component": "datagrid", "props": { "table": "sources", "filter": { "item_id": ["<商品 id>"] }, "sort": [{ "col": "chosen", "desc": true }, { "col": "score", "desc": true }], "group": { "col": "item_name" } } }
   ```
 
   交给 `x2 page push`。她贴了 1688 链接，用 `orders source` 带上那个链接记下。

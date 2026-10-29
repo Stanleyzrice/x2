@@ -6,7 +6,7 @@ import { readdirSync } from "node:fs";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import type { Props as GridProps } from "../ui/interactable/datagrid/schema.ts";
+import { checkRef, type Ref } from "./grid.ts";
 import { tables } from "./tables.ts";
 
 export const KINDS = ["generative", "interactable"] as const;
@@ -33,28 +33,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise.all(KINDS.map(collect))).flat().map((c) => [c.name, c]));
 
 /** 引用别处的组件，服务端再查一遍指向的东西在不在（schema.ts 只管形状，不认库） */
-const REFS: Record<string, (props: any) => string[]> = { datagrid: checkGrid };
-
-export function filterable(table: string): Set<string> {
-	const t = tables().find((x) => x.name === table);
-	if (!t) return new Set();
-	return new Set([...t.key, ...Object.keys(t.columns).filter((c) => !t.computed?.[c])]);
-}
-
-function checkGrid(p: GridProps): string[] {
-	const t = tables().find((x) => x.name === p.table);
-	if (!t)
-		return [
-			`table：没有表 ${p.table}（有：${tables()
-				.map((x) => x.name)
-				.join("、")}）`,
-		];
-	const bad: string[] = [];
-	if (p.view && !t.views.some((v) => v.title === p.view)) bad.push(`view：${t.title}没有视图「${p.view}」（有：${t.views.map((v) => v.title).join("、")}）`);
-	for (const col of Object.keys(p.filter ?? {}))
-		if (!filterable(t.name).has(col)) bad.push(`filter.${col}：${t.title}不能按「${col}」筛（能：${[...filterable(t.name)].join("、")}）`);
-	return bad;
-}
+const REFS: Record<string, (props: any) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
 
 export type Item = { id: string; component: string; props: unknown; at: string };
 export type Page = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };

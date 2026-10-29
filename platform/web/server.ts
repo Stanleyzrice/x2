@@ -1,5 +1,5 @@
 // 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。只读写库，不碰站点。
-// GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=&filter=：一个视图的行（filter 是 JSON，只认 pages.ts 的 filterable 的列）；
+// GET /api/meta：每张表的列（类型从库里读）、表单；GET /api/rows?ref=：一个 datagrid 引用的行（ref 是它的 props 的 JSON，照组件的校验查过、grid.ts 拼成 SQL，只给要的列）；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
 // GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab
 
@@ -9,7 +9,8 @@ import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { closeItem, deletePage, filterable, listPages, showPage } from "./pages.ts";
+import { type Ref, refQuery } from "./grid.ts";
+import { closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
 
 const LIMIT = 1000;
@@ -65,14 +66,14 @@ const guarded = (t: Table) =>
 		.filter(([, e]) => e.when)
 		.map(([c, e]) => [c, e.when!] as const);
 
-function shape(t: Table, cols: Map<string, ColumnType>, row: Row): Row {
+function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly string[] = Object.keys(t.columns)): Row {
 	const out: Row = {
 		_key: Object.fromEntries(t.key.map((k) => [k, String(row[k])])),
 		_readonly: guarded(t)
 			.filter(([c]) => !row[`_can_${c}`])
 			.map(([c]) => c),
 	};
-	for (const c of Object.keys(t.columns)) {
+	for (const c of only) {
 		const computed = t.computed?.[c];
 		const v = computed ? computed.of(row) : row[c];
 		out[c] = cols.get(c) === "number" && v !== null && v !== undefined ? Number(v) : v;
@@ -114,7 +115,6 @@ export async function serve(
 						name: t.name,
 						title: t.title,
 						key: t.key,
-						views: t.views,
 						columns: Object.entries(t.columns).map(([name, label]) => ({
 							name,
 							label,
@@ -143,25 +143,18 @@ export async function serve(
 			),
 
 		"GET /api/rows": async (_, url) => {
-			const t = table(url.searchParams.get("table"));
-			const v = t.views.find((x) => x.title === url.searchParams.get("view")) ?? t.views[0]!;
-			let filter: Record<string, string | string[]> = {};
+			let raw: unknown;
 			try {
-				filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
+				raw = JSON.parse(url.searchParams.get("ref") ?? "");
 			} catch {
-				throw new Usage("filter 要是 JSON");
+				throw new Usage("ref 要是 datagrid 的 props 的 JSON");
 			}
-			const can = filterable(t.name);
-			const conds = [
-				...(v.where ? [sql`(${sql.unsafe(v.where)})`] : []),
-				...Object.entries(filter).map(([c, x]) => {
-					if (!can.has(c)) throw new Usage(`${t.title}不能按「${c}」筛`);
-					return sql`${sql(c)}::text in ${sql((Array.isArray(x) ? x : [x]).map(String))}`;
-				}),
-			];
-			const where = conds.length ? sql`where ${conds.reduce((a, b) => sql`${a} and ${b}`)}` : sql``;
-			const rows = await sql`${select(t)} ${where} order by ${sql.unsafe(v.order)} limit ${LIMIT}`;
-			return rows.map((r) => shape(t, colTypes.get(t.name)!, r));
+			const ref = parseProps("datagrid", raw) as Ref;
+			const t = table(ref.table);
+			const q = refQuery(t, ref, LIMIT);
+			const rows = await sql.unsafe(q.text, q.values);
+			const only = [...new Set([...(ref.columns ?? Object.keys(t.columns)), ...(ref.group ? [ref.group.col] : [])])];
+			return rows.map((r) => shape(t, colTypes.get(t.name)!, r, only));
 		},
 
 		"GET /api/pages": async () => listPages(sql),

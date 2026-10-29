@@ -1,5 +1,5 @@
-// datagrid：页上引用的一张表（table、view、filter），不存数据：行现读（每 15 秒、回到页面时再读），人改一格马上存（照 tables.ts 收），存不进说原话。
-// 视图是卡片的一行一张卡片（例 商品稿的审稿），别的是表格，点一行在右边滑出整行（能改的格在这改）；视图分组的按组排；表有表单的能添一行
+// datagrid：页上引用的一张表（agent 拼的 table、columns、filter、sort、group、layout），不存数据：行现读（每 15 秒、回到页面时再读），人改一格马上存（照 tables.ts 收），存不进说原话。
+// layout 是 cards 的一行一张卡片（例 商品稿的审稿），table 的是表格，点一行在右边滑出整行（能改的格在这改）；给了 group 的按组排；表有表单的能添一行
 import { PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -12,11 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, fail, keyOf, type Meta, type Row, meta as readMeta, type View as TableView, usePoll } from "../../api.ts";
+import { api, fail, keyOf, type Meta, type Row, meta as readMeta, usePoll } from "../../api.ts";
 import { Edit, type Save, Show } from "./cells.tsx";
 import type { Props } from "./schema.ts";
 
-function groups(rows: Row[], g: TableView["group"]): [string | null, Row[]][] {
+function groups(rows: Row[], g: Props["group"]): [string | null, Row[]][] {
 	if (!g) return [[null, rows]];
 	const by = new Map<string, Row[]>();
 	for (const r of rows) {
@@ -35,15 +35,14 @@ export function View({ props }: { props: Props }) {
 	useEffect(() => {
 		readMeta(props.table).then(setMeta, fail);
 	}, [props.table]);
-	const filter = JSON.stringify(props.filter ?? {});
-	const [rows, error, reload] = usePoll(() => api.rows(props.table, props.view, props.filter), 15_000, [props.table, props.view, filter]);
+	const [rows, error, reload] = usePoll(() => api.rows(props), 15_000, [props]);
 	const [local, setLocal] = useState<Row[] | null>(null);
 	useEffect(() => setLocal(rows), [rows]);
 	const [opened, setOpened] = useState<string | null>(null);
 
 	if (error) return <p className="p-4 text-sm text-destructive">{error}</p>;
 	if (!m || !local) return <Skeleton className="m-4 h-40" />;
-	const view = m.views.find((v) => v.title === props.view) ?? m.views[0]!;
+	const shown: Meta = props.columns ? { ...m, columns: props.columns.flatMap((n) => m.columns.filter((c) => c.name === n)) } : m;
 	const saver =
 		(row: Row) =>
 		(col: string): Save =>
@@ -55,7 +54,7 @@ export function View({ props }: { props: Props }) {
 		<div className="flex flex-col gap-3 p-4">
 			<header className="flex flex-wrap items-center gap-2">
 				<span className="text-sm text-muted-foreground">
-					{m.title} · {view.title} · {local.length} 行
+					{m.title} · {local.length} 行
 				</span>
 				<div className="grow" />
 				{m.form && <AddForm meta={m} onAdded={reload} />}
@@ -64,9 +63,9 @@ export function View({ props }: { props: Props }) {
 				</Button>
 			</header>
 			{!local.length ? (
-				<p className="py-8 text-center text-sm text-muted-foreground">{view.empty ?? "没有"}</p>
+				<p className="py-8 text-center text-sm text-muted-foreground">没有</p>
 			) : (
-				groups(local, view.group).map(([g, list]) => (
+				groups(local, props.group).map(([g, list]) => (
 					<section key={g ?? ""} className="flex flex-col gap-2">
 						{g !== null && (
 							<h4 className="flex items-center gap-2 text-sm font-medium">
@@ -74,10 +73,10 @@ export function View({ props }: { props: Props }) {
 								<span className="text-muted-foreground">{list.length}</span>
 							</h4>
 						)}
-						{view.cards ? (
-							list.map((r) => <RowCard key={keyOf(r)} meta={m} row={r} save={saver(r)} />)
+						{props.layout === "cards" ? (
+							list.map((r) => <RowCard key={keyOf(r)} meta={shown} row={r} save={saver(r)} />)
 						) : (
-							<Rows meta={m} rows={list} group={view.group?.col} open={(r) => setOpened(keyOf(r))} />
+							<Rows meta={shown} rows={list} group={props.group?.col} open={(r) => setOpened(keyOf(r))} />
 						)}
 					</section>
 				))
@@ -85,9 +84,9 @@ export function View({ props }: { props: Props }) {
 			<Sheet open={Boolean(row)} onOpenChange={(o) => !o && setOpened(null)}>
 				<SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
 					<SheetHeader>
-						<SheetTitle>{row ? String(row[m.columns[0]!.name] ?? "—") : ""}</SheetTitle>
+						<SheetTitle>{row ? String(row[shown.columns[0]!.name] ?? "—") : ""}</SheetTitle>
 					</SheetHeader>
-					{row && <Fields meta={m} row={row} save={saver(row)} />}
+					{row && <Fields meta={shown} row={row} save={saver(row)} />}
 				</SheetContent>
 			</Sheet>
 		</div>
