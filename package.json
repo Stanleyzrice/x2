@@ -10,9 +10,9 @@
 		"x2": "bin/x2.ts"
 	},
 	"scripts": {
-		"check": "tsc && tsc -p web/ui && biome check",
+		"check": "tsc && tsc -p platform/ui && biome check",
 		"fix": "biome check --write",
-		"test": "node --test test/*.test.ts",
+		"test": "node --test 'test/*.test.ts' 'skills/**/*.test.ts' 'connectors/**/*.test.ts'",
 		"prepare": "git config core.hooksPath .githooks"
 	},
 	"dependencies": {

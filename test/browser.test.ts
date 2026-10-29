@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
 import { z } from "zod";
-import { runOp, type Site } from "../src/cli/site.ts";
-import { Challenge, NeedsHuman, Usage } from "../src/errors.ts";
-import { alibabaCookie, choose } from "../src/sites/accounts.ts";
-import { challengeOf, guarded, loginPage, siteOf } from "../src/sites/browser.ts";
-import { get, str } from "../src/sites/op.ts";
+import { alibabaCookie, choose } from "../platform/browser/accounts.ts";
+import { challengeOf, guarded, loginPage, siteOf } from "../platform/browser/browser.ts";
+import { runOp, type Site } from "../platform/cli.ts";
+import { Challenge, NeedsHuman, Usage } from "../platform/errors.ts";
+import { get, str } from "../platform/tool.ts";
 
 test("网址是哪个站点：1688 的各个子域都是 1688，不认识的是 null", () => {
 	assert.equal(siteOf("https://seller.shopee.tw/portal/product/new"), "shopee");

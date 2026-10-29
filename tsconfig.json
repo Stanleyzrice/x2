@@ -17,5 +17,6 @@
 		"noUnusedLocals": true,
 		"noUnusedParameters": true
 	},
-	"include": ["bin", "src", "test", "web/*.ts"]
+	"include": ["bin", "platform", "connectors", "skills", "test"],
+	"exclude": ["platform/ui"]
 }

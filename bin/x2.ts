@@ -2,18 +2,18 @@
 // x2 的命令行：x2 <命令> [参数…] [--json]。--json 给 agent 读，不加给人读。
 // 输出约定：stdout 只放结果；stderr 只放进度、日志；--json 时出错也在 stdout：{ "error": { "kind", "message" } }。
 // 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先回读）
-import "../src/env.ts";
-import { dbCommand } from "../src/cli/db.ts";
-import { listingCommand } from "../src/cli/listing.ts";
-import { doCommand, handledCommand, resolveCommand, status, verifyCommand } from "../src/cli/loop.ts";
-import { ruleCommand } from "../src/cli/rule.ts";
-import { sessionCommand } from "../src/cli/session.ts";
-import { schema, site, sites, sitesHelp } from "../src/cli/site.ts";
-import { sourceCommand } from "../src/cli/source.ts";
-import { strategyCommand } from "../src/cli/strategy.ts";
-import { webCommand } from "../src/cli/web.ts";
-import { close } from "../src/db/index.ts";
-import { EXIT, kindOf, Usage } from "../src/errors.ts";
+import "../platform/env.ts";
+import { schema, site, sites, sitesHelp } from "../platform/cli.ts";
+import { dbCommand } from "../platform/commands/db.ts";
+import { doCommand, handledCommand, resolveCommand, status, verifyCommand } from "../platform/commands/loop.ts";
+import { sessionCommand } from "../platform/commands/session.ts";
+import { webCommand } from "../platform/commands/web.ts";
+import { close } from "../platform/db/index.ts";
+import { EXIT, kindOf, Usage } from "../platform/errors.ts";
+import { listingCommand } from "../skills/listing/commands.ts";
+import { sourceCommand } from "../skills/orders/commands.ts";
+import { ruleCommand } from "../skills/selection/rule.ts";
+import { strategyCommand } from "../skills/selection/strategy.ts";
 
 const argv = process.argv.slice(2);
 const json = argv.includes("--json");
@@ -60,7 +60,7 @@ const help = [
 	"  x2 listing list                  所有商品稿走到哪了",
 	"  x2 strategy add | set | list | log   选品的策略（假设、选品方法、版本号）；set 要 --why，版本号加 1；log 看变更记录",
 	"  x2 rule add | retire | list       选品规矩（所有策略共用）：add、retire 要 --why；停用的不删",
-	"网页（会话：agent 往里放组件给人看、让人填，见 web/sessions.ts）：",
+	"网页（会话：agent 往里放组件给人看、让人填，见 platform/web/sessions.ts）：",
 	"  x2 session list | create <标题> | delete <会话> | show <会话>",
 	"  x2 session push <会话> < 组件.json  放组件：{ component, props }（x2 session components 看有哪些、参数）",
 	"  x2 web [--host 127.0.0.1] [--port 5170]   开网页：侧栏是会话，中间是 generative 组件，右边是 interactive 组件",

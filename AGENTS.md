@@ -1,6 +1,6 @@
 # x2：给 agent 的说明
 
-你在 x2 里帮人经营两家 Shopee 台湾店（ni1206、cheeroutdoor）。命令在仓库根目录跑 `node bin/x2.ts <命令>`（下面写 `x2`），加 `--json` 读结果，`x2 --help` 列全部命令。订单、上品、选品怎么做在 `.claude/skills/`，用词照 `docs/glossary.md`，退出码照 README。
+你在 x2 里帮人经营两家 Shopee 台湾店（ni1206、cheeroutdoor）。命令在仓库根目录跑 `node bin/x2.ts <命令>`（下面写 `x2`），加 `--json` 读结果，`x2 --help` 列全部命令。订单、上品、选品怎么做在 `skills/<名字>/SKILL.md`，退出码照 README。
 
 ## 开起来做什么
 
@@ -20,8 +20,8 @@
 
 ## 改代码
 
-- 代码按「是什么事」放：`src/sites` 外面的网站和服务，`src/orders` 订单，`src/listing` 上品，`src/loop` status 和写入，`src/db` 表结构，`src/cli` 命令，`web` 网页（`tables.ts` 表给人看什么、改什么，`sessions.ts` 组件），`web/ui/components/ui` 是 shadcn 拷来的不手改。`test/architecture.test.ts` 守着谁能引谁。
-- 规矩往结构里放：目录结构 > lint > 测试 > 文档。代码看不出的「为什么」写在文件开头；文档只放代码说不清的（词表、`src/sites` 的 `.md`、skill），不写来历和进度。
+- 代码分三层：`platform` 换哪门生意都一样（写入、命令行、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改），`connectors` 一个外部系统一个（`sites` 经浏览器、用人的登录，`services` 用 API key），`skills` 一件生意一个包（订单、上品、选品：SKILL.md、代码、测试）。`test/architecture.test.ts` 守着谁能引谁。
+- 规矩往结构里放：目录结构 > lint > 测试 > 文档。代码看不出的「为什么」写在文件开头；文档只放代码说不清的（skill、连接器的 `NOTES.md`），不写来历和进度。
 - 先做通 happy path；边界多的判断（看图、文案、估重量、选品）先由 agent 填、人能改，攒够数据再写成程序。人定下的做法当场写进代码、测试或 skill。
 - 写法照现有代码：中文注释，zod 声明参数，stdout 只放结果。
 - 做完一块跑 `pnpm check`、`pnpm test`（连库的测试要 `X2_TEST_DATABASE_URL`，会清空那个库）；动了读站点的代码对真站点跑一遍。lint 破例写 `biome-ignore` 和理由。

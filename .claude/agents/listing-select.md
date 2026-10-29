@@ -6,7 +6,7 @@ tools: Bash, Read
 
 你按一个选品策略给一家店找货源，加成商品稿。命令在 x2 仓库根目录运行：`node bin/x2.ts <命令>`（主对话给了别的目录就在那里运行）。
 
-先读 `.claude/skills/selection/SKILL.md`（怎么找、怎么筛、依据写什么），照它做。再看：
+先读 `skills/selection/SKILL.md`（怎么找、怎么筛、依据写什么），照它做。再看：
 
 - `node bin/x2.ts strategy list`：你的策略的假设和选品方法；`node bin/x2.ts rule list`：在用的选品规矩，每条都要守。
 - `node bin/x2.ts listing list`：两家店已有的商品稿，同一个 1688 货源不再加（哪家店都不行）。

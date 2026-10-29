@@ -6,10 +6,10 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { acquire, lockDir, type Owner, spaced, stale } from "../src/sites/lock.ts";
+import { acquire, lockDir, type Owner, spaced, stale } from "../platform/browser/lock.ts";
 
 process.env.X2_HOME = mkdtempSync(join(tmpdir(), "x2-lock-"));
-const LOCK = fileURLToPath(new URL("../src/sites/lock.ts", import.meta.url));
+const LOCK = fileURLToPath(new URL("../platform/browser/lock.ts", import.meta.url));
 const path = (name: string) => join(lockDir(), `${name}.lock`);
 const owner = (o: Partial<Owner>): Owner => ({ pid: process.pid, host: hostname(), cmd: "x2 测试", at: new Date().toISOString(), token: "t", ...o });
 

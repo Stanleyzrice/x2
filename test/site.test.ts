@@ -2,11 +2,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
-import { runOp, type Site } from "../src/cli/site.ts";
-import { Usage } from "../src/errors.ts";
-import { byPage, day, get, ints, parseJson, str } from "../src/sites/op.ts";
-import { needsHuman } from "../src/sites/shopee/seller.ts";
-import { bySales30Day } from "../src/sites/zhixia.ts";
+import { needsHuman } from "../connectors/sites/shopee/seller.ts";
+import { bySales30Day } from "../connectors/sites/zhixia/api.ts";
+import { runOp, type Site } from "../platform/cli.ts";
+import { Usage } from "../platform/errors.ts";
+import { byPage, day, get, ints, parseJson, str } from "../platform/tool.ts";
 
 // 一个假的站点：items 一页 2 行，共 5 行
 const seen: unknown[] = [];
