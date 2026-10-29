@@ -46,7 +46,7 @@ const tools = {
 			path: str("/api/shopee-report-service/pro 之后的一段，例 /hotWord/hotWordList"),
 			params: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}).describe("参数，JSON 对象"),
 		}),
-		(p) => api(p.path, p.params),
+		(p) => api(p.path, z.unknown(), p.params),
 	),
 };
 

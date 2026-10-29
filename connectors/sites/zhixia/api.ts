@@ -8,8 +8,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { hold, page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
+import { reply } from "../../../platform/reply.ts";
 
 const ORIGIN = "https://shopee.mobduos.com";
 const PRO = "/api/shopee-report-service/pro";
@@ -49,19 +51,35 @@ async function throttle(): Promise<void> {
 	await writeUsage({ calls: [...recent, new Date().toISOString()] });
 }
 
+// 页面里用到的：webpack 的 jsonp 运行时、Vue 根组件上的 store（站点、类目树）
+type WebpackRequire = (id: string) => { a: (config: Record<string, unknown>) => Promise<unknown> };
+type ZhixiaWindow = {
+	webpackJsonp?: { push: (chunk: [string[], Record<string, (m: unknown, e: unknown, r: WebpackRequire) => void>, string[][]]) => void };
+	__x2Http?: (config: Record<string, unknown>) => Promise<unknown>;
+};
+type VueRoot = HTMLElement & { __vue__?: { $store?: { getters?: { siteId?: number }; state?: { user?: { catList?: unknown } } } } };
+
 /** x2 打开知虾标签页时要落在工作台页面上（有 webpackJsonp），不是随便一页 */
 export async function ready(): Promise<void> {
 	const p = await page(ORIGIN);
 	// 首页（/）也有 webpackJsonp，但没有工作台的 store：要在 /workbench/ 下面
 	const ok = await p.run(
-		() => Boolean((window as any).webpackJsonp) && location.pathname.startsWith("/workbench/") && !location.pathname.startsWith("/workbench/login"),
+		() =>
+			Boolean((window as unknown as ZhixiaWindow).webpackJsonp) &&
+			location.pathname.startsWith("/workbench/") &&
+			!location.pathname.startsWith("/workbench/login"),
 	);
 	if (!ok) await p.goto(`${ORIGIN}/workbench/home`);
 }
 
 /** 用页面的 axios 发一个请求，回整个响应体（各接口的外壳不一样：有的在 data，有的在 hotWordList、payload）。
  * path 是 /api/shopee-report-service/pro 之后的一段；siteId 不用给，取页面当前的站点 */
-export async function api<T = any>(path: string, params: Record<string, unknown> = {}, method: "get" | "post" = "get"): Promise<T> {
+export async function api<S extends z.ZodType>(
+	path: string,
+	schema: S,
+	params: Record<string, unknown> = {},
+	method: "get" | "post" = "get",
+): Promise<z.output<S>> {
 	const body = await hold(ORIGIN, async () => {
 		await ready();
 		await throttle();
@@ -69,23 +87,24 @@ export async function api<T = any>(path: string, params: Record<string, unknown>
 		return p.run(
 			async (url: string, params: Record<string, unknown>, method: string) => {
 				if (location.pathname.startsWith("/workbench/login")) return { code: 401, msg: "没有登录" };
-				const w = window as any;
+				const w = window as unknown as ZhixiaWindow;
 				if (!w.webpackJsonp) return { code: -1, msg: "页面还没加载好：不是知虾的工作台页面" };
 				if (!w.__x2Http) {
-					const holder: { req: any } = { req: null };
+					const holder: { req: WebpackRequire | null } = { req: null };
 					const id = `x2-http-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 					w.webpackJsonp.push([
 						[id],
 						{
-							[id]: (_m: unknown, _e: unknown, r: any) => {
+							[id]: (_m: unknown, _e: unknown, r: WebpackRequire) => {
 								holder.req = r;
 							},
 						},
 						[[id]],
 					]);
-					w.__x2Http = holder.req("b775").a;
+					w.__x2Http = holder.req?.("b775").a;
 				}
-				const siteId = document.querySelector<any>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
+				if (!w.__x2Http) return { code: -1, msg: "页面里没找到知虾的 axios（webpack 模块 b775）" };
+				const siteId = document.querySelector<VueRoot>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
 				const all = { siteId, ...params };
 				return w.__x2Http({ url, method, ...(method === "get" ? { params: all } : { data: all }), validateStatus: () => true });
 			},
@@ -94,35 +113,46 @@ export async function api<T = any>(path: string, params: Record<string, unknown>
 			method,
 		);
 	});
-	const b = body as { code?: number; msg?: string };
+	const b = shell.safeParse(body).data ?? {};
 	if (b.code === 401 || b.code === 602) throw new NeedsHuman("知虾没有登录（或令牌失效）：在浏览器里登录知虾再试");
-	if (b.code !== undefined && Number(b.code) !== 200) throw new Error(`知虾 ${path} 回：${b.code} ${b.msg ?? ""}`);
-	return body as T;
+	if (b.code !== undefined && b.code !== null && Number(b.code) !== 200) throw new Error(`知虾 ${path} 回：${b.code} ${b.msg ?? ""}`);
+	return reply(schema, body, `知虾 ${path}`);
 }
 
-type Row = Record<string, any>;
+/** 各接口的外壳不一样，只有 code（200 成功；401、602 没登录、令牌作废）、msg 是共有的 */
+const shell = z.looseObject({ code: z.union([z.number(), z.string()]).nullish(), msg: z.string().nullish() });
+
+type Row = Record<string, unknown>;
+const row = z.looseObject({});
+const num = z.union([z.number(), z.string()]).nullish();
 /** 类目路径：一级、二级、三级类目 id，例 [100629, 100630]；接口要最后一级的 id 和层数 */
 const at = (path: number[]) => (path.length ? { catId: path.at(-1), level: path.length } : {});
 
 export type Category = { id: string; name: string; children: Category[] };
 
+type CatNode = { value: string | number; label: string | number; children?: CatNode[] | null };
+const catNode: z.ZodType<CatNode> = z.looseObject({
+	value: z.union([z.string(), z.number()]),
+	label: z.union([z.string(), z.number()]),
+	get children() {
+		return z.array(catNode).nullish();
+	},
+});
+
 /** 类目树（三级）。读页面 store 里登录时就载入的 state.user.catList，不发请求 */
 export async function categories(): Promise<Category[]> {
 	await ready();
 	const p = await page(ORIGIN);
-	const tree = await p.run(() => {
-		const conv = (n: any): any => ({ id: String(n.value), name: String(n.label), children: (n.children ?? []).map(conv) });
-		const list = document.querySelector<any>("#app")?.__vue__?.$store?.state?.user?.catList;
-		return Array.isArray(list) && list.length ? list.map(conv) : null;
-	});
+	const list = await p.run(() => document.querySelector<VueRoot>("#app")?.__vue__?.$store?.state?.user?.catList ?? null);
 	// 没有类目树就是没登录（或页面没载入工作台）：别当成空的
-	if (!tree) throw new NeedsHuman("知虾的工作台没有类目树：在浏览器里登录知虾、打开工作台再试");
-	return tree;
+	if (!Array.isArray(list) || !list.length) throw new NeedsHuman("知虾的工作台没有类目树：在浏览器里登录知虾、打开工作台再试");
+	const conv = (c: CatNode): Category => ({ id: String(c.value), name: String(c.label), children: (c.children ?? []).map(conv) });
+	return reply(z.array(catNode), list, "知虾的类目树（store 的 state.user.catList）").map(conv);
 }
 
 /** 热销类目榜：path 下一级的各类目，按昨天（DAY）的销量排；path 为空是全站的二级类目（不是一级，2026-10-09 查过） */
 export async function sellWell(path: number[] = [], pageNum = 1, pageSize = 100): Promise<{ total: number; rows: Row[] }> {
-	const b = await api<{ data: Row[]; total: string }>("/industryAnalysis/sellWell", {
+	const b = await api("/industryAnalysis/sellWell", z.looseObject({ data: z.array(row).nullish(), total: num }), {
 		type: "DAY",
 		field: "sales",
 		sortType: "DESC",
@@ -135,14 +165,18 @@ export async function sellWell(path: number[] = [], pageNum = 1, pageSize = 100)
 }
 
 export async function categoryDaily(path: number[]): Promise<Row> {
-	return (await api<{ data: Row }>("/industryAnalysis/industryInfoOverview", at(path))).data;
+	return (await api("/industryAnalysis/industryInfoOverview", z.looseObject({ data: row }), at(path))).data;
 }
 
 // 口径（lilto 记下的）：searchVal 是全站的搜索量，sales30day 是本类目 30 天的销量；标题里的片段不等于搜索词
 
+/** 一个热搜词：hotWordId 是别的接口要的 id；searchVal 全站搜索量、sales30day 本类目 30 天销量 */
+export const hotWord = z.looseObject({ hotWordId: z.number(), word: z.string(), searchVal: num, sales30day: num });
+const hotWordList = z.looseObject({ hotWordList: z.array(hotWord).nullish(), total: num, updateTime: z.string().nullish() });
+
 /** 一个类目的热搜词，最多 1000 个；updateTime 是数据的日期 */
-export async function hotWords(path: number[]): Promise<{ total: number; updateTime: string | null; rows: Row[] }> {
-	const b = await api<{ hotWordList: Row[]; total: string; updateTime?: string }>("/hotWord/hotWordList", {
+export async function hotWords(path: number[]): Promise<{ total: number; updateTime: string | null; rows: z.output<typeof hotWord>[] }> {
+	const b = await api("/hotWord/hotWordList", hotWordList, {
 		field: "",
 		orderType: "",
 		pageNum: 1,
@@ -153,11 +187,16 @@ export async function hotWords(path: number[]): Promise<{ total: number; updateT
 	return { total: Number(b.total ?? 0), updateTime: b.updateTime ?? null, rows: b.hotWordList ?? [] };
 }
 
+/** 一个竞品：itemId、名字、30 天销量在 itemDataList[0].sales30Day；别的格原样 */
+export const item = z.looseObject({ itemId: z.union([z.string(), z.number()]), itemDataList: z.array(z.looseObject({ sales30Day: num })).nullish() });
+export type Item = z.output<typeof item>;
+const hotWordItemList = z.looseObject({ itemListInfo: z.array(item).nullish(), total: num });
+
 /** 一个词在一个类目里的全部商品（竞品），按 30 天销量（itemDataList[0].sales30Day）从高到低；每个商品带上架时间 ctime。
  * 站点不管 pageNum、pageSize、field、orderType：每次都回全部（2026-10-09：第 1、2 页都是同样的 1680 个，按 itemId 排），
  * 页面自己在浏览器里排序、截前 100 个。所以只发一次，在这里排 */
-export async function hotWordItems(hotWordId: number, path: number[]): Promise<{ total: number; rows: Row[] }> {
-	const b = await api<{ itemListInfo: Row[]; total: string }>("/hotWordDetail/hotWordItemSalesDetail", {
+export async function hotWordItems(hotWordId: number, path: number[]): Promise<{ total: number; rows: Item[] }> {
+	const b = await api("/hotWordDetail/hotWordItemSalesDetail", hotWordItemList, {
 		exampleType: "DAY",
 		word: String(hotWordId),
 		field: "sales",
@@ -170,31 +209,41 @@ export async function hotWordItems(hotWordId: number, path: number[]): Promise<{
 	return { total: Number(b.total ?? 0), rows: bySales30Day(b.itemListInfo ?? []) };
 }
 
-export const bySales30Day = (rows: Row[]): Row[] => {
-	const sales = (r: Row) => Number(r.itemDataList?.[0]?.sales30Day ?? -1) || 0;
+export const bySales30Day = (rows: Item[]): Item[] => {
+	const sales = (r: Item) => Number(r.itemDataList?.[0]?.sales30Day ?? -1) || 0;
 	return [...rows].sort((a, b) => sales(b) - sales(a));
 };
 
 const word = (hotWordId: number) => ({ hotWordId, updateKey: 1 });
 /** 一个词最近 30 天每天的搜索量、销量（charts；顺序不保证，按 timest 排） */
-export const demandChange = async (hotWordId: number): Promise<Row> =>
-	(await api<{ data: Row }>("/hotWordChopeeProduct/getDemandChange", word(hotWordId))).data;
-export const competition = async (hotWordId: number): Promise<Row> =>
-	(await api<{ data: Row }>("/hotWordChopeeProduct/getCompetitiveEnvironment", word(hotWordId))).data;
-export const priceLine = async (hotWordId: number): Promise<Row> => (await api<{ data: Row }>("/hotWordChopeeProduct/getPriceLine", word(hotWordId))).data;
-export const complaints = async (hotWordId: number): Promise<Row[]> =>
-	(await api<{ data: Row[] }>("/hotWordChopeeProduct/tucaoPoint", word(hotWordId))).data ?? [];
-export const preferences = async (hotWordId: number): Promise<Row[]> =>
-	(await api<{ data: Row[] }>("/hotWordChopeeProduct/preference", word(hotWordId))).data ?? [];
+const one = z.looseObject({ data: row.nullish() });
+const rows = z.looseObject({ data: z.array(row).nullish() });
+export const demandChange = async (hotWordId: number): Promise<Row | null | undefined> =>
+	(await api("/hotWordChopeeProduct/getDemandChange", one, word(hotWordId))).data;
+export const competition = async (hotWordId: number): Promise<Row | null | undefined> =>
+	(await api("/hotWordChopeeProduct/getCompetitiveEnvironment", one, word(hotWordId))).data;
+export const priceLine = async (hotWordId: number): Promise<Row | null | undefined> =>
+	(await api("/hotWordChopeeProduct/getPriceLine", one, word(hotWordId))).data;
+export const complaints = async (hotWordId: number): Promise<Row[]> => (await api("/hotWordChopeeProduct/tucaoPoint", rows, word(hotWordId))).data ?? [];
+export const preferences = async (hotWordId: number): Promise<Row[]> => (await api("/hotWordChopeeProduct/preference", rows, word(hotWordId))).data ?? [];
 /** 长尾词（参数是小写 w 的 hotwordId，列表在 payload） */
 export const longTail = async (hotWordId: number): Promise<Row[]> =>
-	(await api<{ payload: Row[] }>("/drainageWords/longTailWords", { hotwordId: hotWordId })).payload ?? [];
+	(await api("/drainageWords/longTailWords", z.looseObject({ payload: z.array(row).nullish() }), { hotwordId: hotWordId })).payload ?? [];
 
 export type Candidate = { offerId: string; url: string; title: string; price: number; monthSold: number; image: string };
 
-export async function similar1688(imageUrl: string, n = 4): Promise<Candidate[]> {
-	const b = await api<{ data?: any[] }>("/similarProduct/query1688", { imgUrl: imageUrl, beginPage: 1, pageSize: n });
-	if (!Array.isArray(b.data)) throw new Error("知虾的 1688 同款没有回列表");
+/** 1688 同款的一个：offerId、subject、priceInfo.price、monthSold、imageUrl */
+const sameOffer = z.looseObject({
+	offerId: z.union([z.string(), z.number()]),
+	subject: z.string().nullish(),
+	priceInfo: z.looseObject({ price: num }).nullish(),
+	monthSold: num,
+	imageUrl: z.string().nullish(),
+});
+
+/** 1688 同款的回包 → 候选（纯函数）；没有列表是「回包变了」 */
+export function similarOf(body: unknown, n = 4): Candidate[] {
+	const b = reply(z.looseObject({ data: z.array(sameOffer) }), body, "知虾 /similarProduct/query1688");
 	return b.data.slice(0, n).map((o) => ({
 		offerId: String(o.offerId),
 		url: `https://detail.1688.com/offer/${o.offerId}.html`,
@@ -203,4 +252,8 @@ export async function similar1688(imageUrl: string, n = 4): Promise<Candidate[]>
 		monthSold: Number(o.monthSold ?? 0),
 		image: o.imageUrl ?? "",
 	}));
+}
+
+export async function similar1688(imageUrl: string, n = 4): Promise<Candidate[]> {
+	return similarOf(await api("/similarProduct/query1688", z.unknown(), { imgUrl: imageUrl, beginPage: 1, pageSize: n }), n);
 }
