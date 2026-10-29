@@ -1,5 +1,5 @@
-// 页：agent 开一页（x2 page create），往上放组件（x2 page push）。网页的侧栏是页列表，中间是页上 generative 组件的流，右边是 interactive 组件（一个一个 tab）。
-// generative 是快照：agent 说话那一刻的内容，数据在组件里，人只看。interactive 是引用：组件里只记指向谁（例 一张表的一个视图），数据每次现读，人在上面做的事写回去。
+// 页：agent 开一页（x2 page create），往上放组件（x2 page push）。网页的侧栏是页列表，中间是页上 generative 组件的流，右边是 interactable 组件（一个一个 tab）。
+// generative 是快照：agent 说话那一刻的内容，数据在组件里，人只看。interactable 是引用：组件里只记指向谁（例 一张表的一个视图），数据每次现读，人在上面做的事写回去。
 // 组件的参数在这里声明一次：x2 page push 照它校验（不对说哪一格），x2 page components 照它给 agent 看，网页照它的类型画
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
@@ -95,16 +95,16 @@ export const COMPONENTS = {
 		}),
 	},
 	datagrid: {
-		kind: "interactive",
+		kind: "interactable",
 		description: "库里的一张表（引用，不是数据）：人看现在的行、改人能改的格（照 tables.ts）。同一页上同一个引用只开一个 tab",
 		props: datagrid,
 	},
-} as const satisfies Record<string, { kind: "generative" | "interactive"; description: string; props: z.ZodType }>;
+} as const satisfies Record<string, { kind: "generative" | "interactable"; description: string; props: z.ZodType }>;
 
 export type ComponentName = keyof typeof COMPONENTS;
 export type Props<C extends ComponentName> = z.infer<(typeof COMPONENTS)[C]["props"]>;
 export type GenerativeName = { [C in ComponentName]: (typeof COMPONENTS)[C]["kind"] extends "generative" ? C : never }[ComponentName];
-export type InteractiveName = Exclude<ComponentName, GenerativeName>;
+export type InteractableName = Exclude<ComponentName, GenerativeName>;
 export type Item = { [C in ComponentName]: { id: string; component: C; props: Props<C>; at: string } }[ComponentName];
 export type Page = { id: string; title: string; createdAt: string; updatedAt: string; items: Item[] };
 export type PageSummary = Omit<Page, "items">;
@@ -164,7 +164,7 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 		const [s] = await tx`select id from pages where id = ${sid} for update`;
 		if (!s) throw new Usage(`没有页 ${id}`);
 		await tx`update pages set updated_at = now() where id = ${sid}`;
-		if (COMPONENTS[component].kind === "interactive") {
+		if (COMPONENTS[component].kind === "interactable") {
 			const ref = props as Props<"datagrid">;
 			const same = (await tx`select id, props from page_items where page_id = ${sid} and component = ${component}`).find(
 				(r) => refKey(r.props) === refKey(ref),
@@ -181,7 +181,7 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 
 export async function closeItem(sql: Sql, item: string): Promise<void> {
 	if (!/^\d+$/.test(item)) throw new Usage(`没有这个组件：${item}`);
-	await sql`delete from page_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactive"))}`;
+	await sql`delete from page_items where id = ${item} and component in ${sql(Object.keys(COMPONENTS).filter((c) => COMPONENTS[c as ComponentName].kind === "interactable"))}`;
 }
 
 /** 一个 datagrid 引用的样子：表、视图、按列名排好的筛选（jsonb 存进去会重排对象的键，不能直接比 JSON） */

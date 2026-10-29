@@ -1,4 +1,4 @@
-// 一页：中间是 generative 组件的流（agent 放进来的先后），右边是 interactive 组件，一个一个 tab（新放进来的那个打开；人能关掉）。
+// 一页：中间是 generative 组件的流（agent 放进来的先后），右边是 interactable 组件，一个一个 tab（新放进来的那个打开；人能关掉）。
 // 每 3 秒重读这一页（agent 随时会往里放）。手机上两边换成上面的两个 tab
 import { Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { api, fail, usePoll } from "./api.ts";
 import { Generative, isGenerative } from "./generative/index.tsx";
-import { Interactive, type InteractiveItem, isInteractive } from "./interactive/index.tsx";
+import { Interactable, type InteractableItem, isInteractable } from "./interactable/index.tsx";
 
 const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
@@ -20,7 +20,7 @@ export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void 
 	if (error) return <p className="p-6 text-sm text-destructive">{error}</p>;
 	if (!page) return <Skeleton className="m-6 h-40" />;
 	const stream = page.items.filter(isGenerative);
-	const panel = page.items.filter(isInteractive);
+	const panel = page.items.filter(isInteractable);
 	const remove = () => {
 		if (confirm(`删掉这一页「${page.title}」？`)) api.deletePage(id).then(onDeleted, fail);
 	};
@@ -81,7 +81,7 @@ export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void 
 	);
 }
 
-function Panel({ items, onClosed }: { items: InteractiveItem[]; onClosed: () => void }) {
+function Panel({ items, onClosed }: { items: InteractableItem[]; onClosed: () => void }) {
 	const newest = [...items].sort((a, b) => b.at.localeCompare(a.at))[0]!;
 	const [active, setActive] = useState(newest.id);
 	const seen = useRef(newest.at);
@@ -109,7 +109,7 @@ function Panel({ items, onClosed }: { items: InteractiveItem[]; onClosed: () => 
 			</TabsList>
 			{items.map((i) => (
 				<TabsContent key={i.id} value={i.id} className="min-h-0 flex-1 overflow-y-auto">
-					<Interactive item={i} />
+					<Interactable item={i} />
 				</TabsContent>
 			))}
 		</Tabs>

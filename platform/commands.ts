@@ -78,7 +78,7 @@ export const platform: Toolkit = {
 		schema: get("全部工具的说明和参数（JSON Schema）", undefined, async () => schema()),
 		web: {
 			...get(
-				"开网页（Ctrl-C 关掉）：侧栏是页，中间是 generative 组件，右边是 interactive 组件",
+				"开网页（Ctrl-C 关掉）：侧栏是页，中间是 generative 组件，右边是 interactable 组件",
 				z.object({
 					host: z.string().min(1).default("127.0.0.1").describe("0.0.0.0：同一个网络里别的电脑也能开"),
 					port: z.coerce.number().int().min(1).max(65535).default(5170).describe("端口"),
@@ -111,7 +111,7 @@ const pageId = z.object({ id: str("页编号") });
 
 export const page: Toolkit = {
 	name: "page",
-	title: "页：agent 开页、往上放组件给人看（generative）、让人在上面做事（interactive），人在网页上（x2 web）看",
+	title: "页：agent 开页、往上放组件给人看（generative）、让人在上面做事（interactable），人在网页上（x2 web）看",
 	kind: "platform",
 	tools: {
 		list: {
