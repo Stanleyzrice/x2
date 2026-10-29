@@ -1,0 +1,36 @@
+{
+	"code": 0,
+	"message": "success",
+	"data": {
+		"page_info": { "total": 1, "page_number": 1, "page_size": 48 },
+		"products": [
+			{
+				"id": 25000000001,
+				"parent_sku": "X2-12-cheeroutdoor",
+				"name": "浴室地墊 硅藻泥 吸水防滑",
+				"cover_image": "tw-11134207-0000cover",
+				"create_time": 1760000000,
+				"status": 1,
+				"model_list": [
+					{
+						"id": 250000000011,
+						"sku": "X2-12-1",
+						"name": "黑貓,60*90cm",
+						"price_detail": { "origin_price": "299" },
+						"stock_detail": { "total_seller_stock": 50 },
+						"statistics": { "sold_count": 3 },
+						"tier_index": [0, 1]
+					},
+					{
+						"id": 250000000012,
+						"sku": "",
+						"name": "黃狗,60*90cm",
+						"price_detail": { "origin_price": "" },
+						"stock_detail": {},
+						"tier_index": [1, 1]
+					}
+				]
+			}
+		]
+	}
+}

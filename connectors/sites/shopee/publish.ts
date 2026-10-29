@@ -14,6 +14,9 @@ export async function findByParentSku(parentSku: string, name: string): Promise<
 	return null;
 }
 
+/** 建好以后的答复里有商品 id（product_id，旧的叫 id）；没有、认不出都是结果未知，不是失败 */
+const created = z.looseObject({ product_id: z.union([z.number(), z.string()]).nullish(), id: z.union([z.number(), z.string()]).nullish() }).nullish();
+
 export const createListing: SubmitTool = {
 	kind: "write",
 	description: "建商品（先建成下架；只经业务工具的写工具调）",
@@ -22,7 +25,8 @@ export const createListing: SubmitTool = {
 		const w = await createProduct(p.productInfo);
 		if (w.kind === "refused") return { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() };
 		if (w.kind !== "done") return w;
-		const id = String(w.data?.product_id ?? w.data?.id ?? "");
+		const d = created.safeParse(w.data);
+		const id = String((d.success ? (d.data?.product_id ?? d.data?.id) : undefined) ?? "");
 		if (!/^\d+$/.test(id) || id === "0") return { kind: "unknown", why: "Shopee 说建好了，但没回商品 id" };
 		return { kind: "done", data: { productId: id } };
 	},

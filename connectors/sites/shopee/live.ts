@@ -10,19 +10,21 @@ import * as products from "./products.ts";
 import * as returns from "./returns.ts";
 import * as seller from "./seller.ts";
 
-const shape = (v: any): string =>
+const shape = (v: unknown): string =>
 	Array.isArray(v)
 		? `[${v.length}] ${v[0] && typeof v[0] === "object" ? Object.keys(v[0]).slice(0, 12).join(",") : ""}`
 		: v && typeof v === "object"
 			? `{${Object.keys(v).slice(0, 12).join(",")}}`
 			: typeof v;
-const run = async (name: string, f: () => Promise<any>) => {
+const run = async <T>(name: string, f: () => Promise<T>): Promise<T | undefined> => {
 	try {
 		const v = await f();
-		console.log("OK ", name.padEnd(22), shape(v?.rows ?? v), v?.total !== undefined ? `total ${v.total}` : "");
+		const l = v as { rows?: unknown; total?: unknown };
+		console.log("OK ", name.padEnd(22), shape(l?.rows ?? v), l?.total !== undefined ? `total ${l.total}` : "");
 		return v;
 	} catch (e) {
 		console.log("ERR", name.padEnd(22), (e as Error).message.slice(0, 200));
+		return undefined;
 	}
 };
 const now = Math.floor(Date.now() / 1000),
@@ -37,7 +39,8 @@ await run("shop", async () => {
 const idx = await run("orderIndex(all)", () => orders.orderIndex(orders.TAB.all, 1, 5).then((r) => ({ total: r.total, rows: r.refs })));
 const cards = await run("orderCards", () => orders.orderCards(orders.TAB.all, idx?.rows ?? []));
 await run("toShipOrders", () => orders.toShipOrders());
-if (cards?.[0]) await run("oneOrder", () => orders.oneOrder(cards[0].orderId));
+const first = cards?.[0];
+if (first) await run("oneOrder", () => orders.oneOrder(first.orderId));
 const live = await run("liveProducts", () => products.liveProducts(1, 5));
 await run("allProducts", () => products.allProducts(1, 5));
 const pid = live?.rows?.[0]?.productId;
@@ -48,12 +51,13 @@ if (leaf) await run("attributes", () => products.attributes(Number(leaf)));
 await run("countLimit", () => products.countLimit());
 await run("performance", () => products.performance(now - 7 * day, now, "past7days", 1, 5));
 await run("categoryTree", () => products.categoryTree());
-if (info?.name) await run("recommendedCategory", () => products.recommendedCategory(info.name));
+const name = info?.name;
+if (name) await run("recommendedCategory", () => products.recommendedCategory(name));
 await run("shippingDays", () => products.shippingDays());
 await run("mass.records", () => mass.records());
 await run("mass.drafts", () => mass.drafts());
 const inc = await run("income", () => finance.income(monthAgo, today));
-const oid = inc?.rows?.[0]?.local_income_detail?.order_income_info?.order_id;
+const oid = (inc?.rows?.[0]?.local_income_detail as { order_income_info?: { order_id?: unknown } } | undefined)?.order_income_info?.order_id;
 if (oid) await run("incomeComponents", () => finance.incomeComponents(String(oid)));
 await run("returns.cases", () => returns.cases());
 await run("shopMetrics", () => marketing.shopMetrics(now - 7 * day, now, "past7days"));

@@ -1,0 +1,14 @@
+[
+	{
+		"id": "1000000000000000001",
+		"to_id": 900001,
+		"to_name": "買家甲",
+		"latest_message_type": "text",
+		"latest_message_content": { "text": "請問有現貨嗎" },
+		"latest_message_from_id": 900001,
+		"last_message_state": "normal",
+		"last_message_time_nano": "1761700000000000000",
+		"unread_count": 1,
+		"next_timestamp_nano": "1761700000000000000"
+	}
+]

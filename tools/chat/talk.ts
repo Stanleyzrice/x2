@@ -3,6 +3,8 @@
 // 平台发的（退货卡片、缺货提醒）来源（source）是 server；会话里对方的 id 是 to_id；消息里 from_shop_id 是这家店的店铺 id 就是我们（消息的 shop_id 是 0）。
 // 时间：会话的 last_message_time_nano 是纳秒的字符串（前 13 位是毫秒），消息的 created_timestamp 是秒
 
+import type { Conversation as Raw, Message as RawMessage } from "../../connectors/sites/shopee/chat.ts";
+
 export type Sender = "buyer" | "us" | "auto" | "platform" | "other_auto";
 export type Conversation = { id: string; buyer: string; lastText: string; lastFrom: Sender; lastAt: string | null; unread: number; unreplied: boolean };
 export type Message = { id: string; sender: Sender; text: string; at: string };
@@ -19,14 +21,17 @@ const KINDS: Record<string, string> = {
 };
 const AUTO = ["auto_reply", "offwork_autoreply"];
 
-export const messageText = (type: string, content: any): string => (type === "text" ? String(content?.text ?? "") : (KINDS[type] ?? `[${type}]`));
+export const messageText = (type: string | null | undefined, content: unknown): string =>
+	type === "text"
+		? String((typeof content === "object" && content !== null && "text" in content ? content.text : undefined) ?? "")
+		: (KINDS[String(type)] ?? `[${type}]`);
 
 const nano = (v: unknown) => (v ? new Date(Number(String(v).slice(0, 13))).toISOString() : null);
 
 /** 会话列表和「未回覆」合起来：未回覆的排前面，再按最后一条从新到旧 */
-export function conversationsOf(all: any[], unreplied: any[]): Conversation[] {
+export function conversationsOf(all: Raw[], unreplied: Raw[]): Conversation[] {
 	const waiting = new Set(unreplied.map((c) => String(c.id)));
-	const byId = new Map<string, any>();
+	const byId = new Map<string, Raw>();
 	for (const c of [...unreplied, ...all]) if (!byId.has(String(c.id))) byId.set(String(c.id), c);
 	return [...byId.values()]
 		.map(
@@ -34,7 +39,7 @@ export function conversationsOf(all: any[], unreplied: any[]): Conversation[] {
 				id: String(c.id),
 				buyer: String(c.to_name ?? ""),
 				lastText: messageText(c.latest_message_type, c.latest_message_content),
-				lastFrom: AUTO.includes(c.last_message_state)
+				lastFrom: AUTO.includes(String(c.last_message_state))
 					? c.latest_message_from_id === c.to_id
 						? "other_auto"
 						: "auto"
@@ -52,13 +57,13 @@ export function conversationsOf(all: any[], unreplied: any[]): Conversation[] {
 }
 
 /** 一个会话的消息，从旧到新 */
-export function messagesOf(raw: any[], shopId: string): Message[] {
+export function messagesOf(raw: RawMessage[], shopId: string): Message[] {
 	return raw
 		.map((m): Message => {
 			const ours = String(m.from_shop_id) === shopId;
 			return {
 				id: String(m.id),
-				sender: AUTO.includes(m.status) ? (ours ? "auto" : "other_auto") : m.source === "server" ? "platform" : ours ? "us" : "buyer",
+				sender: AUTO.includes(String(m.status)) ? (ours ? "auto" : "other_auto") : m.source === "server" ? "platform" : ours ? "us" : "buyer",
 				text: messageText(m.type, m.content),
 				at: new Date(Number(m.created_timestamp) * 1000).toISOString(),
 			};
