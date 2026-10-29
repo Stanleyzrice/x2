@@ -13,11 +13,12 @@ import { zhixia } from "./connectors/sites/zhixia/index.ts";
 import { main } from "./platform/cli.ts";
 import { page, platform } from "./platform/commands.ts";
 import { register, type Toolkit } from "./platform/tool.ts";
+import { chat } from "./tools/chat/index.ts";
 import { listing } from "./tools/listing/index.ts";
 import { orders } from "./tools/orders/index.ts";
 import { selection } from "./tools/selection/index.ts";
 
-export const TOOLKITS: Toolkit[] = [platform, page, orders, listing, selection, shopee, alibaba, chanboss, zhixia, market, gemini, xiangji, image];
+export const TOOLKITS: Toolkit[] = [platform, page, orders, listing, selection, chat, shopee, alibaba, chanboss, zhixia, market, gemini, xiangji, image];
 
 if (import.meta.main) {
 	register(...TOOLKITS);

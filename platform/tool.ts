@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { registerSite, type SiteDef } from "./browser/browser.ts";
 import { addSchema, type Sql } from "./db/index.ts";
+import { Usage } from "./errors.ts";
 import type { Table } from "./web/tables.ts";
 import type { Ran, WriteOp } from "./writes.ts";
 
@@ -56,6 +57,16 @@ export function findTool(id: string): Tool | undefined {
 	const dot = id.indexOf(".");
 	const [kit, name] = dot < 0 ? ["", id] : [id.slice(0, dot), id.slice(dot + 1)];
 	return kits.find((k) => k.name === kit)?.tools[name];
+}
+
+/** 照注册表调一个读工具（不经命令行：网页服务替组件调）：参数照工具的 zod 校验，一页一页的只读第一页。写工具不从这里调 */
+export async function invoke(id: string, input: Record<string, unknown>): Promise<unknown> {
+	const t = findTool(id);
+	if (!t) throw new Usage(`没有工具 ${id}`);
+	if (t.kind !== "read") throw new Usage(`${id} 是写工具，网页还不调写工具`);
+	const p = t.params.safeParse(input);
+	if (!p.success) throw new Usage(`${id} 的参数不对：${p.error.issues.map((x) => `${x.path.join(".")}：${x.message}`).join("；")}`);
+	return "run" in t ? t.run(p.data) : t.page(p.data, null);
 }
 
 export const writeOps = (): Record<string, WriteOp> => Object.assign({}, ...kits.map((k) => k.writes ?? {}));

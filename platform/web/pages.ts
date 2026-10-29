@@ -6,13 +6,23 @@ import { readdirSync } from "node:fs";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
+import { invoke } from "../tool.ts";
 import { checkRef, type Ref } from "./grid.ts";
 import { tables } from "./tables.ts";
 
 export const KINDS = ["generative", "interactable"] as const;
 export type Kind = (typeof KINDS)[number];
-/** 一个组件的 schema.ts：参数、说明、例子；要人回答的（例 choice）还有 answer：照这一个组件的参数，人的答案长什么样 */
-export type Component = { name: string; kind: Kind; description: string; props: z.ZodType; examples: unknown[]; answer?: (props: any) => z.ZodType };
+/** 一个组件的 schema.ts：参数、说明、例子；要人回答的（例 choice）还有 answer：照这一个组件的参数，人的答案长什么样；
+ * 要现读站点的（例 chat）还有 actions：网页能替它调哪几个工具（名字 → 注册表里的工具 id） */
+export type Component = {
+	name: string;
+	kind: Kind;
+	description: string;
+	props: z.ZodType;
+	examples: unknown[];
+	answer?: (props: any) => z.ZodType;
+	actions?: Record<string, string>;
+};
 
 const UI = new URL("../ui/", import.meta.url);
 
@@ -26,7 +36,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 	return Promise.all(
 		names.map(async (name) => {
 			const m = await import(new URL(`${name}/schema.ts`, dir).href);
-			return { name, kind, description: m.description, props: m.props, examples: m.examples, answer: m.answer };
+			return { name, kind, description: m.description, props: m.props, examples: m.examples, answer: m.answer, actions: m.actions };
 		}),
 	);
 }
@@ -160,6 +170,17 @@ export async function answer(sql: Sql, item: string, input: unknown): Promise<vo
 	const a = parseAnswer(i.component, i.props, input);
 	await sql`update page_items set answer = ${sql.json(a as any)}, answered_at = now() where id = ${id}`;
 	await sql`update pages set updated_at = now() where id = ${i.page_id}`;
+}
+
+/** 网页替组件调它声明的一个工具：参数是组件的引用（props，标题不算）加上人在网页上选的（例 换了一个会话）。只调 schema.ts 的 actions 里写着的 */
+export async function act(sql: Sql, item: string, action: string, input: unknown): Promise<unknown> {
+	const id = itemId(item);
+	const [i] = await sql`select component, props from page_items where id = ${id}`;
+	if (!i) throw new Usage(`没有组件 ${item}`);
+	const tool = COMPONENTS.get(i.component)?.actions?.[action];
+	if (!tool) throw new Usage(`${i.component} 没有 ${action}`);
+	const { title: _, ...ref } = i.props as Record<string, unknown>;
+	return invoke(tool, { ...ref, ...(input && typeof input === "object" ? input : {}) });
 }
 
 export async function closeItem(sql: Sql, item: string): Promise<void> {

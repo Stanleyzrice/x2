@@ -1,16 +1,18 @@
-// 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。只读写库，不碰站点。
+// 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。
+// 碰站点只有一条路：组件在 schema.ts 里声明网页能替它调哪几个工具（actions，例 chat 读聊聊、写回复草稿），这里经注册表（platform/tool.ts 的 invoke）调；platform 仍然不 import connectors、tools，只认工具的 id。只调读工具
 // GET /api/meta：每张表的列（类型从库里读）、表单；GET /api/rows?ref=：一个 datagrid 引用的行（ref 是它的 props 的 JSON，照组件的校验查过、grid.ts 拼成 SQL，只给要的列）；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
-// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查
+// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查；
+// POST /api/page/act { item, action, input }：替组件调它声明的工具
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import type { Sql } from "../db/index.ts";
-import { Usage } from "../errors.ts";
+import { NeedsHuman, Usage } from "../errors.ts";
 import { type Ref, refQuery } from "./grid.ts";
-import { answer, closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
+import { act, answer, closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
 
 const LIMIT = 1000;
@@ -167,6 +169,7 @@ export async function serve(
 			await answer(sql, String(b?.item ?? ""), b?.answer);
 			return { ok: true };
 		},
+		"POST /api/page/act": async (b) => act(sql, String(b?.item ?? ""), String(b?.action ?? ""), b?.input),
 		"DELETE /api/page/item": async (_, url) => {
 			await closeItem(sql, url.searchParams.get("id") ?? "");
 			return { ok: true };
@@ -227,7 +230,8 @@ export async function serve(
 				for await (const c of req) raw += c;
 				send(res, 200, "application/json", JSON.stringify(await route(raw ? JSON.parse(raw) : null, url)));
 			} catch (e) {
-				const told = e instanceof Usage || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
+				const told =
+					e instanceof Usage || e instanceof NeedsHuman || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
 				if (!told) console.error(e);
 				send(res, told ? 400 : 500, "application/json", JSON.stringify({ error: (e as Error).message }));
 			}

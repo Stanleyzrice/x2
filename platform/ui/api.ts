@@ -20,6 +20,7 @@ export const api = {
 	page: (id: string) => call<Page>("GET", `/api/page?id=${q(id)}`),
 	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
 	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
+	act: <T>(item: string, action: string, input: Record<string, unknown> = {}) => call<T>("POST", "/api/page/act", { item, action, input }),
 	closeItem: (id: string) => call<unknown>("DELETE", `/api/page/item?id=${q(id)}`),
 	rows: (ref: unknown) => call<Row[]>("GET", `/api/rows?ref=${q(JSON.stringify(ref))}`),
 	set: (table: string, key: Key, col: string, value: unknown) => call<Row | null>("PATCH", "/api/rows", { table, key, col, value }),
