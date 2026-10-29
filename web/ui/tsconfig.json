@@ -12,7 +12,7 @@
 		"verbatimModuleSyntax": true,
 		"noUncheckedIndexedAccess": true,
 		"noFallthroughCasesInSwitch": true,
-		"types": [],
+		"types": ["node", "vite/client"],
 		"paths": {
 			"@/*": ["./*"]
 		}

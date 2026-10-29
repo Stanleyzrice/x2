@@ -359,3 +359,22 @@ alter table listings drop column if exists approved_at;
 alter table listings drop column if exists approved_hash;
 alter table listings drop column if exists content_hash;
 alter table listings drop column if exists unapproved_why;
+
+-- ── 会话（网页，web/sessions.ts） ──
+
+-- 会话：agent 开的（x2 session create），网页的侧栏列出来
+create table if not exists sessions (
+	id bigserial primary key,
+	title text not null,
+	created_at timestamptz not null default now(),
+	updated_at timestamptz not null default now()
+);
+-- 会话里的组件：component 是 web/sessions.ts 的 COMPONENTS 里的名字，props 照它校验过。interactive 的 props 是引用（例 一张表的视图），不是数据
+create table if not exists session_items (
+	id bigserial primary key,
+	session_id bigint not null references sessions (id) on delete cascade,
+	component text not null,
+	props jsonb not null,
+	created_at timestamptz not null default now()
+);
+create index if not exists session_items_session on session_items (session_id);

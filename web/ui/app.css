@@ -128,3 +128,60 @@
 		@apply font-sans;
 	}
 }
+
+/* generative 的 markdown：没有 typography 插件，照主题写几样 */
+.markdown > * + * {
+	margin-top: 0.75em;
+}
+.markdown h1 {
+	font-size: 1.25rem;
+	font-weight: 600;
+}
+.markdown h2 {
+	font-size: 1.125rem;
+	font-weight: 600;
+}
+.markdown h3 {
+	font-weight: 600;
+}
+.markdown ul {
+	list-style: disc;
+	padding-left: 1.25rem;
+}
+.markdown ol {
+	list-style: decimal;
+	padding-left: 1.25rem;
+}
+.markdown a {
+	color: var(--primary);
+	text-decoration: underline;
+	text-underline-offset: 4px;
+}
+.markdown code {
+	font-family: var(--font-mono);
+	font-size: 0.875em;
+	background: var(--muted);
+	border-radius: 0.25rem;
+	padding: 0.1em 0.3em;
+}
+.markdown pre {
+	background: var(--muted);
+	border-radius: 0.5rem;
+	padding: 0.75rem;
+	overflow-x: auto;
+}
+.markdown table {
+	width: 100%;
+	border-collapse: collapse;
+}
+.markdown th,
+.markdown td {
+	border: 1px solid var(--border);
+	padding: 0.25rem 0.5rem;
+	text-align: left;
+}
+.markdown blockquote {
+	border-left: 3px solid var(--border);
+	padding-left: 0.75rem;
+	color: var(--muted-foreground);
+}

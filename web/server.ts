@@ -1,6 +1,7 @@
 // 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（web/ui/dist）。只读写库，不碰站点。
-// GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=：一个视图的行；
-// PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行
+// GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=&filter=：一个视图的行（filter 是 JSON，只认 sessions.ts 的 filterable 的列）；
+// PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
+// GET /api/sessions：会话列表；GET /api/session?id=：一个会话和它的组件；DELETE /api/session?id=：删会话；DELETE /api/session/item?id=：关掉右边的一个 tab
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -8,6 +9,7 @@ import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import type { Sql } from "../src/db/index.ts";
 import { Usage } from "../src/errors.ts";
+import { closeItem, deleteSession, filterable, listSessions, showSession } from "./sessions.ts";
 import { type ColumnType, type Key, type Meta, type Row, TABLES, type Table } from "./tables.ts";
 
 /** 一个视图最多给几行 */
@@ -151,8 +153,35 @@ export async function serve(
 		"GET /api/rows": async (_, url) => {
 			const t = table(url.searchParams.get("table"));
 			const v = t.views.find((x) => x.title === url.searchParams.get("view")) ?? t.views[0]!;
-			const rows = await sql`${select(t)} ${v.where ? sql`where ${sql.unsafe(v.where)}` : sql``} order by ${sql.unsafe(v.order)} limit ${LIMIT}`;
+			// 按列筛（会话里的 datagrid 引用的）：只认能筛的列，值都当文字比
+			let filter: Record<string, string | string[]> = {};
+			try {
+				filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
+			} catch {
+				throw new Usage("filter 要是 JSON");
+			}
+			const can = filterable(t.name);
+			const conds = [
+				...(v.where ? [sql`(${sql.unsafe(v.where)})`] : []),
+				...Object.entries(filter).map(([c, x]) => {
+					if (!can.has(c)) throw new Usage(`${t.title}不能按「${c}」筛`);
+					return sql`${sql(c)}::text in ${sql((Array.isArray(x) ? x : [x]).map(String))}`;
+				}),
+			];
+			const where = conds.length ? sql`where ${conds.reduce((a, b) => sql`${a} and ${b}`)}` : sql``;
+			const rows = await sql`${select(t)} ${where} order by ${sql.unsafe(v.order)} limit ${LIMIT}`;
 			return rows.map((r) => shape(t, colTypes.get(t.name)!, r));
+		},
+
+		"GET /api/sessions": async () => listSessions(sql),
+		"GET /api/session": async (_, url) => showSession(sql, url.searchParams.get("id") ?? ""),
+		"DELETE /api/session": async (_, url) => {
+			await deleteSession(sql, url.searchParams.get("id") ?? "");
+			return { ok: true };
+		},
+		"DELETE /api/session/item": async (_, url) => {
+			await closeItem(sql, url.searchParams.get("id") ?? "");
+			return { ok: true };
 		},
 
 		"PATCH /api/rows": async (b) => {

@@ -5,11 +5,10 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<title>x2</title>
 	<link rel="icon" href="./favicon.svg" />
-	<link rel="stylesheet" href="./app.css" />
 	<script>
-		// 深浅色跟系统（Kumo 认 data-mode）；先于页面画出来设好，免得闪一下
+		// 深浅色跟系统（shadcn 认 .dark）；先于页面画出来设好，免得闪一下
 		const dark = matchMedia("(prefers-color-scheme: dark)");
-		const mode = () => document.documentElement.setAttribute("data-mode", dark.matches ? "dark" : "light");
+		const mode = () => document.documentElement.classList.toggle("dark", dark.matches);
 		mode();
 		dark.addEventListener("change", mode);
 	</script>

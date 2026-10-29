@@ -19,6 +19,7 @@ import type { Submitted, WriteOp } from "../src/loop/writes.ts";
 import type { Reads } from "../src/orders/read.ts";
 import { setException } from "../src/orders/source.ts";
 import { serve } from "../web/server.ts";
+import { createSession, push, showSession } from "../web/sessions.ts";
 
 const url = process.env.X2_TEST_DATABASE_URL;
 const sql = url ? postgres(url, { onnotice: () => {}, max: 2 }) : null;
@@ -851,6 +852,57 @@ test("网页：只收人能改的格，照类型和条件收；删图记进已�
 		assert.deepEqual(
 			(await db`select shop, offer_id, strategy from listings where id = ${added.body.key}`).map((r) => ({ ...r })),
 			[{ shop: "ni1206", offer_id: "123456", strategy: "人选" }],
+		);
+	} finally {
+		await stop();
+	}
+});
+
+test("会话：push 照组件的参数校验，说哪一格不对；interactive 的同一个引用换掉不另开；网页按引用筛行，人能关掉右边的 tab", {
+	skip: !sql && "没设 X2_TEST_DATABASE_URL",
+}, async () => {
+	const db = sql!;
+	const s = await createSession(db, "试会话");
+	await assert.rejects(push(db, s.id, { component: "nope", props: {} }), (e: Error) => e instanceof Usage && /没有组件 nope/.test(e.message));
+	await assert.rejects(
+		push(db, s.id, { component: "chart", props: { type: "pie", data: [{ d: "一", n: 1 }], x: "zz", y: ["n", "m"] } }),
+		(e: Error) => e instanceof Usage && /x：data 里没有 x 这一列；y：pie 只画一列/.test(e.message),
+	);
+	await assert.rejects(
+		push(db, s.id, { component: "datagrid", props: { table: "listings", filter: { title_secret: "x" } } }),
+		(e: Error) => e instanceof Usage && /不能按「title_secret」筛/.test(e.message),
+	);
+	await assert.rejects(
+		push(db, "999999", { component: "markdown", props: { text: "hi" } }),
+		(e: Error) => e instanceof Usage && /没有会话 999999/.test(e.message),
+	);
+	await push(db, s.id, { component: "markdown", props: { text: "hi" } });
+	const ref = { table: "listings", view: "全部", filter: { shop: "ni1206" } };
+	const a = await push(db, s.id, { component: "datagrid", props: ref });
+	const b = await push(db, s.id, { component: "datagrid", props: { ...ref, title: "ni1206 的商品稿" } });
+	assert.deepEqual([a.replaced, b.replaced, b.id], [false, true, a.id]);
+	const shown = await showSession(db, s.id);
+	assert.deepEqual(
+		shown.items.map((i) => i.component),
+		["markdown", "datagrid"],
+	);
+
+	const [l] = await db`insert into listings (shop, offer_id) values ('ni1206', '777950') returning id::text`;
+	const { port, stop } = await serve(db, { host: "127.0.0.1", port: 0, dist: "/nonexistent" });
+	try {
+		const get = async (path: string) => {
+			const r = await fetch(`http://127.0.0.1:${port}${path}`);
+			return { status: r.status, body: (await r.json()) as any };
+		};
+		const rows = await get(`/api/rows?table=listings&view=全部&filter=${encodeURIComponent(JSON.stringify(ref.filter))}`);
+		assert.ok(rows.body.length >= 1 && rows.body.every((r: any) => r.shop === "ni1206"));
+		assert.ok(rows.body.some((r: any) => r._key.id === l!.id));
+		assert.equal((await get(`/api/rows?table=listings&filter=${encodeURIComponent('{"title_secret":"x"}')}`)).status, 400);
+		assert.equal((await get(`/api/session?id=${s.id}`)).body.items.length, 2);
+		await fetch(`http://127.0.0.1:${port}/api/session/item?id=${a.id}`, { method: "DELETE" });
+		assert.deepEqual(
+			(await showSession(db, s.id)).items.map((i) => i.component),
+			["markdown"],
 		);
 	} finally {
 		await stop();

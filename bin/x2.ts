@@ -7,6 +7,7 @@ import { dbCommand } from "../src/cli/db.ts";
 import { listingCommand } from "../src/cli/listing.ts";
 import { doCommand, handledCommand, resolveCommand, status, verifyCommand } from "../src/cli/loop.ts";
 import { ruleCommand } from "../src/cli/rule.ts";
+import { sessionCommand } from "../src/cli/session.ts";
 import { schema, site, sites, sitesHelp } from "../src/cli/site.ts";
 import { sourceCommand } from "../src/cli/source.ts";
 import { strategyCommand } from "../src/cli/strategy.ts";
@@ -29,6 +30,7 @@ const commands: Record<string, () => Promise<void>> = {
 	strategy: () => strategyCommand(args, json),
 	rule: () => ruleCommand(args, json),
 	db: () => dbCommand(args, json),
+	session: () => sessionCommand(args, json),
 	web: () => webCommand(args, json),
 	schema: async () => schema(),
 };
@@ -58,7 +60,10 @@ const help = [
 	"  x2 listing list                  所有商品稿走到哪了",
 	"  x2 strategy add | set | list | log   选品的策略（假设、选品方法、版本号）；set 要 --why，版本号加 1；log 看变更记录",
 	"  x2 rule add | retire | list       选品规矩（所有策略共用）：add、retire 要 --why；停用的不删",
-	"  x2 web [--host 127.0.0.1] [--port 5170]   开网页：商品稿（审稿、删图）、订单、货源、设置；人在这里看、填",
+	"网页（会话：agent 往里放组件给人看、让人填，见 web/sessions.ts）：",
+	"  x2 session list | create <标题> | delete <会话> | show <会话>",
+	"  x2 session push <会话> < 组件.json  放组件：{ component, props }（x2 session components 看有哪些、参数）",
+	"  x2 web [--host 127.0.0.1] [--port 5170]   开网页：侧栏是会话，中间是 generative 组件，右边是 interactive 组件",
 	"  x2 db migrate                  建表、加列",
 	"读站点（只读）：",
 	...sitesHelp(),
