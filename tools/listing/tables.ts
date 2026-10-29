@@ -3,6 +3,7 @@ import { IMAGE } from "../../connectors/sites/shopee/seller.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { Grid, Key, Pic, Row, Table } from "../../platform/web/tables.ts";
+import { LISTING_STEPS } from "./check.ts";
 import { addListings } from "./pick.ts";
 import { LABEL, numbered, usedPics } from "./product.ts";
 import { listingsCheck } from "./status.ts";
@@ -81,6 +82,7 @@ export const LISTING_TABLES: Table[] = [
 		name: "listings",
 		title: "商品稿",
 		key: ["id"],
+		order: { step: LISTING_STEPS },
 		columns: {
 			nickname: "简称",
 			step: "当前步骤",

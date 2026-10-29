@@ -16,7 +16,8 @@ import { api, fail, keyOf, type Meta, type Row, meta as readMeta, usePoll } from
 import { Edit, type Save, Show } from "./cells.tsx";
 import type { Props } from "./schema.ts";
 
-function groups(rows: Row[], g: Props["group"]): [string | null, Row[]][] {
+/** 按组排：agent 给了 values 照它，没给照这一列在 tables.ts 里的先后（例 当前步骤照流程），都没有照行的顺序 */
+function groups(rows: Row[], g: Props["group"], order: readonly string[] | undefined): [string | null, Row[]][] {
 	if (!g) return [[null, rows]];
 	const by = new Map<string, Row[]>();
 	for (const r of rows) {
@@ -24,7 +25,7 @@ function groups(rows: Row[], g: Props["group"]): [string | null, Row[]][] {
 		by.set(k, [...(by.get(k) ?? []), r]);
 	}
 	const rank = (k: string) => {
-		const i = g.values?.indexOf(k) ?? -1;
+		const i = (g.values ?? order)?.indexOf(k) ?? -1;
 		return i < 0 ? Number.POSITIVE_INFINITY : i;
 	};
 	return [...by].sort(([a], [b]) => rank(a) - rank(b));
@@ -65,7 +66,7 @@ export function View({ props }: { props: Props }) {
 			{!local.length ? (
 				<p className="py-8 text-center text-sm text-muted-foreground">没有</p>
 			) : (
-				groups(local, props.group).map(([g, list]) => (
+				groups(local, props.group, m.columns.find((c) => c.name === props.group?.col)?.order).map(([g, list]) => (
 					<section key={g ?? ""} className="flex flex-col gap-2">
 						{g !== null && (
 							<h4 className="flex items-center gap-2 text-sm font-medium">

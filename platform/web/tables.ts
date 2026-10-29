@@ -23,6 +23,8 @@ export type Table = {
 	images?: string[];
 	links?: string[];
 	edit?: Record<string, Edit>;
+	/** 一列的值的先后（例 当前步骤照流程排）：网页按这一列分组时，agent 没给 values 就照它 */
+	order?: Record<string, readonly string[]>;
 	recheck?: (sql: Sql, key: Key) => Promise<unknown>;
 	form?: Form;
 };
@@ -45,7 +47,7 @@ export type Meta = {
 	name: string;
 	title: string;
 	key: string[];
-	columns: { name: string; label: string; type: ColumnType; edit?: { options?: readonly string[] } }[];
+	columns: { name: string; label: string; type: ColumnType; edit?: { options?: readonly string[] }; order?: readonly string[] }[];
 	form?: { title: string; fields: { name: string; label: string; hint: string; type: ColumnType; required: boolean; options?: readonly string[] }[] };
 };
 

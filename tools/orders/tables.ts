@@ -2,6 +2,7 @@
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { Key, Table } from "../../platform/web/tables.ts";
+import { STEPS } from "./check.ts";
 
 async function choose(sql: Sql, key: Key, value: unknown): Promise<void> {
 	if (typeof value !== "boolean") throw new Usage("选用：要 true 或 false");
@@ -16,6 +17,7 @@ export const ORDER_TABLES: Table[] = [
 		name: "orders",
 		title: "订单",
 		key: ["sn"],
+		order: { step: STEPS },
 		columns: {
 			sn: "订单号",
 			shop: "店铺",

@@ -122,6 +122,7 @@ export async function serve(
 							label,
 							type: cols.get(name) ?? "text",
 							...(t.edit?.[name] ? { edit: { options: t.edit[name].options } } : {}),
+							...(t.order?.[name] ? { order: t.order[name] } : {}),
 						})),
 						...(t.form
 							? {
