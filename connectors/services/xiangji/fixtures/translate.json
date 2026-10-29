@@ -1,0 +1,16 @@
+{
+	"Code": 200,
+	"Message": "success",
+	"RequestId": "00000000-0000-0000-0000-000000000000",
+	"Data": {
+		"Content": [
+			{
+				"Code": 200,
+				"OriginUrl": "https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fa.jpg",
+				"SslUrl": "https://i.tosoiot.com/a.jpg",
+				"Url": "http://i.tosoiot.com/a.jpg"
+			},
+			{ "Code": 1002, "OriginUrl": "https://cbu01.alicdn.com/img/b.jpg", "Message": "图片无文字" }
+		]
+	}
+}

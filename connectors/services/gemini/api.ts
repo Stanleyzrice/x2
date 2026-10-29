@@ -4,12 +4,25 @@
 // GEMINI_BASE 换出口网关（地域被挡时）；GEMINI_MODEL 换模型。gemini-2.5-flash-lite 在这把 key 上回 404，用 3.1
 // 只对 429 和 5xx 重试（最多 4 次，隔 1、2、4 秒：同时问的多了，偶尔会碰上限流）；别的出错直接抛。回模型输出的文字
 
+import { z } from "zod";
+import { reply } from "../../../platform/reply.ts";
+
 export const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const MAX_BYTES = 20 * 1024 * 1024;
 
 export type Image = { bytes: Uint8Array; mime: string };
 
 export const model = () => process.env.GEMINI_MODEL || DEFAULT_MODEL;
+
+const generated = z.looseObject({
+	candidates: z
+		.array(z.looseObject({ content: z.looseObject({ parts: z.array(z.looseObject({ text: z.string().nullish() })).nullish() }).nullish() }))
+		.nullish(),
+});
+
+/** generateContent 的回包 → 第一个候选的字（纯函数）；没有候选是空字符串 */
+export const textOf = (body: unknown): string =>
+	(reply(generated, body, "Gemini generateContent").candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
 
 export async function gemini(prompt: string, images: Image[], schema?: object): Promise<string> {
 	const key = process.env.GEMINI_API_KEY;
@@ -28,10 +41,7 @@ export async function gemini(prompt: string, images: Image[], schema?: object): 
 			body,
 			signal: AbortSignal.timeout(60_000),
 		});
-		if (r.ok) {
-			const j = (await r.json()) as any;
-			return ((j?.candidates?.[0]?.content?.parts ?? []) as { text?: string }[]).map((p) => p.text ?? "").join("");
-		}
+		if (r.ok) return textOf(await r.json());
 		if ((r.status === 429 || r.status >= 500) && attempt < 4) {
 			await new Promise((res) => setTimeout(res, 2 ** (attempt - 1) * 1000));
 			continue;
