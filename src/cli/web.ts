@@ -17,7 +17,7 @@ export async function webCommand(args: string[], json: boolean): Promise<void> {
 		.safeParse({ host: flag(args, "--host"), port: flag(args, "--port") });
 	if (!a.success) throw new Usage("x2 web [--host 127.0.0.1] [--port 5170]（--host 0.0.0.0：同一个网络里别的电脑也能开）");
 	const { build } = await import("vite");
-	await build({ configFile: `${root}vite.config.ts`, logLevel: "warn" });
+	await build({ configFile: `${root}web/ui/vite.config.ts`, logLevel: "warn" });
 	const { stop } = await serve(await db(), { ...a.data, dist: `${root}web/ui/dist` });
 	const url = `http://${a.data.host === "0.0.0.0" ? "localhost" : a.data.host}:${a.data.port}`;
 	console.log(json ? JSON.stringify({ url }) : `网页：${url}（Ctrl-C 关掉）`);
