@@ -75,6 +75,8 @@ export async function run(sql: Sql, opts: Opts = {}, ops: Record<string, WriteOp
 }
 
 const IN_FLIGHT = ["待执行", "已提交", "结果未知", "不一致"];
+/** 要人到站点上看、x2 resolve 记结果的。已提交的不算：可能还在路上（进程正在提交），人看的时候还没到站点，记成被拒会再做一次；先 x2 verify 读回来 */
+export const LOOK = ["结果未知", "不一致"];
 const DONE_OR_FLYING = ["成功", "已核对", "已提交", "结果未知", "不一致"];
 
 // 下面几个是纯的判断（一条写入现在该怎么办），引擎只管读写库、调写操作

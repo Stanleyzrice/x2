@@ -1,7 +1,7 @@
 // 写入引擎的判断：没核清的同一个对象不再做；结果未知停下这一批、不重发；被拒的记下原因，同一个 key 再交加次数
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { admit, failed, gate, type Stuck, settle, stuck } from "./writes.ts";
+import { admit, failed, gate, LOOK, type Stuck, settle, stuck } from "./writes.ts";
 
 const none = (): Stuck => ({ batches: new Set(), targets: new Set() });
 const w = { op: "试写", batch: "1", target: "t:1" };
@@ -53,4 +53,8 @@ test("写入：执行时抛了错，没记意图的是未执行、提交了没�
 	assert.equal(failed("已核对"), null);
 	assert.equal(failed("被拒"), null);
 	assert.equal(failed("未执行"), null);
+});
+
+test("写入：人到站点上核的只有结果未知、不一致；已提交的可能还在路上，先读回来", () => {
+	assert.deepEqual(LOOK, ["结果未知", "不一致"]);
 });

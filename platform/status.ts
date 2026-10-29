@@ -2,6 +2,7 @@
 // 加上写入的：结果未知、不一致的提醒人去站点上看，已提交、结果未知的 agent 先核清（x2 verify）。人说做完了的（x2 handled）不再提醒
 import type { Sql } from "./db/index.ts";
 import { type Checked, type Reminder, type Todo, toolkits, writeOps } from "./tool.ts";
+import { LOOK } from "./writes.ts";
 
 export async function status(sql: Sql): Promise<Checked> {
 	const checked: Checked[] = [];
@@ -9,7 +10,7 @@ export async function status(sql: Sql): Promise<Checked> {
 	const ops = writeOps();
 	const unsure = await sql`select id::text, op, display, status, error from writes where status in ('已提交', '结果未知', '不一致') order by id`;
 	const look = unsure
-		.filter((w) => w.status !== "已提交")
+		.filter((w) => LOOK.includes(w.status))
 		.map(
 			(w): Reminder => ({
 				key: `unknown:${w.id}`,
