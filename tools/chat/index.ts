@@ -20,21 +20,22 @@ export const chat: Toolkit = {
 	title: "聊聊：读会话和消息，让 Gemini 写回复草稿",
 	kind: "tool",
 	tools: {
-		conversations: {
-			...get("这家店最近的会话（最新的 50 个和「未回覆」的）：未回覆的排前面，再按最后一条从新到旧", z.object({ shop }), (p) =>
-				inAccount("shopee", p.shop, async () => conversationsOf(await conversations(), (await unreplied()).rows)),
-			),
-			text: (l) => l.map((c: any) => `${c.unreplied ? "[未回覆] " : ""}${c.id} ${c.buyer}：${c.lastText}`).join("\n") || "没有会话",
-		},
-		messages: {
-			...get("一个会话最近的 30 条消息，从旧到新；sender 是 buyer、us、auto（我们的自动回复）、platform、other_auto", conversation, read),
-			text: (l) => l.map((m: any) => `${m.at} ${m.sender}：${m.text}`).join("\n"),
-		},
-		draft: {
-			...get("让 Gemini 照这个会话写一则回复的草稿（台湾繁体；不知道的不编）：给人看、人改，不会发出去", conversation, async (p) => ({
+		conversations: get(
+			"这家店最近的会话（最新的 50 个和「未回覆」的）：未回覆的排前面，再按最后一条从新到旧",
+			z.object({ shop }),
+			(p) => inAccount("shopee", p.shop, async () => conversationsOf(await conversations(), (await unreplied()).rows)),
+			{ text: (l) => l.map((c) => `${c.unreplied ? "[未回覆] " : ""}${c.id} ${c.buyer}：${c.lastText}`).join("\n") || "没有会话" },
+		),
+		messages: get("一个会话最近的 30 条消息，从旧到新；sender 是 buyer、us、auto（我们的自动回复）、platform、other_auto", conversation, read, {
+			text: (l) => l.map((m) => `${m.at} ${m.sender}：${m.text}`).join("\n"),
+		}),
+		draft: get(
+			"让 Gemini 照这个会话写一则回复的草稿（台湾繁体；不知道的不编）：给人看、人改，不会发出去",
+			conversation,
+			async (p) => ({
 				text: (await gemini(draftPrompt(p.shop, await read(p)), [])).trim(),
-			})),
-			text: (r) => r.text,
-		},
+			}),
+			{ text: (r) => r.text },
+		),
 	},
 };

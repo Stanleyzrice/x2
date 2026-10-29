@@ -8,12 +8,14 @@ export const gemini: Toolkit = {
 	title: "Gemini（GEMINI_API_KEY；GEMINI_MODEL 换模型）",
 	kind: "service",
 	tools: {
-		ask: {
-			...get("问一句（只有字，不带图），回模型的回答", z.object({ prompt: z.string().min(1).describe("提示") }), async (p) => ({
+		ask: get(
+			"问一句（只有字，不带图），回模型的回答",
+			z.object({ prompt: z.string().min(1).describe("提示") }),
+			async (p) => ({
 				model: model(),
 				text: await ask(p.prompt, []),
-			})),
-			text: (r) => r.text,
-		},
+			}),
+			{ text: (r) => r.text },
+		),
 	},
 };

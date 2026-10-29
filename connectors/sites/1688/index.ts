@@ -1,19 +1,22 @@
 // x2 1688 <工具>：1688 的读工具（加购是写，只经业务工具的写工具调）
 import { z } from "zod";
 import { Usage } from "../../../platform/errors.ts";
-import { all, byPage, get, type SubmitTool, str, strs, type Toolkit } from "../../../platform/tool.ts";
-import { account, addToCart, alibabaCookie, buyerOrders, cart, offer, offerIdOf, refund, search, traces } from "./api.ts";
+import { all, byPage, get, str, strs, submit, type Toolkit } from "../../../platform/tool.ts";
+import { account, addToCart, alibabaCookie, buyerOrders, cart, OfferId, offer, offerIdOf, refund, SpecId, search, traces } from "./api.ts";
 import { SLIDER } from "./challenge.ts";
 
-export const cartAdd: SubmitTool = {
-	kind: "write",
-	description: "加购：把商品的一个规格加进购物车（只经业务工具的写工具调）",
-	params: z.object({ offerId: str("商品 id（offer id）"), specId: str("规格的 specId"), qty: z.number().int().positive().describe("件数") }),
-	submit: async (p) => {
+export const cartAdd = submit(
+	"加购：把商品的一个规格加进购物车（只经业务工具的写工具调）",
+	z.object({
+		offerId: OfferId.describe("商品 id（offer id）"),
+		specId: SpecId.describe("规格的 specId（只有一个规格的商品是空的）"),
+		qty: z.number().int().positive().describe("件数"),
+	}),
+	async (p) => {
 		const r = await addToCart(p.offerId, p.specId, p.qty);
 		return r.kind === "sent" ? { kind: "done" } : r;
 	},
-};
+);
 
 const tools = {
 	"cart-add": cartAdd,

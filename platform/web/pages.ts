@@ -4,7 +4,7 @@
 // 这里照这两个目录收 schema.ts：x2 page push 照它校验（不对说哪一格），x2 page components 照它给 agent 看
 import { readdirSync } from "node:fs";
 import { z } from "zod";
-import type { Sql } from "../db/index.ts";
+import type { Json, Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
 import { invoke } from "../tool.ts";
 import { checkRef, type Ref } from "./grid.ts";
@@ -136,11 +136,11 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 				(r) => refKey(r.props) === refKey(props),
 			);
 			if (same) {
-				await tx`update page_items set props = ${tx.json(props as any)}, created_at = now() where id = ${same.id}`;
+				await tx`update page_items set props = ${tx.json(props as Json)}, created_at = now() where id = ${same.id}`;
 				return { id: String(same.id), component, replaced: true };
 			}
 		}
-		const [r] = await tx`insert into page_items (page_id, component, props) values (${pid}, ${component}, ${tx.json(props as any)}) returning id`;
+		const [r] = await tx`insert into page_items (page_id, component, props) values (${pid}, ${component}, ${tx.json(props as Json)}) returning id`;
 		return { id: String(r!.id), component, replaced: false };
 	});
 }
@@ -152,7 +152,7 @@ export async function update(sql: Sql, item: string, input: unknown): Promise<{ 
 		const [i] = await tx`select component, page_id from page_items where id = ${id} for update`;
 		if (!i) throw new Usage(`没有组件 ${item}（x2 page show 看编号）`);
 		const props = parseProps(i.component, input);
-		await tx`update page_items set props = ${tx.json(props as any)} where id = ${id}`;
+		await tx`update page_items set props = ${tx.json(props as Json)} where id = ${id}`;
 		await tx`update pages set updated_at = now() where id = ${i.page_id}`;
 		return { id, component: i.component as string };
 	});
@@ -173,7 +173,7 @@ export async function answer(sql: Sql, item: string, input: unknown): Promise<vo
 	const [i] = await sql`select component, props, page_id from page_items where id = ${id}`;
 	if (!i) throw new Usage(`没有组件 ${item}`);
 	const a = parseAnswer(i.component, i.props, input);
-	await sql`update page_items set answer = ${sql.json(a as any)}, answered_at = now() where id = ${id}`;
+	await sql`update page_items set answer = ${sql.json(a as Json)}, answered_at = now() where id = ${id}`;
 	await sql`update pages set updated_at = now() where id = ${i.page_id}`;
 }
 

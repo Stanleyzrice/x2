@@ -1,14 +1,13 @@
 // x2 chanboss <工具>：chanboss（货代）的读工具（预报是写，只经业务工具的写工具调）
 import { z } from "zod";
-import { byPage, day, get, type SubmitTool, strs, type Toolkit } from "../../../platform/tool.ts";
+import { byPage, day, get, strs, submit, type Toolkit } from "../../../platform/tool.ts";
 import { balance, ChanbossOrderId, forecast, identity, OrderSn, orders, putaway, returnChanges, returns, stock } from "./api.ts";
 
 const range = { start: day("开始"), end: day("结束", true) };
 
-export const forecastOrder: SubmitTool = {
-	kind: "write",
-	description: "预报一张订单（只经业务工具的写工具调）",
-	params: z.object({
+export const forecastOrder = submit(
+	"预报一张订单（只经业务工具的写工具调）",
+	z.object({
 		sn: OrderSn.describe("Shopee 订单号"),
 		orderId: ChanbossOrderId.describe("chanboss 上这张订单的 id"),
 		orderTime: z.number().describe("chanboss 上的下单时间（秒）"),
@@ -17,8 +16,8 @@ export const forecastOrder: SubmitTool = {
 		warehouseId: z.number().describe("仓库"),
 		lines: z.array(z.object({ platformModelId: z.string(), modelId: z.string(), count: z.number().int().positive(), trackNum: z.string() })).min(1),
 	}),
-	submit: async ({ sn: _, ...body }) => forecast(body),
-};
+	async ({ sn: _, ...body }) => forecast(body),
+);
 
 const tools = {
 	forecast: forecastOrder,

@@ -1,7 +1,7 @@
 // 选品可追溯：商品稿加进来那一刻按的是哪一版策略、哪些选品规矩。读选品的表（strategies、selection_rules：数据上的依赖，不 import 选品的代码）
 
 import { offerIdOf } from "../../connectors/sites/1688/api.ts";
-import type { Sql } from "../../platform/db/index.ts";
+import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 
 export type PickSnapshot = {
@@ -50,7 +50,7 @@ export async function addListings(
 	const added: Added[] = [];
 	for (const offerId of offerIds) {
 		const [r] = await sql`insert into listings (shop, offer_id, strategy, pick_why, pick_evidence, pick_snapshot)
-			values (${a.shop}, ${offerId}, ${strategy}, ${a.why ?? null}, ${a.evidence ?? null}, ${sql.json(snapshot as any)})
+			values (${a.shop}, ${offerId}, ${strategy}, ${a.why ?? null}, ${a.evidence ?? null}, ${sql.json(snapshot as Json)})
 			on conflict (shop, offer_id) do update set updated_at = listings.updated_at returning id::text, (xmax = 0) as is_new, pick_why, pick_evidence, pick_snapshot`;
 		added.push({ id: r!.id, offerId, isNew: Boolean(r!.is_new), why: r!.pick_why, evidence: r!.pick_evidence, snapshot: r!.pick_snapshot });
 	}

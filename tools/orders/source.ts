@@ -6,7 +6,7 @@
 
 import { Gone, type Offer, OfferId, offerIdOf, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { similar1688, ready as zhixiaReady } from "../../connectors/sites/zhixia/api.ts";
-import type { Sql } from "../../platform/db/index.ts";
+import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { SourceSku } from "./check.ts";
 import { addException, matchSku } from "./similar.ts";
@@ -19,7 +19,7 @@ const live = (id: OfferId) =>
 	});
 
 export async function snapshot(sql: Sql, itemId: string, o: Offer): Promise<void> {
-	await sql`update sources set url = ${o.url}, title = ${o.title}, image = ${o.image}, skus = ${sql.json(o.skus as any)}, read_at = now(), broken = null
+	await sql`update sources set url = ${o.url}, title = ${o.title}, image = ${o.image}, skus = ${sql.json(o.skus as Json)}, read_at = now(), broken = null
 		where item_id = ${itemId} and offer_id = ${o.offerId}`;
 }
 
@@ -95,7 +95,7 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 						url: f.offer.url,
 						title: f.offer.title,
 						image: f.offer.image,
-						skus: tx.json(f.offer.skus as any),
+						skus: tx.json(f.offer.skus as Json),
 						read_at: new Date(),
 						score: f.total ? Math.round((f.matched / f.total) * 100) / 100 : null,
 						missing: f.missing.join("、") || null,

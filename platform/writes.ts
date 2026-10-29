@@ -11,7 +11,7 @@
 // 不花钱、能重来的写不经它（业务工具直接调连接器的写）
 import type postgres from "postgres";
 import { z } from "zod";
-import { host, type Sql } from "./db/index.ts";
+import { host, type Json, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
 import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
 
@@ -106,7 +106,7 @@ export async function addWrites(tx: Sql | postgres.TransactionSql, rows: NewRow[
 		const a = admit(r.key, same);
 		if ("busy" in a) throw new Usage(`${r.display}：写入 #${a.busy} 还没核清（x2 verify），不再做新的`);
 		const key = a.key;
-		await tx`insert into writes (batch, op, target, params, display, key, status, host) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as any)}, ${r.display}, ${key}, '待执行', ${host})`;
+		await tx`insert into writes (batch, op, target, params, display, key, status, host) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as Json)}, ${r.display}, ${key}, '待执行', ${host})`;
 	}
 	return batch;
 }
@@ -145,12 +145,12 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 		try {
 			const r = await op.where(sql, w.params, () => op.check(w.params, w.readback?.before, false));
 			if (r.done) {
-				await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as any), finished_at: new Date() });
+				await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as Json), finished_at: new Date() });
 				await op.after?.(sql, w.params);
 				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: "已核对", why: "读回来看到做成了" });
 				continue;
 			}
-			await set(sql, w.id, { status: "结果未知", readback: sql.json({ ...w.readback, after: r.readback } as any) });
+			await set(sql, w.id, { status: "结果未知", readback: sql.json({ ...w.readback, after: r.readback } as Json) });
 		} catch (e) {
 			if (e instanceof NeedsHuman) {
 				blocked = e.message;
@@ -206,8 +206,8 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 				const params = prepared.params;
 				await set(sql, w.id, {
 					status: "已提交",
-					params: sql.json(params as any),
-					readback: sql.json({ before: prepared.before } as any),
+					params: sql.json(params as Json),
+					readback: sql.json({ before: prepared.before } as Json),
 					started_at: new Date(),
 					host,
 				});
@@ -235,8 +235,8 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 			await set(sql, w.id, {
 				status: outcome.status,
 				error: outcome.why ?? null,
-				response: sql.json(outcome.response as any),
-				readback: sql.json({ before: outcome.before, after: outcome.after } as any),
+				response: sql.json(outcome.response as Json),
+				readback: sql.json({ before: outcome.before, after: outcome.after } as Json),
 				finished_at: new Date(),
 			});
 			if (outcome.status === "已核对") await op.after?.(sql, outcome.params);

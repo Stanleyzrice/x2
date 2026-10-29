@@ -7,7 +7,7 @@
 import { detailImages, Gone, type Offer, type OfferId, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../../connectors/sites/shopee/products.ts";
 import { logins } from "../../platform/browser/browser.ts";
-import type { Sql } from "../../platform/db/index.ts";
+import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages } from "./images.ts";
@@ -22,7 +22,7 @@ export async function savePrices(sql: Sql, l: ListingRow, s: Settings): Promise<
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
 	const fields = { variants: r.specs, pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
-	await sql`update listings set variants = ${sql.json(fields.variants as any)}, pricing = ${sql.json(fields.pricing as any)}, updated_at = now() where id = ${l.id}`;
+	await sql`update listings set variants = ${sql.json(fields.variants as Json)}, pricing = ${sql.json(fields.pricing as Json)}, updated_at = now() where id = ${l.id}`;
 	Object.assign(l, fields);
 	return true;
 }
@@ -156,7 +156,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 
 async function save(sql: Sql, id: string, fields: Record<string, unknown>, problems: string[]): Promise<{ id: string; problems: string[] }> {
 	const json = new Set(["images", "offer", "variants", "pricing", "attributes", "category_path"]);
-	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as any) : v]));
+	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as Json) : v]));
 	await sql`update listings set ${sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() } as any)} where id = ${id}`;
 	return { id, problems };
 }

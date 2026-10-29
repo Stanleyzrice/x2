@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { close, db } from "./db/index.ts";
 import { EXIT, kindOf, Usage } from "./errors.ts";
-import { type Tool, type Toolkit, toolkits } from "./tool.ts";
+import { type Tool, type Toolkit, toolkits, type WriteTool } from "./tool.ts";
 import { type Outcome, perform } from "./writes.ts";
 
 const camel = (s: string) => s.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
@@ -18,7 +18,7 @@ const table = (rows: [string, string][]) => {
 };
 
 const schemaOf = (t: Tool) => z.toJSONSchema(t.params, { io: "input", unrepresentable: "any" }) as { properties?: Record<string, any>; required?: string[] };
-const isWrite = (t: Tool) => t.kind === "write" && "plan" in t;
+const isWrite = (t: Tool): t is WriteTool => t.kind === "write" && "plan" in t;
 const paged = (t: Tool) => t.kind === "read" && "page" in t;
 const call = (kit: Toolkit, name: string) => (kit.name ? `x2 ${kit.name} ${name}` : `x2 ${name}`);
 
@@ -155,15 +155,15 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	const where = <T>(fn: () => Promise<T>) => (scoped === undefined ? fn() : kit.scope!.run(scoped, fn));
 	if (isWrite(t)) {
 		const sql = await db();
-		const batches = await t.plan(sql, parsed.data);
+		const batches = await t.plan(sql, parsed.data as never);
 		return { value: await perform(sql, batches, { try: tryFlag === "true" }), tool: t };
 	}
-	if (!("page" in t)) return { value: await where(() => t.run(parsed.data)), tool: t };
+	if (!("page" in t)) return { value: await where(() => t.run(parsed.data as never)), tool: t };
 	return where(async () => {
 		const rows: unknown[] = [];
 		let next: string | null = cursor ?? null;
 		for (let n = 1; n <= limit; n++) {
-			const page = await t.page(parsed.data, next);
+			const page = await t.page(parsed.data as never, next);
 			rows.push(...page.rows);
 			next = page.next;
 			if (next !== null || n > 1) console.error(`${kit.name} ${name}：第 ${n} 页，共 ${rows.length} 行`);
@@ -192,11 +192,13 @@ export async function main(argv: string[]): Promise<void> {
 		if (!kit && !platformKit) throw new Usage(`没有 ${first} 这个命令\n${help()}`);
 		const r = kit ? await runTool(kit, toolName ? [toolName, ...args] : args) : await runTool(platformKit!, [first, ...args]);
 		if ("help" in r) return console.log(r.help);
-		const out = r.value as any;
+		const out = r.value;
+		// 写工具的输出是写入引擎的结果（runTool 里 perform 回的）；读工具的输出交回给它自己的 text、exit
+		const ran = isWrite(r.tool) ? (out as Outcome) : null;
 		if (json) console.log(JSON.stringify(out));
-		else if (isWrite(r.tool)) console.log(outcomeText(out));
-		else console.log(r.tool.text ? r.tool.text(out) : JSON.stringify(out, null, 2));
-		const exit = isWrite(r.tool) ? (out.unknown ? "unknown" : out.blocked ? "human" : undefined) : r.tool.exit?.(out);
+		else if (ran) console.log(outcomeText(ran));
+		else console.log(r.tool.text ? r.tool.text(out as never) : JSON.stringify(out, null, 2));
+		const exit = ran ? (ran.unknown ? "unknown" : ran.blocked ? "human" : undefined) : r.tool.exit?.(out as never);
 		if (exit) process.exitCode = EXIT[exit];
 	} catch (e) {
 		const kind = kindOf(e);

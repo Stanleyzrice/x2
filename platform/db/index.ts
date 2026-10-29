@@ -6,6 +6,8 @@ import postgres from "postgres";
 import { NeedsHuman } from "../errors.ts";
 
 export type Sql = postgres.Sql;
+/** 写进 jsonb 的值：postgres 的类型只认 JSONValue。我们写进去的都是 JSON 能表示的（解析过的参数、回包、算出来的对象），写的地方 as Json */
+export type Json = postgres.JSONValue;
 
 let conn: Sql | null = null;
 let ready: Promise<void> | null = null;
