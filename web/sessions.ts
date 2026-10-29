@@ -73,6 +73,23 @@ export const COMPONENTS = {
 			images: z.array(z.object({ url: z.url(), caption: z.string().optional(), link: z.url().optional() })).min(1),
 		}),
 	},
+	diagram: {
+		kind: "generative",
+		description:
+			'一张图（Mermaid 的文字）：流程（flowchart）、状态怎么走（stateDiagram-v2）、谁调谁（sequenceDiagram）、表和关系（erDiagram）。节点的字有标点、空格的加引号，例 A["x2 status"]',
+		props: z.object({ title, mermaid: z.string().trim().min(1) }),
+	},
+	stats: {
+		kind: "generative",
+		description: "一排关键数字（最多 8 个）：数、说明；hint 是一句补充（例 和上周比、截至哪天）",
+		props: z.object({
+			title,
+			items: z
+				.array(z.object({ label: z.string().min(1), value: z.union([z.string(), z.number()]), hint: z.string().optional() }))
+				.min(1)
+				.max(8),
+		}),
+	},
 	datagrid: {
 		kind: "interactive",
 		description: "库里的一张表（引用，不是数据）：人看现在的行、改人能改的格（照 tables.ts）。同一个会话里同一个引用只开一个 tab",

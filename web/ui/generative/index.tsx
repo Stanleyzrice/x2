@@ -2,11 +2,20 @@
 import type { ReactNode } from "react";
 import type { GenerativeName, Item, Props } from "../../sessions.ts";
 import { Chart } from "./chart.tsx";
+import { Diagram } from "./diagram.tsx";
 import { Images } from "./images.tsx";
 import { Markdown } from "./markdown.tsx";
+import { Stats } from "./stats.tsx";
 import { SnapshotTable } from "./table.tsx";
 
-const RENDER: { [C in GenerativeName]: (p: { props: Props<C> }) => ReactNode } = { markdown: Markdown, table: SnapshotTable, chart: Chart, images: Images };
+const RENDER: { [C in GenerativeName]: (p: { props: Props<C> }) => ReactNode } = {
+	markdown: Markdown,
+	table: SnapshotTable,
+	chart: Chart,
+	images: Images,
+	diagram: Diagram,
+	stats: Stats,
+};
 
 export const isGenerative = (item: Item): item is Extract<Item, { component: GenerativeName }> => item.component in RENDER;
 
