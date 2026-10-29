@@ -59,9 +59,10 @@ type Row = {
 	readback: { before?: unknown; after?: unknown } | null;
 };
 
-/** 改一条写入的几列（值是 jsonb 的已经 sql.json 过） */
-async function set(sql: Sql, id: WriteId, fields: Record<string, postgres.ParameterOrJSON<never> | Date | string | null>) {
-	await sql`update writes set ${sql(fields)} where id = ${id}`;
+/** 改一条写入的几列（值是 jsonb 的已经 sql.json 过）。给了 from 只在状态还是它时改，回改没改 */
+async function set(sql: Sql, id: WriteId, fields: Record<string, postgres.ParameterOrJSON<never> | Date | string | null>, from?: string) {
+	const rows = await sql`update writes set ${sql(fields)} where id = ${id} ${from ? sql`and status = ${from}` : sql``} returning id`;
+	return rows.length > 0;
 }
 
 type Opts = { batch?: string; tryOps?: string[] };
@@ -198,14 +199,16 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 		const op = ops[w.op];
 		if (!op) continue;
 		try {
+			// 读回来的这会儿，别的进程可能正在提交这一条、已经记了结果：只改还是挑出来时那个状态的，改过了的不动
 			const r = await op.where(sql, w.params, () => op.check(w.params, w.readback?.before, false));
 			if (r.done) {
-				await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as Json), finished_at: new Date() });
+				if (!(await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as Json), finished_at: new Date() }, w.status)))
+					continue;
 				await op.after?.(sql, w.params);
 				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: "已核对", why: "读回来看到做成了" });
 				continue;
 			}
-			await set(sql, w.id, { status: "结果未知", readback: sql.json({ ...w.readback, after: r.readback } as Json) });
+			if (!(await set(sql, w.id, { status: "结果未知", readback: sql.json({ ...w.readback, after: r.readback } as Json) }, w.status))) continue;
 		} catch (e) {
 			if (e instanceof NeedsHuman) {
 				blocked = e.message;
