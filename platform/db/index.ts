@@ -1,9 +1,10 @@
-// 库：Postgres，唯一的数据。地址在 X2_DATABASE_URL（先在本机开发，以后指到 NAS）；凭证留在环境变量里，不进库。
+// 库：Postgres，唯一的数据，大家共用香港服务器上的一个（经 SSH 隧道，见 tunnel.ts）。地址在 X2_DATABASE_URL，每人一个库账号；凭证留在环境变量里，不进库。
 // 表的结构：平台的在 schema.sql，每个业务工具（tools/<名字>）的在它自己的 schema.sql（toolkit 的 schema，注册时记下）。每个进程第一次用库时按先后跑一遍（只建没有的、加没有的列）
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";
 import { NeedsHuman } from "../errors.ts";
+import { open } from "./tunnel.ts";
 
 export type Sql = postgres.Sql;
 /** 写进 jsonb 的值：postgres 的类型只认 JSONValue。我们写进去的都是 JSON 能表示的（解析过的参数、回包、算出来的对象），写的地方 as Json */
@@ -29,12 +30,22 @@ export async function migrate(sql: Sql): Promise<void> {
 	});
 }
 
+/** 连一个库：numeric、bigint 回字符串（postgres 的默认，id 一律是字符串）；设了 X2_DATABASE_SSH，每条连接经 tunnel.ts 连 */
+export function client(url: string, max: number): Sql {
+	const ssh = process.env.X2_DATABASE_SSH;
+	// postgres.js 支持 socket，类型里没写，所以不写成字面量
+	const options = { onnotice: () => {}, max, ...(ssh ? { socket: () => open(url, ssh) } : {}) };
+	return postgres(url, options);
+}
+
 export async function db(): Promise<Sql> {
 	if (!conn) {
 		const url = target ?? process.env.X2_DATABASE_URL;
-		if (!url) throw new NeedsHuman("没有设 X2_DATABASE_URL（库的地址，例 postgres://localhost/x2）");
-		// numeric 回字符串（postgres 的默认），bigint 也回字符串：id 一律是字符串
-		conn = postgres(url, { onnotice: () => {}, max: 4 });
+		if (!url)
+			throw new NeedsHuman(
+				"没有设 X2_DATABASE_URL：库是共用的，在服务器上，不用在本机装 Postgres；连库的两行（X2_DATABASE_URL、X2_DATABASE_SSH）找管服务器的人要（ops/db-user.sh）",
+			);
+		conn = client(url, 4);
 		ready = migrate(conn).catch((e: Error) => {
 			if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|does not exist|password/.test(e.message)) throw new NeedsHuman(`连不上库（X2_DATABASE_URL）：${e.message}`);
 			throw e;
