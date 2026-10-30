@@ -32,6 +32,7 @@
 | | `shippingDays` | `GET /api/v3/product/get_product_constraints/` |
 | | `createProduct`（写） | `POST /api/v3/product/create_product_info` |
 | | `updateProduct`、`setUnlisted`（写） | `POST /api/v3/product/update_product_info` |
+| | `edit-product`（写，只经业务工具调用） | 同上；`name` 和可选的 `model_list`（规格 id、tier_index、price），不交库存、规格名或商品其他字段 |
 | | `deleteProducts`（写） | `POST /api/v3/product/delete_product_info` |
 | | `uploadImage`（写） | 页面的 `UploadService.$instance.uploadImage`（webpack 模块里找） |
 | `mass.ts` | `template` | `GET /api/tool/mass_product/download_template/`、`download_basic_template/` |

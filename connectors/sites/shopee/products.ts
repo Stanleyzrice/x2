@@ -135,6 +135,8 @@ const productInfoShape = z.looseObject({
 	model_list: z
 		.array(
 			z.looseObject({
+				id: idText.pipe(ModelId).optional(),
+				name: z.string().nullish(),
 				sku: z.string().nullish(),
 				tier_index: z.array(z.union([z.number(), z.string()])).nullish(),
 				stock_detail: z.looseObject({ total_seller_stock: scalar, seller_stock_info: z.array(z.looseObject({ sellable_stock: scalar })).nullish() }).nullish(),

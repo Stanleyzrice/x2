@@ -2,8 +2,8 @@
 // 只经业务工具的写工具调：组 product_info、看还该不该建、读回来怎么比都是业务工具的事
 import { z } from "zod";
 import { submit } from "../../../platform/tool.ts";
-import { allProducts, createProduct, productInfo, setUnlisted, unlistFromList } from "./products.ts";
-import { ItemId } from "./seller.ts";
+import { allProducts, createProduct, productInfo, setUnlisted, unlistFromList, updateProduct } from "./products.ts";
+import { ItemId, ModelId } from "./seller.ts";
 
 /** 建商品结果未知时按货号找：新建的是下架，在售列表里没有，翻全部商品；名字一样的再读详情核对货号 */
 export async function findByParentSku(parentSku: string, name: string): Promise<string | null> {
@@ -50,5 +50,18 @@ export const unlistProduct = submit(
 	async (p) => {
 		const w = await unlistFromList(p.productId, p.shopId);
 		return w.kind === "done" ? { kind: "done", data: w.data } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
+	},
+);
+
+export const editProduct = submit(
+	"修改商品名稱和規格價格（只经业务工具的写工具调）",
+	z.object({
+		productId: ItemId,
+		title: z.string().min(1),
+		models: z.array(z.object({ id: ModelId, tier_index: z.array(z.number().int().nonnegative()), price: z.string() })).optional(),
+	}),
+	async (p) => {
+		const w = await updateProduct(p.productId, { name: p.title, ...(p.models ? { model_list: p.models.map((m) => ({ ...m, id: Number(m.id) })) } : {}) });
+		return w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
 	},
 );

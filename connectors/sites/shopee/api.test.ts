@@ -117,6 +117,7 @@ test("商品资料：读回对账、上架要用的格解析出来，别的原�
 		["浴室地墊 硅藻泥 吸水防滑", "X2-12-cheeroutdoor", 8, true, [100636, 100713, 101174]],
 	);
 	assert.equal(p.model_list?.[0]?.stock_detail?.seller_stock_info?.[0]?.sellable_stock, 50);
+	assert.equal(p.model_list?.[0]?.id, "250000000011");
 	assert.equal(p.id, 25000000001);
 	assert.throws(() => productInfoOf({ code: 0, data: {} }), /get_product_info 的回包变了：data\.product_info 没有了/);
 });

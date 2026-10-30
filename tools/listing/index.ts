@@ -10,6 +10,7 @@ import { flag, get, parseJson, str, strs, type Toolkit, write } from "../../plat
 import type { Ran } from "../../platform/writes.ts";
 import { AUDIT_DROP, type Audit, type AuditIssue, auditDropped, auditIssues, auditKey, dropAudited, issueLine, restoreAudited } from "./audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
+import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { unmarked } from "./images.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
@@ -463,6 +464,8 @@ export const listing: Toolkit = {
 			z.object({ ids }),
 			(sql, p) => publishPlan(sql, [...new Set(p.ids as string[])]),
 		),
+		"edit-preview": get("现读商品原标题和价格，预览标题与指定规格价格修改；不提交", editParams, async (p) => previewEdit(await db(), p)),
+		edit: write("人同意的现有商品标题与价格修改：原标题和原价逐字核对、提交一次、读回来核对；首次约一个商品 --try", editParams, planEdit),
 		"unlist-preview": get("现读指定商品的在售状态和期间销量：只预览，不下架；未知不当零", unlistParams, async (p) => previewUnlist(await db(), p)),
 		unlist: write("人同意下架的零销量商品：确认销量、已付款件数都为零才下架；记意图、提交一次、读回来核对，不删除", unlistParams, planUnlist),
 		cancel: get(
@@ -541,7 +544,7 @@ export const listing: Toolkit = {
 		const r = await listingsCheck(sql);
 		return { read: [], human: r.reminders, todo: r.todo };
 	},
-	writes: { ...LISTING_WRITES, ...UNLIST_WRITES },
+	writes: { ...LISTING_WRITES, ...UNLIST_WRITES, ...EDIT_WRITES },
 	written,
 	tables: LISTING_TABLES,
 	schema: new URL("./schema.sql", import.meta.url),
