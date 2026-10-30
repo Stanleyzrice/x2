@@ -22,6 +22,7 @@ import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
+import { templateItem, templateParams, templatePrice } from "./template-pricing.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
 import { textCheck } from "./textcheck.ts";
 import { planUnlist, previewUnlist, UNLIST_WRITES, unlistParams } from "./unlist.ts";
@@ -75,6 +76,18 @@ export const listing: Toolkit = {
 	title: "上品：贴货源、做商品稿、写文案、建商品、上架、零销量下架",
 	kind: "tool",
 	tools: {
+		"price-preview": get(
+			"按定价模板试算毛利率区间：只给建议，不存库、不改设置或商品；缺成本不补零",
+			z.object({
+				...templateParams.shape,
+				items: z.preprocess(parseJson, z.array(templateItem).min(1).max(1000)).describe("逐规格成本输入的 JSON，写 - 从 stdin 读"),
+			}),
+			async (p) => {
+				const { items, ...params } = p;
+				const assumptions = templateParams.parse(params);
+				return { assumptions, rows: items.map((item) => templatePrice(item, assumptions)) };
+			},
+		),
 		add: get(
 			"添加货源：一个货源 × 一家店一份商品稿；记下选品理由、依据和选品快照（当时的策略、在用的选品规矩）。按策略选的（带 --strategy）--why 必填；几个链接一起加的理由是同一份",
 			z
