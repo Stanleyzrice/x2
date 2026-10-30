@@ -4,6 +4,8 @@
 // 图片地址要编码两次：每个地址先 encodeURIComponent、逗号连起来，表单再编码一次（服务端只解一次；少一层，带 & 的地址会散）。
 // 结果按 OriginUrl 对回原图（原样比，再解码后比），绝不按位置对。象寄回的地址大约 80 天失效：拿到就转存
 import { createHash } from "node:crypto";
+import { z } from "zod";
+import { reply } from "../../../platform/reply.ts";
 
 export const BATCH = 5;
 
@@ -33,9 +35,31 @@ export function form(urls: string[], keys: { userKey: string; imgTransKey: strin
 	});
 }
 
-export function parse(urls: string[], raw: any): Outcome {
-	if (Number(raw?.Code) !== 200) return { kind: "refused", why: `象寄没有翻译：Code=${raw?.Code} ${raw?.Message ?? ""}`.trim(), raw };
-	const rows = (raw?.Data?.Content ?? []) as any[];
+const code = z.union([z.number(), z.string()]).nullish();
+const head = z.looseObject({ Code: code, Message: z.string().nullish() });
+const content = z.looseObject({
+	Data: z
+		.looseObject({
+			Content: z
+				.array(
+					z.looseObject({
+						Code: code,
+						OriginUrl: z.string().nullish(),
+						SslUrl: z.string().nullish(),
+						Url: z.string().nullish(),
+						Message: z.string().nullish(),
+					}),
+				)
+				.nullish(),
+		})
+		.nullish(),
+});
+
+/** 象寄的回包 → 每张图的结果（纯函数）。Code 不是 200 是没翻（不扣钱）；是 200 而结果的样子变了，报「回包变了」（可能扣了钱，调用方当结果未知） */
+export function parse(urls: string[], raw: unknown): Outcome {
+	const h = head.safeParse(raw).data;
+	if (Number(h?.Code) !== 200) return { kind: "refused", why: `象寄没有翻译：Code=${h?.Code} ${h?.Message ?? ""}`.trim(), raw };
+	const rows = reply(content, raw, "象寄 GetImageTranslateBatch").Data?.Content ?? [];
 	const decode = (s: string) => {
 		try {
 			return decodeURIComponent(s);
@@ -47,9 +71,9 @@ export function parse(urls: string[], raw: any): Outcome {
 		failed: { origin: string; why: string }[] = [],
 		missing: string[] = [];
 	for (const u of urls) {
-		const hits = rows.filter((c) => c?.OriginUrl === u || decode(String(c?.OriginUrl ?? "")) === u);
+		const hits = rows.filter((c) => c.OriginUrl === u || decode(String(c.OriginUrl ?? "")) === u);
 		const hit = hits[0];
-		if (hits.length !== 1) missing.push(u);
+		if (hits.length !== 1 || !hit) missing.push(u);
 		else if (Number(hit.Code) === 200 && (hit.SslUrl || hit.Url)) results.push({ origin: u, url: String(hit.SslUrl || hit.Url) });
 		else failed.push({ origin: u, why: `Code=${hit.Code} ${hit.Message ?? ""}`.trim() });
 	}

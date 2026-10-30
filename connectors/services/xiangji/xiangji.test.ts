@@ -1,5 +1,6 @@
 // 象寄：签名、结果对图
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { form, parse, sign } from "./api.ts";
 
@@ -46,4 +47,19 @@ test("象寄：结果按原图地址对（原样或解码后），不按位置�
 	});
 	assert.ok(twice.kind === "done" && twice.missing.length === 1);
 	assert.equal(parse([b], { Code: 401, Message: "签名错误" }).kind, "refused");
+});
+
+test("象寄（样本，照文档和 lilto 的记录写的）：编码过的原图地址对得上；没字的图是失败；结果样子变了报回包变了（可能扣了钱）", () => {
+	const a = "https://cbu01.alicdn.com/img/a.jpg",
+		b = "https://cbu01.alicdn.com/img/b.jpg";
+	const raw: unknown = JSON.parse(readFileSync(new URL("./fixtures/translate.json", import.meta.url), "utf8"));
+	const r = parse([a, b], raw);
+	assert.equal(r.kind, "done");
+	if (r.kind !== "done") return;
+	assert.deepEqual(r.results, [{ origin: a, url: "https://i.tosoiot.com/a.jpg" }]);
+	assert.deepEqual(r.failed, [{ origin: b, why: "Code=1002 图片无文字" }]);
+	assert.throws(
+		() => parse([a], { Code: 200, Data: { Content: [{ OriginUrl: 1 }] } }),
+		/象寄 GetImageTranslateBatch 的回包变了：Data\.Content\[0\]\.OriginUrl/,
+	);
 });

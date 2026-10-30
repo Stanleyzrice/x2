@@ -4,22 +4,22 @@
 // 别的都写成还在挑的货源，x2 status 提醒「选货源」，人在网页的「货源」里勾「选用」。人贴了链接（--url）就直接用它。
 // 货源的样子（标题、图、规格）存一份快照，x2 每次现读就更新；买之前一律现读
 
-import { Gone, type Offer, offerIdOf, offer as readOffer } from "../../connectors/sites/1688/api.ts";
+import { Gone, type Offer, OfferId, offerIdOf, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { similar1688, ready as zhixiaReady } from "../../connectors/sites/zhixia/api.ts";
-import type { Sql } from "../../platform/db/index.ts";
+import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { SourceSku } from "./check.ts";
 import { addException, matchSku } from "./similar.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const live = (id: string) =>
+const live = (id: OfferId) =>
 	readOffer(id).catch((e) => {
 		if (e instanceof Gone) return null;
 		throw e;
 	});
 
 export async function snapshot(sql: Sql, itemId: string, o: Offer): Promise<void> {
-	await sql`update sources set url = ${o.url}, title = ${o.title}, image = ${o.image}, skus = ${sql.json(o.skus as any)}, read_at = now(), broken = null
+	await sql`update sources set url = ${o.url}, title = ${o.title}, image = ${o.image}, skus = ${sql.json(o.skus as Json)}, read_at = now(), broken = null
 		where item_id = ${itemId} and offer_id = ${o.offerId}`;
 }
 
@@ -73,7 +73,7 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 			for (const [i, h] of hits.entries()) {
 				if (i > 0) await sleep(1500);
 				console.error(`读搜到的货源 ${i + 1}/${hits.length}：${h.offerId}`);
-				const o = await live(h.offerId);
+				const o = await live(OfferId.parse(h.offerId));
 				if (o) found.push(score(specs, o, "以图搜图", kept.get(o.offerId)));
 			}
 		}
@@ -95,7 +95,7 @@ export async function findSources(sql: Sql, itemIds: string[], url?: string): Pr
 						url: f.offer.url,
 						title: f.offer.title,
 						image: f.offer.image,
-						skus: tx.json(f.offer.skus as any),
+						skus: tx.json(f.offer.skus as Json),
 						read_at: new Date(),
 						score: f.total ? Math.round((f.matched / f.total) * 100) / 100 : null,
 						missing: f.missing.join("、") || null,

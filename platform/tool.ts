@@ -8,17 +8,22 @@
 import { z } from "zod";
 import { registerSite, type SiteDef } from "./browser/browser.ts";
 import { addSchema, type Sql } from "./db/index.ts";
+import { Usage } from "./errors.ts";
 import type { Table } from "./web/tables.ts";
 import type { Ran, WriteOp } from "./writes.ts";
 
-export type Page = { rows: unknown[]; next: string | null };
+export type Page<R = unknown> = { rows: R[]; next: string | null };
 
-type Common = { description: string; params: z.ZodObject; text?: (out: any) => string; exit?: (out: any) => "human" | "unknown" | undefined };
-export type ReadTool = Common & { kind: "read" } & ({ run: (p: any) => Promise<unknown> } | { page: (p: any, cursor: string | null) => Promise<Page> });
+/** 命令行怎么显示一个工具的输出（不给是 JSON）、什么样的输出算出错、要人处理、结果未知（退出码） */
+export type Show<O> = { text?: (out: O) => string; exit?: (out: O) => "error" | "human" | "unknown" | undefined };
+// 注册表里放各种工具，参数、输出各不一样：存起来时函数的参数写成 never（什么都传不进），
+// 只有照这个工具自己的 zod 解析过的参数、它自己的输出才传回给它（cli.ts、invoke 在那几处写 as never）。定义工具用下面的 get、list、write、submit，参数和输出的类型照 zod、照函数推出来
+type Common = { description: string; params: z.ZodObject } & Show<never>;
+export type ReadTool = Common & { kind: "read" } & ({ run: (p: never) => Promise<unknown> } | { page: (p: never, cursor: string | null) => Promise<Page> });
 export type Planned = { op: string; params: unknown };
-export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: any) => Promise<Planned[][]> };
+export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: never) => Promise<Planned[][]> };
 export type Sent = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
-export type SubmitTool = Common & { kind: "write"; submit: (p: any) => Promise<Sent> };
+export type SubmitTool = Common & { kind: "write"; submit: (p: never) => Promise<Sent> };
 export type Tool = ReadTool | WriteTool | SubmitTool;
 
 export type Reminder = { key: string; kind: string; title: string; detail: string; shop: string | null; due: Date | null; link: string | null };
@@ -58,37 +63,74 @@ export function findTool(id: string): Tool | undefined {
 	return kits.find((k) => k.name === kit)?.tools[name];
 }
 
+/** 照注册表调一个读工具（不经命令行：网页服务替组件调）：参数照工具的 zod 校验，一页一页的只读第一页。写工具不从这里调 */
+export async function invoke(id: string, input: Record<string, unknown>): Promise<unknown> {
+	const t = findTool(id);
+	if (!t) throw new Usage(`没有工具 ${id}`);
+	if (t.kind !== "read") throw new Usage(`${id} 是写工具，网页还不调写工具`);
+	const p = t.params.safeParse(input);
+	if (!p.success) throw new Usage(`${id} 的参数不对：${p.error.issues.map((x) => `${x.path.join(".")}：${x.message}`).join("；")}`);
+	return "run" in t ? t.run(p.data as never) : t.page(p.data as never, null);
+}
+
 export const writeOps = (): Record<string, WriteOp> => Object.assign({}, ...kits.map((k) => k.writes ?? {}));
 
 const none = z.object({});
 
-export function get<P extends z.ZodObject = typeof none>(description: string, params: P | undefined, run: (p: z.output<P>) => Promise<unknown>): ReadTool {
-	return { kind: "read", description, params: params ?? none, run };
-}
-
-export function list<P extends z.ZodObject = typeof none>(
+export function get<P extends z.ZodObject = typeof none, O = unknown>(
 	description: string,
 	params: P | undefined,
-	page: (p: z.output<P>, cursor: string | null) => Promise<Page>,
+	run: (p: z.output<P>) => Promise<O>,
+	show: Show<O> = {},
 ): ReadTool {
-	return { kind: "read", description, params: params ?? none, page };
+	return { kind: "read", description, params: params ?? none, run, ...show };
 }
 
-export function byPage<P extends z.ZodObject = typeof none>(
+export function list<P extends z.ZodObject = typeof none, R = unknown>(
 	description: string,
 	params: P | undefined,
-	fetch: (p: z.output<P>, n: number) => Promise<{ rows: unknown[]; more: boolean }>,
+	page: (p: z.output<P>, cursor: string | null) => Promise<Page<R>>,
+	show: Show<Page<R>> = {},
+): ReadTool {
+	return { kind: "read", description, params: params ?? none, page, ...show };
+}
+
+export function byPage<P extends z.ZodObject = typeof none, R = unknown>(
+	description: string,
+	params: P | undefined,
+	fetch: (p: z.output<P>, n: number) => Promise<{ rows: R[]; more: boolean }>,
 	first = 1,
+	show: Show<Page<R>> = {},
 ): ReadTool {
-	return list(description, params, async (p, cursor) => {
-		const n = cursor === null ? first : Number(cursor);
-		const { rows, more } = await fetch(p, n);
-		return { rows, next: more && rows.length > 0 ? String(n + 1) : null };
-	});
+	return list(
+		description,
+		params,
+		async (p, cursor) => {
+			const n = cursor === null ? first : Number(cursor);
+			const { rows, more } = await fetch(p, n);
+			return { rows, next: more && rows.length > 0 ? String(n + 1) : null };
+		},
+		show,
+	);
 }
 
-export function all<P extends z.ZodObject = typeof none>(description: string, params: P | undefined, fetch: (p: z.output<P>) => Promise<unknown[]>): ReadTool {
-	return list(description, params, async (p) => ({ rows: await fetch(p), next: null }));
+export function all<P extends z.ZodObject = typeof none, R = unknown>(
+	description: string,
+	params: P | undefined,
+	fetch: (p: z.output<P>) => Promise<R[]>,
+	show: Show<Page<R>> = {},
+): ReadTool {
+	return list(description, params, async (p) => ({ rows: await fetch(p), next: null }), show);
+}
+
+/** 业务工具的写工具：照参数排成一批或几批写入，交给写入引擎（writes.ts）；命令行显示引擎的结果 */
+export function write<P extends z.ZodObject>(description: string, params: P, plan: (sql: Sql, p: z.output<P>) => Promise<Planned[][]>): WriteTool {
+	return { kind: "write", description, params, plan };
+}
+
+/** 连接器的写工具：只发一次请求、回结果，只经业务工具的写操作调（回的对象保留参数的类型，业务工具直接调它的 submit） */
+export function submit<P extends z.ZodObject>(description: string, params: P, send: (p: z.output<P>) => Promise<Sent>) {
+	return { kind: "write" as const, description, params, submit: send } satisfies SubmitTool;
 }
 
 /** 字符串（id 一律是字符串：Shopee、1688 的订单号超过 JS 数字的精度） */

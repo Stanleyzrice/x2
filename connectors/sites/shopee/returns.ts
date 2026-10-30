@@ -1,8 +1,18 @@
 // 售后：退货、退款、不成立（卖家中心「退貨/退款/不成立」，2026-09-10 的列表）。外壳是 { error, error_msg, data }
-import { seller } from "./seller.ts";
+import { z } from "zod";
+import { row, seller, withData } from "./seller.ts";
 
-export async function cases(pageNo = 1): Promise<{ total: number; hasMore: boolean; rows: any[] }> {
-	const b = await seller("/api/v4/seller_center/return/return_list/get_exceptional_case_list", {
+// 没有 exceptional_case_list 不能当成没有案件：是「回包变了」
+const list = withData(
+	z.looseObject({
+		exceptional_case_list: z.array(row),
+		total: z.union([z.number(), z.string()]).nullish(),
+		pagination_info: z.looseObject({ has_more: z.boolean().nullish() }).nullish(),
+	}),
+);
+
+export async function cases(pageNo = 1): Promise<{ total: number; hasMore: boolean; rows: Record<string, unknown>[] }> {
+	const b = await seller("/api/v4/seller_center/return/return_list/get_exceptional_case_list", list, {
 		body: {
 			language: "zh-Hant",
 			platform_type: "sc",
@@ -28,6 +38,5 @@ export async function cases(pageNo = 1): Promise<{ total: number; hasMore: boole
 			request_adjusted: null,
 		},
 	});
-	if (!Array.isArray(b.data?.exceptional_case_list)) throw new Error("Shopee 售后列表的格式变了（没有 exceptional_case_list）");
 	return { total: Number(b.data.total ?? 0), hasMore: b.data.pagination_info?.has_more === true, rows: b.data.exceptional_case_list };
 }

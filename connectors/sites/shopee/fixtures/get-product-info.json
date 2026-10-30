@@ -1,0 +1,28 @@
+{
+	"code": 0,
+	"data": {
+		"product_info": {
+			"id": 25000000001,
+			"name": "浴室地墊 硅藻泥 吸水防滑",
+			"parent_sku": "X2-12-cheeroutdoor",
+			"status": 8,
+			"is_unlisted": true,
+			"category_path": [100636, 100713, 101174],
+			"weight": { "value": "0.5", "unit": 1 },
+			"images": ["tw-11134207-0000a", "tw-11134207-0000b"],
+			"size_chart_info": { "size_chart": "" },
+			"pre_order_info": { "pre_order": true, "days_to_ship": 10 },
+			"description_info": { "description": "{\"field_list\":[{\"type\":0,\"value\":\"吸水防滑\"}]}" },
+			"model_list": [
+				{
+					"id": 250000000011,
+					"sku": "X2-12-1",
+					"tier_index": [0, 0],
+					"stock_detail": { "seller_stock_info": [{ "sellable_stock": 50 }] },
+					"price_info": { "normal_price": "299" }
+				}
+			],
+			"std_tier_variation_list": [{ "custom_value": "顏色", "value_list": [{ "custom_value": "黑貓", "image_id": "tw-11134207-0000c" }] }]
+		}
+	}
+}

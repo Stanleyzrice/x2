@@ -1,16 +1,22 @@
-// 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。只读写库，不碰站点。
-// GET /api/meta：每张表的列（类型从库里读）、视图、表单；GET /api/rows?table=&view=&filter=：一个视图的行（filter 是 JSON，只认 sessions.ts 的 filterable 的列）；
+// 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。
+// 碰站点只有一条路：组件在 schema.ts 里声明网页能替它调哪几个工具（actions，例 chat 读聊聊、写回复草稿），这里经注册表（platform/tool.ts 的 invoke）调；platform 仍然不 import connectors、tools，只认工具的 id。只调读工具
+// GET /api/meta：每张表的列（类型从库里读）、表单；GET /api/rows?ref=：一个 datagrid 引用的行（ref 是它的 props 的 JSON，照组件的校验查过、grid.ts 拼成 SQL，只给要的列）；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
-// GET /api/sessions：会话列表；GET /api/session?id=：一个会话和它的组件；DELETE /api/session?id=：删会话；DELETE /api/session/item?id=：关掉右边的一个 tab
+// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查；
+// POST /api/page/act { item, action, input }：替组件调它声明的工具
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
-import type { Sql } from "../db/index.ts";
-import { Usage } from "../errors.ts";
-import { closeItem, deleteSession, filterable, listSessions, showSession } from "./sessions.ts";
-import { type ColumnType, type Key, type Meta, type Row, type Table, tables } from "./tables.ts";
+import type { Json, Sql } from "../db/index.ts";
+import { NeedsHuman, Usage } from "../errors.ts";
+import { type Ref, refQuery } from "./grid.ts";
+import { act, answer, closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
+import { type ColumnType, type Key, type Meta, type Row, type Shown, type Table, tables } from "./tables.ts";
+
+/** 网页发来的请求体：一个 JSON 对象（各个接口再照自己要的格解析） */
+const body = z.record(z.string(), z.unknown());
 
 const LIMIT = 1000;
 const MIME: Record<string, string> = {
@@ -65,16 +71,16 @@ const guarded = (t: Table) =>
 		.filter(([, e]) => e.when)
 		.map(([c, e]) => [c, e.when!] as const);
 
-function shape(t: Table, cols: Map<string, ColumnType>, row: Row): Row {
-	const out: Row = {
+function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly string[] = Object.keys(t.columns)): Shown {
+	const out: Shown = {
 		_key: Object.fromEntries(t.key.map((k) => [k, String(row[k])])),
 		_readonly: guarded(t)
 			.filter(([c]) => !row[`_can_${c}`])
 			.map(([c]) => c),
 	};
-	for (const c of Object.keys(t.columns)) {
+	for (const c of only) {
 		const computed = t.computed?.[c];
-		const v = computed ? computed.of(row) : row[c];
+		const v = computed ? computed.of(row as never) : row[c];
 		out[c] = cols.get(c) === "number" && v !== null && v !== undefined ? Number(v) : v;
 	}
 	return out;
@@ -105,7 +111,7 @@ export async function serve(
 		return row ? shape(t, colTypes.get(t.name)!, row) : null;
 	};
 
-	const api: Record<string, (body: any, url: URL) => Promise<unknown>> = {
+	const api: Record<string, (body: Record<string, unknown>, url: URL) => Promise<unknown>> = {
 		"GET /api/meta": async () =>
 			Promise.all(
 				tables().map(async (t): Promise<Meta> => {
@@ -114,12 +120,12 @@ export async function serve(
 						name: t.name,
 						title: t.title,
 						key: t.key,
-						views: t.views,
 						columns: Object.entries(t.columns).map(([name, label]) => ({
 							name,
 							label,
 							type: cols.get(name) ?? "text",
 							...(t.edit?.[name] ? { edit: { options: t.edit[name].options } } : {}),
+							...(t.order?.[name] ? { order: t.order[name] } : {}),
 						})),
 						...(t.form
 							? {
@@ -143,34 +149,32 @@ export async function serve(
 			),
 
 		"GET /api/rows": async (_, url) => {
-			const t = table(url.searchParams.get("table"));
-			const v = t.views.find((x) => x.title === url.searchParams.get("view")) ?? t.views[0]!;
-			let filter: Record<string, string | string[]> = {};
+			let raw: unknown;
 			try {
-				filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
+				raw = JSON.parse(url.searchParams.get("ref") ?? "");
 			} catch {
-				throw new Usage("filter 要是 JSON");
+				throw new Usage("ref 要是 datagrid 的 props 的 JSON");
 			}
-			const can = filterable(t.name);
-			const conds = [
-				...(v.where ? [sql`(${sql.unsafe(v.where)})`] : []),
-				...Object.entries(filter).map(([c, x]) => {
-					if (!can.has(c)) throw new Usage(`${t.title}不能按「${c}」筛`);
-					return sql`${sql(c)}::text in ${sql((Array.isArray(x) ? x : [x]).map(String))}`;
-				}),
-			];
-			const where = conds.length ? sql`where ${conds.reduce((a, b) => sql`${a} and ${b}`)}` : sql``;
-			const rows = await sql`${select(t)} ${where} order by ${sql.unsafe(v.order)} limit ${LIMIT}`;
-			return rows.map((r) => shape(t, colTypes.get(t.name)!, r));
+			const ref = parseProps("datagrid", raw) as Ref;
+			const t = table(ref.table);
+			const q = refQuery(t, ref, LIMIT);
+			const rows = await sql.unsafe(q.text, q.values);
+			const only = [...new Set([...(ref.columns ?? Object.keys(t.columns)), ...(ref.group ? [ref.group.col] : [])])];
+			return rows.map((r) => shape(t, colTypes.get(t.name)!, r, only));
 		},
 
-		"GET /api/sessions": async () => listSessions(sql),
-		"GET /api/session": async (_, url) => showSession(sql, url.searchParams.get("id") ?? ""),
-		"DELETE /api/session": async (_, url) => {
-			await deleteSession(sql, url.searchParams.get("id") ?? "");
+		"GET /api/pages": async () => listPages(sql),
+		"GET /api/page": async (_, url) => showPage(sql, url.searchParams.get("id") ?? ""),
+		"DELETE /api/page": async (_, url) => {
+			await deletePage(sql, url.searchParams.get("id") ?? "");
 			return { ok: true };
 		},
-		"DELETE /api/session/item": async (_, url) => {
+		"POST /api/page/answer": async (b) => {
+			await answer(sql, String(b?.item ?? ""), b?.answer);
+			return { ok: true };
+		},
+		"POST /api/page/act": async (b) => act(sql, String(b?.item ?? ""), String(b?.action ?? ""), b?.input),
+		"DELETE /api/page/item": async (_, url) => {
 			await closeItem(sql, url.searchParams.get("id") ?? "");
 			return { ok: true };
 		},
@@ -189,7 +193,7 @@ export async function serve(
 			if (edit.set) await edit.set(sql, key, b.value);
 			else {
 				const value = cellValue(colTypes.get(t.name)!.get(col)!, edit.options, b.value);
-				const r = await sql`update ${sql(t.name)} set ${sql({ [col]: value } as Record<string, any>)} where ${where(t, key)} returning 1`;
+				const r = await sql`update ${sql(t.name)} set ${sql({ [col]: value as Json })} where ${where(t, key)} returning 1`;
 				if (!r.length) throw new Usage(`${t.title}里没有这一行`);
 			}
 			await t.recheck?.(sql, key);
@@ -201,8 +205,9 @@ export async function serve(
 			const f = t.form;
 			if (!f) throw new Usage(`${t.title}不能在网页上添加`);
 			const values: Record<string, string> = {};
+			const given = body.safeParse(b.values).data ?? {};
 			for (const name of Object.keys(f.fields)) {
-				const v = b.values?.[name];
+				const v = given[name];
 				if (v === undefined || v === null || String(v).trim() === "") {
 					if (f.required.includes(name)) throw new Usage(`要填「${t.columns[name] ?? name}」`);
 					continue;
@@ -212,7 +217,7 @@ export async function serve(
 			if (f.insert) return { key: await f.insert(sql, values) };
 			const cols = colTypes.get(t.name)!;
 			const row = Object.fromEntries(Object.entries(values).map(([c, v]) => [c, cellValue(cols.get(c)!, undefined, cols.get(c) === "number" ? Number(v) : v)]));
-			const [r] = await sql`insert into ${sql(t.name)} ${sql(row as Record<string, any>)} returning *`;
+			const [r] = await sql`insert into ${sql(t.name)} ${sql(row as Record<string, Json>)} returning *`;
 			return { key: shape(t, cols, r!)._key };
 		},
 	};
@@ -228,9 +233,12 @@ export async function serve(
 			try {
 				let raw = "";
 				for await (const c of req) raw += c;
-				send(res, 200, "application/json", JSON.stringify(await route(raw ? JSON.parse(raw) : null, url)));
+				const b = body.safeParse(raw ? JSON.parse(raw) : {});
+				if (!b.success) throw new Usage("请求体要是一个 JSON 对象");
+				send(res, 200, "application/json", JSON.stringify(await route(b.data, url)));
 			} catch (e) {
-				const told = e instanceof Usage || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
+				const told =
+					e instanceof Usage || e instanceof NeedsHuman || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
 				if (!told) console.error(e);
 				send(res, told ? 400 : 500, "application/json", JSON.stringify({ error: (e as Error).message }));
 			}

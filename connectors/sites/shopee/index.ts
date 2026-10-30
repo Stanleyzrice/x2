@@ -102,7 +102,7 @@ const tools = {
 	reviews: list("评价（每页 20 条）", z.object({ orderSn: z.string().optional().describe("只找这张订单的评价") }), async (p, cursor) => {
 		const [n, last] = cursor ? (cursor.split(":") as [string, string]) : ["1", "0"];
 		const r = await reviews(Number(n), last, p.orderSn);
-		const lastId = (r.rows.at(-1) as any)?.comment_id;
+		const lastId = r.rows.at(-1)?.comment_id;
 		return { rows: r.rows, next: Number(n) * 20 < r.total && lastId ? `${Number(n) + 1}:${lastId}` : null };
 	}),
 	"ads-account": get("广告账户和广告余额", undefined, () => adsAccount()),
@@ -164,7 +164,7 @@ const tools = {
 	}),
 	conversations: list("聊聊的会话，按最后一条消息从新到旧", undefined, async (_, cursor) => {
 		const rows = await conversations(cursor ?? "");
-		const next = String((rows.at(-1) as any)?.next_timestamp_nano ?? "");
+		const next = String(rows.at(-1)?.next_timestamp_nano ?? "");
 		return { rows, next: next && next !== cursor ? next : null };
 	}),
 	unreplied: list("聊聊的「未回覆」会话", undefined, async (_, cursor) => {
@@ -207,7 +207,7 @@ const tools = {
 				.default({})
 				.describe("查询参数，JSON 对象"),
 		}),
-		(p) => seller(p.path, { method: "GET", query: p.query }),
+		(p) => seller(p.path, z.unknown(), { method: "GET", query: p.query }),
 	),
 };
 

@@ -3,7 +3,7 @@
 // 属性：只送必填的，值一字不差取自属性树（编的值发布被拒）：只有「是 / 否」的选「否」，有「其他」「一般」的选它，不然选第一个；
 // 要填字的必填属性（属性树里没有可选值）不拿标题编，交给人。备货天数取这个类目的上限（10、15、30 天）
 // 推荐的不对、不在本店允许的类目里：人定（x2 listing category --id <商品稿> --category <叶子类目 id>），做商品稿不再问推荐
-import type { Attribute, Category } from "../../connectors/sites/shopee/products.ts";
+import type { Attribute, Category, Recommended } from "../../connectors/sites/shopee/products.ts";
 
 export const CATEGORY_PROBLEM = /^(类目|属性|备货天数)：/;
 
@@ -24,7 +24,7 @@ export function leafPath(tree: Category[], id: string): { path: number[]; names:
 	return { path: hit.map((c) => Number(c.id)), names };
 }
 
-export function recommendedPath(data: any): { path: number[]; names: string[] } | null {
+export function recommendedPath(data: Recommended): { path: number[]; names: string[] } | null {
 	const first = (data?.category_recommend_list ?? [])[0];
 	const path = ((first?.category_path ?? []) as unknown[]).map(Number);
 	if (!path.length || path.some((n) => !Number.isInteger(n) || n <= 0)) return null;

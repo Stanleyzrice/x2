@@ -1,0 +1,49 @@
+{
+	"code": 0,
+	"data": {
+		"card_list": [
+			{
+				"package_level_order_card": {
+					"card_header": { "order_sn": "251009ABCDEF01" },
+					"order_ext_info": { "order_id": 210000000001, "ship_by_date": 1760300000 },
+					"package_list": [
+						{
+							"status_info": { "status": "To ship" },
+							"payment_info": { "total_price": 21000000 },
+							"package_ext_info": { "package_number": "OFG000001", "consignment_no": "", "fulfilment_status": 1, "acl1_arrange_ship_date": 0 },
+							"fulfilment_info": { "fulfilment_channel_name": "7-ELEVEN", "tracking_number_list": ["TW0000000001"] },
+							"item_info_group": {
+								"item_info_list": [
+									{
+										"item_list": [
+											{
+												"inner_item_ext_info": { "item_id": 25000000001, "model_id": 250000000011 },
+												"name": "浴室地墊 硅藻泥",
+												"description": "商品規格: 黑貓,60*90cm [4bd272e0]",
+												"amount": 2,
+												"image": "tw-11134207-0000item"
+											}
+										]
+									}
+								]
+							}
+						}
+					]
+				}
+			},
+			{
+				"order_card": {
+					"card_header": { "order_sn": "251009ABCDEF02" },
+					"order_ext_info": { "order_id": 210000000002 },
+					"status_info": { "status": "Completed" },
+					"payment_info": { "total_price": 15000000 },
+					"fulfilment_info": { "fulfilment_channel_name": "全家" },
+					"package_ext_info_list": [{ "package_number": "OFG000002", "consignment_no": "F0000002", "fulfilment_status": 8 }],
+					"item_info_group": {
+						"item_info_list": [{ "item_list": [{ "inner_item_ext_info": { "item_id": 25000000002, "model_id": 25000000002 }, "name": "掛勾", "amount": 1 }] }]
+					}
+				}
+			}
+		]
+	}
+}

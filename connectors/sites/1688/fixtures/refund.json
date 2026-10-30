@@ -1,0 +1,13 @@
+{
+	"model": {
+		"status": "waitbuyersend",
+		"statusLabel": "等待买家退货",
+		"needReturnGoods": true,
+		"refundSceneModel": { "replaceNew": false, "reshipping": false },
+		"refundPayment": 2430,
+		"refundCarriage": 0,
+		"selfReturnGoodsLogisticModel": { "hasReturnGoodsLogistics": true, "freightBill": "SF0000000000001", "logisticsStatus": "已签收" },
+		"gmtCreate": "2026-10-09 12:00:00",
+		"gmtModified": "2026-10-10 09:30:00"
+	}
+}

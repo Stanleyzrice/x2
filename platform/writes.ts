@@ -10,15 +10,21 @@
 // 3. 执行完：告诉注册了 written 的业务工具（例 上品重算碰过的商品稿的当前步骤）
 // 不花钱、能重来的写不经它（业务工具直接调连接器的写）
 import type postgres from "postgres";
-import type { z } from "zod";
-import { host, type Sql } from "./db/index.ts";
+import { z } from "zod";
+import { alive } from "./browser/lock.ts";
+import { host, type Json, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
 import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
 
-export type Submitted = Sent;
-export type Prepared<P> = { skip: string } | { params: P; before: unknown };
+/** 写入的编号（writes 的 id）：命令行参数、读库时贴上，别和商品稿编号、订单号传混 */
+export const WriteId = z.string().regex(/^\d+$/, "写入的编号是数字").brand<"WriteId">();
+export type WriteId = z.output<typeof WriteId>;
 
-export type WriteOp<P = any> = {
+export type Submitted = Sent;
+export type Prepared<P, B = unknown> = { skip: string } | { params: P; before: B };
+
+/** 一个写操作。P 是参数的样子，B 是提交前现读的（对账用；记在库里，再读回来时还是它） */
+export type WriteOp<P = unknown, B = unknown> = {
 	describe: string;
 	params: z.ZodType<P>;
 	target: (p: P) => string;
@@ -27,20 +33,36 @@ export type WriteOp<P = any> = {
 	link?: string;
 	untried?: string;
 	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
-	prepare: (sql: Sql, p: P) => Promise<Prepared<P>>;
+	prepare: (sql: Sql, p: P) => Promise<Prepared<P, B>>;
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
-	check: (p: P, before: any, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
+	check: (p: P, before: B | undefined, fresh: boolean) => Promise<{ done: boolean | null; readback: unknown }>;
 	after?: (sql: Sql, p: P) => Promise<void>;
 };
 
+/** 登记写操作：各个操作的参数、现读的样子不一样，进注册表（Toolkit 的 writes）时一律看成 unknown。
+ * 引擎只把照这个操作自己的 params 解析过的参数、它自己的 prepare 回的 before（存进库再读回来）传回给它，所以这一处的转换是对的 */
+export const writeOp = <P, B>(op: WriteOp<P, B>): WriteOp => op as unknown as WriteOp;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export type Ran = { id: string; batch: string; op: string; display: string; status: string; why?: string };
+export type Ran = { id: WriteId; batch: string; op: string; display: string; status: string; why?: string };
 
-type Row = { id: string; batch: string; op: string; target: string; key: string; params: any; display: string; status: string; readback: any };
+type Row = {
+	id: WriteId;
+	batch: string;
+	op: string;
+	target: string;
+	key: string;
+	params: unknown;
+	display: string;
+	status: string;
+	readback: { before?: unknown; after?: unknown } | null;
+};
 
-async function set(sql: Sql, id: string, fields: Record<string, unknown>) {
-	await sql`update writes set ${sql(fields as any)} where id = ${id}`;
+/** 改一条写入的几列（值是 jsonb 的已经 sql.json 过）。给了 from 只在状态还是它时改，回改没改 */
+async function set(sql: Sql, id: WriteId, fields: Record<string, postgres.ParameterOrJSON<never> | Date | string | null>, from?: string) {
+	const rows = await sql`update writes set ${sql(fields)} where id = ${id} ${from ? sql`and status = ${from}` : sql``} returning id`;
+	return rows.length > 0;
 }
 
 type Opts = { batch?: string; tryOps?: string[] };
@@ -55,7 +77,10 @@ export async function run(sql: Sql, opts: Opts = {}, ops: Record<string, WriteOp
 }
 
 const IN_FLIGHT = ["待执行", "已提交", "结果未知", "不一致"];
-const DONE_OR_FLYING = ["成功", "已核对", "已提交", "结果未知", "不一致"];
+/** 要人到站点上看、x2 resolve 记结果的。已提交的不算：可能还在路上（进程正在提交），人看的时候还没到站点，记成被拒会再做一次；先 x2 verify 读回来 */
+export const LOOK = ["结果未知", "不一致"];
+const UNSETTLED = ["已提交", "结果未知", "不一致"];
+const DONE = ["成功", "已核对"];
 
 // 下面几个是纯的判断（一条写入现在该怎么办），引擎只管读写库、调写操作
 
@@ -70,14 +95,23 @@ export type Stuck = { batches: Set<string>; targets: Set<string> };
 /** 轮到一条待执行的写入：能做回 null，不做回原因 */
 export function gate(
 	w: { op: string; batch: string; target: string },
-	s: { known: boolean; blocked: string | null; stuck: Stuck; untried?: string | undefined; tried: boolean; dup: string | null },
+	s: { known: boolean; blocked: string | null; stuck: Stuck; untried?: string | undefined; tried: boolean },
 ): string | null {
 	if (!s.known) return `没有 ${w.op} 这个写操作`;
 	if (s.blocked) return `没做：${s.blocked}`;
 	if (s.stuck.batches.has(w.batch) || s.stuck.targets.has(w.target)) return "这一批（或同一个对象）有结果未知的写入：先核清再做";
 	if (s.untried && !s.tried) return s.untried;
-	if (s.dup) return `重复：写入 #${s.dup} 已经做过（或还没核清）`;
 	return null;
+}
+
+export type Held = { id: string; key: string; target: string; status: string };
+/** 记意图之前再看一遍库里同一个 key、同一个对象上的写入（别的批、别的进程的也算）：没核清的挡着（一个对象上同时在路上的两条，读回对账分不清是谁做的）；
+ * 同一个 key 做成过的是重复 */
+export function held(w: { key: string; target: string }, others: Held[]): string | null {
+	const open = others.find((o) => (o.key === w.key || o.target === w.target) && UNSETTLED.includes(o.status));
+	if (open) return `同一个对象有没核清的写入 #${open.id}：先核清再做`;
+	const dup = others.find((o) => o.key === w.key && DONE.includes(o.status));
+	return dup ? `重复：写入 #${dup.id} 已经做过` : null;
 }
 
 /** 提交一次、读回来以后：站点的答复和读回来的结果合成写入的状态 */
@@ -87,13 +121,39 @@ export function settle(sent: Exclude<Sent, { kind: "blocked" }>, done: boolean |
 	return { status: "结果未知", why: `读回来看不出做没做${sent.kind === "unknown" ? `（${sent.why}）` : ""}` };
 }
 
+/** 执行、核清一条写入时抛了错：照库里它现在的状态定改成什么。还是待执行的（没记意图、没提交）是未执行；已提交、结果未知的是结果未知；
+ * 已经有结果的（做成了以后 after 更新库出错）不改：改成未执行，业务会当没做过再做一次（加购的会再加一次） */
+export function failed(now: string | undefined): "未执行" | "结果未知" | null {
+	if (now === "待执行") return "未执行";
+	if (now === "已提交" || now === "结果未知") return "结果未知";
+	return null;
+}
+
+/** 一条写入是谁在执行（交它的进程执行它）：这个进程自己、这台电脑上还开着的另一个进程、已经退出了的（没记进程号的旧行也算），别的电脑的看不出。
+ * 退出了的留下的待执行没提交过，清成未执行（不清的话同一个 key 一直「还没核清」，再也交不了）；
+ * 还开着的另一个进程的已提交可能正在提交，核清不碰（不然读回来看不到、改成结果未知，人去看了记成被拒，它又到了站点） */
+export function owner(
+	w: { host: string | null; pid: number | null },
+	me: { host: string; pid: number },
+	isAlive: (pid: number) => boolean,
+): "我" | "开着" | "退出了" | "看不出" {
+	if (w.host !== me.host) return "看不出";
+	if (w.pid === null) return "退出了";
+	if (w.pid === me.pid) return "我";
+	return isAlive(w.pid) ? "开着" : "退出了";
+}
+
 /** 这个状态要停下同一批、同一个对象上的写入 */
 export const stuck = (status: string) => status === "结果未知" || status === "不一致";
 
 type NewRow = { op: string; params: unknown; target: string; key: string; display: string };
 
-export async function addWrites(tx: Sql | postgres.TransactionSql, rows: NewRow[]): Promise<string> {
-	const [{ batch }] = (await tx`select nextval('batch_seq')::text as batch`) as any;
+/** 交写入、记意图的进程排队用的锁（postgres 的 advisory lock，跟着事务放）：两个进程同时交同一个 key，后一个看得到前一个的 */
+const lock = (tx: postgres.TransactionSql) => tx`select pg_advisory_xact_lock(hashtext('x2 writes'))`;
+
+export async function addWrites(tx: postgres.TransactionSql, rows: NewRow[]): Promise<string> {
+	await lock(tx);
+	const [{ batch }] = (await tx`select nextval('batch_seq')::text as batch`) as unknown as [{ batch: string }];
 	for (const r of rows) {
 		const same = (await tx`select id::text, status from writes where key = ${r.key} or key like ${`${r.key}#%`} order by id`) as unknown as {
 			id: string;
@@ -102,7 +162,7 @@ export async function addWrites(tx: Sql | postgres.TransactionSql, rows: NewRow[
 		const a = admit(r.key, same);
 		if ("busy" in a) throw new Usage(`${r.display}：写入 #${a.busy} 还没核清（x2 verify），不再做新的`);
 		const key = a.key;
-		await tx`insert into writes (batch, op, target, params, display, key, status, host) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as any)}, ${r.display}, ${key}, '待执行', ${host})`;
+		await tx`insert into writes (batch, op, target, params, display, key, status, host, pid) values (${batch}, ${r.op}, ${r.target}, ${tx.json(r.params as Json)}, ${r.display}, ${key}, '待执行', ${host}, ${process.pid})`;
 	}
 	return batch;
 }
@@ -133,24 +193,42 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 	const halted: Stuck = { batches: new Set(), targets: new Set() };
 	let blocked: string | null = null;
 
-	const unsure =
-		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback from writes where status in ('已提交', '结果未知') order by writes.id`) as unknown as Row[];
+	const me = { host, pid: process.pid };
+	const left = await sql<{ id: string; host: string; pid: number | null }[]>`select id::text, host, pid from writes where status = '待执行' and host = ${host}`;
+	const gone = left.filter((w) => owner(w, me, alive) === "退出了").map((w) => w.id);
+	if (gone.length) {
+		const cleared = await sql<Ran[]>`update writes set status = '未执行', error = '交了以后进程没执行就退出了', finished_at = now()
+			where id in ${sql(gone)} and status = '待执行' returning id::text, batch::text, op, display, status`;
+		for (const w of cleared) ran.push({ ...w, why: "交了以后进程没执行就退出了：没提交过，要做再交一次" });
+	}
+
+	const unsure = (
+		(await sql`select id::text, batch::text, op, target, key, params, display, status, readback, host, pid from writes
+			where status in ('已提交', '结果未知') order by writes.id`) as unknown as (Row & { host: string | null; pid: number | null })[]
+	).filter((w) => owner(w, me, alive) !== "开着");
 	for (const w of unsure) {
 		const op = ops[w.op];
 		if (!op) continue;
 		try {
+			// 读回来的这会儿，别的进程可能正在提交这一条、已经记了结果：只改还是挑出来时那个状态的，改过了的不动
 			const r = await op.where(sql, w.params, () => op.check(w.params, w.readback?.before, false));
 			if (r.done) {
-				await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as any), finished_at: new Date() });
+				if (!(await set(sql, w.id, { status: "已核对", readback: sql.json({ ...w.readback, after: r.readback } as Json), finished_at: new Date() }, w.status)))
+					continue;
 				await op.after?.(sql, w.params);
 				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: "已核对", why: "读回来看到做成了" });
 				continue;
 			}
-			await set(sql, w.id, { status: "结果未知", readback: sql.json({ ...w.readback, after: r.readback } as any) });
+			if (!(await set(sql, w.id, { status: "结果未知", readback: sql.json({ ...w.readback, after: r.readback } as Json) }, w.status))) continue;
 		} catch (e) {
 			if (e instanceof NeedsHuman) {
 				blocked = e.message;
 				break;
+			}
+			const [now] = await sql`select status from writes where id = ${w.id}`;
+			if (failed(now?.status) !== "结果未知") {
+				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: String(now?.status), why: `之后出错（状态不改）：${(e as Error).message}` });
+				continue;
 			}
 			await set(sql, w.id, { status: "结果未知", error: (e as Error).message });
 		}
@@ -178,14 +256,12 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 			await set(sql, w.id, { status, error: why, finished_at: new Date() });
 			ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status, why });
 		};
-		const dup = op && !blocked ? await sql`select id::text from writes where key = ${w.key} and id <> ${w.id} and status in ${sql(DONE_OR_FLYING)}` : [];
 		const no = gate(w, {
 			known: Boolean(op),
 			blocked,
 			stuck: halted,
 			untried: op?.untried,
 			tried: Boolean(opts.tryOps?.includes(w.op)),
-			dup: (dup[0]?.id as string | undefined) ?? null,
 		});
 		if (no || !op) {
 			await skip(no ?? `没有 ${w.op} 这个写操作`);
@@ -200,13 +276,22 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 				const prepared = await op.prepare(sql, w.params);
 				if ("skip" in prepared) return { skip: prepared.skip };
 				const params = prepared.params;
-				await set(sql, w.id, {
-					status: "已提交",
-					params: sql.json(params as any),
-					readback: sql.json({ before: prepared.before } as any),
-					started_at: new Date(),
-					host,
+				const no = await sql.begin(async (tx) => {
+					await lock(tx);
+					const others = (await tx`select id::text, key, target, status from writes
+						where id <> ${w.id} and (key = ${w.key} or target = ${w.target}) and status in ${tx([...UNSETTLED, ...DONE])}`) as unknown as Held[];
+					const why = held(w, others);
+					if (why) return why;
+					const mine = await tx`update writes set ${tx({
+						status: "已提交",
+						params: sql.json(params as Json),
+						readback: sql.json({ before: prepared.before } as Json),
+						started_at: new Date(),
+						host,
+					})} where id = ${w.id} and status = '待执行' returning id`;
+					return mine.length ? null : "已经不是待执行了";
 				});
+				if (no) return { skip: no };
 				const sent = await op.submit(sql, params);
 				if (sent.kind === "blocked") return { blocked: sent.why, params };
 				if (sent.kind === "refused") return { status: "被拒", why: sent.why, response: sent, before: undefined, after: undefined, params };
@@ -231,8 +316,8 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 			await set(sql, w.id, {
 				status: outcome.status,
 				error: outcome.why ?? null,
-				response: sql.json(outcome.response as any),
-				readback: sql.json({ before: outcome.before, after: outcome.after } as any),
+				response: sql.json(outcome.response as Json),
+				readback: sql.json({ before: outcome.before, after: outcome.after } as Json),
 				finished_at: new Date(),
 			});
 			if (outcome.status === "已核对") await op.after?.(sql, outcome.params);
@@ -243,17 +328,20 @@ async function execute(sql: Sql, opts: Opts, ops: Record<string, WriteOp>): Prom
 			}
 		} catch (e) {
 			const [now] = await sql`select status from writes where id = ${w.id}`;
+			const to = failed(now?.status);
 			if (e instanceof NeedsHuman) {
 				blocked = e.message;
-				if (now?.status !== "已提交") await skip(`没做：${blocked}`);
+				if (to === "未执行") await skip(`没做：${blocked}`);
 				continue;
 			}
-			if (now?.status === "已提交") {
+			if (to === "结果未知") {
 				await set(sql, w.id, { status: "结果未知", error: (e as Error).message });
 				halted.batches.add(w.batch);
 				halted.targets.add(w.target);
 				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: "结果未知", why: (e as Error).message });
-			} else await skip((e as Error).message);
+			} else if (to === "未执行") await skip((e as Error).message);
+			else
+				ran.push({ id: w.id, batch: w.batch, op: w.op, display: w.display, status: String(now?.status), why: `之后出错（状态不改）：${(e as Error).message}` });
 		}
 	}
 	return { ran, unknown: ran.some((r) => stuck(r.status)), blocked };

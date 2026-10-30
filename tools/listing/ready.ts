@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, pricingProblems, type Settings } from "./pricing.ts";
 import { type Product, productInfo, usedPics } from "./product.ts";
+import type { ListingRow } from "./row.ts";
 import { OLD_SPECS, specsOf, structureProblems } from "./variants.ts";
 
-export function productOf(l: any, s: Settings): { product?: Product; info?: Record<string, unknown>; hash?: string; problems: string[] } {
+export function productOf(l: ListingRow, s: Settings): { product?: Product; info?: Record<string, unknown>; hash?: string; problems: string[] } {
 	const problems: string[] = [];
 	if (!l.offer) return { problems: ["未做商品稿"] };
 	const specs = specsOf(l.variants);

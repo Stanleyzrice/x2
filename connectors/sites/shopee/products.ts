@@ -8,40 +8,85 @@
 // - 1000100256 是通用的字段校验失败码（缺尺码表也回它），不等于重复
 // - 直接开卖的发布路径回 10025；成功的配方是先发成下架（unlisted: true），人看过再上架
 
+import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
-import { IMAGE, ORIGIN, seller, type Write, write } from "./seller.ts";
+import { idText, reply } from "../../../platform/reply.ts";
+import { IMAGE, ItemId, ModelId, ORIGIN, row, seller, type Write, withData, write } from "./seller.ts";
 
 const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? String(id) : `${IMAGE}${id}`);
 
-export type Model = { modelId: string; sku: string; name: string; price: number | null; stock: number | null; sold: number | null; tierIndex: number[] };
-export type Product = { productId: string; parentSku: string; name: string; cover: string; createdAt: string | null; models: Model[] };
+export type Model = { modelId: ModelId; sku: string; name: string; price: number | null; stock: number | null; sold: number | null; tierIndex: number[] };
+export type Product = { productId: ItemId; parentSku: string; name: string; cover: string; createdAt: string | null; models: Model[] };
 
-export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: number; rows: Product[] }> {
-	const b = await seller("/api/v3/opt/mpsku/list/v2/get_product_list", {
-		query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "live_all", need_ads: false },
-	});
+const scalar = z.union([z.string(), z.number()]).nullish();
+const pageInfo = z.looseObject({ total: scalar }).nullish();
+
+/** 在售列表（get_product_list）的回包 */
+export const liveList = withData(
+	z
+		.looseObject({
+			page_info: pageInfo,
+			products: z
+				.array(
+					z.looseObject({
+						id: idText.pipe(ItemId),
+						parent_sku: z.string().nullish(),
+						name: z.string().nullish(),
+						cover_image: z.string().nullish(),
+						create_time: scalar,
+						model_list: z
+							.array(
+								z.looseObject({
+									id: idText.pipe(ModelId),
+									sku: z.string().nullish(),
+									name: z.string().nullish(),
+									price_detail: z.looseObject({ origin_price: scalar }).nullish(),
+									stock_detail: z.looseObject({ total_seller_stock: scalar }).nullish(),
+									statistics: z.looseObject({ sold_count: scalar }).nullish(),
+									tier_index: z.array(z.union([z.number(), z.string()])).nullish(),
+								}),
+							)
+							.nullish(),
+					}),
+				)
+				.nullish(),
+		})
+		.nullish(),
+);
+
+/** 在售列表的回包 → 商品（纯函数） */
+export function liveProductsOf(raw: unknown): { total: number; rows: Product[] } {
+	const b = reply(liveList, raw, "Shopee get_product_list");
 	const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
 	return {
 		total: Number(b.data?.page_info?.total ?? 0),
-		rows: ((b.data?.products ?? []) as any[]).map((p) => ({
-			productId: String(p.id),
+		rows: (b.data?.products ?? []).map((p) => ({
+			productId: p.id,
 			parentSku: String(p.parent_sku ?? ""),
 			name: String(p.name ?? ""),
 			cover: image(p.cover_image),
 			createdAt: Number(p.create_time) > 0 ? new Date(Number(p.create_time) * 1000).toISOString() : null,
-			models: ((p.model_list ?? []) as any[]).map((m) => ({
-				modelId: String(m.id),
+			models: (p.model_list ?? []).map((m) => ({
+				modelId: m.id,
 				sku: String(m.sku ?? ""),
 				name: String(m.name ?? ""),
 				price: n(m.price_detail?.origin_price),
 				stock: n(m.stock_detail?.total_seller_stock),
 				sold: n(m.statistics?.sold_count),
 				// 改商品的 model_list 必须带 tier_index
-				tierIndex: ((m.tier_index ?? []) as unknown[]).map(Number),
+				tierIndex: (m.tier_index ?? []).map(Number),
 			})),
 		})),
 	};
+}
+
+export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: number; rows: Product[] }> {
+	return liveProductsOf(
+		await seller("/api/v3/opt/mpsku/list/v2/get_product_list", z.unknown(), {
+			query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "live_all", need_ads: false },
+		}),
+	);
 }
 
 export const STATUS: Record<number, string> = { 0: "删除", 1: "在售", 2: "审核中", 3: "禁卖", 8: "下架" };
@@ -50,12 +95,23 @@ export async function allProducts(
 	pageNo = 1,
 	pageSize = 48,
 ): Promise<{ total: number; rows: { productId: string; name: string; status: number; cover: string }[] }> {
-	const b = await seller("/api/v3/opt/mpsku/list/v2/search_product_list", {
-		query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "all", need_ads: false },
-	});
+	const b = await seller(
+		"/api/v3/opt/mpsku/list/v2/search_product_list",
+		withData(
+			z
+				.looseObject({
+					page_info: pageInfo,
+					products: z
+						.array(z.looseObject({ id: idText, name: z.string().nullish(), status: z.union([z.number(), z.string()]), cover_image: z.string().nullish() }))
+						.nullish(),
+				})
+				.nullish(),
+		),
+		{ query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "all", need_ads: false } },
+	);
 	return {
 		total: Number(b.data?.page_info?.total ?? 0),
-		rows: ((b.data?.products ?? []) as any[]).map((p) => ({
+		rows: (b.data?.products ?? []).map((p) => ({
 			productId: String(p.id),
 			name: String(p.name ?? ""),
 			status: Number(p.status),
@@ -64,22 +120,63 @@ export async function allProducts(
 	};
 }
 
-export async function productInfo(productId: string): Promise<any> {
-	const b = await seller("/api/v3/product/get_product_info", { query: { product_id: productId, is_draft: false } });
-	if (!b.data?.product_info) throw new Error(`Shopee 没有回商品 ${productId} 的资料`);
-	return b.data.product_info;
+/** 商品的完整资料（product_info）：写只认识读回对账、上架、按货号找要用的格，别的原样留着 */
+const productInfoShape = z.looseObject({
+	name: z.string().nullish(),
+	parent_sku: z.string().nullish(),
+	status: scalar,
+	is_unlisted: z.boolean().nullish(),
+	category_path: z.array(z.union([z.number(), z.string()])).nullish(),
+	weight: z.looseObject({ value: scalar }).nullish(),
+	images: z.array(z.unknown()).nullish(),
+	size_chart_info: z.looseObject({ size_chart: z.unknown().optional() }).nullish(),
+	pre_order_info: z.record(z.string(), z.unknown()).nullish(),
+	description_info: z.looseObject({ description: z.string().nullish() }).nullish(),
+	model_list: z
+		.array(
+			z.looseObject({
+				sku: z.string().nullish(),
+				tier_index: z.array(z.union([z.number(), z.string()])).nullish(),
+				stock_detail: z.looseObject({ total_seller_stock: scalar, seller_stock_info: z.array(z.looseObject({ sellable_stock: scalar })).nullish() }).nullish(),
+				price_info: z.looseObject({ input_normal_price: scalar, normal_price: scalar }).nullish(),
+			}),
+		)
+		.nullish(),
+	std_tier_variation_list: z
+		.array(
+			z.looseObject({
+				custom_value: z.string().nullish(),
+				value_list: z.array(z.looseObject({ custom_value: z.string().nullish(), image_id: z.string().nullish() })).nullish(),
+			}),
+		)
+		.nullish(),
+});
+export type ProductInfo = z.output<typeof productInfoShape>;
+
+/** 商品资料（get_product_info）的回包 → product_info（纯函数） */
+export const productInfoOf = (raw: unknown): ProductInfo =>
+	reply(withData(z.looseObject({ product_info: productInfoShape })), raw, "Shopee /api/v3/product/get_product_info").data.product_info;
+
+export async function productInfo(productId: string): Promise<ProductInfo> {
+	return productInfoOf(await seller("/api/v3/product/get_product_info", z.unknown(), { query: { product_id: productId, is_draft: false } }));
 }
 
+/** 一个物流渠道：启用没有（enabled）、渠道 id（新旧两种写法 channel_id、channelid） */
+export const channel = z.looseObject({ enabled: z.boolean().nullish(), channel_id: scalar, channelid: scalar });
+export type Channel = z.output<typeof channel>;
+
 /** 物流渠道（启用哪些、谁付运费）。新商品给 productId 0、叶子类目 id */
-export async function channels(productId: string, categoryId: number): Promise<any[]> {
-	const b = await seller("/api/v3/listing-upload/component/get_product_channel_info", {
+export async function channels(productId: string, categoryId: number): Promise<Channel[]> {
+	const b = await seller("/api/v3/listing-upload/component/get_product_channel_info", withData(z.looseObject({ list: z.array(channel).nullish() }).nullish()), {
 		body: { product_id: Number(productId), category_id: categoryId, is_draft: false },
 	});
 	return b.data?.list ?? [];
 }
 
+const limits = z.looseObject({ current_published: scalar, unlisted_count: scalar, publish_limit: scalar });
+
 export async function countLimit(): Promise<{ used: number; unlisted: number; limit: number }> {
-	const b = await seller("/api/v3/opt/mpsku/list/get_product_count_limit");
+	const b = await seller("/api/v3/opt/mpsku/list/get_product_count_limit", limits.extend({ data: limits.nullish() }));
 	const d = b.data ?? b;
 	return { used: Number(d.current_published), unlisted: Number(d.unlisted_count), limit: Number(d.publish_limit) };
 }
@@ -90,59 +187,119 @@ export async function performance(
 	period: "past7days" | "past30days",
 	pageNo = 1,
 	pageSize = 50,
-): Promise<{ total: number; rows: any[] }> {
-	const b = await seller("/api/mydata/v4/product/performance/", {
-		query: {
-			start_time: start,
-			end_time: end,
-			period,
-			keyword: "",
-			category_type: "shopee",
-			category_id: -1,
-			page_size: Math.min(50, pageSize),
-			page_num: pageNo,
-			order_type: "confirmed",
-			order_by: "confirmed_sales.desc",
+): Promise<{ total: number; rows: Record<string, unknown>[] }> {
+	const b = await seller(
+		"/api/mydata/v4/product/performance/",
+		z.looseObject({ result: z.looseObject({ total: scalar, items: z.array(row).nullish() }).nullish() }),
+		{
+			query: {
+				start_time: start,
+				end_time: end,
+				period,
+				keyword: "",
+				category_type: "shopee",
+				category_id: -1,
+				page_size: Math.min(50, pageSize),
+				page_num: pageNo,
+				order_type: "confirmed",
+				order_by: "confirmed_sales.desc",
+			},
 		},
-	});
+	);
 	return { total: Number(b.result?.total ?? 0), rows: b.result?.items ?? [] };
 }
 
 export type Category = { id: string; name: string; children: Category[] };
 
+type CategoryNode = { id: string | number; display_name?: string | null; name?: string | null; children?: CategoryNode[] | null };
+const categoryNode: z.ZodType<CategoryNode> = z.looseObject({
+	id: z.union([z.string(), z.number()]),
+	display_name: z.string().nullish(),
+	name: z.string().nullish(),
+	get children() {
+		return z.array(categoryNode).nullish();
+	},
+});
+
 export async function categoryTree(): Promise<Category[]> {
-	const b = await seller("/api/v3/category/get_category_tree");
-	const conv = (n: any): Category => ({ id: String(n.id), name: String(n.display_name ?? n.name ?? n.id), children: (n.children ?? []).map(conv) });
-	const list = (b.data?.list ?? []) as any[];
+	const b = await seller("/api/v3/category/get_category_tree", withData(z.looseObject({ list: z.array(categoryNode).nullish() }).nullish()));
+	const conv = (n: CategoryNode): Category => ({ id: String(n.id), name: String(n.display_name ?? n.name ?? n.id), children: (n.children ?? []).map(conv) });
+	const list = b.data?.list ?? [];
 	if (!list.length) throw new Error("Shopee 类目树是空的（没登录，或被风控）");
 	return list.map(conv);
 }
 
 export type Attribute = { id: string; name: string; mandatory: boolean; maxValues: number; values: { valueId: string; name: string }[] };
 
-/** 叶子类目的属性：必填的决定能不能上架；可选值只能从 values 里挑 */
-export async function attributes(categoryId: number): Promise<Attribute[]> {
-	const b = await seller("/api/v3/listing-upload/component/get_attribute_tree", { body: { category_id: categoryId } });
-	return ((b.data?.list?.[0]?.attribute_tree ?? []) as any[]).map((a) => ({
-		id: String(a.attribute_id),
+const attribute = z.looseObject({
+	attribute_id: idText,
+	display_name: z.string().nullish(),
+	name: z.string().nullish(),
+	mandatory: z.unknown().optional(),
+	attribute_info: z.looseObject({ max_value_count: scalar }).nullish(),
+	children: z.array(z.looseObject({ value_id: idText, display_name: z.string().nullish(), name: z.string().nullish() })).nullish(),
+});
+const attributeTree = withData(z.looseObject({ list: z.array(z.looseObject({ attribute_tree: z.array(attribute).nullish() })).nullish() }).nullish());
+
+/** 属性树（get_attribute_tree）的回包 → 属性（纯函数） */
+export function attributesOf(raw: unknown): Attribute[] {
+	const b = reply(attributeTree, raw, "Shopee /api/v3/listing-upload/component/get_attribute_tree");
+	return (b.data?.list?.[0]?.attribute_tree ?? []).map((a) => ({
+		id: a.attribute_id,
 		name: String(a.display_name ?? a.name ?? ""),
 		mandatory: Boolean(a.mandatory),
 		maxValues: Number(a.attribute_info?.max_value_count ?? 1),
-		values: ((a.children ?? []) as any[]).map((c) => ({ valueId: String(c.value_id), name: String(c.display_name ?? c.name ?? "") })),
+		values: (a.children ?? []).map((c) => ({ valueId: c.value_id, name: String(c.display_name ?? c.name ?? "") })),
 	}));
 }
 
-export async function recommendedCategory(name: string, imageId = ""): Promise<any> {
+/** 叶子类目的属性：必填的决定能不能上架；可选值只能从 values 里挑 */
+export async function attributes(categoryId: number): Promise<Attribute[]> {
+	return attributesOf(await seller("/api/v3/listing-upload/component/get_attribute_tree", z.unknown(), { body: { category_id: categoryId } }));
+}
+
+/** 推荐的类目：第一个最像；类目路径是几级的 id，名字在 category_path_name（旧的叫 display_path、category_name_list） */
+export const recommended = z
+	.looseObject({
+		category_recommend_list: z
+			.array(
+				z.looseObject({
+					category_path: z.array(z.union([z.number(), z.string()])).nullish(),
+					category_path_name: z.array(z.unknown()).nullish(),
+					display_path: z.array(z.unknown()).nullish(),
+					category_name_list: z.array(z.unknown()).nullish(),
+				}),
+			)
+			.nullish(),
+	})
+	.nullish();
+export type Recommended = z.output<typeof recommended>;
+
+export async function recommendedCategory(name: string, imageId = ""): Promise<Recommended> {
 	return (
-		await seller("/api/v3/category/get_recommended_category", { body: { item_id: 0, name, image: imageId, description: "", description_type: "normal" } })
+		await seller("/api/v3/category/get_recommended_category", withData(recommended), {
+			body: { item_id: 0, name, image: imageId, description: "", description_type: "normal" },
+		})
 	).data;
 }
 
 export async function shippingDays(): Promise<{ inStock: number; rules: { categoryIds: string[]; min: number; max: number }[] }> {
-	const b = await seller("/api/v3/product/get_product_constraints/");
+	const b = await seller(
+		"/api/v3/product/get_product_constraints/",
+		withData(
+			z
+				.looseObject({
+					in_stock_dts: scalar,
+					category_dts_setting: z
+						.array(z.looseObject({ category_id_list: z.array(z.union([z.number(), z.string()])).nullish(), dts_min: scalar, dts_max: scalar }))
+						.nullish(),
+				})
+				.nullish(),
+		),
+	);
 	return {
 		inStock: Number(b.data?.in_stock_dts),
-		rules: ((b.data?.category_dts_setting ?? []) as any[]).map((r) => ({
+		rules: (b.data?.category_dts_setting ?? []).map((r) => ({
 			categoryIds: (r.category_id_list ?? []).map(String),
 			min: Number(r.dts_min),
 			max: Number(r.dts_max),
@@ -179,6 +336,16 @@ export async function productPage() {
 
 /** 写：传一批商品图，回每张的图片 id（顺序同 files）。图片服务的签名只有页面里的 UploadService 算得出：到 webpack 模块里找它，找到记在页面上，一张一张传（隔 0.5 秒）。
  * biz 4207 是商品图。任何一张失败就抛错（传图不收钱、不上架，重来就是）。bytes 经 base64 传进页面 */
+// 页面里的 webpack 运行时和 Shopee 的 UploadService：只写传图用到的几样
+type WebpackRequire = ((id: string) => Record<string, unknown> | null) & {
+	u?: (i: number) => unknown;
+	e: (i: number) => Promise<unknown>;
+	m?: Record<string, unknown>;
+};
+type WebpackChunks = { push: (chunk: [string[], Record<string, never>, (req: WebpackRequire) => void]) => void };
+type Uploader = { uploadImage: (file: File, opts: Record<string, unknown>) => Promise<{ data?: { resourceId?: unknown }; error?: unknown } | null> };
+type UploadWindow = Record<string, unknown> & { __x2Upload?: Uploader | null };
+
 export async function uploadImages(files: { base64: string; mime: string }[], biz = 4207): Promise<string[]> {
 	const p = await productPage();
 	const ids: string[] = [];
@@ -187,19 +354,19 @@ export async function uploadImages(files: { base64: string; mime: string }[], bi
 		const ext = f.mime === "image/png" ? "png" : f.mime === "image/webp" ? "webp" : "jpg";
 		const r = await p.run(
 			async (b64: string, filename: string, mime: string, biz: number) => {
-				const w = window as any;
-				const find = async () => {
-					const reqs: any[] = await new Promise((resolve) => {
-						const found: any[] = [];
+				const w = window as unknown as UploadWindow;
+				const find = async (): Promise<Uploader | null> => {
+					const reqs: WebpackRequire[] = await new Promise((resolve) => {
+						const found: WebpackRequire[] = [];
 						const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
 						let pending = names.length;
 						if (!pending) return resolve(found);
 						for (const n of names) {
 							try {
-								w[n].push([
+								(w[n] as WebpackChunks).push([
 									[`__x2_up_${n}_${Date.now()}`],
 									{},
-									(req: any) => {
+									(req: WebpackRequire) => {
 										found.push(req);
 										if (--pending <= 0) resolve(found);
 									},
@@ -225,17 +392,19 @@ export async function uploadImages(files: { base64: string; mime: string }[], bi
 								} catch {}
 							}
 						}
-						for (const id in req.m ?? {}) {
-							if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(req.m[id]))) continue;
-							let mod: any;
+						const mods = req.m ?? {};
+						for (const id in mods) {
+							if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(mods[id]))) continue;
+							let mod: Record<string, unknown> | null;
 							try {
 								mod = req(id);
 							} catch {
 								continue;
 							}
 							for (const v of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
-								if (typeof v === "function" && typeof v.prototype?.uploadImage === "function" && typeof v.$instance?.uploadImage === "function")
-									return v.$instance;
+								const c = v as { prototype?: { uploadImage?: unknown }; $instance?: Uploader } | null;
+								if (typeof v === "function" && typeof c?.prototype?.uploadImage === "function" && typeof c.$instance?.uploadImage === "function")
+									return c.$instance;
 							}
 						}
 					}

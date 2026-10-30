@@ -1,0 +1,21 @@
+{
+	"code": 0,
+	"data": {
+		"list": [
+			{
+				"category_id": 101174,
+				"attribute_tree": [
+					{
+						"attribute_id": 100037,
+						"display_name": "保固期限",
+						"mandatory": true,
+						"attribute_info": { "max_value_count": 1 },
+						"children": [{ "value_id": 1, "display_name": "無保固" }, { "value_id": 2, "name": "1個月" }],
+						"value_list": []
+					},
+					{ "attribute_id": "100134", "name": "材質", "mandatory": false }
+				]
+			}
+		]
+	}
+}

@@ -17,6 +17,7 @@ export const ORDER_TABLES: Table[] = [
 		name: "orders",
 		title: "订单",
 		key: ["sn"],
+		order: { step: STEPS },
 		columns: {
 			sn: "订单号",
 			shop: "店铺",
@@ -33,7 +34,6 @@ export const ORDER_TABLES: Table[] = [
 			cancelled_at: "取消时间",
 			checked_at: "检查时间",
 		},
-		views: [{ title: "全部", order: "ship_by nulls last", group: { col: "step", values: STEPS } }],
 	},
 	{
 		name: "sources",
@@ -57,7 +57,6 @@ export const ORDER_TABLES: Table[] = [
 			chosen_at: "选定时间",
 		},
 		edit: { chosen: { set: choose }, sku_exceptions: {} },
-		views: [{ title: "全部", order: "chosen desc, score desc nulls last", group: { col: "item_name" } }],
 	},
 	{
 		name: "arrival_issues",
@@ -83,7 +82,6 @@ export const ORDER_TABLES: Table[] = [
 			resolution: { options: ["退换", "重新采购", "无需处理"] },
 			done: {},
 		},
-		views: [{ title: "全部", order: "done, reported_at desc" }],
 		form: {
 			title: "上报到货问题",
 			required: ["sn", "kind"],
@@ -104,6 +102,5 @@ export const ORDER_TABLES: Table[] = [
 			warehouse_id: "仓库 id",
 		},
 		edit: Object.fromEntries(["buy_account", "late_days", "ship_wait_hours", "channel", "sendway_id", "line_id", "warehouse_id"].map((c) => [c, {}])),
-		views: [{ title: "设置", order: "id", cards: true }],
 	},
 ];

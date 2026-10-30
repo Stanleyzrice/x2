@@ -2,9 +2,10 @@
 import type { Offer } from "../../connectors/sites/1688/api.ts";
 import type { Mark } from "./pics.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
+import type { OfferLike, PriceInput, ShopSettingsRow } from "./row.ts";
 import { limitProblems, priceRange, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 
-export function settingsOf(row: any) {
+export function settingsOf(row: ShopSettingsRow) {
 	const n = (v: unknown) => Number(v);
 	const params: PriceParams = priceParams.parse({
 		fx: n(row.fx),
@@ -60,14 +61,13 @@ export const usableWeights = (o: Offer): Offer => ({
 
 export const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
 
-export const freightOf = (offer: Partial<Offer> | null | undefined, column: unknown): number | null =>
+export const freightOf = (offer: OfferLike | null | undefined, column: unknown): number | null =>
 	num(column) ?? offer?.freight?.costRmb ?? (offer?.tags?.freeShipping ? 0 : null);
 
-const weightsOf = (offer: Partial<Offer> | null | undefined) =>
-	new Map((offer?.skus ?? []).filter((k) => (k.weightKg ?? 0) > 0).map((k) => [k.skuId, k.weightKg!]));
+const weightsOf = (offer: OfferLike | null | undefined) => new Map((offer?.skus ?? []).filter((k) => (k.weightKg ?? 0) > 0).map((k) => [k.skuId, k.weightKg!]));
 
 export type Need = "重量" | "国内运费";
-export function estimateNeeds(l: any): Need[] {
+export function estimateNeeds(l: PriceInput): Need[] {
 	const specs = specsOf(l.variants);
 	if (!l.offer || !specs) return [];
 	const weights = weightsOf(l.offer);
@@ -82,7 +82,7 @@ export function pricingProblems(specs: Specs, needs: Need[]): string[] {
 	return [...(specs.variants.some((v) => v.priceTwd === null) ? ["核价：有规格怎么定价都过不了毛利的两道门"] : []), ...limitProblems(specs)];
 }
 
-export function reprice(l: any, s: Settings): { specs: Specs; freightRmb: number | null; changed: boolean } | null {
+export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb: number | null; changed: boolean } | null {
 	const specs = specsOf(l.variants);
 	if (!l.offer || !specs) return null;
 	const weights = weightsOf(l.offer);

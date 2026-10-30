@@ -1,9 +1,10 @@
 // 批量上架（mass upload）。一个一个建商品，必填的认证属性会被一个一个点名、补不完，所以 lilto 旧工作台走的是批量：
 // 下模板 → 在本机把数据填进 xlsx → 传模板 → 等解析（异步）→ 草稿池里等图摄取完 → 发布成下架 → 人看过再上架。
 // 模板按店发（列 = 这家店的物流渠道），不能存下来给别的店用；给了类目 id 才有 ps_product_global_attribute.<id> 这类属性列。
-// xlsx 在页面和本机之间用 base64 传（cdp-relay 只传得了 JSON）
+// xlsx 在页面和本机之间用 base64 传（booey 只传得了 JSON）
+import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
-import { ORIGIN, seller, type Write, write } from "./seller.ts";
+import { ORIGIN, row, seller, type Write, withData, write } from "./seller.ts";
 
 async function download(path: string): Promise<string> {
 	const p = await page(ORIGIN);
@@ -36,10 +37,14 @@ export const template = (categoryId?: number) =>
 			: `/api/tool/mass_product/download_basic_template/?timestamp=${Date.now()}`,
 	);
 
-export async function records(pageSize = 30): Promise<any[]> {
-	const b = await seller("/api/tool/mass_product/get_mass_record_list/", {
-		query: { operation_type: 2, page_number: 1, page_size: Math.max(10, Math.min(100, pageSize)) },
-	});
+export async function records(pageSize = 30): Promise<Record<string, unknown>[]> {
+	const b = await seller(
+		"/api/tool/mass_product/get_mass_record_list/",
+		withData(z.looseObject({ list: z.array(row).nullish(), records: z.array(row).nullish() }).nullish()),
+		{
+			query: { operation_type: 2, page_number: 1, page_size: Math.max(10, Math.min(100, pageSize)) },
+		},
+	);
 	return b.data?.list ?? b.data?.records ?? [];
 }
 
@@ -51,13 +56,30 @@ export type Draft = { id: string; parentSku: string; name: string; imagesPending
 /** 草稿池（传上去、还没发布的）。id 是 unpublished_product_id，不是商品 id（猜错了发布时平台照收一串空 id、什么都不做）。
  * 图还在摄取（imagesPending）时不能发布：发了会丢图，补不回来 */
 export async function drafts(): Promise<Draft[]> {
-	const b = await seller("/api/tool/mass_product/get_unpublished_product_list/", { query: { page_number: 1, page_size: 100 } });
-	return ((b.data?.list ?? b.data?.products ?? []) as any[]).map((d) => ({
+	const id = z.union([z.number(), z.string()]).nullish();
+	const draft = z.looseObject({
+		unpublished_product_id: id,
+		unpublished_id: id,
+		id,
+		sku_parent_short: z.string().nullish(),
+		parent_sku: z.string().nullish(),
+		name: z.string().nullish(),
+		product_name: z.string().nullish(),
+		need_upload: z.unknown().optional(),
+		// 图片 id 的数组；还在摄取的是带 need_upload 的对象
+		images: z.array(z.union([z.string(), z.null(), z.looseObject({ need_upload: z.unknown().optional() })])).nullish(),
+	});
+	const b = await seller(
+		"/api/tool/mass_product/get_unpublished_product_list/",
+		withData(z.looseObject({ list: z.array(draft).nullish(), products: z.array(draft).nullish() }).nullish()),
+		{ query: { page_number: 1, page_size: 100 } },
+	);
+	return (b.data?.list ?? b.data?.products ?? []).map((d) => ({
 		id: String(d.unpublished_product_id ?? d.unpublished_id ?? d.id ?? ""),
 		parentSku: String(d.sku_parent_short ?? d.parent_sku ?? ""),
 		name: String(d.name ?? d.product_name ?? ""),
 		// images 是图片 id 的数组；有 need_upload 就信它，没有时空数组算还没摄取完
-		imagesPending: Boolean(d.need_upload) || (d.images ?? []).some((x: any) => x?.need_upload) || (d.images ?? []).length === 0,
+		imagesPending: Boolean(d.need_upload) || (d.images ?? []).some((x) => typeof x === "object" && x?.need_upload) || (d.images ?? []).length === 0,
 	}));
 }
 
@@ -83,7 +105,7 @@ export async function upload(base64: string, filename = "x2.xlsx"): Promise<Writ
 					headers: { "x-csrftoken": cookie("csrftoken") },
 					body: fd,
 				});
-				const j = await r.json();
+				const j = (await r.json()) as { code?: number; data?: unknown; message?: unknown } | null;
 				return j?.code === 0 ? { kind: "done" as const, data: j.data } : { kind: "refused" as const, code: j?.code, why: String(j?.message ?? "") };
 			} catch (e) {
 				return { kind: "unknown" as const, why: String((e as Error)?.message ?? e) };

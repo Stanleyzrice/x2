@@ -44,7 +44,7 @@ test("核价：两道门都过的最小整数售价（和 lilto 的验算、真�
 	assert.ok(minPrice(19.9, 3, 1.6, cheer, true)! > 295);
 });
 
-import type { Offer } from "../../connectors/sites/1688/api.ts";
+import { type Offer, OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import {
 	dropSpecs,
 	limitProblems,
@@ -61,7 +61,7 @@ import {
 } from "./variants.ts";
 
 const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offer => ({
-	offerId: "1",
+	offerId: OfferId.parse("1"),
 	url: "",
 	title: "",
 	image: "",
@@ -69,8 +69,8 @@ const offerOf = (props: [string, string[]][], skus: [string[], number?][]): Offe
 	minQty: 1,
 	props: props.map(([name, values], i) => ({ name, values: values.map((v) => ({ name: v, image: i === 0 ? `${v}.jpg` : "" })) })),
 	skus: skus.map(([attrs, stock = 9], k) => ({
-		skuId: `k${k}`,
-		specId: `s${k}`,
+		skuId: SkuId.parse(`k${k}`),
+		specId: SpecId.parse(`s${k}`),
 		name: attrs.join(" / "),
 		attrs,
 		price: 10,
@@ -94,8 +94,8 @@ const grid = (tiers: [string, string[]][], price: (c: number[]) => number | null
 		})),
 		variants: cells.map((c) => ({
 			sku: `LT1-${c.join("")}`,
-			skuId: c.join(""),
-			specId: c.join(""),
+			skuId: SkuId.parse(c.join("")),
+			specId: SpecId.parse(c.join("")),
 			options: c,
 			costRmb: 1,
 			stock: 9,
@@ -468,7 +468,7 @@ test("规格和价格：按层写，价格、重量跟着哪层变就写在哪�
 	assert.equal(priceRange(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 155 : 133)).variants), "NT$133–155");
 });
 
-import { type Product, productInfo, readbackProblems } from "./product.ts";
+import { type Product, productInfo, readbackProblems, type SentInfo } from "./product.ts";
 
 const draft = (): Product => ({
 	parentSku: "LT952803717616",
@@ -505,8 +505,8 @@ const draft = (): Product => ({
 		[1, 1, 299, 1.6],
 	].map(([a, b, priceTwd, weightKg], i) => ({
 		sku: `LT952803717616-${i + 1}`,
-		skuId: String(i + 1),
-		specId: String(i + 1),
+		skuId: SkuId.parse(String(i + 1)),
+		specId: SpecId.parse(String(i + 1)),
 		options: [a!, b!],
 		costRmb: 1,
 		stock: 9,
@@ -520,23 +520,23 @@ const draft = (): Product => ({
 });
 
 test("product_info：照 9-01 的成功样本；规格（层、tier_index）照存着的结构；规格图挂第一层；详情图进描述；建成下架；30019 开不了", () => {
-	const p = productInfo(draft()) as any;
+	const p = productInfo(draft());
 	assert.equal(p.unlisted, true);
 	assert.deepEqual(p.weight, { value: "1.7", unit: 1 });
 	assert.deepEqual(
-		p.std_tier_variation_list.map((t: any) => t.custom_value),
+		p.std_tier_variation_list.map((t) => t.custom_value),
 		["顏色", "尺碼"],
 	);
-	assert.deepEqual(p.std_tier_variation_list[0].value_list, [
+	assert.deepEqual(p.std_tier_variation_list[0]!.value_list, [
 		{ id: 0, custom_value: "卡其色", image_id: "tw-11134207-k" },
 		{ id: 0, custom_value: "黑色" },
 	]);
-	assert.deepEqual(p.std_tier_variation_list[1].value_list, [
+	assert.deepEqual(p.std_tier_variation_list[1]!.value_list, [
 		{ id: 0, custom_value: "M" },
 		{ id: 0, custom_value: "L" },
 	]);
 	assert.deepEqual(
-		p.model_list.map((m: any) => [m.sku, m.tier_index, m.price, m.is_default]),
+		p.model_list.map((m) => [m.sku, m.tier_index, m.price, m.is_default]),
 		[
 			["LT952803717616-1", [0, 0], "295", true],
 			["LT952803717616-2", [0, 1], "295", false],
@@ -544,9 +544,9 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 			["LT952803717616-4", [1, 1], "299", false],
 		],
 	);
-	const reversed = productInfo({ ...draft(), variants: draft().variants.reverse() }) as any;
+	const reversed = productInfo({ ...draft(), variants: draft().variants.reverse() });
 	assert.deepEqual(
-		reversed.model_list.map((m: any) => [m.sku, m.tier_index]),
+		reversed.model_list.map((m) => [m.sku, m.tier_index]),
 		[
 			["LT952803717616-4", [1, 1]],
 			["LT952803717616-3", [1, 0]],
@@ -559,17 +559,17 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 		{ type: 1, value: "tw-11134207-d", width: 800, height: 1200 },
 	]);
 	assert.deepEqual(
-		p.logistics_channels.filter((c: any) => c.enabled).map((c: any) => c.channelid),
+		p.logistics_channels.filter((c) => c.enabled).map((c) => c.channelid),
 		[30006, 30005],
 	);
-	assert.equal(p.logistics_channels.find((c: any) => c.channelid === 30020).sizeid, 1);
+	assert.equal(p.logistics_channels.find((c) => c.channelid === 30020)?.sizeid, 1);
 	const single = productInfo({
 		...draft(),
 		tiers: [{ source: "", name: "", options: [{ source: "", name: "", image: null }] }],
 		variants: [{ ...draft().variants[0]!, options: [0] }],
-	}) as any;
+	});
 	assert.deepEqual(
-		[single.std_tier_variation_list, single.model_list[0].tier_index],
+		[single.std_tier_variation_list, single.model_list[0]!.tier_index],
 		[[{ id: 0, custom_value: "", value_list: [{ id: 0, custom_value: "" }] }], [0]],
 	);
 	assert.throws(() => productInfo({ ...draft(), variants: draft().variants.map((v) => ({ ...v, options: [0, 0] })) }), /同一格/);
@@ -579,20 +579,20 @@ test("product_info：照 9-01 的成功样本；规格（层、tier_index）照�
 });
 
 test("读回来核对：图片可以是地址；价格、库存、规格对不上要写出来", () => {
-	const sent = productInfo(draft()) as any;
+	const sent = productInfo(draft());
 	const got = {
 		...sent,
 		images: sent.images.map((id: string) => `https://cf.shopee.tw/file/${id}`),
-		model_list: sent.model_list.map((m: any) => ({
+		model_list: sent.model_list.map((m) => ({
 			sku: m.sku,
 			tier_index: m.tier_index,
 			price_info: { input_normal_price: Number(m.price) },
-			stock_detail: { total_seller_stock: m.stock_setting_list[0].sellable_stock },
+			stock_detail: { total_seller_stock: m.stock_setting_list[0]!.sellable_stock },
 		})),
 	};
-	const channels = sent.logistics_channels.map((c: any) => ({ channel_id: c.channelid, enabled: c.enabled }));
+	const channels = sent.logistics_channels.map((c) => ({ channel_id: c.channelid, enabled: c.enabled }));
 	assert.deepEqual(readbackProblems(sent, got, channels), []);
-	got.model_list[2].price_info.input_normal_price = 199;
+	got.model_list[2]!.price_info.input_normal_price = 199;
 	got.name = "別的標題";
 	assert.deepEqual(readbackProblems(sent, got, channels), ["标题和提交的不一致", "规格 LT952803717616-3 的选项、售价或库存和提交的不一致"]);
 });
@@ -678,14 +678,68 @@ test("人定的类目：在类目树里找叶子，回从根到它的路径和�
 	);
 });
 
-import { auditDropped, auditIssues, auditKey, auditNotes, dropAudited, issueLine, restoreAudited, roleOf, shouldDrop, uniqIssues } from "./audit.ts";
-import { checkListings } from "./check.ts";
+import {
+	type Audit,
+	auditDropped,
+	auditIssues,
+	auditKey,
+	auditNotes,
+	dropAudited,
+	issueLine,
+	restoreAudited,
+	roleOf,
+	shouldDrop,
+	uniqIssues,
+} from "./audit.ts";
+import { checkListings, type Write } from "./check.ts";
 import { type TranslatedCheck, translatedDrop } from "./images.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf, usableWeights } from "./pricing.ts";
 import { productOf } from "./ready.ts";
+import { ListingId, type ListingRow, type OfferLike, type ShopSettingsRow } from "./row.ts";
 
-const shopRow = {
+/** 一行商品稿：没给的格是空的 */
+const BLANK: ListingRow = {
+	id: ListingId.parse("0"),
+	shop: "",
+	offer_id: OfferId.parse(""),
+	strategy: "人选",
+	cancelled: false,
+	weight_kg: null,
+	freight_rmb: null,
+	title: null,
+	description: null,
+	note: null,
+	noted: null,
+	nickname: null,
+	offer: null,
+	offer_read_at: null,
+	category_id: null,
+	category_path: null,
+	category_name: null,
+	attributes: null,
+	attributes_text: null,
+	days_to_ship: null,
+	variants: null,
+	images: {},
+	pricing: null,
+	audit: null,
+	problems: null,
+	step: null,
+	step_detail: null,
+	product_id: null,
+	listed_at: null,
+	removed_images: null,
+	removed_variants: null,
+	kept_images: null,
+	pick_why: null,
+	pick_evidence: null,
+	pick_snapshot: null,
+	created_at: new Date(0),
+	updated_at: new Date(0),
+};
+
+const shopRow: ShopSettingsRow = {
 	shop: "cheeroutdoor",
 	shop_id: "1554182542",
 	fx: "4.4",
@@ -727,8 +781,8 @@ const colors = (): Specs => ({
 	],
 	variants: [1, 2].map((n, i) => ({
 		sku: `LT952803717616-${n}`,
-		skuId: String(n),
-		specId: String(n),
+		skuId: SkuId.parse(String(n)),
+		specId: SpecId.parse(String(n)),
 		options: [i],
 		costRmb: 1,
 		stock: 9,
@@ -736,20 +790,23 @@ const colors = (): Specs => ({
 		priceTwd: 295,
 	})),
 });
-const ready = (o: Record<string, unknown> = {}) => {
+/** 测试的货源只给用到的格 */
+const asOffer = (o: OfferLike) => o as Offer;
+const ready = (o: Partial<ListingRow> = {}): ListingRow => {
 	const variants = o.variants ?? colors();
 	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({ skuId: v.skuId, attrs: [v.sku], weightKg: v.weightKg }));
 	return {
-		id: "7",
+		...BLANK,
+		id: ListingId.parse("7"),
 		shop: "cheeroutdoor",
-		offer_id: "952803717616",
+		offer_id: OfferId.parse("952803717616"),
 		cancelled: false,
 		listed_at: null,
 		product_id: null,
 		problems: null,
 		weight_kg: null,
 		freight_rmb: null,
-		offer: { title: "雨衣", tags: { freeShipping: true }, skus },
+		offer: asOffer({ title: "雨衣", tags: { freeShipping: true, onePsale: false, ship48h: false, deliveryDays: null }, skus }),
 		title: "輕便雨衣 成人連身 防水透氣 騎車通勤",
 		description: "防水雨衣，騎車通勤用",
 		category_path: [100637, 101324],
@@ -765,12 +822,17 @@ const ready = (o: Record<string, unknown> = {}) => {
 
 test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做的进 todo", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
-	const run = (l: any, writes: any[] = []) => checkListings([l], s, writes);
+	const run = (l: ListingRow, writes: Partial<Write>[] = []) =>
+		checkListings(
+			[l],
+			s,
+			writes.map((w) => ({ id: "0", batch: "1", op: "", status: "", params: null, finishedAt: null, ...w })),
+		);
 	assert.equal(run(ready({ offer: null })).steps.get("7")!.step, "待做商品稿");
 	const old = run(ready({ variants: [{ sku: "LT952803717616-1", specs: [{ label: "顏色", value: "黑色" }] }] }));
 	assert.deepEqual(old.steps.get("7"), { step: "待做商品稿", detail: "规格为旧格式，待重做商品稿" });
 	assert.deepEqual(
-		[old.todo[0]!.kind, old.todo[0]!.why, (old.todo[0] as any).params],
+		[old.todo[0]!.kind, old.todo[0]!.why, "params" in old.todo[0]! ? old.todo[0].params : null],
 		["做商品稿", "规格是旧格式，要重做：雨衣（cheeroutdoor，#7）", { ids: ["7"] }],
 	);
 	assert.deepEqual(productOf(ready({ variants: [] }), s.get("cheeroutdoor")!).problems, [OLD_SPECS]);
@@ -796,7 +858,7 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 			["上架", null],
 		],
 	);
-	assert.equal((ok.ready[0]!.writes[0]!.params.productInfo as any).std_tier_variation_list[0].value_list[0].image_id, "o1");
+	assert.equal((ok.ready[0]!.writes[0]!.params.productInfo as SentInfo).std_tier_variation_list[0]!.value_list[0]!.image_id, "o1");
 	assert.equal(
 		run({ ...l, audit: { key } }, [
 			{ id: "3", op: "建商品", status: "被拒", error: "10004", params: { listingId: "7" } },
@@ -819,7 +881,7 @@ test("检查：人换了类目（属性、备货天数清掉了）、没有别�
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const r = checkListings([ready({ days_to_ship: null, attributes: null })], s, []);
 	assert.deepEqual(
-		[r.steps.get("7"), r.reminders, r.todo[0]!.why, (r.todo[0] as any).params],
+		[r.steps.get("7"), r.reminders, r.todo[0]!.why, "params" in r.todo[0]! ? r.todo[0].params : null],
 		[{ step: "待做商品稿", detail: "换了类目，待照新的类目做属性、备货天数" }, [], "换了类目，要照新的类目重做：雨衣（cheeroutdoor，#7）", { ids: ["7"] }],
 	);
 	assert.equal(checkListings([ready({ days_to_ship: null, problems: "货源：起订量 2，无法单件购买" })], s, []).steps.get("7")!.step, "待补充");
@@ -982,7 +1044,7 @@ test("x2 去掉挑出的图：写在 Pic 的 drop 上（不进已删除的图）
 		{ id: "d9", issues: ["「干」"] },
 	]);
 	assert.deepEqual(
-		[...dropped.main, ...dropped.detail].map((x) => x.drop ?? null),
+		[...(dropped.main ?? []), ...(dropped.detail ?? [])].map((x) => x.drop ?? null),
 		[null, "Gemini 文字检查：「产品」是簡體；「质量」", null, "Gemini 文字检查：「产品」是簡體；「质量」", "超过张数，不用"],
 	);
 	assert.equal(pics.main[1]!.drop, undefined);
@@ -1029,7 +1091,7 @@ test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明�
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const l = ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("d2")], options: [pic("o1", "k.jpg")] } });
 	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
-	const audit = {
+	const audit: Audit = {
 		key,
 		at: "t0",
 		textIssues: ["規格名「綠色」寫成「绿色」"],
@@ -1069,8 +1131,8 @@ test("估重量、国内运费：1688 有的用 1688 的；1688 没给、「重�
 	];
 	assert.deepEqual(estimateNeeds(l({ offer: { skus: all, tags: { freeShipping: true } } })), []);
 	assert.deepEqual(estimateNeeds(l({ offer: { skus: all, freight: { costRmb: 8 } } })), []);
-	assert.equal(freightOf({ freight: { costRmb: 8 } } as any, "12"), 12);
-	assert.equal(freightOf({ tags: { freeShipping: true } } as any, null), 0);
+	assert.equal(freightOf({ freight: { costRmb: 8 } }, "12"), 12);
+	assert.equal(freightOf({ tags: { freeShipping: true } }, null), 0);
 	assert.deepEqual(estimateNeeds({ offer: null, variants: null }), []);
 });
 
@@ -1129,9 +1191,9 @@ test("重新核价（不读 1688）：1688 给的重量照用，没给的用「�
 
 test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估（带着 1688 的标题和规格），不提醒人", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
-	const l = {
+	const l: ListingRow = {
 		...ready(),
-		offer: {
+		offer: asOffer({
 			title: "可爱猫咪地垫",
 			skus: [
 				{ skuId: "1", attrs: ["黑猫", "40*60"], weightKg: 0.3 },
@@ -1139,7 +1201,7 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 			],
 			freight: null,
 			tags: { freeShipping: false },
-		},
+		}),
 	};
 	const r = checkListings([l], s, []);
 	assert.deepEqual(r.steps.get("7"), { step: "待做商品稿", detail: "缺重量、国内运费：agent 估" });
@@ -1391,7 +1453,7 @@ test("Gemini 文字检查一句话重复上百遍：一张图的问题去掉重�
 	assert.equal(issueLine(issues[0]!), `1. 详情图 5：${line}（x2 已去掉）`);
 	const pics = { main: [], detail: [{ from: "d.jpg", imageId: "d5", drop: `Gemini 文字检查：${line}；${line}` }], options: [] };
 	assert.deepEqual(
-		auditDropped(pics as any).map((x) => x.issues),
+		auditDropped(pics).map((x) => x.issues),
 		[[line]],
 	);
 });

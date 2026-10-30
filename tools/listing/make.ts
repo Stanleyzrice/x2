@@ -4,24 +4,25 @@
 // 几份同时做（x2 listing make --jobs）：碰浏览器的（读 1688 货源、加水印、传图、类目、属性、备货天数）按浏览器排队，读 1688 隔几秒（queue.ts）；
 // 问 Gemini、交象寄、取图不排队。报价（quote，选品用）用第 2 步的同一套代码，不做图、不存库
 
-import { detailImages, Gone, type Offer, offer as readOffer } from "../../connectors/sites/1688/api.ts";
+import { detailImages, Gone, type Offer, type OfferId, offer as readOffer } from "../../connectors/sites/1688/api.ts";
 import { attributes as attributeTree, type Category, categoryTree, recommendedCategory, shippingDays } from "../../connectors/sites/shopee/products.ts";
 import { logins } from "../../platform/browser/browser.ts";
-import type { Sql } from "../../platform/db/index.ts";
+import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages } from "./images.ts";
 import type { Pics } from "./pics.ts";
 import { freightOf, num, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
+import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import { nicknameFor } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
-export async function savePrices(sql: Sql, l: any, s: Settings): Promise<boolean> {
+export async function savePrices(sql: Sql, l: ListingRow, s: Settings): Promise<boolean> {
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
 	const fields = { variants: r.specs, pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
-	await sql`update listings set variants = ${sql.json(fields.variants as any)}, pricing = ${sql.json(fields.pricing as any)}, updated_at = now() where id = ${l.id}`;
+	await sql`update listings set variants = ${sql.json(fields.variants as Json)}, pricing = ${sql.json(fields.pricing as Json)}, updated_at = now() where id = ${l.id}`;
 	Object.assign(l, fields);
 	return true;
 }
@@ -40,7 +41,7 @@ async function categoryNames(): Promise<Map<string, string>> {
 	return tree;
 }
 
-export async function readOffer1688(offerId: string): Promise<Offer> {
+export async function readOffer1688(offerId: OfferId): Promise<Offer> {
 	const a = (await logins("1688"))[0];
 	if (!a) throw new NeedsHuman("没有登录着 1688 的浏览器：读不了货源");
 	return usableWeights(await on1688(a.account.id, () => readOffer(offerId)));
@@ -51,9 +52,9 @@ const CANDIDATE_MAIN = 12,
 	CANDIDATE_DETAIL = 16;
 
 export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
-	const [l] = await sql`select * from listings where id = ${id}`;
+	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
-	const [row] = await sql`select * from shop_settings where shop = ${l.shop}`;
+	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
 	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
@@ -155,7 +156,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 
 async function save(sql: Sql, id: string, fields: Record<string, unknown>, problems: string[]): Promise<{ id: string; problems: string[] }> {
 	const json = new Set(["images", "offer", "variants", "pricing", "attributes", "category_path"]);
-	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as any) : v]));
-	await sql`update listings set ${sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() } as any)} where id = ${id}`;
+	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as Json) : v]));
+	await sql`update listings set ${sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() })} where id = ${id}`;
 	return { id, problems };
 }

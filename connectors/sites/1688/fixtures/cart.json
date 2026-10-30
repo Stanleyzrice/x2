@@ -1,0 +1,3 @@
+{
+	"model": "{\"data\":{\"root_1\":{\"type\":\"root\",\"fields\":{\"totalSkuCount\":2}},\"item_1\":{\"type\":\"item\",\"fields\":{\"offerId\":1014247787336,\"skuId\":6022174637511,\"quantity\":3}},\"item_2\":{\"type\":\"item\",\"fields\":{\"offerId\":\"720000000001\",\"quantity\":\"1\"}},\"shop_1\":{\"type\":\"shop\",\"fields\":{\"sellerLoginId\":\"某某工厂\"}}}}"
+}

@@ -1,0 +1,15 @@
+{
+	"code": 200,
+	"msg": "success",
+	"data": [
+		{
+			"offerId": 1014247787336,
+			"subject": "浴水生财猫咪浴室地垫",
+			"priceInfo": { "price": "8.10" },
+			"monthSold": 1200,
+			"imageUrl": "https://cbu01.alicdn.com/img/ibank/a.jpg"
+		},
+		{ "offerId": "720000000001", "subject": "硅藻泥地垫", "priceInfo": {}, "imageUrl": null },
+		{ "offerId": "720000000002" }
+	]
+}

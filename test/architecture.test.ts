@@ -124,9 +124,11 @@ test("文档只放在 README、AGENTS.md、skill、子 agent、连接器的 NOTE
 
 test("代码、文档里提到的仓库里的文件都在（改名、删了文件，提到它的地方跟着改）", () => {
 	const bad: string[] = [];
-	for (const f of tracked().filter((x) => /\.(ts|tsx|md|sql)$/.test(x))) {
+	for (const f of tracked().filter((x) => /\.(ts|tsx|md|sql|tla|cfg|mjs)$/.test(x))) {
 		const text = readFileSync(join(ROOT, f), "utf8");
-		for (const m of text.matchAll(/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude)\/[\w./-]+\.(?:md|ts|tsx|sql|json))/g))
+		for (const m of text.matchAll(
+			/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude)\/[\w./-]+\.(?:md|ts|tsx|sql|json|tla|cfg|mjs|mmd))/g,
+		))
 			if (!existsSync(join(ROOT, m[1]!))) bad.push(`${f} → ${m[1]}`);
 		if (f.endsWith(".md"))
 			for (const m of text.matchAll(/\]\(([^)#:\s]+)(?:#[^)]*)?\)/g)) if (!existsSync(resolve(ROOT, dirname(f), m[1]!))) bad.push(`${f} → ${m[1]}`);

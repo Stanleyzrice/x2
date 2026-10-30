@@ -59,3 +59,7 @@
 - **取消预报**：页面上的按钮发 `POST /pack/cancel/pack/sub`，`{ sns: [订单号…] }`，回 `{ failed_sns }`；但它走的是另一个 axios（baseURL 没核实，可能是 `https://cn.connkey.com/api`）。x2 还没做：要先在页面上点一次，看它发到哪。
 
 第一次预报要和运营约好一张单一起跑（`x2 orders forecast --orders - --try`），跑完在 chanboss 上看那张订单变成「已预报」、明细是海快、无单号。
+
+## 回包样本
+
+`fixtures/*.json` 是 api.ts 解析的 data（外壳里面那一层），api.test.ts 拿它们跑解析。都是照代码和上面记的字段写的（不是抓的真回包）。登录以后用 live.ts 读一遍，把真回包换进来（买家的名字、电话、地址换成假的）。

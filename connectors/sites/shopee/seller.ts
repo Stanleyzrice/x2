@@ -4,16 +4,26 @@
 // 响应的外壳多数是 { code, message, data }，code 0 是成功；财务、售后的是 { error, error_msg, data }，error 0 是成功。
 // 接口一览、各自的坑在同目录的 NOTES.md
 
+import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
+import { idText, reply } from "../../../platform/reply.ts";
 
 export const ORIGIN = "https://seller.shopee.tw";
 /** 商品图、订单图的地址：图片 id 接在后面，加 _tn 是缩略图 */
 export const IMAGE = "https://down-tw.img.susercontent.com/file/";
 
+/** Shopee 的几种 id 都是字符串，贴上标签别互相传错：商品 id（item id，卖家中心叫 product_id）、规格 id（model id）、订单号（order sn；和 chanboss 连接器的 OrderSn 是同一个标签）。解析回包时贴 */
+export const ItemId = z.string().min(1).brand<"ItemId">();
+export type ItemId = z.output<typeof ItemId>;
+export const ModelId = z.string().min(1).brand<"ModelId">();
+export type ModelId = z.output<typeof ModelId>;
+export const OrderSn = z.string().min(1).brand<"OrderSn">();
+export type OrderSn = z.output<typeof OrderSn>;
+
 export type Req = { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown };
 
-export type Raw = { kind: "signin" } | { kind: "unknown"; why: string } | { kind: "http"; status: number; json: any; text: string };
+export type Raw = { kind: "signin" } | { kind: "unknown"; why: string } | { kind: "http"; status: number; json: unknown; text: string };
 
 export async function call(path: string, req: Req = {}): Promise<Raw> {
 	const p = await page(ORIGIN);
@@ -55,26 +65,48 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 	);
 }
 
-const codeOf = (json: any): number | undefined => ((json?.code ?? json?.error) === undefined ? undefined : Number(json.code ?? json.error));
-const messageOf = (json: any) => String(json?.user_message ?? json?.message ?? json?.msg ?? json?.error_msg ?? "");
+/** 外壳：code（或财务、售后的 error）0 是成功；出错的话在 user_message、message、msg、error_msg 里。不是这个样子的（例 数组）当没有外壳 */
+const shell = z.looseObject({
+	code: z.union([z.number(), z.string()]).nullish(),
+	error: z.union([z.number(), z.string()]).nullish(),
+	user_message: z.unknown().optional(),
+	message: z.unknown().optional(),
+	msg: z.unknown().optional(),
+	error_msg: z.unknown().optional(),
+	data: z.unknown().optional(),
+});
+type Shell = z.output<typeof shell>;
+const shellOf = (json: unknown): Shell => {
+	const r = shell.safeParse(json);
+	return r.success ? r.data : {};
+};
+const codeOf = (j: Shell): number | undefined => ((j.code ?? j.error) === undefined ? undefined : Number(j.code ?? j.error));
+const messageOf = (j: Shell) => String(j.user_message ?? j.message ?? j.msg ?? j.error_msg ?? "");
 
 /** 出错的回应里，哪些要人处理：401、403（没登录、token 失效，页面不一定跳登录页），或要再输一次密码、验证（财务区） */
-export const needsHuman = (status: number, json: any) => status === 401 || status === 403 || /密碼|驗證/.test(messageOf(json));
+export const needsHuman = (status: number, json: unknown) => status === 401 || status === 403 || /密碼|驗證/.test(messageOf(shellOf(json)));
 
-export async function seller<T = any>(path: string, req: Req = {}): Promise<T> {
+/** 卖家中心的一个读接口：外壳对了，整个回包照 schema 解析（对不上是「回包变了」） */
+export async function seller<S extends z.ZodType>(path: string, schema: S, req: Req = {}): Promise<z.output<S>> {
 	const r = await call(path, req);
 	if (r.kind === "signin") throw new NeedsHuman("Shopee 卖家中心没有登录：在浏览器里登录");
 	if (r.kind === "unknown") throw new Error(`Shopee ${path}：${r.why}`);
 	if (r.json === null) throw new Error(`Shopee ${path}：HTTP ${r.status} ${r.text}`);
-	const code = codeOf(r.json);
-	if (r.status < 400 && (code === undefined || code === 0)) return r.json as T;
+	const head = shellOf(r.json);
+	const code = codeOf(head);
+	if (r.status < 400 && (code === undefined || code === 0)) return reply(schema, r.json, `Shopee ${path}`);
 	// 出错了才看要不要人处理：成功的响应里也可能出现「驗證」这类字
 	if (needsHuman(r.status, r.json))
-		throw new NeedsHuman(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}。没登录或要再验证一次：在浏览器里打开卖家中心处理好再试`);
-	throw new Error(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(r.json)}`);
+		throw new NeedsHuman(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(head)}。没登录或要再验证一次：在浏览器里打开卖家中心处理好再试`);
+	throw new Error(`Shopee ${path} 回 ${code ?? r.status}：${messageOf(head)}`);
 }
 
-export type Write = { kind: "done"; data: any } | { kind: "refused"; code: number | undefined; why: string } | { kind: "unknown"; why: string };
+/** 回包的 data 照 s 解析，别的格原样留着 */
+export const withData = <S extends z.ZodType>(s: S) => z.looseObject({ data: s });
+/** 原样的一行（列表里不解析的行） */
+export const row = z.looseObject({});
+
+export type Write = { kind: "done"; data: unknown } | { kind: "refused"; code: number | undefined; why: string } | { kind: "unknown"; why: string };
 
 export async function write(path: string, req: Req): Promise<Write> {
 	const r = await call(path, req);
@@ -82,24 +114,24 @@ export async function write(path: string, req: Req): Promise<Write> {
 	if (r.kind === "unknown") return { kind: "unknown", why: r.why };
 	if (r.json === null)
 		return r.status >= 500 ? { kind: "unknown", why: `HTTP ${r.status}` } : { kind: "refused", code: undefined, why: `HTTP ${r.status} ${r.text}` };
-	const code = codeOf(r.json);
+	const head = shellOf(r.json);
+	const code = codeOf(head);
 	// 字段校验失败（1000100256）时 msg 里列着全部失败的规则（Rule Type），user_message 只有第一条：都带上
-	const rules = /Rule Type/.test(String(r.json?.msg ?? "")) ? ` | ${String(r.json.msg).slice(0, 800)}` : "";
-	return code === 0 ? { kind: "done", data: r.json.data } : { kind: "refused", code, why: messageOf(r.json) + rules };
+	const rules = /Rule Type/.test(String(head.msg ?? "")) ? ` | ${String(head.msg).slice(0, 800)}` : "";
+	return code === 0 ? { kind: "done", data: head.data } : { kind: "refused", code, why: messageOf(head) + rules };
 }
 
 /** 当前登录的店铺。shopId 是店铺 id（订单的 shop_id、聊聊消息的 from_shop_id）；userId 是卖家账号的 user_id（聊聊消息的 from_id、广告账户 id）。
  * 两个不一样（2026-10-09 查过：店铺 1554182542，账号 1555026956），别拿 user_id 当店铺 id */
 export async function shop(): Promise<{ shopId: string; userId: string; name: string; username: string; rating: number | null }> {
-	const s = await seller("/api/selleraccount/shop_info/");
-	const u = await seller("/api/selleraccount/user_info/");
-	const r = await seller("/api/v3/general/get_shop_info/").catch(() => null);
-	if (!s.data?.shop_id) throw new Error("Shopee 没有回店铺 id（/api/selleraccount/shop_info/）");
+	const s = await seller("/api/selleraccount/shop_info/", withData(z.looseObject({ shop_id: idText, name: z.string().nullish() })));
+	const u = await seller("/api/selleraccount/user_info/", withData(z.looseObject({ user_id: idText.nullish(), user_name: z.string().nullish() }).nullish()));
+	const r = await seller("/api/v3/general/get_shop_info/", withData(z.looseObject({ rating_star: z.number().nullish() }).nullish())).catch(() => null);
 	return {
-		shopId: String(s.data.shop_id),
-		userId: String(u.data?.user_id ?? ""),
-		name: String(s.data.name ?? ""),
-		username: String(u.data?.user_name ?? ""),
+		shopId: s.data.shop_id,
+		userId: u.data?.user_id ?? "",
+		name: s.data.name ?? "",
+		username: u.data?.user_name ?? "",
 		rating: r?.data?.rating_star ?? null,
 	};
 }

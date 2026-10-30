@@ -1,18 +1,51 @@
 // 订单的检查（x2 status 问它）：拿这一轮现读的站点数据（read.ts）和库里人定的东西拼成一份快照，跑 check.ts 的检查，
 // 算出要提醒人的、agent 要做的，把订单上算出来的列写回库；规格定了货源以后删掉它剩下的候选
 
+import type { OfferId } from "../../connectors/sites/1688/api.ts";
+import type { ChanbossOrderId, OrderSn } from "../../connectors/sites/chanboss/api.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import type { Checked, Reminder } from "../../platform/tool.ts";
-import { checkOrders, planned, type Result, type Snapshot } from "./check.ts";
+import { checkOrders, type Item, planned, type Result, type Snapshot, type SourceSku, type Write } from "./check.ts";
 import { type Reads, read1688 } from "./read.ts";
 
+// 库里读出的行（列照 schema.sql；numeric、bigint 回字符串，jsonb 回写进去的样子）
+type SettingsRow = { late_days: number; channel: string; ship_wait_hours: number };
+type OrderRow = {
+	sn: OrderSn;
+	shop: string | null;
+	created_at: Date | null;
+	ship_by: Date | null;
+	platform_status: string | null;
+	chanboss_status: string | null;
+	chanboss_id: ChanbossOrderId;
+	chanboss_time: string | null;
+	items: Item[];
+	problem: string | null;
+	cancelled_at: Date | null;
+};
+type SourceRow = {
+	item_id: string;
+	offer_id: OfferId;
+	title: string | null;
+	skus: SourceSku[];
+	chosen: boolean;
+	sure: boolean;
+	broken: string | null;
+	sku_exceptions: string | null;
+};
+type IssueRow = { id: string; sn: string; item: string | null; kind: string; qty: number | null; note: string | null; resolution: string | null };
+
 export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
-	const [settings] = await sql`select * from order_settings where id = 1`;
-	const orders = await sql`select * from orders where created_at > now() - interval '60 days' or platform_status = '待出货' order by ship_by nulls last`;
-	const sources = await sql`select item_id, offer_id, title, skus, chosen, sure, broken, sku_exceptions from sources`;
-	const writes = await sql`select id, batch, op, status, params, finished_at from writes where op in ('加购', '预报', '取消预报')`;
-	const issues = await sql`select id::text, sn, item, kind, qty, note, resolution from arrival_issues where not done order by id`;
+	const [settings] = await sql<SettingsRow[]>`select * from order_settings where id = 1`;
+	const orders = await sql<
+		OrderRow[]
+	>`select * from orders where created_at > now() - interval '60 days' or platform_status = '待出货' order by ship_by nulls last`;
+	const sources = await sql<SourceRow[]>`select item_id, offer_id, title, skus, chosen, sure, broken, sku_exceptions from sources`;
+	const writes = await sql<
+		Write[]
+	>`select id::text, batch::text, op, status, params, finished_at as "finishedAt" from writes where op in ('加购', '预报', '取消预报')`;
+	const issues = await sql<IssueRow[]>`select id::text, sn, item, kind, qty, note, resolution from arrival_issues where not done order by id`;
 	return {
 		now: new Date(),
 		settings: {
@@ -44,7 +77,7 @@ export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 			broken: r.broken,
 			exceptions: r.sku_exceptions,
 		})),
-		writes: writes.map((w) => ({ id: String(w.id), batch: String(w.batch), op: w.op, status: w.status, params: w.params, finishedAt: w.finished_at })),
+		writes: [...writes],
 		purchases: reads.purchases,
 		cart: reads.cart,
 		accounts: reads.accounts,

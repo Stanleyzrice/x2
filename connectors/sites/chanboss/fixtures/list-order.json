@@ -1,0 +1,47 @@
+{
+	"total": 2,
+	"pageCount": 1,
+	"items": [
+		{
+			"id": 88001234,
+			"sn": "251009ABCDEF01",
+			"status": "paid",
+			"platform_status": "READY_TO_SHIP",
+			"platform_shop_id": 1554182542,
+			"shop_name": "cheeroutdoor",
+			"platform_create_time": 1760000000,
+			"ship_deadline_time": 1760300000,
+			"cancel_time": 0,
+			"problem": 0,
+			"problem_note": "",
+			"problem_type": "",
+			"item_detail_new": [
+				{
+					"platform_item_id": 25000000001,
+					"platform_model_id": "250000000011",
+					"model_id": 990001,
+					"item_name": "浴室地墊 硅藻泥",
+					"model_name": "黑貓,60*90cm",
+					"count": 2,
+					"image": "https://down-tw.img.susercontent.com/file/tw-11134207-0000"
+				}
+			]
+		},
+		{
+			"id": "88001235",
+			"sn": "251009ABCDEF02",
+			"status": "pre_report",
+			"platform_status": "CANCELLED",
+			"platform_shop_id": "348425",
+			"shop_name": "ni1206",
+			"platform_create_time": "1760000100",
+			"ship_deadline_time": "1760300100",
+			"cancel_time": "1760100000",
+			"problem": 1,
+			"problem_note": "",
+			"problem_type": 3,
+			"sendway_name": "海快",
+			"item_detail_new": []
+		}
+	]
+}

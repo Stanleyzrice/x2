@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { close, db } from "./db/index.ts";
 import { EXIT, kindOf, Usage } from "./errors.ts";
-import { type Tool, type Toolkit, toolkits } from "./tool.ts";
+import { type Tool, type Toolkit, toolkits, type WriteTool } from "./tool.ts";
 import { type Outcome, perform } from "./writes.ts";
 
 const camel = (s: string) => s.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
@@ -17,8 +17,10 @@ const table = (rows: [string, string][]) => {
 	return rows.map(([a, b]) => `  ${a.padEnd(width)}  ${b}`);
 };
 
-const schemaOf = (t: Tool) => z.toJSONSchema(t.params, { io: "input", unrepresentable: "any" }) as { properties?: Record<string, any>; required?: string[] };
-const isWrite = (t: Tool) => t.kind === "write" && "plan" in t;
+/** 命令行帮助用到的 JSON Schema 的几格（placeholder 是 tool.ts 的 meta 加的） */
+type Prop = { type?: string; enum?: unknown[]; default?: unknown; description?: string; placeholder?: string };
+const schemaOf = (t: Tool) => z.toJSONSchema(t.params, { io: "input", unrepresentable: "any" }) as { properties?: Record<string, Prop>; required?: string[] };
+const isWrite = (t: Tool): t is WriteTool => t.kind === "write" && "plan" in t;
 const paged = (t: Tool) => t.kind === "read" && "page" in t;
 const call = (kit: Toolkit, name: string) => (kit.name ? `x2 ${kit.name} ${name}` : `x2 ${name}`);
 
@@ -58,8 +60,8 @@ export function toolHelp(kit: Toolkit, name: string, t: Tool): string {
 	const params = Object.entries(s.properties ?? {}).map(([k, p]): [string, string] => {
 		const value = p.placeholder ?? (p.enum ? p.enum.join("|") : (p.type ?? "值"));
 		// JSON Schema 里没有 preprocess 过的参数的默认值：从 zod 的声明里取
-		const def = (t.params.shape[k] as any)?.def;
-		const fallback = def?.type === "default" ? def.defaultValue : undefined;
+		const def = (t.params.shape[k] as z.ZodType | undefined)?.def;
+		const fallback = def?.type === "default" ? (def as z.core.$ZodDefaultDef).defaultValue : undefined;
 		const note = required.has(k) ? "必填" : (p.default ?? fallback) !== undefined ? `默认 ${JSON.stringify(p.default ?? fallback)}` : "可选";
 		return [`--${kebab(k)} <${value}>`, `${note}。${p.description ?? ""}`];
 	});
@@ -94,7 +96,7 @@ function help(): string {
 		"x2 <命令> [--参数 值…] [--json]",
 		"平台：",
 		...table(top.flatMap((k) => Object.entries(k.tools).map(([n, t]): [string, string] => [`x2 ${n}`, t.description]))),
-		...group("platform", "会话（网页）："),
+		...group("platform", "页（网页）："),
 		...group("tool", "业务工具（生意的规则写成代码）："),
 		...group("site", "站点（经浏览器、用人的登录）："),
 		...group("service", "服务（用 API key）："),
@@ -155,15 +157,15 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	const where = <T>(fn: () => Promise<T>) => (scoped === undefined ? fn() : kit.scope!.run(scoped, fn));
 	if (isWrite(t)) {
 		const sql = await db();
-		const batches = await t.plan(sql, parsed.data);
+		const batches = await t.plan(sql, parsed.data as never);
 		return { value: await perform(sql, batches, { try: tryFlag === "true" }), tool: t };
 	}
-	if (!("page" in t)) return { value: await where(() => t.run(parsed.data)), tool: t };
+	if (!("page" in t)) return { value: await where(() => t.run(parsed.data as never)), tool: t };
 	return where(async () => {
 		const rows: unknown[] = [];
 		let next: string | null = cursor ?? null;
 		for (let n = 1; n <= limit; n++) {
-			const page = await t.page(parsed.data, next);
+			const page = await t.page(parsed.data as never, next);
 			rows.push(...page.rows);
 			next = page.next;
 			if (next !== null || n > 1) console.error(`${kit.name} ${name}：第 ${n} 页，共 ${rows.length} 行`);
@@ -192,11 +194,13 @@ export async function main(argv: string[]): Promise<void> {
 		if (!kit && !platformKit) throw new Usage(`没有 ${first} 这个命令\n${help()}`);
 		const r = kit ? await runTool(kit, toolName ? [toolName, ...args] : args) : await runTool(platformKit!, [first, ...args]);
 		if ("help" in r) return console.log(r.help);
-		const out = r.value as any;
+		const out = r.value;
+		// 写工具的输出是写入引擎的结果（runTool 里 perform 回的）；读工具的输出交回给它自己的 text、exit
+		const ran = isWrite(r.tool) ? (out as Outcome) : null;
 		if (json) console.log(JSON.stringify(out));
-		else if (isWrite(r.tool)) console.log(outcomeText(out));
-		else console.log(r.tool.text ? r.tool.text(out) : JSON.stringify(out, null, 2));
-		const exit = isWrite(r.tool) ? (out.unknown ? "unknown" : out.blocked ? "human" : undefined) : r.tool.exit?.(out);
+		else if (ran) console.log(outcomeText(ran));
+		else console.log(r.tool.text ? r.tool.text(out as never) : JSON.stringify(out, null, 2));
+		const exit = ran ? (ran.unknown ? "unknown" : ran.blocked ? "human" : undefined) : r.tool.exit?.(out as never);
 		if (exit) process.exitCode = EXIT[exit];
 	} catch (e) {
 		const kind = kindOf(e);

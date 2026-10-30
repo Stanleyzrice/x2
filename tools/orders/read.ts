@@ -4,7 +4,7 @@
 // 同一个进程里 2 分钟内读过的复用（一批几项加购、x2 orders source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
-import { orders as chanbossOrders } from "../../connectors/sites/chanboss/api.ts";
+import { ChanbossOrderId, orders as chanbossOrders, type Order } from "../../connectors/sites/chanboss/api.ts";
 import { challengeIn, inAccount, logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
@@ -47,8 +47,8 @@ const date = (v: unknown) => {
 };
 
 /** chanboss 订单列表的一行 → orders 的一行。只有一个规格的商品，chanboss 的 platform_model_id 是商品 id */
-export function orderRow(r: any) {
-	const items: Item[] = ((r.item_detail_new ?? []) as any[]).map((i) => ({
+export function orderRow(r: Order) {
+	const items: Item[] = (r.item_detail_new ?? []).map((i) => ({
 		itemId: String(i.platform_item_id ?? ""),
 		modelId: String(i.platform_model_id ?? ""),
 		chanbossModelId: String(i.model_id ?? ""),
@@ -66,11 +66,11 @@ export function orderRow(r: any) {
 		ship_by: time(r.ship_deadline_time),
 		platform_status: PLATFORM_STATUS[platform] ?? platform,
 		chanboss_status: CHANBOSS_STATUS[String(r.status)] ?? String(r.status ?? ""),
-		chanboss_id: String(r.id),
+		chanboss_id: ChanbossOrderId.parse(String(r.id)),
 		chanboss_time: Number(r.platform_create_time ?? 0),
 		items,
 		items_text: items.map((i) => `${i.name} / ${i.spec || "（单规格）"} × ${i.qty}`).join("\n"),
-		problem: Number(r.problem) ? String(r.problem_note || `问题（${r.problem_type}）`) : null,
+		problem: Number(r.problem) ? r.problem_note || `问题（${r.problem_type}）` : null,
 		cancelled_at: platform === "CANCELLED" ? time(r.cancel_time) : null,
 	};
 }
@@ -132,7 +132,7 @@ export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: s
 	const name = s?.buy_account as string | null;
 	if (!name) return null;
 	const a = (await logins("1688")).find((x) => x.account.name === name || x.account.id === name);
-	if (!a) throw (await challengeIn("1688")) ?? new NeedsHuman(`采购账号「${name}」没有登录：在浏览器里登录这个 1688 账号，确认 cdp-relay 扩展已连接`);
+	if (!a) throw (await challengeIn("1688")) ?? new NeedsHuman(`采购账号「${name}」没有登录：在浏览器里登录这个 1688 账号，确认 booey 扩展已连接`);
 	return { userId: a.account.id, loginId: a.account.name };
 }
 
@@ -237,7 +237,7 @@ export async function read1688(sql: Sql, log: (s: string) => void = console.erro
 async function writeOrders(sql: Sql): Promise<number> {
 	const to = Math.floor(Date.now() / 1000),
 		from = to - 60 * 86400;
-	const raw: any[] = [];
+	const raw: Order[] = [];
 	for (let n = 1; ; n++) {
 		const page = await chanbossOrders(from, to, n);
 		raw.push(...page.rows);

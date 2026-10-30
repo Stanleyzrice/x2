@@ -178,3 +178,7 @@
 | get | `/hotWordChopeeProduct/commentList` |  |
 | post | `/bigData/getBigDataOverview` |  |
 | post | `/item/getCategoryTopProductTrend` |  |
+
+## 回包样本
+
+`fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。`hot-word-list.json`、`hot-word-item-sales-detail.json` 是真回包（penna 留下的，只有公开的店名），`similar-1688.json` 照代码写的。别的接口（热销类目、类目每天的数据、需求变化、竞争、价格带、吐槽、偏好、长尾词）原样回，只认列表那一层，没配样本。

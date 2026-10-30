@@ -44,7 +44,7 @@
 				"useBlockStatements": "off"
 			},
 			"suspicious": {
-				"noExplicitAny": "off",
+				"noExplicitAny": "error",
 				"noConsole": {
 					"level": "error",
 					"options": {
@@ -54,6 +54,14 @@
 			},
 			"complexity": {
 				"noExcessiveCognitiveComplexity": "off"
+			},
+			"nursery": {
+				"useExhaustiveSwitchCases": {
+					"level": "error",
+					"options": {
+						"requireExplicitCase": true
+					}
+				}
 			}
 		}
 	},
@@ -119,7 +127,7 @@
 			}
 		},
 		{
-			"includes": ["platform/ui/*/**"],
+			"includes": ["platform/ui/*/*.ts", "platform/ui/*/*.tsx"],
 			"linter": {
 				"rules": {
 					"style": {
@@ -130,6 +138,50 @@
 									{
 										"group": ["../../**", "!../../web/**"],
 										"message": "网页的界面只引自己和网页服务的接口（platform/web，只 import type）：它打包进浏览器，不认库、站点和生意"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["platform/ui/interactable/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["../../../**", "!../../../web/**"],
+										"message": "网页的界面只引自己和网页服务的接口（platform/web，只 import type）：它打包进浏览器，不认库、站点和生意"
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["platform/ui/generative/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["../../../**", "!../../../web/**"],
+										"message": "网页的界面只引自己和网页服务的接口（platform/web，只 import type）：它打包进浏览器，不认库、站点和生意"
+									},
+									{
+										"group": ["../../api.ts", "../../api", "@/api.ts", "@/api"],
+										"message": "generative 是快照：数据在组件里，不读库、不写回，不引网页和服务之间的接口（api.ts）。要现读、要人改的做成 interactable"
 									}
 								]
 							}

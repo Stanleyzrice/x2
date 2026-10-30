@@ -1,0 +1,8 @@
+{
+	"result": [
+		{
+			"orderId": 3012345678901234000,
+			"trace": [{ "mailNo": "YT0000000000001", "currentStatus": "已签收", "logisticsId": "LP001", "remark": "快件已签收" }, { "currentStatus": "已揽收" }]
+		}
+	]
+}

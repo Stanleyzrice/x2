@@ -1,0 +1,51 @@
+{
+	"tradeModel": {
+		"offerId": 1014247787336,
+		"unit": "个",
+		"beginAmount": 1,
+		"minPrice": "8.10",
+		"canBookedAmount": 19982,
+		"skuMap": [
+			{
+				"skuId": 6022174637511,
+				"specId": "3071830fb9e7fcd58cfdc4a4b5f0d8d5",
+				"specAttrs": "水生财黑猫咪&gt;60*90cm（升级版硅藻泥）",
+				"price": "8.10",
+				"canBookCount": 9984
+			},
+			{
+				"skuId": 6022174637539,
+				"specId": "9d51e543e760e554812ebd5303be915b",
+				"specAttrs": "洗洗睡吧梅棕狗&gt;60*90cm（升级版硅藻泥）",
+				"discountPrice": "8.10",
+				"canBookCount": 9998
+			}
+		]
+	},
+	"offerDetail": {
+		"subject": "浴水生财猫咪浴室地垫硅藻泥卫生间门口防滑脚垫异形卡通耐脏门垫",
+		"detailUrl": "//itemcdn.tmall.com/1688offer/icoss1014247787336.html",
+		"mainImageList": [
+			{ "fullPathImageURI": "https://cbu01.alicdn.com/img/ibank/O1CN01yqDlmq1hzRFT1jIiT_!!2221163894348-0-cib.jpg" },
+			{ "fullPathImageURI": "https://cbu01.alicdn.com/img/ibank/O1CN01aZC4cR1hzRDIHFfCf_!!2221163894348-0-cib.jpg" }
+		],
+		"skuProps": [
+			{
+				"prop": "颜色",
+				"value": [
+					{ "name": "水生财黑猫咪", "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN018daIiX1hzRDHtcmWm_!!2221163894348-0-cib.jpg" },
+					{ "name": "洗洗睡吧梅棕狗", "imageUrl": "https://cbu01.alicdn.com/img/ibank/O1CN01RX4gZ81hzRDHzzb2n_!!2221163894348-0-cib.jpg" }
+				]
+			},
+			{ "prop": "尺寸", "value": [{ "name": "60*90cm（升级版硅藻泥）" }] }
+		]
+	},
+	"freightInfo": {
+		"skuWeight": { "6022174637511": 0.486 },
+		"unitWeight": 0.5,
+		"totalCost": 8,
+		"recieveAddress": "广东省东莞市"
+	},
+	"gallery": ["//cbu01.alicdn.com/img/ibank/O1CN01szAzab1hzRDH8pOQp_!!2221163894348-0-cib.jpg"],
+	"tags": { "onePsale": true, "freeShipping": false, "ship48h": true, "deliveryDays": 2 }
+}

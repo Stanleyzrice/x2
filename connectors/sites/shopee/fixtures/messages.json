@@ -1,0 +1,11 @@
+[
+	{ "id": "m1", "from_shop_id": 0, "status": "normal", "type": "text", "content": { "text": "請問有現貨嗎" }, "created_timestamp": 1761700000 },
+	{
+		"id": "m2",
+		"from_shop_id": 1554182542,
+		"status": "auto_reply",
+		"type": "text",
+		"content": { "text": "您好，馬上為您查詢" },
+		"created_timestamp": "1761700005"
+	}
+]

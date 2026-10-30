@@ -1,8 +1,8 @@
-// 唯一碰 cdp-relay 的地方：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
+// 碰 booey 的只有 platform/browser（这里管站点；shot.ts 截 x2 自己的网页）：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
 // 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
 // 站点由连接器注册（SiteDef：首页、主机名、怎么认登录、要不要隔开、怎么认人机验证），这里不认具体站点。
 // 在哪个浏览器里做（一家店一个浏览器）：using() 指定的（按账号找浏览器的 inAccount 用它）；没指定的用 X2_BROWSER
-// （浏览器在 cdp-relay 里的 id 或名字）；也没设的，只连着一个就用它，连着几个就按登录选（browserFor）。
+// （浏览器在 booey 里的 id 或名字）；也没设的，只连着一个就用它，连着几个就按登录选（browserFor）。
 // 几个 x2 进程同时跑：同一个浏览器的同一个站点一次只让一个进程用（lock.ts 的锁，用完 2 秒没再用就放），要隔开的站点两次加载之间隔开。
 // 认登录时开的标签页，没认出就关掉（probe）；跳到别的网站的登录页的标签页 x2 以后找不回来，也关掉，不留下。
 // 注册了人机验证的站点跳了验证（例 整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
@@ -12,7 +12,7 @@
 // 没在 using() 里、也没设 X2_BROWSER 的读写，pick 按站点来问 browserFor：要人选的站点（each，例 Shopee 按店）连着几个时要给 --shop，
 // 别的用登录着的那个
 import { AsyncLocalStorage } from "node:async_hooks";
-import { RelayClient } from "@wuwe1/cdp-relay";
+import { RelayClient } from "@wuwe1/booey";
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { acquire, type Lock, spaced } from "./lock.ts";
 
@@ -29,7 +29,8 @@ export type Page = {
 export type Browser = { id: string; label: string; attached: number[] };
 
 /** 认人机验证：look、seen 要自给自足（整个放进页面里跑） */
-export type Challenger = { look: () => unknown; seen: (l: any) => boolean; url: (url: string) => boolean };
+// seen 拿到的是 look 回的（两个在页面里配对跑，参数写成 never：哪个站的 look 回什么由它自己定）
+export type Challenger = { look: () => unknown; seen: (l: never) => boolean; url: (url: string) => boolean };
 
 export type Account = { id: string; name: string };
 
@@ -78,20 +79,20 @@ export const using = <T>(browser: string, fn: () => Promise<T>): Promise<T> => c
 
 export async function browsers(): Promise<Browser[]> {
 	const all = await new RelayClient({}).browsers().catch(() => {
-		throw new NeedsHuman("连不上 cdp-relay：Chrome 开着吗？扩展连上了吗？");
+		throw new NeedsHuman("连不上 booey：Chrome 开着吗？扩展连上了吗？");
 	});
 	return all.map((b) => ({ id: b.id, label: b.label, attached: b.attached ?? [] }));
 }
 
 const short = (b: Browser) => b.label || b.id.slice(0, 8);
 
-async function pick(origin: string): Promise<Browser> {
+export async function pick(origin: string): Promise<Browser> {
 	const all = await browsers();
-	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 cdp-relay 扩展已连接");
+	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 booey 扩展已连接");
 	const want = chosen.getStore() ?? process.env.X2_BROWSER;
 	if (want) {
 		const b = all.find((x) => x.id === want || x.label === want);
-		if (!b) throw new NeedsHuman(`浏览器 ${want} 没有连着：打开它，确认 cdp-relay 扩展已连接`);
+		if (!b) throw new NeedsHuman(`浏览器 ${want} 没有连着：打开它，确认 booey 扩展已连接`);
 		return b;
 	}
 	if (all.length === 1) return all[0]!;
@@ -99,7 +100,7 @@ async function pick(origin: string): Promise<Browser> {
 	if (!site) throw new Usage(`连着 ${all.length} 个浏览器，用 X2_BROWSER 选一个：${all.map(short).join("、")}`);
 	const id = await browserFor(site);
 	const b = all.find((x) => x.id === id);
-	if (!b) throw new NeedsHuman(`浏览器 ${id} 刚断开了：确认 cdp-relay 扩展已连接再试`);
+	if (!b) throw new NeedsHuman(`浏览器 ${id} 刚断开了：确认 booey 扩展已连接再试`);
 	return b;
 }
 
@@ -197,7 +198,7 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	}
 }
 
-export function guarded(fn: (...args: any[]) => unknown, args: readonly unknown[], challenge: Challenger): string {
+export function guarded(fn: (...args: never[]) => unknown, args: readonly unknown[], challenge: Challenger): string {
 	const call = `(${fn.toString()})(${args.map((a) => JSON.stringify(a) ?? "undefined").join(",")})`;
 	return `(async () => {
 		const look = ${challenge.look.toString()};
@@ -343,7 +344,7 @@ export function choose(site: string, found: Found[]): string {
 		throw new Usage(`连着 ${logged.length} 个登录着 ${d.title} 的浏览器，用 --${d.login.each!.flag} 选一个：${logged.map((f) => f.name).join("、")}`);
 	throw (
 		found.map((f) => f.error).find((e) => e instanceof Challenge) ??
-		new NeedsHuman(`没有登录着 ${d.title} 的浏览器：打开登录着它的 Chrome（或在浏览器里登录 ${d.title}），确认 cdp-relay 扩展已连接`)
+		new NeedsHuman(`没有登录着 ${d.title} 的浏览器：打开登录着它的 Chrome（或在浏览器里登录 ${d.title}），确认 booey 扩展已连接`)
 	);
 }
 
@@ -423,6 +424,6 @@ export async function inAccount<T>(site: string, account: string, fn: () => Prom
 	if (challenge) throw challenge;
 	const now = (await logins(site)).map((l) => l.account.name || l.account.id);
 	throw new NeedsHuman(
-		`没有登录着 ${d.title} ${account} 的浏览器：打开那个 Chrome，登录 ${d.title}，确认 cdp-relay 扩展已连接（现在登录着的：${now.join("、") || "没有"}）`,
+		`没有登录着 ${d.title} ${account} 的浏览器：打开那个 Chrome，登录 ${d.title}，确认 booey 扩展已连接（现在登录着的：${now.join("、") || "没有"}）`,
 	);
 }
