@@ -34,7 +34,9 @@ export async function migrate(sql: Sql): Promise<void> {
 export function client(url: string, max: number): Sql {
 	const ssh = process.env.X2_DATABASE_SSH;
 	// postgres.js 支持 socket，类型里没写，所以不写成字面量
-	const options = { onnotice: () => {}, max, ...(ssh ? { socket: () => open(url, ssh) } : {}) };
+	// application_name：等写入锁时说是谁拿着（postgres 只收 ASCII）
+	const connection = { application_name: `x2 ${host} pid ${process.pid}` };
+	const options = { onnotice: () => {}, max, connection, ...(ssh ? { socket: () => open(url, ssh) } : {}) };
 	return postgres(url, options);
 }
 

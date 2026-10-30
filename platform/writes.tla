@@ -8,20 +8,21 @@
 \*   PendingEnds      进程退出留下的待执行，之后有 x2 跑（verify 或写工具）就会清掉
 \* 怎么跑（要 Java、TLC，不进 CI）：用 pstack 的 statechart（skills/statechart/scripts/statechart，第一次跑用 mise 装 TLC 和 Java），在仓库根目录：
 \*   statechart platform/writes.tla --config platform/writes.cfg --out <临时目录>          一个进程，最多三条写入
-\*   statechart platform/writes.tla --config platform/writes-2.cfg --out <临时目录>        同一台电脑上两个进程
-\*   statechart platform/writes.tla --config platform/writes-2hosts.cfg --out <临时目录>   两台电脑：已知破三条，见那份 cfg
+\*   statechart platform/writes.tla --config platform/writes-2.cfg --out <临时目录>        两个进程（哪台电脑上都一样，锁在共用的库里）
+\*   statechart platform/writes.tla --config platform/writes-drop.cfg --out <临时目录>     拿锁的连接在记意图以后、提交以前断了：已知破，见那份 cfg
 \*   statechart platform/writes.tla --config platform/writes-chart.cfg --view platform/writes-view.mjs --out <临时目录>
 \*     一条写入的状态图，out 里的 chart.mmd 换进 platform/writes.mmd
 \* 改了 writes.ts 的状态、判断、哪一步先哪一步后，这里跟着改再跑。
 \* 模型的状态名对照：pending 待执行，submitted 已提交，unknown 结果未知，mismatch 不一致，verified 已核对，refused 被拒，skipped 未执行。
-\* 没放进模型的：读回来说错（Lag = TRUE 时读回来可能看不到已经做成的）、站点上被人改、业务工具 prepare 的判断（当成可能不做）、几台电脑各自的进程号。
+\* 写入锁（exclusive）：交、核清、执行、resolve 都拿着库里的一把锁，同一时间只有一个进程碰写入；进程退出、连接断了（Drop）锁就放。
+\* 没放进模型的：读回来说错（Lag = TRUE 时读回来可能看不到已经做成的）、站点上被人改、业务工具 prepare 的判断（当成可能不做）。
 EXTENDS Naturals, Sequences, FiniteSets
 
-CONSTANTS Procs, MaxRows, Lag, SameHost
+CONSTANTS Procs, MaxRows, Lag, Drop
 
-VARIABLES rows, pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded
+VARIABLES rows, pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded, holder
 
-vars == <<rows, pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
+vars == <<rows, pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded, holder>>
 
 Proposals == {<<"a">>, <<"b">>, <<"a", "b">>}
 Target(k) == "t"
@@ -31,10 +32,6 @@ Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 Key(i) == <<rows[i].lk, rows[i].n>>
 Tgt(i) == Target(rows[i].lk)
 St(i) == rows[i].st
-\* 交它的进程还在执行这一批（库里记着进程号；同一台电脑上看得出进程还开没开着，别的电脑看不出）
-Owned(i) == i \in mine[rows[i].by]
-Host(p) == IF SameHost THEN "mac" ELSE p
-Visible(p, i) == Host(rows[i].by) = Host(p)
 
 InFlight == {"pending", "submitted", "unknown", "mismatch"}
 Unsettled == {"submitted", "unknown", "mismatch"}
@@ -65,6 +62,7 @@ Clear(p) ==
   /\ blocked' = [blocked EXCEPT ![p] = FALSE]
   /\ cur' = [cur EXCEPT ![p] = 0]
   /\ reply' = [reply EXCEPT ![p] = "none"]
+  /\ holder' = IF holder = p THEN "none" ELSE holder
 
 Init ==
   /\ rows = <<>>
@@ -80,10 +78,13 @@ Init ==
   /\ nextBatch = 1
   /\ resent = {}
   /\ crowded = {}
+  /\ holder = "none"
 
-\* addWrites：排着队（advisory lock）读同一个业务 key 的写入，admit，插一批待执行；有没核清的整批不收
+\* perform：拿写入锁，addWrites 读同一个业务 key 的写入，admit，插一批待执行；有没核清的整批不收
 Propose(p, ks) ==
   /\ pc[p] = "idle"
+  /\ holder = "none"
+  /\ holder' = p
   /\ Len(rows) + Len(ks) <= MaxRows
   /\ LET same(k) == {i \in Ids : rows[i].lk = k} IN
      /\ ~\E j \in 1 .. Len(ks) : \E i \in same(ks[j]) : St(i) \in InFlight
@@ -98,34 +99,32 @@ Propose(p, ks) ==
 \* x2 verify：run 不带批
 Verify(p) ==
   /\ pc[p] = "idle"
+  /\ holder = "none"
+  /\ holder' = p
   /\ pc' = [pc EXCEPT ![p] = "verify0"]
   /\ UNCHANGED <<rows, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
 
-\* execute 开头：清掉这台电脑上进程已经退出的待执行（owner 退出了），再挑出已提交、结果未知的读回来（这台电脑上还开着的另一个进程的不碰）
+\* execute 开头（拿着锁）：别的批的待执行是退出了的进程留下的，清掉；已提交、结果未知的都读回来
 VerifyStart(p) ==
   /\ pc[p] = "verify0"
-  /\ rows' = [i \in Ids |-> IF St(i) = "pending" /\ Visible(p, i) /\ ~Owned(i) THEN [rows[i] EXCEPT !.st = "skipped"] ELSE rows[i]]
-  /\ unsure' = [unsure EXCEPT ![p] = {[id |-> i, st |-> St(i)] :
-                  i \in {i \in Ids : St(i) \in {"submitted", "unknown"} /\ ~(Visible(p, i) /\ rows[i].by # p /\ Owned(i))}}]
+  /\ holder = p
+  /\ rows' = [i \in Ids |-> IF St(i) = "pending" /\ i \notin mine[p] THEN [rows[i] EXCEPT !.st = "skipped"] ELSE rows[i]]
+  /\ unsure' = [unsure EXCEPT ![p] = {i \in Ids : St(i) \in {"submitted", "unknown"}}]
   /\ pc' = [pc EXCEPT ![p] = "verify"]
-  /\ UNCHANGED <<mine, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<mine, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded, holder>>
 
-\* 一条一条读回来；只改还是挑出来时那个状态的（别的进程可能已经记了结果）
+\* 一条一条读回来
 VerifyOne(p) ==
   /\ pc[p] = "verify"
   /\ unsure[p] # {}
-  /\ LET u == CHOOSE x \in unsure[p] : \A y \in unsure[p] : x.id <= y.id
-         i == u.id
-         rest == [unsure EXCEPT ![p] = @ \ {u}]
-     IN \/ /\ St(i) # u.st
-           /\ unsure' = rest
-           /\ UNCHANGED <<rows, hb, ht, blocked>>
-        \/ /\ St(i) = u.st
+  /\ LET i == Min(unsure[p])
+         rest == [unsure EXCEPT ![p] = @ \ {i}]
+     IN \/ /\ holder = p
            /\ "yes" \in Readback(i, FALSE)
            /\ SetSt(i, "verified")
            /\ unsure' = rest
            /\ UNCHANGED <<hb, ht, blocked>>
-        \/ /\ St(i) = u.st
+        \/ /\ holder = p
            /\ SetSt(i, "unknown")
            /\ unsure' = rest
            /\ hb' = [hb EXCEPT ![p] = @ \cup {rows[i].batch}]
@@ -134,14 +133,14 @@ VerifyOne(p) ==
         \/ /\ blocked' = [blocked EXCEPT ![p] = TRUE]
            /\ unsure' = [unsure EXCEPT ![p] = {}]
            /\ UNCHANGED <<rows, hb, ht>>
-  /\ UNCHANGED <<pc, mine, todo, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<pc, mine, todo, cur, reply, nextBatch, resent, crowded, holder>>
 
 VerifyEnd(p) ==
   /\ pc[p] = "verify"
   /\ unsure[p] = {}
   /\ todo' = [todo EXCEPT ![p] = {i \in mine[p] : St(i) = "pending"}]
   /\ pc' = [pc EXCEPT ![p] = "gate"]
-  /\ UNCHANGED <<rows, mine, unsure, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<rows, mine, unsure, hb, ht, blocked, cur, reply, nextBatch, resent, crowded, holder>>
 
 \* gate()：要人处理的、这一轮停下的批和对象不做
 Gate(p) ==
@@ -149,40 +148,43 @@ Gate(p) ==
   /\ todo[p] # {}
   /\ LET i == Min(todo[p]) IN
      IF blocked[p] \/ rows[i].batch \in hb[p] \/ Tgt(i) \in ht[p]
-     THEN /\ SetSt(i, "skipped")
+     THEN /\ holder = p
+          /\ SetSt(i, "skipped")
           /\ todo' = [todo EXCEPT ![p] = @ \ {i}]
           /\ UNCHANGED <<pc, cur>>
      ELSE /\ cur' = [cur EXCEPT ![p] = i]
           /\ pc' = [pc EXCEPT ![p] = "prepare"]
           /\ UNCHANGED <<rows, todo>>
-  /\ UNCHANGED <<mine, unsure, hb, ht, blocked, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<mine, unsure, hb, ht, blocked, reply, nextBatch, resent, crowded, holder>>
 
 Next1(p) ==
   /\ todo' = [todo EXCEPT ![p] = @ \ {cur[p]}]
   /\ pc' = [pc EXCEPT ![p] = "gate"]
 
-\* prepare 现读站点（业务可能不做、可能要人登录），再记意图：排着队看同一个对象、同一个 key（held），只改还是待执行的
+\* prepare 现读站点（业务可能不做、可能要人登录），看同一个对象、同一个 key（held），fence 看锁还在，再记意图
 Prepare(p) ==
   /\ pc[p] = "prepare"
   /\ LET i == cur[p]
          held == \E j \in Ids : /\ j # i
                                 /\ \/ (Tgt(j) = Tgt(i) \/ Key(j) = Key(i)) /\ St(j) \in Unsettled
                                    \/ Key(j) = Key(i) /\ St(j) \in Done
-     IN \/ /\ SetSt(i, "skipped")
-           /\ Next1(p)
-           /\ UNCHANGED blocked
-        \/ /\ SetSt(i, "skipped")
-           /\ Next1(p)
-           /\ blocked' = [blocked EXCEPT ![p] = TRUE]
-        \/ /\ held \/ St(i) # "pending"
+     IN \/ /\ holder = p
            /\ SetSt(i, "skipped")
            /\ Next1(p)
            /\ UNCHANGED blocked
-        \/ /\ ~held /\ St(i) = "pending"
+        \/ /\ holder = p
+           /\ SetSt(i, "skipped")
+           /\ Next1(p)
+           /\ blocked' = [blocked EXCEPT ![p] = TRUE]
+        \/ /\ held /\ holder = p
+           /\ SetSt(i, "skipped")
+           /\ Next1(p)
+           /\ UNCHANGED blocked
+        \/ /\ ~held /\ holder = p
            /\ SetSt(i, "submitted")
            /\ pc' = [pc EXCEPT ![p] = "submit"]
            /\ UNCHANGED <<todo, blocked>>
-  /\ UNCHANGED <<mine, unsure, hb, ht, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<mine, unsure, hb, ht, cur, reply, nextBatch, resent, crowded, holder>>
 
 \* 提交那一刻记下有没有破规则
 Sent(i) ==
@@ -191,18 +193,25 @@ Sent(i) ==
   /\ crowded' = IF \E j \in Ids : j # i /\ Tgt(j) = Tgt(i) /\ St(j) \in Unsettled
                 THEN crowded \cup {i} ELSE crowded
 
-\* 连接器的写只发一次：要人处理（没发）、被拒、做了、说做了其实没做、没回话（做了或没做）
+\* 连接器的写只发一次：要人处理（没发）、被拒、做了、说做了其实没做、没回话（做了或没做）。记被拒时锁没了：发出去了，记不上，停下（lost）
 Submit(p) ==
   /\ pc[p] = "submit"
   /\ LET i == cur[p] IN
-     \/ /\ SetSt(i, "skipped")
+     \/ /\ holder = p
+        /\ SetSt(i, "skipped")
         /\ blocked' = [blocked EXCEPT ![p] = TRUE]
         /\ Next1(p)
         /\ UNCHANGED <<reply, resent, crowded>>
-     \/ /\ rows' = [rows EXCEPT ![i].sends = @ + 1, ![i].st = "refused"]
+     \/ /\ holder = p
+        /\ rows' = [rows EXCEPT ![i].sends = @ + 1, ![i].st = "refused"]
         /\ Sent(i)
         /\ Next1(p)
         /\ UNCHANGED <<blocked, reply>>
+     \/ /\ holder # p
+        /\ rows' = [rows EXCEPT ![i].sends = @ + 1]
+        /\ Sent(i)
+        /\ pc' = [pc EXCEPT ![p] = "lost"]
+        /\ UNCHANGED <<todo, blocked, reply>>
      \/ /\ \E r \in {[did |-> TRUE, said |-> "done"], [did |-> FALSE, said |-> "done"],
                      [did |-> TRUE, said |-> "unknown"], [did |-> FALSE, said |-> "unknown"]} :
              /\ rows' = [rows EXCEPT ![i].sends = @ + 1, ![i].did = @ \/ r.did]
@@ -210,10 +219,11 @@ Submit(p) ==
         /\ Sent(i)
         /\ pc' = [pc EXCEPT ![p] = "check"]
         /\ UNCHANGED <<todo, blocked>>
-  /\ UNCHANGED <<mine, unsure, hb, ht, cur, nextBatch>>
+  /\ UNCHANGED <<mine, unsure, hb, ht, cur, nextBatch, holder>>
 
 Check(p) ==
   /\ pc[p] = "check"
+  /\ holder = p
   /\ LET i == cur[p] IN
      \E d \in Readback(i, TRUE) :
        LET s == Settle(reply[p], d) IN
@@ -226,13 +236,13 @@ Check(p) ==
           THEN /\ pc' = [pc EXCEPT ![p] = "after"]
                /\ UNCHANGED todo
           ELSE Next1(p)
-  /\ UNCHANGED <<mine, unsure, blocked, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<mine, unsure, blocked, cur, reply, nextBatch, resent, crowded, holder>>
 
 \* 写操作的 after（更新库）做成了也好、出错也好，状态不改（failed）
 After(p) ==
   /\ pc[p] = "after"
   /\ Next1(p)
-  /\ UNCHANGED <<rows, mine, unsure, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<rows, mine, unsure, hb, ht, blocked, cur, reply, nextBatch, resent, crowded, holder>>
 
 Finish(p) ==
   /\ pc[p] = "gate"
@@ -245,11 +255,19 @@ Crash(p) ==
   /\ Clear(p)
   /\ UNCHANGED <<rows, nextBatch, resent, crowded>>
 
-\* x2 resolve：人到站点上看过（只收结果未知、不一致）
+\* 拿锁的连接断了：锁放了，进程不知道，接着往下走；改写入的每一步都带着「锁还在」（holds），锁没了改不了、停下，只能退出
+LoseLock(p) ==
+  /\ Drop
+  /\ holder = p
+  /\ holder' = "none"
+  /\ UNCHANGED <<rows, pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
+
+\* x2 resolve：人到站点上看过（只收结果未知、不一致），拿着锁改（一步里拿、改、放）
 Resolve(i) ==
+  /\ holder = "none"
   /\ St(i) \in Look
   /\ SetSt(i, IF rows[i].did THEN "verified" ELSE "refused")
-  /\ UNCHANGED <<pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded>>
+  /\ UNCHANGED <<pc, mine, unsure, todo, hb, ht, blocked, cur, reply, nextBatch, resent, crowded, holder>>
 
 Human == \E i \in Ids : Resolve(i)
 
@@ -260,7 +278,7 @@ Run(p) ==
 Next ==
   \/ \E p \in Procs :
        \/ \E ks \in Proposals : Propose(p, ks)
-       \/ Verify(p) \/ Run(p) \/ Crash(p)
+       \/ Verify(p) \/ Run(p) \/ Crash(p) \/ LoseLock(p)
   \/ Human
 
 \* 公平：开着的进程会往下走（一直退出也会有一次走到），闲着的进程会有一次跑 x2 verify

@@ -12,7 +12,7 @@ import { status } from "./status.ts";
 import { type Checked, findTool, flag, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
 import { catalog, createPage, deletePage, listPages, parseItem, push, showPage, update } from "./web/pages.ts";
 import { serve } from "./web/server.ts";
-import { LOOK, run, WriteId } from "./writes.ts";
+import { exclusive, LOOK, verify, WriteId } from "./writes.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -51,14 +51,18 @@ export const platform: Toolkit = {
 			text: statusText,
 			exit: (c: Checked) => (c.read.some((r) => r.blocked) ? "human" : undefined),
 		}),
-		verify: get("读回来核清已提交、结果未知的写入", undefined, async () => run(await db()), writesResult),
+		verify: get("读回来核清已提交、结果未知的写入", undefined, async () => verify(await db()), writesResult),
 		resolve: get(
 			"人到站点上看过结果未知、不一致的写入：做成了是已核对，没做成是被拒（人说了才用）",
 			z.object({ id: WriteId.describe("写入的编号"), status: z.enum(["已核对", "被拒"]).describe("人看到的结果") }),
 			async (p) => {
 				const sql = await db();
-				const rows =
-					await sql`update writes set status = ${p.status}, finished_at = now() where id = ${p.id} and status in ${sql(LOOK)} returning id::text, op, display`;
+				// 拿着写入锁：不和正在核清的进程互相盖
+				const rows = await exclusive(
+					sql,
+					async () =>
+						await sql`update writes set status = ${p.status}, finished_at = now() where id = ${p.id} and status in ${sql(LOOK)} returning id::text, op, display`,
+				);
 				if (!rows.length) throw new Usage(`写入 #${p.id} 不是结果未知、不一致（已提交的先 x2 verify 读回来）`);
 				return { id: p.id, status: p.status, op: rows[0]!.op, display: rows[0]!.display };
 			},
