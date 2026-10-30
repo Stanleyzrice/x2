@@ -74,6 +74,9 @@
 - 规格最多两层；一个商品最多 100 个规格，规格之间价差不超过 5 倍。
 - `1000100256` 是通用的字段校验失败码（缺尺码表也回它），不等于重复。
 - 发布：直接开卖的路径回 10025；成功的配方是先发成下架（`unlisted: true`），人看过再上架。
+- 商品列表的上下架按钮使用 `update_product_info`，只交 `product_info: { unlisted }`，带 `Entrance-Identification: 1`（2026-10-30 读当前 product-list 模块的单件下架按钮）。普通编辑请求不带这个入口标识；不要为了下架擅自补尺码表或重交整份商品资料。
+- 列表下架还设置 `listingSignature`，请求拦截器发送 `sc-listing-sign`（MD5：原请求体 JSON + `SIGNCODE` + 四舍五入到秒的时间 + 当前 `SPC_CDS`）、`sc-listing-sign-t`、`sc-listing-sign-v: 1.0.0`；`SPC-SLT` 用当前店铺 id、页面公开固定串和当前 `SPC_CDS` 计算。不能只补入口标识而漏签名；这些会话值不进日志和写入记录。
+- 列表的批量下架使用 `product/update_product/?version=3.1.0&source=seller_center`，请求是 `[{ id, unlisted: true }]`，入口标识为 `2`（当前 `delistPublishedProducts`）。它与单件 `update_product_info` 不同，但两个入口都可能因旧商品缺尺码表而拒绝。x2 逐件交批量入口，解析 `data.result` 的商品 id、code，再读详情核对状态；不补尺码表、不重交商品内容。
 - 批量上架的草稿 id 是 `unpublished_product_id`；图还在摄取时发布会丢图。
 - 广告计划列表的时间要对齐到台湾时间的整天，不然回 `5 invalid request`。
 - 自动选品广告的商品表现一页只能 10 个；`item_with_impression_only: false` 回的是全店能投的商品，不是这个计划的。
@@ -82,6 +85,8 @@
 - 聊聊不调 `conversation/enter`、`conversation/open`：会把消息标成已读。
 
 ## 回包样本
+
+`fixtures/unlist-product.json` 是 2026-10-30 列表批量入口成功下架的 `data` 摘录，商品 id 已替换。提交前后详情的 `is_unlisted` 从 false 变 true；详情的 `status` 可以暂时还是 1，因此对账不能只看 status。
 
 `fixtures/product-performance.json` 是 2026-10-30 从商品表现接口真回包抽取的有销量、零销量两条（其余字段省略，total 保留原值）；用于 id、确认件数和付款件数的解析。商品表现已逐项解析这些字段，缺少件数保留未知，不补零。下架的 `unlist-product` 经业务工具登记进写入引擎，只发一次 `update_product_info`，回读商品详情确认下架；首次须单件试跑。
 

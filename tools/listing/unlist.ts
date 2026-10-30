@@ -139,7 +139,7 @@ const unlist: WriteOp<Params, { status: unknown; unlisted: unknown }> = {
 		if (metric?.confirmed_units !== 0 || metric.paid_units !== 0) return { skip: "期间表现未返回、未知或已经有销量，不提交下架" };
 		return { params: p, before: { status: now.status, unlisted: now.is_unlisted } };
 	},
-	submit: (_sql, p) => unlistProduct.submit({ productId: p.productId }),
+	submit: (_sql, p) => unlistProduct.submit({ productId: p.productId, shopId: p.shopId }),
 	async check(p, _before, fresh) {
 		for (let n = 0; n < (fresh ? 6 : 1); n++) {
 			if (n) await new Promise((ok) => setTimeout(ok, 3000));

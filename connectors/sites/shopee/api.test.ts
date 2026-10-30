@@ -6,9 +6,42 @@ import { z } from "zod";
 import { reply } from "../../../platform/reply.ts";
 import { conversation, message } from "./chat.ts";
 import { ordersOf } from "./orders.ts";
-import { attributesOf, liveProductsOf, performanceOf, productInfoOf } from "./products.ts";
+import { attributesOf, liveProductsOf, performanceOf, productInfoOf, unlistRequest, unlistResult } from "./products.ts";
+import { ItemId, listingHeaders } from "./seller.ts";
 
 const sample = (name: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+
+test("列表签名：绑定请求体、店铺、当前会话，照网页把时间四舍五入到秒；缺登录态不提交", () => {
+	const a = listingHeaders('{"unlisted":true}', "348425", "test-cds", 1600000000500);
+	assert.equal(a["sc-listing-sign-t"], "1600000001");
+	assert.equal(a["sc-listing-sign-v"], "1.0.0");
+	assert.notEqual(a["sc-listing-sign"], listingHeaders('{"unlisted":false}', "348425", "test-cds", 1600000000500)["sc-listing-sign"]);
+	assert.notEqual(a["SPC-SLT"], listingHeaders('{"unlisted":true}', "2", "test-cds", 1600000000500)["SPC-SLT"]);
+	assert.throws(() => listingHeaders("{}", "348425", ""), /重新登录/);
+});
+
+test("列表批量下架：只提交一个 id 和 unlisted；逐件回包必须是这个商品成功，缺失、错号不能猜做成", () => {
+	const id = ItemId.parse("25000000001");
+	assert.deepEqual(unlistRequest(id, "348425"), {
+		query: { version: "3.1.0", source: "seller_center" },
+		headers: { "Entrance-Identification": "2" },
+		listing: { shopId: "348425" },
+		body: [{ id: 25000000001, unlisted: true }],
+	});
+	assert.equal(unlistResult({ result: [{ id: 25000000001, code: 0 }] }, id).kind, "done");
+	assert.deepEqual(unlistResult({ result: [{ id: 25000000001, code: 42, message: "blocked" }] }, id), { kind: "refused", code: 42, why: "blocked" });
+	assert.equal(unlistResult({ result: [{ id: 1, code: 0 }] }, id).kind, "unknown");
+	assert.equal(unlistResult({ result: [] }, id).kind, "unknown");
+	assert.equal(unlistResult({}, id).kind, "unknown");
+});
+
+test("列表批量下架（真回包摘录）：逐件成功的 id 对得上；多交一条结果不能当单件做成", () => {
+	const id = ItemId.parse("25000000001");
+	const raw = sample("unlist-product") as { result: Record<string, unknown>[] };
+	assert.equal(unlistResult(raw, id).kind, "done");
+	raw.result.push({ id: 25000000002, code: 0 });
+	assert.equal(unlistResult(raw, id).kind, "unknown");
+});
 
 test("商品表现（真回包摘录）：id 收成字符串，确认与付款件数分开；没返回的件数不补零", () => {
 	const raw = sample("product-performance") as { result: { items: Record<string, unknown>[] } };

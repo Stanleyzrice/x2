@@ -12,7 +12,7 @@ import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { idText, reply } from "../../../platform/reply.ts";
-import { IMAGE, ItemId, ModelId, ORIGIN, seller, type Write, withData, write } from "./seller.ts";
+import { IMAGE, ItemId, ModelId, ORIGIN, type Req, seller, type Write, withData, write } from "./seller.ts";
 
 const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? String(id) : `${IMAGE}${id}`);
 
@@ -333,6 +333,27 @@ export function updateProduct(productId: string, productInfo: Record<string, unk
 }
 
 export const setUnlisted = (productId: string, unlisted: boolean) => updateProduct(productId, { unlisted });
+
+/** 列表的批量下架走另一个入口；仍然一次只交一个商品，让平台逐件记意图、回读。缺尺码表等校验被拒就原样回，不补商品内容。 */
+export const unlistRequest = (productId: ItemId, shopId: string): Req => ({
+	query: { version: "3.1.0", source: "seller_center" },
+	headers: { "Entrance-Identification": "2" },
+	listing: { shopId },
+	body: [{ id: Number(productId), unlisted: true }],
+});
+const unlistReply = z.looseObject({ result: z.array(z.looseObject({ id: idText.pipe(ItemId), code: z.number(), message: z.string().nullish() })) });
+export function unlistResult(data: unknown, productId: ItemId): Write {
+	const parsed = unlistReply.safeParse(data);
+	if (!parsed.success) return { kind: "unknown", why: "Shopee update_product 下架回包变了：没有逐件结果" };
+	const rows = parsed.data.result;
+	if (rows.length !== 1 || rows[0]?.id !== productId) return { kind: "unknown", why: "Shopee update_product 下架回包商品编号对不上" };
+	const row = rows[0];
+	return row.code === 0 ? { kind: "done", data } : { kind: "refused", code: row.code, why: row.message ?? "商品下架被拒" };
+}
+export async function unlistFromList(productId: ItemId, shopId: string): Promise<Write> {
+	const w = await write("/api/v3/product/update_product/", unlistRequest(productId, shopId));
+	return w.kind === "done" ? unlistResult(w.data, productId) : w;
+}
 
 /** 写：删商品。真删，平台没有回收站 */
 export function deleteProducts(productIds: string[]): Promise<Write> {

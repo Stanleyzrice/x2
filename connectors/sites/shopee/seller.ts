@@ -4,6 +4,7 @@
 // 响应的外壳多数是 { code, message, data }，code 0 是成功；财务、售后的是 { error, error_msg, data }，error 0 是成功。
 // 接口一览、各自的坑在同目录的 NOTES.md
 
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
@@ -21,14 +22,45 @@ export type ModelId = z.output<typeof ModelId>;
 export const OrderSn = z.string().min(1).brand<"OrderSn">();
 export type OrderSn = z.output<typeof OrderSn>;
 
-export type Req = { method?: "GET" | "POST"; query?: Record<string, string | number | boolean>; body?: unknown };
+export type Req = {
+	method?: "GET" | "POST";
+	query?: Record<string, string | number | boolean>;
+	body?: unknown;
+	headers?: Record<string, string>;
+	listing?: { shopId: string };
+};
+
+/** 当前卖家中心 product-list 的 listingSignature 和 getSLTToken：只在内存里用登录 cookie 算，不把 cookie、签名记进库或日志 */
+export function listingHeaders(body: string, shopId: string, cds: string, now = Date.now()): Record<string, string> {
+	if (!cds) throw new NeedsHuman("Shopee 没有 SPC_CDS：在浏览器里重新登录卖家中心");
+	const md5 = (s: string) => createHash("md5").update(s).digest("hex");
+	const time = Math.round(now / 1000).toFixed(0);
+	return {
+		"SPC-SLT": md5(`${shopId}-e18c3c4dd05aef020946e6afbf9e04ef-${cds}`),
+		"sc-listing-sign": md5(`${body}SIGNCODE${time}${cds}`),
+		"sc-listing-sign-t": time,
+		"sc-listing-sign-v": "1.0.0",
+	};
+}
 
 export type Raw = { kind: "signin" } | { kind: "unknown"; why: string } | { kind: "http"; status: number; json: unknown; text: string };
 
 export async function call(path: string, req: Req = {}): Promise<Raw> {
 	const p = await page(ORIGIN);
+	const body = req.body === undefined ? null : JSON.stringify(req.body);
+	let headers = req.headers ?? {};
+	if (req.listing) {
+		const cds = await p.run(
+			() =>
+				document.cookie
+					.split("; ")
+					.find((s) => s.startsWith("SPC_CDS="))
+					?.slice("SPC_CDS=".length) ?? "",
+		);
+		headers = { ...headers, ...listingHeaders(body ?? "", req.listing.shopId, cds) };
+	}
 	return p.run(
-		async (path: string, method: string, query: Record<string, string>, body: string | null) => {
+		async (path: string, method: string, query: Record<string, string>, body: string | null, headers: Record<string, string>) => {
 			if (/\/account\/signin|\/seller\/login/.test(location.pathname)) return { kind: "signin" as const };
 			const cookie = (n: string) =>
 				document.cookie
@@ -44,7 +76,12 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 				const r = await fetch(url.href, {
 					method,
 					credentials: "include",
-					headers: { accept: "application/json", "x-csrftoken": cookie("csrftoken"), ...(body === null ? {} : { "content-type": "application/json" }) },
+					headers: {
+						accept: "application/json",
+						"x-csrftoken": cookie("csrftoken"),
+						...(body === null ? {} : { "content-type": "application/json" }),
+						...headers,
+					},
 					body: body ?? undefined,
 				});
 				if (r.url.includes("/account/signin")) return { kind: "signin" as const };
@@ -61,7 +98,8 @@ export async function call(path: string, req: Req = {}): Promise<Raw> {
 		path,
 		req.method ?? (req.body === undefined ? "GET" : "POST"),
 		Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)])),
-		req.body === undefined ? null : JSON.stringify(req.body),
+		body,
+		headers,
 	);
 }
 

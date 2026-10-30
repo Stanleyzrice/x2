@@ -2,7 +2,7 @@
 // 只经业务工具的写工具调：组 product_info、看还该不该建、读回来怎么比都是业务工具的事
 import { z } from "zod";
 import { submit } from "../../../platform/tool.ts";
-import { allProducts, createProduct, productInfo, setUnlisted } from "./products.ts";
+import { allProducts, createProduct, productInfo, setUnlisted, unlistFromList } from "./products.ts";
 import { ItemId } from "./seller.ts";
 
 /** 建商品结果未知时按货号找：新建的是下架，在售列表里没有，翻全部商品；名字一样的再读详情核对货号 */
@@ -43,9 +43,12 @@ export const listProduct = submit(
 
 export const unlistProduct = submit(
 	"下架：在售 → 下架（只经业务工具的写工具调）",
-	z.object({ productId: ItemId.refine((id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0).describe("商品 id") }),
+	z.object({
+		productId: ItemId.refine((id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0).describe("商品 id"),
+		shopId: z.string().regex(/^\d+$/).describe("店铺 id（列表签名使用）"),
+	}),
 	async (p) => {
-		const w = await setUnlisted(p.productId, true);
-		return w.kind === "done" ? { kind: "done" } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
+		const w = await unlistFromList(p.productId, p.shopId);
+		return w.kind === "done" ? { kind: "done", data: w.data } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
 	},
 );
