@@ -16,3 +16,12 @@ Host penna-hk
 Host penna-sh
 	HostName 175.24.190.201
 	User ubuntu
+
+# 共享库：香港服务器上的 Postgres 只听它自己的 5432，转到本机 15432。x2 连库时自己开（X2_DATABASE_SSH=x2-db），不用手动
+Host x2-db
+	HostName 43.132.177.132
+	User ubuntu
+	ProxyJump penna-gw
+	LocalForward 15432 127.0.0.1:5432
+	ServerAliveInterval 30
+	ServerAliveCountMax 3

@@ -5,9 +5,9 @@ x2 帮我们经营 Shopee 台湾的两家店（ni1206、cheeroutdoor）：一个
 ## 装
 
 1. Node 24、pnpm：`pnpm install`。
-2. 仓库根目录写 `.env`（不进 git），要设什么照 `.env.example`：至少 `X2_DATABASE_URL`（Postgres）、`GEMINI_API_KEY`、`XIANGJI_USER_KEY`、`XIANGJI_IMG_TRANS_KEY`。
+2. 仓库根目录写 `.env`（不进 git），要设什么照 `.env.example`：至少 `X2_DATABASE_URL`、`X2_DATABASE_SSH`、`GEMINI_API_KEY`、`XIANGJI_USER_KEY`、`XIANGJI_IMG_TRANS_KEY`。库是大家共用的，在香港服务器上，本机不用装 Postgres、不用 Docker：连库的两行找管服务器的人要（他跑 `ops/db-user.sh <你的名字>`），x2 连库时自己经 SSH 隧道连过去（要你的公钥已经在服务器上）。只有 `x2 web --scratch` 要本机有 `pg_dump`、`psql`（15 或更新，`brew install libpq`）。
 3. x2 经 booey（`@wuwe1/booey`，`pnpm install` 装好了）用浏览器：开它的 daemon（`pnpm exec booey daemon start`，开着就不用）；两家店各开一个浏览器（Chrome 的不同用户），每个在 `chrome://extensions` 打开开发者模式、「加载已解压的扩展程序」选 `node_modules/@wuwe1/booey/extension`，在扩展弹窗里起个名字，再登录 Shopee、1688、知虾、chanboss。`pnpm exec booey doctor` 查 daemon、扩展对不对得上。
-4. 连服务器：`ops/ssh_config` 是三台服务器的 SSH 配置（不含秘密），在 `~/.ssh/config` 里 `Include` 它，或 `ssh -F ops/ssh_config penna-hk`。
+4. 连服务器：`ops/ssh_config` 是三台服务器和共享库隧道的 SSH 配置（不含秘密），在 `~/.ssh/config` 里 `Include` 它，或 `ssh -F ops/ssh_config penna-hk`。共享库在服务器上怎么装、怎么开账号是 `ops/db-server.sh`、`ops/db-user.sh`。
 
 ## 开始
 
