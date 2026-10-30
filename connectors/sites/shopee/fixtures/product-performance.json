@@ -1,0 +1,25 @@
+{
+	"code": 0,
+	"msg": "ok",
+	"result": {
+		"total": 162,
+		"items": [
+			{
+				"id": 53462713192,
+				"name": "【滿199出貨】卡通kt貓耐用耐髒防水吸水硅藻泥地墊入戶門衛生間防滑",
+				"status": 1,
+				"confirmed_units": 37,
+				"paid_units": 34,
+				"confirmed_sales": 6465
+			},
+			{
+				"id": 24727651607,
+				"name": "復古山茶花質感項鍊🌸",
+				"status": 0,
+				"confirmed_units": 0,
+				"paid_units": 0,
+				"confirmed_sales": 0
+			}
+		]
+	}
+}

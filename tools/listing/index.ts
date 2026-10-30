@@ -24,6 +24,7 @@ import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
 import { textCheck } from "./textcheck.ts";
+import { planUnlist, previewUnlist, UNLIST_WRITES, unlistParams } from "./unlist.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "./variants.ts";
 import { LISTING_WRITES } from "./writes.ts";
 
@@ -71,7 +72,7 @@ async function written(sql: Sql, ran: Ran[]): Promise<void> {
 
 export const listing: Toolkit = {
 	name: "listing",
-	title: "上品：贴货源、做商品稿、写文案、建商品、上架",
+	title: "上品：贴货源、做商品稿、写文案、建商品、上架、零销量下架",
 	kind: "tool",
 	tools: {
 		add: get(
@@ -449,6 +450,8 @@ export const listing: Toolkit = {
 			z.object({ ids }),
 			(sql, p) => publishPlan(sql, [...new Set(p.ids as string[])]),
 		),
+		"unlist-preview": get("现读指定商品的在售状态和期间销量：只预览，不下架；未知不当零", unlistParams, async (p) => previewUnlist(await db(), p)),
+		unlist: write("人同意下架的零销量商品：确认销量、已付款件数都为零才下架；记意图、提交一次、读回来核对，不删除", unlistParams, planUnlist),
 		cancel: get(
 			"人在终端里说「放弃」：替人勾「放弃」，马上是已放弃。建了商品的要下架，不是放弃；建商品还没核清的先核清；有一份不行就都不勾。原因只回显，不存",
 			z.object({ ids, why: text.optional().describe("原因") }),
@@ -525,7 +528,7 @@ export const listing: Toolkit = {
 		const r = await listingsCheck(sql);
 		return { read: [], human: r.reminders, todo: r.todo };
 	},
-	writes: LISTING_WRITES,
+	writes: { ...LISTING_WRITES, ...UNLIST_WRITES },
 	written,
 	tables: LISTING_TABLES,
 	schema: new URL("./schema.sql", import.meta.url),

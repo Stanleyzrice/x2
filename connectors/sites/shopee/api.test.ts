@@ -6,9 +6,22 @@ import { z } from "zod";
 import { reply } from "../../../platform/reply.ts";
 import { conversation, message } from "./chat.ts";
 import { ordersOf } from "./orders.ts";
-import { attributesOf, liveProductsOf, productInfoOf } from "./products.ts";
+import { attributesOf, liveProductsOf, performanceOf, productInfoOf } from "./products.ts";
 
 const sample = (name: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+
+test("商品表现（真回包摘录）：id 收成字符串，确认与付款件数分开；没返回的件数不补零", () => {
+	const raw = sample("product-performance") as { result: { items: Record<string, unknown>[] } };
+	const r = performanceOf(raw);
+	assert.equal(typeof r.rows[0]!.id, "string");
+	assert.ok(r.rows[0]!.confirmed_units! > 0);
+	assert.equal(r.rows[1]!.confirmed_units, 0);
+	assert.equal(r.rows[1]!.paid_units, 0);
+	delete raw.result.items[1]!.confirmed_units;
+	assert.equal(performanceOf(raw).rows[1]!.confirmed_units, undefined);
+	raw.result.items[1]!.confirmed_units = "0";
+	assert.throws(() => performanceOf(raw), /回包变了/);
+});
 
 test("在售列表：商品和规格的 id 收成字符串，价格、库存、销量空的是 null，规格带 tier_index", () => {
 	const r = liveProductsOf(sample("get-product-list"));

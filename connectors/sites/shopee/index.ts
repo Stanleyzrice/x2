@@ -35,7 +35,7 @@ import {
 	recommendedCategory,
 	shippingDays,
 } from "./products.ts";
-import { createListing, listProduct } from "./publish.ts";
+import { createListing, listProduct, unlistProduct } from "./publish.ts";
 import { cases } from "./returns.ts";
 import { seller, shop } from "./seller.ts";
 
@@ -50,6 +50,7 @@ async function save(b64: string, out: string) {
 const tools = {
 	"create-product": createListing,
 	"list-product": listProduct,
+	"unlist-product": unlistProduct,
 	shop: get("当前登录的店铺：shopId（店铺 id）、userId（卖家账号 id）、店名、账号名、评分", undefined, () => shop()),
 
 	orders: all(

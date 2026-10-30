@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { submit } from "../../../platform/tool.ts";
 import { allProducts, createProduct, productInfo, setUnlisted } from "./products.ts";
+import { ItemId } from "./seller.ts";
 
 /** 建商品结果未知时按货号找：新建的是下架，在售列表里没有，翻全部商品；名字一样的再读详情核对货号 */
 export async function findByParentSku(parentSku: string, name: string): Promise<string | null> {
@@ -36,6 +37,15 @@ export const listProduct = submit(
 	z.object({ productId: z.string().regex(/^\d+$/).describe("商品 id") }),
 	async (p) => {
 		const w = await setUnlisted(p.productId, false);
+		return w.kind === "done" ? { kind: "done" } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
+	},
+);
+
+export const unlistProduct = submit(
+	"下架：在售 → 下架（只经业务工具的写工具调）",
+	z.object({ productId: ItemId.refine((id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0).describe("商品 id") }),
+	async (p) => {
+		const w = await setUnlisted(p.productId, true);
 		return w.kind === "done" ? { kind: "done" } : w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
 	},
 );

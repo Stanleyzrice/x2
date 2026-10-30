@@ -15,6 +15,7 @@ description: 上品，把 1688 的货源做成店里在售的商品：加货源�
 4. **写文案**（标题、描述、规格名、简称）：能开 subagent 就交给 `listing-copy`，给它商品稿编号和选品时找到的热搜词；选品时看图、看竞品得来的事实不给它。自己写的话，读 `.claude/agents/listing-copy.md`，照它的规矩和步骤用 `listing show`、`listing text`。`listing text` 写完马上做 Gemini 文字检查（`listing audit`），只提示、不挡。
 5. **审稿**：**人做**。开一页放审稿的表，请运营看；她删图、要回图、去规格、放弃、写备注，你照着用工具记下。读 references/review.md。
 6. **建商品、上架**：**她在终端里说批准哪几份**，`listing publish`（写工具）：先建成下架、读回来逐项核对、上架、读回来在售。把每一行结果原样告诉她。「被拒」的 Shopee 原因写在说明里，改好请她看过再说批准；「不一致」的商品停在下架，请她到卖家中心看，她说了结果用 `x2 resolve`。
+7. **零销量商品下架**：她同意下架已有清单后，`listing unlist-preview` 现读指定期间的双零销量和在售状态，`listing unlist` 执行；首次约一个商品 `--try`。下架后重新读在售列表，在页上分店展示带图商品；读 references/unlist.md。
 
 ## 规矩
 

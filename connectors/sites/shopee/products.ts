@@ -12,7 +12,7 @@ import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { idText, reply } from "../../../platform/reply.ts";
-import { IMAGE, ItemId, ModelId, ORIGIN, row, seller, type Write, withData, write } from "./seller.ts";
+import { IMAGE, ItemId, ModelId, ORIGIN, seller, type Write, withData, write } from "./seller.ts";
 
 const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? String(id) : `${IMAGE}${id}`);
 
@@ -181,32 +181,46 @@ export async function countLimit(): Promise<{ used: number; unlisted: number; li
 	return { used: Number(d.current_published), unlisted: Number(d.unlisted_count), limit: Number(d.publish_limit) };
 }
 
+const performanceItem = z.looseObject({
+	id: idText.pipe(ItemId),
+	name: z.string(),
+	status: scalar,
+	confirmed_units: z.number().nonnegative().nullish(),
+	paid_units: z.number().nonnegative().nullish(),
+});
+export type Performance = z.output<typeof performanceItem>;
+const performanceReply = z.looseObject({ result: z.looseObject({ total: z.union([z.string(), z.number()]), items: z.array(performanceItem) }) });
+
+/** 商品表现：用到的件数先解析；缺失保留，不能把没返回的件数当零 */
+export function performanceOf(raw: unknown): { total: number; rows: Performance[] } {
+	const b = reply(performanceReply, raw, "Shopee /api/mydata/v4/product/performance/");
+	const total = Number(b.result.total);
+	if (!Number.isSafeInteger(total) || total < 0) throw new Error("Shopee 商品表现的回包变了：total 不是非负整数");
+	return { total, rows: b.result.items };
+}
+
 export async function performance(
 	start: number,
 	end: number,
 	period: "past7days" | "past30days",
 	pageNo = 1,
 	pageSize = 50,
-): Promise<{ total: number; rows: Record<string, unknown>[] }> {
-	const b = await seller(
-		"/api/mydata/v4/product/performance/",
-		z.looseObject({ result: z.looseObject({ total: scalar, items: z.array(row).nullish() }).nullish() }),
-		{
-			query: {
-				start_time: start,
-				end_time: end,
-				period,
-				keyword: "",
-				category_type: "shopee",
-				category_id: -1,
-				page_size: Math.min(50, pageSize),
-				page_num: pageNo,
-				order_type: "confirmed",
-				order_by: "confirmed_sales.desc",
-			},
+): Promise<{ total: number; rows: Performance[] }> {
+	const b = await seller("/api/mydata/v4/product/performance/", z.unknown(), {
+		query: {
+			start_time: start,
+			end_time: end,
+			period,
+			keyword: "",
+			category_type: "shopee",
+			category_id: -1,
+			page_size: Math.min(50, pageSize),
+			page_num: pageNo,
+			order_type: "confirmed",
+			order_by: "confirmed_sales.desc",
 		},
-	);
-	return { total: Number(b.result?.total ?? 0), rows: b.result?.items ?? [] };
+	});
+	return performanceOf(b);
 }
 
 export type Category = { id: string; name: string; children: Category[] };
