@@ -22,6 +22,8 @@ export type Component = {
 	examples: unknown[];
 	/** 拿到的 props 是照这个组件的 props 解析过的（各个组件不一样，写成 never） */
 	answer?: (props: never) => z.ZodType;
+	/** 逐行选择只送改动的键；普通 choice 仍整份替换。 */
+	answerMode?: "merge";
 	actions?: Record<string, string>;
 	inputs?: string[];
 	writeActions?: Record<string, string>;
@@ -47,6 +49,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 				props: m.props,
 				examples: m.examples,
 				answer: m.answer,
+				answerMode: m.answerMode,
 				actions: m.actions,
 				inputs: m.inputs,
 				writeActions: m.writeActions,
@@ -220,15 +223,29 @@ export function parseAnswer(component: string, props: unknown, input: unknown): 
 	return r.data;
 }
 
-/** 人在网页上回答（例 在 choice 上选了）：存进这个组件的 answer，记下时间；再答是换掉 */
+/** 组件决定答案是整体替换还是按行合并；不把其他行已经做出的决定丢掉。 */
+export function nextAnswer(component: string, props: unknown, previous: unknown, input: unknown): unknown {
+	const parsed = parseAnswer(component, props, input);
+	if (COMPONENTS.get(component)?.answerMode !== "merge") return parsed;
+	const before = z.record(z.string(), z.unknown()).safeParse(previous ?? {});
+	const patch = z.record(z.string(), z.unknown()).safeParse(parsed);
+	if (!before.success || !patch.success) throw new Usage("逐行答案不是对象，保留原答案，未保存");
+	return { ...before.data, ...patch.data };
+}
+
+/** 人在网页上回答：锁住这一份答案再合并，多个窗口选不同行也不会互相覆盖。 */
 export async function answer(sql: Sql, item: string, input: unknown): Promise<void> {
 	const id = itemId(item);
-	const [i] = await sql`select component, props, page_id from page_items where id = ${id}`;
-	if (!i) throw new Usage(`没有组件 ${item}`);
-	if (i.fixed) throw new Usage("固定工作区的引用由应用装配，不允许修改身份");
-	const a = parseAnswer(i.component, i.props, input);
-	await sql`update page_items set answer = ${sql.json(a as Json)}, answered_at = now() where id = ${id}`;
-	await sql`update pages set updated_at = now() where id = ${i.page_id}`;
+	await sql.begin(async (tx) => {
+		const [i] = await tx<
+			{ component: string; props: unknown; answer: unknown; page_id: PageId; fixed: boolean }[]
+		>`select component, props, answer, page_id, fixed from page_items where id = ${id} for update`;
+		if (!i) throw new Usage(`没有组件 ${item}`);
+		if (i.fixed) throw new Usage("固定工作区的引用由应用装配，不允许修改身份");
+		const a = nextAnswer(i.component, i.props, i.answer, input);
+		await tx`update page_items set answer = ${tx.json(a as Json)}, answered_at = now() where id = ${id}`;
+		await tx`update pages set updated_at = now() where id = ${i.page_id}`;
+	});
 }
 
 /** 网页替组件调它声明的一个工具：参数是组件的引用（props，标题不算）加上人在网页上选的（例 换了一个会话）。只调 schema.ts 的 actions 里写着的 */

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Usage } from "../errors.ts";
-import { actParams, invalidOf, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
+import { actParams, invalidOf, nextAnswer, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
 
 test("页：没有的组件说有哪些；参数不对说哪一格", () => {
 	assert.throws(
@@ -78,4 +78,51 @@ test("组件的参数是严格的：多出来的、打错的键报错；库里�
 	);
 	assert.match(invalidOf("datagrid", { table: "writes", view: "全部" }).invalid ?? "", /view/);
 	assert.deepEqual(invalidOf("datagrid", { table: "writes", filter: { status: ["结果未知"] } }), {});
+});
+
+test("逐行选择表支持100行、图片和缺失链接，不接受重复行编号或列数错配", () => {
+	const rows = Array.from({ length: 100 }, (_, i) => ({
+		id: `item-${i}`,
+		name: `商品${i}`,
+		image: "https://example.com/image.jpg",
+		link: i ? "https://example.com/item" : null,
+		cells: [i],
+	}));
+	const parsed = parseProps("choice-table", { columns: ["销量"], rows }) as { rows: unknown[] };
+	assert.equal(parsed.rows.length, 100);
+	assert.throws(() => parseProps("choice-table", { rows: [rows[0], rows[0]], columns: ["销量"] }), /编号不能重复/);
+	assert.throws(() => parseProps("choice-table", { rows: [rows[0]] }), /列数/);
+});
+
+test("逐行选择只接受表内商品及明确决定，空答案不替人作选择", () => {
+	const props = {
+		rows: [
+			{ id: "first", name: "商品一" },
+			{ id: "second", name: "商品二" },
+		],
+	};
+	assert.deepEqual(parseAnswer("choice-table", props, { first: "yes" }), { first: "yes" });
+	assert.deepEqual(parseAnswer("choice-table", props, { second: "no" }), { second: "no" });
+	assert.deepEqual(parseAnswer("choice-table", props, { first: "pending" }), { first: "pending" });
+	assert.throws(() => parseAnswer("choice-table", props, {}), /至少/);
+	assert.throws(() => parseAnswer("choice-table", props, { missing: "yes" }), /答案不对/);
+	assert.throws(() => parseAnswer("choice-table", props, { first: "publish" }), /答案不对/);
+});
+
+test("逐行保存保留其他行的决定，撤回只影响指定行；普通单选保持整体替换", () => {
+	const props = {
+		rows: [
+			{ id: "first", name: "商品一" },
+			{ id: "second", name: "商品二" },
+		],
+	};
+	const first = nextAnswer("choice-table", props, null, { first: "yes" });
+	const both = nextAnswer("choice-table", props, first, { second: "no" });
+	assert.deepEqual(both, { first: "yes", second: "no" });
+	assert.deepEqual(nextAnswer("choice-table", props, both, { first: "pending" }), { first: "pending", second: "no" });
+	assert.deepEqual(nextAnswer("choice-table", props, both, { first: "no" }), { first: "no", second: "no" });
+	assert.throws(() => nextAnswer("choice-table", props, "旧数据损坏", { first: "yes" }), /保留原答案/);
+	assert.deepEqual(nextAnswer("choice", { question: "选哪个", options: [{ label: "A" }, { label: "B" }] }, { picked: ["A"] }, { picked: ["B"] }), {
+		picked: ["B"],
+	});
 });

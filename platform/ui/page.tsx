@@ -93,6 +93,8 @@ export function PageView({ id, onDeleted, pages = [] }: { id: string; onDeleted:
 			</header>
 			{!side ? (
 				<div className="min-h-0 flex-1 overflow-y-auto">{flow}</div>
+			) : !stream.length ? (
+				<div className="min-h-0 flex-1 overflow-hidden">{side}</div>
 			) : mobile ? (
 				<Tabs defaultValue="flow" className="min-h-0 flex-1 gap-0">
 					<TabsList className="mx-3 mt-2">
