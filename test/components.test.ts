@@ -52,3 +52,20 @@ test("每个组件有说明、至少一个例子，例子过得了自己的校�
 		for (const e of c.examples) assert.doesNotThrow(() => parseProps(c.name, e), `${c.name} 的例子 ${JSON.stringify(e)}`);
 	}
 });
+
+test("固定入口唯一并引用已注册组件，所有保存的身份参数通过组件校验", () => {
+	const workspaces = TOOLKITS.flatMap((k) => k.workspaces ?? []);
+	assert.equal(new Set(workspaces.map((w) => w.key)).size, workspaces.length);
+	assert.equal(workspaces.length, 5);
+	for (const w of workspaces) {
+		assert.equal(COMPONENTS.get(w.component)?.kind, "interactable");
+		assert.doesNotThrow(() => parseProps(w.component, w.props), w.key);
+	}
+});
+
+test("采购入口展示的刷新时间引用实际注册任务，不另维护一份时刻", () => {
+	const kit = TOOLKITS.find((k) => k.name === "reimbursement")!;
+	const job = kit.jobs![0]!;
+	const page = kit.workspaces![0]!;
+	assert.deepEqual(page.props.schedule, { hour: job.hour, timeZone: job.timeZone });
+});
