@@ -38,8 +38,8 @@ export async function reviews(pageNo = 1, cursor = "0", orderSn?: string): Promi
 	return { total: Number(b.data?.page_info?.total ?? 0), rows: b.data?.list ?? [] };
 }
 
-// 顺序：账户和余额 → 各类广告能不能开（setup status）→ 计划列表（一页 20）→ 每个计划的详情（店铺广告 shop_auto、shop_manual 没有详情接口，用列表里的）
-// → 表现曲线（time graph）→ 自动广告（product_gms：Shopee 自己挑商品投放）里每个商品的表现（一页只能 10，多了被拒）
+// 广告接口：账户、余额、setup status、计划列表与详情、time graph、product_gms。
+// shop_auto、shop_manual 没有详情接口；计划列表一页 20，product_gms 一页最多 10。
 
 const pas = <S extends z.ZodType>(path: string, body: unknown, data: S) => seller(`/api/pas/v1/${path}/`, withData(data), { body });
 

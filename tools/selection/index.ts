@@ -1,4 +1,4 @@
-// 选品（x2 selection <工具>）：策略（假设、选品方法、版本号；每份商品稿记下从哪个策略来、按的是第几版，按策略看效果）和选品规矩（所有策略共用，旧的不删）。
+// 选品记录：保存实验状态、方法文档引用、版本与历史；现行规则正文在 skills，历史数据库不作为规则维护入口。
 import { z } from "zod";
 import { db, type Json } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
@@ -7,7 +7,7 @@ import { SELECTION_TABLES } from "./tables.ts";
 
 const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
 const STATUS = ["试验中", "使用中", "已停用"] as const;
-const FIELD = { status: "状态", bet: "假设", how: "选品方法", note: "备注" } as const;
+const FIELD = { status: "状态", bet: "假设", how: "方法引用", note: "备注" } as const;
 type Field = keyof typeof FIELD;
 
 /** 改策略：和现在一样的不算改（空的是清掉）；改了的记改之前、改之后，版本号加 1 */
@@ -26,6 +26,8 @@ export function strategyDiff(
 	return { before, after };
 }
 const text = z.string().trim().min(1);
+const skillRef = text.regex(/^skills\/[\w-]+\/(?:SKILL\.md|references\/[\w.-]+\.md)(?:#[\w-]+)?$/, "方法只保存 skills 下的 Markdown 文件引用");
+const RULE_SOURCE = "skills/selection/references/rules.md";
 
 const changeLines = (before: Record<string, unknown> | null, after: Record<string, unknown>) =>
 	Object.entries(after).map(([k, v]) => `${FIELD[k as Field] ?? k}：${before && k in before ? `${before[k] ?? "（空）"} → ` : ""}${v ?? "（空）"}`);
@@ -36,7 +38,7 @@ const ruleLine = (r: Rule) =>
 
 export const selection: Toolkit = {
 	name: "selection",
-	title: "选品：策略、选品规矩",
+	title: "选品记录：策略实验、方法引用、规则历史",
 	kind: "tool",
 	tools: {
 		"strategy-add": get(
@@ -44,7 +46,7 @@ export const selection: Toolkit = {
 			z.object({
 				name: text.describe("策略名"),
 				bet: text.describe("假设"),
-				how: text.describe("选品方法"),
+				how: skillRef.describe("方法文档引用"),
 				why: text.optional().describe("为什么定这个策略"),
 				note: text.optional(),
 			}),
@@ -60,8 +62,7 @@ export const selection: Toolkit = {
 				return { name, version: 1, bet, how, status: "试验中" };
 			},
 			{
-				text: (r) =>
-					`记下策略「${r.name}」（试验中，第 1 版）。上它选出来的货源：x2 listing add --shop <店> --links <链接…> --strategy ${r.name} --why "为什么选它" --evidence "数据"`,
+				text: (r) => `记下策略「${r.name}」（试验中，第 1 版），方法引用：${r.how}`,
 			},
 		),
 		"strategy-set": get(
@@ -72,7 +73,7 @@ export const selection: Toolkit = {
 					why: text.describe("为什么改"),
 					status: z.enum(STATUS).optional().describe("状态"),
 					bet: text.optional().describe("假设"),
-					how: text.optional().describe("选品方法"),
+					how: skillRef.optional().describe("方法文档引用"),
 					note: z.string().trim().optional().describe("备注（空的是清掉）"),
 				})
 				.refine((a) => a.status !== undefined || a.bet !== undefined || a.how !== undefined || a.note !== undefined, { message: "至少改一样" }),
@@ -150,42 +151,26 @@ export const selection: Toolkit = {
 					].join("\n"),
 			},
 		),
-		"rule-add": get(
-			"记一条选品规矩（从现在起在用；商品稿加进来时，在用的规矩记进它的选品快照）",
-			z.object({ rule: text.describe("规矩"), why: text.describe("为什么") }),
-			async (p) => {
-				const [r] = await (await db())<
-					Rule[]
-				>`insert into selection_rules (rule, why) values (${p.rule}, ${p.why}) returning id::text, rule, why, started_at, ended_at, retire_why`;
-				return r!;
-			},
-			{ text: (r) => `记下选品规矩 ${ruleLine(r)}` },
-		),
+		"rule-add": get("旧接口：现行规则在 skills 中编辑，不再写入数据库", z.object({ rule: text.describe("规矩"), why: text.describe("为什么") }), async () => {
+			throw new Usage(`现行规则只在 ${RULE_SOURCE} 中维护`);
+		}),
 		"rule-retire": get(
-			"停用一条选品规矩：写结束时间、停用原因（不删）",
+			"旧接口：数据库规则为历史记录，现行规则在 skills 中编辑",
 			z.object({ id: z.string().regex(/^\d+$/).describe("规矩编号（x2 selection rule-list）"), why: text.describe("为什么停用") }),
-			async (p) => {
-				const sql = await db();
-				const [r] = await sql<Rule[]>`update selection_rules set ended_at = now(), retire_why = ${p.why} where id = ${p.id} and ended_at is null
-						returning id::text, rule, why, started_at, ended_at, retire_why`;
-				if (!r) {
-					const [old] = await sql<Rule[]>`select id::text, rule, why, started_at, ended_at, retire_why from selection_rules where id = ${p.id}`;
-					throw new Usage(old ? `选品规矩 #${old.id} 已经停用了（${when(old.ended_at!)}）` : `没有选品规矩 #${p.id}`);
-				}
-				return r;
+			async () => {
+				throw new Usage(`历史记录不再改写；现行规则只在 ${RULE_SOURCE} 中维护`);
 			},
-			{ text: (r) => `停用选品规矩 ${ruleLine(r)}` },
 		),
 		"rule-list": get(
-			"在用的选品规矩（--all：连停用的）",
-			z.object({ all: flag("连停用的").default(false) }),
+			"规则文件入口；--all 附数据库中的历史记录",
+			z.object({ all: flag("附历史记录").default(false) }),
 			async (p) => {
-				const sql = await db();
-				return sql<
-					Rule[]
-				>`select id::text, rule, why, started_at, ended_at, retire_why from selection_rules ${p.all ? sql`` : sql`where ended_at is null`} order by id`;
+				const history = p.all
+					? await (await db())<Rule[]>`select id::text, rule, why, started_at, ended_at, retire_why from selection_rules order by selection_rules.id`
+					: [];
+				return { source: RULE_SOURCE, history };
 			},
-			{ text: (rows) => (rows.length ? rows.map(ruleLine).join("\n") : "没有选品规矩（x2 selection rule-list --all 看停用的；x2 selection rule-add 记一条）") },
+			{ text: (r) => [`规则入口：${r.source}`, ...r.history.map(ruleLine)].join("\n") },
 		),
 	},
 	tables: SELECTION_TABLES,

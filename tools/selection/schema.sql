@@ -14,7 +14,7 @@ create table if not exists strategies (
 alter table strategies drop constraint if exists strategies_status_check;
 update strategies set status = case status when '在用' then '使用中' else '已停用' end where status in ('在用', '停了');
 alter table strategies add constraint strategies_status_check check (status in ('试验中', '使用中', '已停用'));
-insert into strategies (name, bet, how, status) values ('人选', '人挑的货源', '运营贴链接', '使用中') on conflict do nothing;
+insert into strategies (name, bet, how, status) values ('人选', '人挑的货源', 'skills/selection/references/strategies.md', '使用中') on conflict do nothing;
 
 alter table strategies add column if not exists version int not null default 1;
 

@@ -1,19 +1,16 @@
 ---
 name: selection
-description: 选品，按策略给一家店找 1688 货源：知虾找词和竞品、以图搜 1688 同款、报价、照选品规矩筛、写选品理由和依据加成商品稿。运营说「选品」「找货」「再上一批」「按策略选 N 个」时用；做商品稿以后的事见 listing skill。
+description: 为 ni1206、cheeroutdoor 做选品研究、筛选候选并记录依据；业务规则和执行方法以本 skill 的 references 为准。
 ---
 
-目标：每家店按在用的策略加够名额的商品稿，每份都能回头查为什么选、按的是哪一版策略和规矩。命令在 x2 仓库根目录跑 `node x2.ts <命令>`（下面写 `x2`），加 `--json` 读结果；工具的参数看 `x2 <toolkit> <工具> --help`。跟运营说起商品稿用「简称（店铺）」。
+命令在仓库根目录运行 `node x2.ts`。规则正文只在本 skill 与 listing skill 维护；数据库中的旧规则、策略变更和商品稿快照用于追溯。
 
-## 步骤
+1. 确认店铺、研究方向和本次名额；只研究时不添加商品稿。
+2. 先读 [选品规则](references/rules.md)，再读 [策略方法](references/strategies.md) 中对应的方法；`selection strategy-list` 只核对实验状态和版本。
+3. 用 `zhixia` 的读取工具找关键词、竞品和需求证据；不把销量、搜索量、价格等未知值补成零。
+4. 找到候选后，优先用知虾以图搜同款，再读取 1688 商品。每次读取一个，记录匹配依据。
+5. 按 [定价流程](../listing/references/pricing.md) 取得参数并报价；单品与组合都要核对实际可成交的搭配。
+6. 按规则筛选，分别报告事实、估计、判断和未知项；找不到合格的就照实报告。
+7. 获准添加候选时，`listing add` 一次一个链接，带店铺、策略、选品理由和依据；不替人选定货源或发布商品。
 
-1. **分这一轮**：两家店方向不同、货不重复；每个在用的策略分一份名额。读 references/round.md。能开 subagent 就一个策略开一个 `listing-select`（给它店、策略、名额、别的策略在找的方向），主对话不装候选的细节。
-2. **看策略和规矩**：`selection strategy-list`、`selection rule-list`。照策略的「选品方法」找，照规矩筛。策略、规矩要改先跟运营说，**她同意了**再用 `selection strategy-set`、`selection rule-add`、`selection rule-retire` 记下。怎么记读 references/records.md。
-3. **找词、找竞品**：知虾的 `zhixia hot-words`、`zhixia hot-word-items`、`zhixia competition`、`zhixia price-line`；种子从店里卖得好的来（`shopee performance`）。知虾的数字有坑、限流共用，读 references/zhixia.md。
-4. **找 1688 货源**：用竞品的图以图搜，`zhixia similar-1688`。不用 `1688 search`（最容易跳滑块）。挑图的办法读 references/zhixia.md。
-5. **报价**：每个候选 `listing quote`，一个一个报，别连着刷。看售价区间、规格数、重量（估的会写出来）、服务、起订量、问题。
-6. **筛**：照选品规矩，做法读 references/screening.md。
-7. **加成商品稿**：`listing add` 带上策略、选品理由、依据，理由不一样的分开加。依据写什么读 references/records.md。
-8. **回报**：每个策略加了哪些（简称或 1688 标题、售价区间、为什么选），放弃了哪些、为什么，这一轮学到的（哪类货赢不了、哪种找法不灵）。要改规矩或策略的提给运营定。
-
-之后照 listing skill：做商品稿、估重量、写文案、人审稿批准、上架。
+需要按策略分工时，读 [任务边界与交付](references/search.md)。业务条件变化时先改对应 skill，再按工具参数执行；不在 Connector、数据库或页面另立一套规则。
