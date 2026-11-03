@@ -9,6 +9,7 @@
 - 采购单号用 `idStr`（19 位，当数字会丢精度）；金额是分。
 - 列表里**没有收货地址**（要的话得读详情）。采购单都寄到 1688 的默认地址，就是我们这里。
 - 每一行（`orderEntries[]`）自带 `skuId`、`specId`、`specInfo.specItems`；`entryStatus` / `entryStatusLabel` 是这一行的状态（`waitsellersend` 待发货、`waitbuyerreceive` 已发货、`success` 已收货、`cancel` 交易关闭）；`entryExtension.receivedQuantity` 已收件数，`trackingNo` 快递单号，`sendgt` 发货时间。
+- 每行商品图片来自自身 `mainSummImageUrl`，实际可为完整 `http://cbu01.alicdn.com/...` URL；协议相对地址转 HTTPS。缺失时保留 null，不拿订单级图片或其他行图片代替；`sourceId` 是这行商品的链接 ID，按字符串保留，不从图片推定。
 - `tradeStatus`：空是全部；`dispute` 是「退款售后」，只回有进行中退款的采购单。页面上还有 `waitselleragree`（退款退货中）、`aftersale`（售后中）、`toushu`（投诉中），没试过。
 
 ## 退款、退货
@@ -53,3 +54,5 @@
 ## 回包样本
 
 `fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。都是照代码和上面记的字段写的（不是抓的真回包）：`offer.json` 的值取自一个真货源解析后的样子，反推成商品页上的几块。登录以后用 live.ts 读一遍，把真回包换进来（买家、卖家的名字、电话、地址换成假的）。
+
+`purchases.ts` 使用同一采购列表接口，金额字段保留为整数分字符串，缺失为 null；只用 `gmtPayment` 作为付款时间证据，不从状态名推定已付款。分页汇总缺失、不安全数字 ID 或金额会报错。供应商只读取明确的 sellerCompanyName、sellerLoginId 或 sellerInfo 对应字段；既有采购回包样本未含这些字段，缺失时返回 null。`buyer-order-facts.json` 为在既有合成样本上扩充的解析用 fixture，覆盖缺项、长金额和供应商字段，不是 live 证据。

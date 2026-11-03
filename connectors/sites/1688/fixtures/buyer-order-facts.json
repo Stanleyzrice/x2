@@ -1,0 +1,5 @@
+{
+	"data": {
+		"result": "{\"data\":{\"total\":2,\"pages\":1,\"data\":[{\"idStr\":\"3012345678901234567\",\"id\":3012345678901234000,\"status\":\"waitbuyerreceive\",\"statusLabel\":\"等待买家收货\",\"gmtCreate\":\"2026-10-09 10:20:30\",\"gmtPayment\":\"1760000000000\",\"sumProductPayment\":\"12345678901234567890\",\"carriage\":800,\"allPromotionFee\":0,\"sumPayment\":3230,\"orderEntries\":[{\"sourceId\":1014247787336,\"specId\":\"3071830fb9e7fcd58cfdc4a4b5f0d8d5\",\"skuId\":6022174637511,\"productName\":\"浴水生财猫咪浴室地垫\",\"specInfo\":{\"specItems\":[{\"specName\":\"颜色\",\"specValue\":\"水生财黑猫咪\"},{\"specName\":\"尺寸\",\"specValue\":\"60*90cm（升级版硅藻泥）\"}]},\"quantity\":{\"realAmount\":3,\"calAmount\":3},\"price\":810,\"entryStatus\":\"waitbuyerreceive\",\"entryStatusLabel\":\"已发货\",\"entryExtension\":{\"receivedQuantity\":0,\"trackingNo\":\"YT0000000000001\",\"sendgt\":1760100000000,\"refundId\":\"TQ0000000000000001\",\"refundStatus\":\"waitselleragree\"}}],\"sellerCompanyName\":\"测试供应商\",\"refundAmount\":1000},{\"idStr\":\"3012345678901234568\",\"status\":\"success\",\"orderEntries\":[{\"sourceId\":\"720000000001\",\"productName\":\"缺失金额测试商品\"}]}]}}"
+	}
+}

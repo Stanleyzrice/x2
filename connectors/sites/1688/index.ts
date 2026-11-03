@@ -4,6 +4,7 @@ import { Usage } from "../../../platform/errors.ts";
 import { all, byPage, get, str, strs, submit, type Toolkit } from "../../../platform/tool.ts";
 import { account, addToCart, alibabaCookie, buyerOrders, cart, OfferId, offer, offerIdOf, refund, SpecId, search, traces } from "./api.ts";
 import { SLIDER } from "./challenge.ts";
+import { purchaseFacts } from "./purchases.ts";
 
 export const cartAdd = submit(
 	"加购：把商品的一个规格加进购物车（只经业务工具的写工具调）",
@@ -35,6 +36,11 @@ const tools = {
 			const r = await buyerOrders(n, 50, p.status);
 			return { rows: r.rows, more: n < r.pages };
 		},
+	),
+	"order-facts": get(
+		"一页采购事实：金额为精确整数分字符串，缺失为null，保留付款时间证据和分页汇总",
+		z.object({ page: z.coerce.number().int().positive().default(1) }),
+		(p) => purchaseFacts(p.page),
 	),
 	refund: get(
 		"一张退款单：状态、类型、退的钱、退货运单号",

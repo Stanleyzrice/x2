@@ -572,7 +572,12 @@ export function buyerOrdersOf(data: unknown): { total: number; pages: number; ro
 /** 采购单（在 1688 买的订单），一页最多 50 张，新的在前。金额是元（接口是分）。
  * orderId 用 idStr：19 位订单号当数字会丢精度 */
 export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): Promise<{ total: number; pages: number; rows: BuyerOrder[] }> {
-	const data = await read(
+	return buyerOrdersOf(await buyerOrderData(pageNo, pageSize, tradeStatus));
+}
+
+/** 采购单列表的原始回包；不同用途的解析器共享同一次网站接入，不把缺失金额预先变成零。 */
+export async function buyerOrderData(pageNo = 1, pageSize = 50, tradeStatus = ""): Promise<unknown> {
+	return read(
 		BUYER_ORDERS,
 		"mtop.1688.trading.dataline.service",
 		{
@@ -581,7 +586,6 @@ export async function buyerOrders(pageNo = 1, pageSize = 50, tradeStatus = ""): 
 		},
 		"读 1688 采购单",
 	);
-	return buyerOrdersOf(data);
 }
 
 /** 一张退款单的状态。status：waitselleragree 等卖家同意、waitbuyermodify 卖家拒绝等买家修改、waitbuyersend 等买家寄回、

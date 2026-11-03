@@ -1,0 +1,5 @@
+{
+	"data": {
+		"result": "{\"data\":{\"total\":1,\"pages\":1,\"data\":[{\"idStr\":\"3012345678901234567\",\"gmtPayment\":\"1760000000000\",\"sumPayment\":1000,\"mainSummImageUrl\":\"https://cbu01.alicdn.com/order-cover-not-a-line.jpg\",\"orderEntries\":[{\"sourceId\":\"1014247787336\",\"skuId\":\"9007199254740993123\",\"productName\":\"商品甲\",\"mainSummImageUrl\":\"http://cbu01.alicdn.com/img/ibank/fixture-one.jpg\",\"price\":100},{\"sourceId\":\"9007199254740993124\",\"productName\":\"商品乙\",\"mainSummImageUrl\":\"//cbu01.alicdn.com/img/ibank/fixture-two.jpg\"},{\"sourceId\":\"1014247787337\",\"productName\":\"缺图商品\",\"snapshot\":{\"image\":\"https://cbu01.alicdn.com/unverified.jpg\"}}]}]}}"
+	}
+}
