@@ -38,6 +38,7 @@ const target = (file: string, spec: string) =>
 	spec.startsWith("@/") ? join(ROOT, "platform/ui", spec.slice(2)) : spec.startsWith(".") ? resolve(join(file, ".."), spec) : null;
 
 const TOP = [
+	".agents",
 	".claude",
 	".env.example",
 	".githooks",
@@ -111,6 +112,8 @@ const DOCS = [
 	/^CLAUDE\.md$/,
 	/^skills\/[^/]+\/SKILL\.md$/,
 	/^skills\/[^/]+\/references\/[^/]+\.md$/,
+	/^\.agents\/skills\/[^/]+\/SKILL\.md$/,
+	/^\.agents\/skills\/[^/]+\/references\/[^/]+\.md$/,
 	/^\.claude\/agents\/[^/]+\.md$/,
 	/^connectors\/(sites|services)\/[^/]+\/NOTES\.md$/,
 ];
@@ -127,7 +130,7 @@ test("代码、文档里提到的仓库里的文件都在（改名、删了文�
 	for (const f of tracked().filter((x) => /\.(ts|tsx|md|sql|tla|cfg|mjs)$/.test(x))) {
 		const text = readFileSync(join(ROOT, f), "utf8");
 		for (const m of text.matchAll(
-			/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude)\/[\w./-]+\.(?:md|ts|tsx|sql|json|tla|cfg|mjs|mmd))/g,
+			/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude|\.agents)\/[\w./-]+\.(?:md|ts|tsx|sql|json|tla|cfg|mjs|mmd))/g,
 		))
 			if (!existsSync(join(ROOT, m[1]!))) bad.push(`${f} → ${m[1]}`);
 		if (f.endsWith(".md"))
@@ -138,11 +141,18 @@ test("代码、文档里提到的仓库里的文件都在（改名、删了文�
 
 const SKILL_LINES = 40;
 const SKILL_CHARS = 2000;
-const skillDirs = () => readdirSync(join(ROOT, "skills"), { withFileTypes: true }).filter((e) => e.isDirectory());
+const skillDirs = () =>
+	["skills", ".agents/skills"]
+		.filter((root) => existsSync(join(ROOT, root)))
+		.flatMap((root) =>
+			readdirSync(join(ROOT, root), { withFileTypes: true })
+				.filter((e) => e.isDirectory())
+				.map((e) => ({ name: e.name, root })),
+		);
 
 test("skills 只有 md：每个 skill 一份 SKILL.md，细节放 references/*.md（代码、表、测试在 tools）", () => {
 	assert.deepEqual(
-		tracked().filter((f) => f.startsWith("skills/") && !/^skills\/[^/]+\/(SKILL\.md|references\/[^/]+\.md)$/.test(f)),
+		tracked().filter((f) => /^(?:\.agents\/)?skills\//.test(f) && !/^(?:\.agents\/)?skills\/[^/]+\/(SKILL\.md|references\/[^/]+\.md)$/.test(f)),
 		[],
 	);
 });
@@ -150,7 +160,7 @@ test("skills 只有 md：每个 skill 一份 SKILL.md，细节放 references/*.m
 test(`SKILL.md 有 frontmatter（name 和目录名一样、description）；正文最多 ${SKILL_LINES} 行、${SKILL_CHARS} 字，细节走到那一步再读 references`, () => {
 	const bad: string[] = [];
 	for (const d of skillDirs()) {
-		const text = readFileSync(join(ROOT, "skills", d.name, "SKILL.md"), "utf8");
+		const text = readFileSync(join(ROOT, d.root, d.name, "SKILL.md"), "utf8");
 		const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
 		if (!m) {
 			bad.push(`${d.name}：没有 frontmatter`);
@@ -168,7 +178,7 @@ test(`SKILL.md 有 frontmatter（name 和目录名一样、description）；正�
 test("skill 提到的 references 都在，references 里的每份都有人提到（SKILL.md 或别的 reference）", () => {
 	const bad: string[] = [];
 	for (const d of skillDirs()) {
-		const dir = join(ROOT, "skills", d.name);
+		const dir = join(ROOT, d.root, d.name);
 		const refs = existsSync(join(dir, "references")) ? readdirSync(join(dir, "references")).map((f) => `references/${f}`) : [];
 		const texts = ["SKILL.md", ...refs].map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
 		for (const m of texts.matchAll(/(?<![\w/])references\/[\w.-]+\.md/g)) if (!existsSync(join(dir, m[0]))) bad.push(`skills/${d.name} → ${m[0]}`);
