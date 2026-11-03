@@ -101,6 +101,7 @@ export const LISTING_TABLES: Table[] = [
 			weight_kg: "重量（kg，1688 没给时用）",
 			freight_rmb: "国内运费（元/件，读不到时用）",
 			days_to_ship: "备货天数",
+			min_purchase: "最低购买数量（空沿用店铺）",
 			cancelled: "放弃",
 			strategy: "策略",
 			pick_why: "选品理由",

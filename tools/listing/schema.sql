@@ -32,7 +32,11 @@ create table if not exists shop_settings (
 	paused text,
 	updated_at timestamptz not null default now()
 );
-insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd) values ('ni1206', '348425', 0, 60), ('cheeroutdoor', '1554182542', 0.015, 0) on conflict do nothing;
+-- 已有店铺先排除：旧库可能已移除默认值，ON CONFLICT 不能跳过候选行的非空校验。
+insert into shop_settings (shop, shop_id, coin_rate, free_shipping_min_twd)
+select seed.* from (values ('ni1206', '348425', 0, 60), ('cheeroutdoor', '1554182542', 0.015, 0)) as seed(shop, shop_id, coin_rate, free_shipping_min_twd)
+where not exists (select 1 from shop_settings existing where existing.shop = seed.shop)
+on conflict do nothing;
 
 create table if not exists listings (
 	id bigserial primary key,
@@ -121,3 +125,9 @@ alter table listings drop column if exists approved_at;
 alter table listings drop column if exists approved_hash;
 alter table listings drop column if exists content_hash;
 alter table listings drop column if exists unapproved_why;
+
+-- 可选的百分比费用模型输入；null 使用原有数值模型。
+alter table shop_settings add column if not exists pricing_template jsonb;
+
+-- 单稿最低购买数量；null 沿用 shop_settings.min_purchase，不改全店配置。
+alter table listings add column if not exists min_purchase int check (min_purchase > 0);

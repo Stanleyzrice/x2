@@ -8,22 +8,27 @@ import { db, type Json, type Sql } from "../../platform/db/index.ts";
 import { NeedsHuman, Usage } from "../../platform/errors.ts";
 import { flag, get, parseJson, str, strs, type Toolkit, write } from "../../platform/tool.ts";
 import type { Ran } from "../../platform/writes.ts";
+import { ADD_SIZE_WRITES, addSizeParams, planAddSize, previewAddSize } from "./add-size.ts";
 import { AUDIT_DROP, type Audit, type AuditIssue, auditDropped, auditIssues, auditKey, dropAudited, issueLine, restoreAudited } from "./audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
+import { copyDraft, copyImages, copyImagesParams, copyParams } from "./copy.ts";
 import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { unmarked } from "./images.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
+import { orderPrice, orderPricingInput } from "./order-pricing.ts";
 import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
 import type { Pics } from "./pics.ts";
-import { estimateNeeds, pricingProblems, quote, settingsOf } from "./pricing.ts";
+import { estimateNeeds, pricingPolicy, pricingProblems, quote, settingsOf } from "./pricing.ts";
+import { pricingInputsParams, setPricingInputs } from "./pricing-input.ts";
 import { imageNames } from "./product.ts";
+import { purchaseLimitParams, setPurchaseLimit } from "./purchase-limit.ts";
 import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
-import { templateItem, templateParams, templatePrice } from "./template-pricing.ts";
+import { templateConfigParams, templateItem, templateParams, templatePrice } from "./template-pricing.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
 import { textCheck } from "./textcheck.ts";
 import { planUnlist, previewUnlist, UNLIST_WRITES, unlistParams } from "./unlist.ts";
@@ -77,6 +82,35 @@ export const listing: Toolkit = {
 	title: "上品：贴货源、做商品稿、写文案、建商品、上架、零销量下架",
 	kind: "tool",
 	tools: {
+		copy: get("从已保存商品稿原子复制到另一店；已存在目标稿不覆盖，不沿用站点身份或图片上传记录", copyParams, async (p) => copyDraft(await db(), p)),
+		"copy-images": get("仅按目标稿保存的原图URL上传到目标店，核对SHA和规格图对应，不重读1688或重建规格", copyImagesParams, async (p) =>
+			copyImages(await db(), p),
+		),
+		"purchase-limit": get("保存单份未建商品稿的最低购买数量，不改全店设置或已建商品", purchaseLimitParams, async (p) => setPurchaseLimit(await db(), p)),
+		"pricing-inputs": get("保存逐规格的显式进价、计费重量和售价，保留1688原始事实；核对当前毛利目标，不改已建商品", pricingInputsParams, async (p) =>
+			setPricingInputs(await db(), p),
+		),
+		pricing: get("读取店铺已保存的计算模型与输入参数", z.object({ shop: str("店（ni1206、cheeroutdoor）") }), async (p) => {
+			const sql = await db();
+			const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${p.shop}`;
+			if (!row) throw new Usage(`没有「${p.shop}」这家店`);
+			return { shop: row.shop, ...pricingPolicy(settingsOf(row)) };
+		}),
+		"pricing-set": get(
+			"保存店铺百分比费用模型的完整计算输入",
+			z.object({
+				shop: str("店（ni1206、cheeroutdoor）"),
+				template: z.preprocess(parseJson, templateConfigParams).describe("完整参数 JSON，六项数值均须提供"),
+			}),
+			async (p) => {
+				const sql = await db();
+				const [row] = await sql<
+					ShopSettingsRow[]
+				>`update shop_settings set pricing_template = ${sql.json(p.template)}, updated_at = now() where shop = ${p.shop} returning *`;
+				if (!row) throw new Usage(`没有「${p.shop}」这家店`);
+				return { shop: row.shop, ...pricingPolicy(settingsOf(row)) };
+			},
+		),
 		"price-preview": get(
 			"按定价模板试算毛利率区间：只给建议，不存库、不改设置或商品；缺成本不补零",
 			z.object({
@@ -87,6 +121,24 @@ export const listing: Toolkit = {
 				const { items, ...params } = p;
 				const assumptions = templateParams.parse(params);
 				return { assumptions, rows: items.map((item) => templatePrice(item, assumptions)) };
+			},
+		),
+		"order-preview": get(
+			"计算输入组合的商品金额、成本、利润及区间比较结果",
+			z.object({
+				shop: str("店（ni1206、cheeroutdoor）"),
+				items: z.preprocess(parseJson, orderPricingInput.shape.items).describe("逐规格的价格、件数、成本、重量 JSON；写 - 从 stdin 读"),
+				freightRmb: z.coerce.number().nonnegative().nullable().default(null).describe("整单国内运费；多个货源合计，未知不填"),
+				sellerDiscountTwd: z.coerce.number().nonnegative().nullable().default(null).describe("整单卖家承担的优惠；明确无优惠填 0，未知不填"),
+				minimumTwd: z.coerce.number().nonnegative().default(0).describe("用于比较的商品金额下限，TWD"),
+			}),
+			async (p) => {
+				const sql = await db();
+				const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${p.shop}`;
+				if (!row) throw new Usage(`没有「${p.shop}」这家店`);
+				const s = settingsOf(row);
+				if (!s.template) throw new Usage("这家店尚未启用定价模板（x2 listing pricing）");
+				return { shop: p.shop, pricing: pricingPolicy(s), ...orderPrice(p, s.template) };
 			},
 		),
 		add: get(
@@ -147,9 +199,9 @@ export const listing: Toolkit = {
 			"报价（选品用）：读货源、排规格、按店铺设置核价，和做商品稿同一套代码，不做图、不存库。1688 没给的重量按 --weight、读不到的国内运费按 --freight 算，都往重了、往高了估；用了估的写出来",
 			z.object({
 				link: str("1688 链接或货源 id"),
-				shop: z.string().min(1).default("cheeroutdoor").describe("按哪家店的店铺设置核价"),
-				weight: z.coerce.number().positive().finite().default(1).describe("1688 没给的重量（kg）"),
-				freight: z.coerce.number().nonnegative().finite().default(10).describe("读不到的国内运费（元/件）"),
+				shop: z.string().min(1).describe("计算参数所属店铺"),
+				weight: z.coerce.number().positive().finite().describe("调用方提供的备用重量（kg）"),
+				freight: z.coerce.number().nonnegative().finite().describe("调用方提供的备用国内运费（元/件）"),
 			}),
 			async (p) => {
 				const offerId = offerIdOf(p.link);
@@ -172,6 +224,9 @@ export const listing: Toolkit = {
 							.join("、") || "无";
 					return [
 						`${q.title}（${q.offerId}）`,
+						q.pricing.model === "template"
+							? `定价模板：毛利率 ${q.pricing.params.minMargin * 100}–${q.pricing.params.maxMargin * 100}%（按扣平台费后的收入；条件试算）`
+							: `结算模型：最低毛利率 ${q.pricing.params.minMarginRate * 100}%，最低毛利 ${q.pricing.params.minMarginRmb} 元`,
 						`${q.shop} 售价 ${q.priceTwd}（${q.variants} 个规格）`,
 						...q.specs.split("\n").map((x: string) => `  ${x}`),
 						`国内运费：${freight}`,
@@ -184,7 +239,14 @@ export const listing: Toolkit = {
 		),
 		make: get(
 			"做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；不给编号就做所有还没做好的。几份同时做：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（queue.ts）",
-			z.object({ ids: ids.optional(), jobs: z.coerce.number().int().min(1).max(10).default(3).describe("几份同时做") }),
+			z.object({
+				ids: ids.optional(),
+				jobs: z.coerce.number().int().min(1).max(10).default(3).describe("几份同时做"),
+				imageMode: z
+					.enum(["processed", "original"])
+					.optional()
+					.describe("本稿图片模式：original上传1688原图，不译图不加水印；不传沿用稿件模式，旧稿保持处理图"),
+			}),
 			async (p) => {
 				const sql = await db();
 				const want =
@@ -195,7 +257,7 @@ export const listing: Toolkit = {
 				if (!want.length) return [];
 				const before = await namesOf(sql, want);
 				const settled = await each(want, p.jobs, async (id) => {
-					const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`));
+					const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`), { imageMode: p.imageMode });
 					const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 					const specs = l ? specsOf(l.variants) : null;
 					const needs = l ? estimateNeeds(l) : [];
@@ -297,6 +359,7 @@ export const listing: Toolkit = {
 					category: l.category_name,
 					attributes: l.attributes_text,
 					variants: specs?.variants.length ?? 0,
+					minPurchase: l.min_purchase ?? null,
 					tiers,
 					weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))],
 					needs: estimateNeeds(l),
@@ -466,6 +529,8 @@ export const listing: Toolkit = {
 		),
 		"edit-preview": get("现读商品原标题和价格，预览标题与指定规格价格修改；不提交", editParams, async (p) => previewEdit(await db(), p)),
 		edit: write("人同意的现有商品标题与价格修改：原标题和原价逐字核对、提交一次、读回来核对；首次约一个商品 --try", editParams, planEdit),
+		"add-size-preview": get("现读现有商品，预览新增一个二级尺寸及逐款售价、库存；不提交", addSizeParams, async (p) => previewAddSize(await db(), p)),
+		"add-size": write("人同意的现有商品新增二级尺寸：核对预览指纹，保留旧规格和价格，提交一次并读回；首次单个商品 --try", addSizeParams, planAddSize),
 		"unlist-preview": get("现读指定商品的在售状态和期间销量：只预览，不下架；未知不当零", unlistParams, async (p) => previewUnlist(await db(), p)),
 		unlist: write("人同意下架的零销量商品：确认销量、已付款件数都为零才下架；记意图、提交一次、读回来核对，不删除", unlistParams, planUnlist),
 		cancel: get(
@@ -544,7 +609,7 @@ export const listing: Toolkit = {
 		const r = await listingsCheck(sql);
 		return { read: [], human: r.reminders, todo: r.todo };
 	},
-	writes: { ...LISTING_WRITES, ...UNLIST_WRITES, ...EDIT_WRITES },
+	writes: { ...LISTING_WRITES, ...UNLIST_WRITES, ...EDIT_WRITES, ...ADD_SIZE_WRITES },
 	written,
 	tables: LISTING_TABLES,
 	schema: new URL("./schema.sql", import.meta.url),

@@ -7,7 +7,7 @@ import { type Image, model } from "../../connectors/services/gemini/api.ts";
 import { type Bytes, fetchImage, inspect } from "../../connectors/services/image/api.ts";
 import { uploadImages } from "../../connectors/sites/shopee/products.ts";
 import type { Sql } from "../../platform/db/index.ts";
-import type { Mark, Pic, Pics, Verdict } from "./pics.ts";
+import type { ImageMode, Mark, Pic, Pics, Verdict } from "./pics.ts";
 import { detailFits, MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { download, geminiJson, limiter, once, type Runner } from "./queue.ts";
 import { SCREEN_VERSION, screen } from "./screen.ts";
@@ -137,6 +137,29 @@ async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes, b
 	Object.assign(p, done);
 }
 
+/** 原图上传输入保留来源字节和格式；Shopee 的上传服务仍可能做平台压缩。 */
+export const originalImageUpload = (base: Bytes) => ({
+	file: { base64: Buffer.from(base.bytes).toString("base64"), mime: base.mime },
+	final: base.sha256,
+	width: base.width,
+	height: base.height,
+});
+
+async function finishOriginal(sql: Sql, shop: string, p: Pic, base: Bytes, browser: Runner): Promise<void> {
+	const done = await once(`原图:${shop}:${base.sha256}`, async () => {
+		const [hit] = await sql<{ image_id: string; width: number; height: number }[]>`select image_id, width, height from shop_images
+			where shop = ${shop} and sha256 = ${base.sha256} order by uploaded_at desc limit 1`;
+		if (hit) return { final: base.sha256, imageId: hit.image_id, width: hit.width, height: hit.height };
+		const { file, ...identity } = originalImageUpload(base);
+		const [imageId] = await browser(() => uploadImages([file]));
+		if (!imageId) throw new Error("原图上传没有返回图片 id");
+		await sql`insert into shop_images ${sql({ shop, sha256: base.sha256, image_id: imageId, width: base.width, height: base.height })}
+			on conflict (shop, sha256) do update set image_id = excluded.image_id, uploaded_at = now()`;
+		return { ...identity, imageId };
+	});
+	Object.assign(p, done);
+}
+
 export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promise<Bytes> {
 	const p = [...(pics.main ?? []), ...(pics.detail ?? []), ...(pics.options ?? [])].find((x) => x.imageId === id);
 	if (!p) throw new Error(`图 ${id} 不在商品稿的图里：重做商品稿（x2 listing make）`);
@@ -155,10 +178,13 @@ const deciding = limiter(1);
 
 export async function makeImages(
 	sql: Sql,
-	c: { shop: string; mark: Mark; main: string[]; detail: string[]; options: string[]; browser: Runner },
+	c: { shop: string; mark: Mark | null; main: string[]; detail: string[]; options: string[]; browser: Runner; imageMode?: ImageMode },
 	log: (s: string) => void = console.error,
 ): Promise<Pics> {
+	const imageMode = c.imageMode ?? "processed";
+	if (imageMode === "processed" && !c.mark) throw new Error("处理图片模式缺少水印设置");
 	const pics: Pics = {
+		imageMode,
 		main: c.main.map((from) => ({ from })),
 		detail: c.detail.map((from) => ({ from })),
 		options: [...new Set(c.options)].map((from) => ({ from })),
@@ -166,7 +192,7 @@ export async function makeImages(
 	const bytes = new Map<string, Bytes>();
 	const all = [...pics.main, ...pics.detail, ...pics.options];
 
-	log(`取图、筛字（${all.length} 张）`);
+	log(`${imageMode === "original" ? "取原图、检查尺寸" : "取图、筛字"}（${all.length} 张）`);
 	await Promise.all(
 		all.map(async (p) => {
 			try {
@@ -185,6 +211,7 @@ export async function makeImages(
 				p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`;
 				return;
 			}
+			if (imageMode === "original") return;
 			const s = await screened(sql, bytes.get(p.sha!)!).catch((e: Error) => {
 				p.drop = `筛字出错：${e.message}`;
 				return null;
@@ -195,7 +222,7 @@ export async function makeImages(
 		}),
 	);
 
-	const toTranslate = all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
+	const toTranslate = imageMode === "original" ? [] : all.filter((p) => !p.drop && (p.verdict === "m" || (p.verdict === "r" && p.simplified)));
 	const shas = [...new Set(toTranslate.map((p) => p.sha!))];
 	if (shas.length) {
 		let job = null as Promise<void> | null;
@@ -258,15 +285,19 @@ export async function makeImages(
 
 	const use = (list: Pic[], max: number) => list.filter((p) => !p.drop).slice(0, max);
 	const keep = [...use(pics.main, MAX_MAIN), ...use(pics.detail, MAX_DETAIL), ...pics.options.filter((p) => !p.drop)];
-	log(`加水印、传图（${keep.length} 张）`);
+	log(`${imageMode === "original" ? "上传原图" : "加水印、传图"}（${keep.length} 张）`);
 	await Promise.all(
 		keep.map(async (p) => {
 			let base = bytes.get(p.sha!)!;
+			if (imageMode === "original") {
+				await finishOriginal(sql, c.shop, p, base, c.browser);
+				return;
+			}
 			if (p.translated) {
 				const [row] = await sql`select bytes from images where sha256 = ${p.translated}`;
 				base = inspect(new Uint8Array(row!.bytes), "译图");
 			}
-			await finish(sql, c.shop, c.mark, p, base, c.browser);
+			await finish(sql, c.shop, c.mark!, p, base, c.browser);
 		}),
 	);
 	for (const p of [...pics.main, ...pics.detail]) if (!p.drop && !p.imageId && !keep.includes(p)) p.drop = "超过张数，不用";

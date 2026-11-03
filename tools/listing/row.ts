@@ -4,6 +4,15 @@ import type { Freight, Offer, OfferId, Tags } from "../../connectors/sites/1688/
 import type { Audit } from "./audit.ts";
 import type { Pics } from "./pics.ts";
 import type { Product } from "./product.ts";
+import type { TemplateParams } from "./template-pricing.ts";
+
+export type PricingSnapshot = {
+	model?: "template" | "settlement";
+	params?: Record<string, number>;
+	preOrder?: boolean;
+	freightRmb?: number | null;
+	at?: string;
+};
 
 /** 商品稿编号（listings 的 id）：命令行参数、写入的参数、读库时贴上，别和货源 id、Shopee 商品 id 传混 */
 export const ListingId = z.string().regex(/^\d+$/, "商品稿编号是数字").brand<"ListingId">();
@@ -16,7 +25,11 @@ export type ListingRow = {
 	strategy: string;
 	cancelled: boolean;
 	weight_kg: string | null;
+	/** 兼容旧库保存的人填重量覆盖标志；缺列的旧快照不补值。 */
+	weight_override?: boolean;
 	freight_rmb: string | null;
+	/** 单稿最低购买数量；null 或旧快照未提供时沿用店铺默认。 */
+	min_purchase?: number | null;
 	title: string | null;
 	description: string | null;
 	note: string | null;
@@ -34,7 +47,7 @@ export type ListingRow = {
 	variants: unknown;
 	images: Partial<Pics>;
 	/** 上次核价：用的参数、国内运费、时间（make.ts 的 savePrices 写的） */
-	pricing: { freightRmb?: number | null } | null;
+	pricing: PricingSnapshot | null;
 	audit: Partial<Audit> | null;
 	problems: string | null;
 	step: string | null;
@@ -63,12 +76,13 @@ export type PriceInput = {
 	offer: OfferLike | null;
 	weight_kg?: string | null;
 	freight_rmb?: string | null;
-	pricing?: { freightRmb?: number | null } | null;
+	pricing?: PricingSnapshot | null;
 };
 
 export type ShopSettingsRow = {
 	shop: string;
 	shop_id: string;
+	pricing_template: TemplateParams | null;
 	fx: string;
 	price_per_kg_rmb: string;
 	label_fee_rmb: string;

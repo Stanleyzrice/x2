@@ -1,18 +1,23 @@
-// 运营提供的定价模板：毛利率 = 毛利 / 扣平台费后的到手金额。只做建议，不改原有核价参数、商品稿或站点。
-// 模板按单一百分比费率计算，没有逐项台币取整、最低毛利、退损；与 price.ts 的结算模型分开，不能冒充真实结算利润。
+// 百分比费用模型的纯计算：所有费率、汇率、成本和目标区间由调用方提供，返回金额与整数价格区间。
+// 与 price.ts 的逐项结算模型分开；这里不选店铺参数、不定义经营目标或业务流程。
 import { z } from "zod";
+
+const orderedMargins = (p: { minMargin: number; maxMargin: number }) => p.maxMargin >= p.minMargin;
+const marginOrderError = { message: "毛利率上限不能低于下限", path: ["maxMargin"] };
 
 export const templateParams = z
 	.object({
-		fx: z.coerce.number().positive().default(4.8).describe("TWD/RMB，模板假设汇率"),
-		feeRate: z.coerce.number().min(0).lt(1).default(0.16).describe("平台综合费率，模板假设值"),
-		freightPerKgRmb: z.coerce.number().nonnegative().default(10).describe("每 kg 头程运费，人民币"),
-		labelFeeRmb: z.coerce.number().nonnegative().default(1.5).describe("每订单贴单费，人民币"),
-		minMargin: z.coerce.number().min(0).lt(1).default(0.15).describe("到手金额口径的目标毛利率下限"),
-		maxMargin: z.coerce.number().min(0).lt(1).default(0.2).describe("到手金额口径的目标毛利率上限"),
+		fx: z.coerce.number().positive().describe("TWD/RMB"),
+		feeRate: z.coerce.number().min(0).lt(1).describe("百分比费用率"),
+		freightPerKgRmb: z.coerce.number().nonnegative().describe("每 kg 运费，人民币"),
+		labelFeeRmb: z.coerce.number().nonnegative().describe("每订单固定费用，人民币"),
+		minMargin: z.coerce.number().min(0).lt(1).describe("输入的到手金额口径毛利率下限"),
+		maxMargin: z.coerce.number().min(0).lt(1).describe("输入的到手金额口径毛利率上限"),
 	})
-	.refine((p) => p.maxMargin >= p.minMargin, { message: "毛利率上限不能低于下限", path: ["maxMargin"] });
+	.refine(orderedMargins, marginOrderError);
 export type TemplateParams = z.output<typeof templateParams>;
+
+export const templateConfigParams = templateParams;
 
 export const templateItem = z.object({
 	key: z.string().min(1).describe("报告行标记，例 店铺:商品:规格"),

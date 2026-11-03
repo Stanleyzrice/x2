@@ -1,11 +1,11 @@
 // 建商品、上架（写）：只发一次请求、回结果；读回对账用 products.ts 的读（商品详情、物流渠道）。
-// 只经业务工具的写工具调：组 product_info、看还该不该建、读回来怎么比都是业务工具的事
+// 只经平台登记的写操作调用；这里解析接口响应，不决定提交时机或经营条件。
 import { z } from "zod";
 import { submit } from "../../../platform/tool.ts";
 import { allProducts, createProduct, productInfo, setUnlisted, unlistFromList, updateProduct } from "./products.ts";
 import { ItemId, ModelId } from "./seller.ts";
 
-/** 建商品结果未知时按货号找：新建的是下架，在售列表里没有，翻全部商品；名字一样的再读详情核对货号 */
+/** 从全部商品列表按名称筛选，再读详情匹配 parent_sku；同时覆盖在售和下架状态。 */
 export async function findByParentSku(parentSku: string, name: string): Promise<string | null> {
 	for (let page = 1; page <= 20; page++) {
 		const r = await allProducts(page);
@@ -19,7 +19,7 @@ export async function findByParentSku(parentSku: string, name: string): Promise<
 const created = z.looseObject({ product_id: z.union([z.number(), z.string()]).nullish(), id: z.union([z.number(), z.string()]).nullish() }).nullish();
 
 export const createListing = submit(
-	"建商品（先建成下架；只经业务工具的写工具调）",
+	"建商品：提交输入的 product_info（只经业务工具的写工具调）",
 	z.object({ productInfo: z.record(z.string(), z.unknown()).describe("create_product_info 的 product_info") }),
 	async (p) => {
 		const w = await createProduct(p.productInfo);

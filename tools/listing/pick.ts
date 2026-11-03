@@ -1,5 +1,7 @@
-// 选品可追溯：商品稿加进来那一刻按的是哪一版策略、哪些选品规矩。读选品的表（strategies、selection_rules：数据上的依赖，不 import 选品的代码）
+// 选品可追溯：记录策略版本，以及 skills 规则文件的位置与摘要；历史快照兼容旧规则编号，不复制新的规则正文。
 
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { offerIdOf } from "../../connectors/sites/1688/api.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
@@ -9,22 +11,29 @@ export type PickSnapshot = {
 	backfilled: boolean;
 	strategy: { name: string; version: number; bet: string | null; how: string | null; status: string } | { name: string; missing: true };
 	rules: { id: string; rule: string }[];
+	ruleSource?: { path: string; sha256: string };
 };
 
 export async function pickSnapshot(sql: Sql, strategy: string, backfilled = false): Promise<PickSnapshot> {
 	const [s] = await sql`select name, version, bet, how, status from strategies where name = ${strategy}`;
-	const rules = await sql`select id::text, rule from selection_rules where ended_at is null order by id`;
+	const path = "skills/selection/references/rules.md";
+	const content = await readFile(new URL(`../../${path}`, import.meta.url), "utf8");
 	return {
 		at: new Date().toISOString(),
 		backfilled,
 		strategy: s ? { name: s.name, version: s.version, bet: s.bet, how: s.how, status: s.status } : { name: strategy, missing: true },
-		rules: rules.map((r) => ({ id: r.id as string, rule: r.rule as string })),
+		rules: [],
+		ruleSource: { path, sha256: createHash("sha256").update(content).digest("hex") },
 	};
 }
 
 export function snapshotLine(s: PickSnapshot): string {
 	const st = "missing" in s.strategy ? `策略「${s.strategy.name}」（库里没有）` : `策略「${s.strategy.name}」第 ${s.strategy.version} 版`;
-	const rules = s.rules.length ? `选品规矩 ${s.rules.map((r) => `#${r.id}`).join(" ")}` : "没有在用的选品规矩";
+	const rules = s.ruleSource
+		? `规则文件 ${s.ruleSource.path}（${s.ruleSource.sha256.slice(0, 12)}）`
+		: s.rules.length
+			? `历史选品规矩 ${s.rules.map((r) => `#${r.id}`).join(" ")}`
+			: "没有记录规则来源";
 	return `${s.backfilled ? `补记于 ${when(s.at)}，按现在的` : `${when(s.at)}，按`}${st}、${rules}`;
 }
 
@@ -38,7 +47,7 @@ export async function addListings(
 ): Promise<{ added: Added[]; snapshot: PickSnapshot }> {
 	const strategy = a.strategy ?? "人选";
 	const [st] = await sql`select name from strategies where name = ${strategy}`;
-	if (!st) throw new Usage(`没有策略「${strategy}」：先 x2 selection strategy-add --name ${strategy} --bet "假设" --how "选品方法"`);
+	if (!st) throw new Usage(`没有策略「${strategy}」：参见 skills/selection/SKILL.md`);
 	const [s] = await sql`select shop from shop_settings where shop = ${a.shop}`;
 	if (!s) throw new Usage(`没有「${a.shop}」这家店（店铺设置里有的：${(await sql`select shop from shop_settings`).map((r) => r.shop).join("、")}）`);
 	const offerIds = a.links.map((link) => {

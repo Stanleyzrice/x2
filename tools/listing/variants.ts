@@ -33,6 +33,13 @@ const tier = z.object({
 	name: z.string(),
 	options: z.array(tierOption),
 });
+// 渠道成交成本和计费估重独立于 offer 中的采购价、报重；显式售价不被自动最低价替换。
+export const variantPricingInput = z.object({
+	costRmb: z.number().nonnegative().finite(),
+	chargeableWeightKg: z.number().positive().finite(),
+	priceTwd: z.number().int().positive().finite(),
+	sourceEvidence: z.string().trim().min(1).optional(),
+});
 const variant = z.object({
 	sku: z.string().min(1),
 	skuId: SkuId,
@@ -42,6 +49,8 @@ const variant = z.object({
 	stock: z.number(),
 	weightKg: z.number().nullable(),
 	priceTwd: z.number().nullable(),
+	pricingInput: variantPricingInput.optional(),
+	pricingProblem: z.string().min(1).optional(),
 });
 export const specsSchema = z.object({ tiers: z.array(tier), variants: z.array(variant) });
 export type TierOption = z.infer<typeof tierOption>;
@@ -106,6 +115,7 @@ const compare = (x: number[], y: number[]) => {
 export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Specs | null = null): { specs: Specs; problems: string[] } {
 	const gone = new Set(removed);
 	const live = offer.skus.filter((s) => s.stock > 0 && !gone.has(skuOf(offer.offerId, s)));
+	const pricingInputs = new Map((prev?.variants ?? []).filter((v) => v.pricingInput).map((v) => [v.skuId, v.pricingInput!]));
 	const variant = (s: Sku, options: number[]): Variant => ({
 		sku: skuOf(offer.offerId, s),
 		skuId: s.skuId,
@@ -115,6 +125,7 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 		stock: s.stock,
 		weightKg: s.weightKg ?? null,
 		priceTwd: null,
+		...(pricingInputs.has(s.skuId) ? { pricingInput: structuredClone(pricingInputs.get(s.skuId)!) } : {}),
 	});
 	if (live.length <= 1)
 		return {

@@ -9,6 +9,7 @@ import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { day, str, strs } from "../../platform/tool.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
+import { catalogWriteBlock } from "./write-guard.ts";
 
 const productId = ItemId.refine((id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0, "商品 id 要是正整数且不丢精度");
 export const unlistParams = z
@@ -131,6 +132,8 @@ const unlist: WriteOp<Params, { status: unknown; unlisted: unknown }> = {
 	where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 	async prepare(sql, p) {
 		if ((await shopIdOf(sql, p.shop)) !== p.shopId) return { skip: "店铺设置刚改过：重新确认店铺" };
+		const blocked = await catalogWriteBlock(sql, p);
+		if (blocked) return { skip: blocked };
 		const now = await productInfo(p.productId);
 		if (unlistState(now)) return { skip: "现读已经下架，不再提交" };
 		if (Number(now.status) !== 1 || now.is_unlisted !== false) return { skip: "现读不能明确确认在售，不提交下架" };

@@ -38,6 +38,7 @@ import {
 import { createListing, editProduct, listProduct, unlistProduct } from "./publish.ts";
 import { cases } from "./returns.ts";
 import { seller, shop } from "./seller.ts";
+import { addSizeProduct } from "./variants.ts";
 
 const TABS = { all: TAB.all, unpaid: TAB.unpaid, "to-ship": TAB.toShip, shipping: TAB.shipping, completed: TAB.completed } as const;
 
@@ -52,6 +53,7 @@ const tools = {
 	"list-product": listProduct,
 	"unlist-product": unlistProduct,
 	"edit-product": editProduct,
+	"add-size-product": addSizeProduct,
 	shop: get("当前登录的店铺：shopId（店铺 id）、userId（卖家账号 id）、店名、账号名、评分", undefined, () => shop()),
 
 	orders: all(

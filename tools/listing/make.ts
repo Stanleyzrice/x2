@@ -11,8 +11,8 @@ import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages } from "./images.ts";
-import type { Pics } from "./pics.ts";
-import { freightOf, num, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
+import { type ImageMode, imageModeOf, type Pics } from "./pics.ts";
+import { freightOf, num, pricingPolicy, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import { nicknameFor } from "./text.ts";
@@ -21,7 +21,7 @@ import { specsOf } from "./variants.ts";
 export async function savePrices(sql: Sql, l: ListingRow, s: Settings): Promise<boolean> {
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
-	const fields = { variants: r.specs, pricing: { params: s.params, preOrder: s.preOrder, freightRmb: r.freightRmb, at: new Date().toISOString() } };
+	const fields = { variants: r.specs, pricing: { ...pricingPolicy(s), freightRmb: r.freightRmb, at: new Date().toISOString() } };
 	await sql`update listings set variants = ${sql.json(fields.variants as Json)}, pricing = ${sql.json(fields.pricing as Json)}, updated_at = now() where id = ${l.id}`;
 	Object.assign(l, fields);
 	return true;
@@ -51,12 +51,18 @@ export async function readOffer1688(offerId: OfferId): Promise<Offer> {
 const CANDIDATE_MAIN = 12,
 	CANDIDATE_DETAIL = 16;
 
-export async function make(sql: Sql, id: string, log: (s: string) => void = console.error): Promise<{ id: string; problems: string[] }> {
+export async function make(
+	sql: Sql,
+	id: string,
+	log: (s: string) => void = console.error,
+	options: { imageMode?: ImageMode } = {},
+): Promise<{ id: string; problems: string[] }> {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
-	if (!s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
+	const imageMode = imageModeOf(options.imageMode, l.images);
+	if (imageMode === "processed" && !s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
 	log(`读货源 ${l.offer_id}`);
 	let o: Offer;
@@ -87,6 +93,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 		{
 			shop: s.shop,
 			mark: s.mark,
+			imageMode,
 			browser,
 			main: (o.images ?? [o.image]).slice(0, CANDIDATE_MAIN),
 			detail: detail.slice(0, CANDIDATE_DETAIL),
@@ -148,7 +155,7 @@ export async function make(sql: Sql, id: string, log: (s: string) => void = cons
 			},
 			offer_read_at: new Date(),
 			variants: specs,
-			pricing: { params: s.params, preOrder: s.preOrder, freightRmb: freight, at: new Date().toISOString() },
+			pricing: { ...pricingPolicy(s), freightRmb: freight, at: new Date().toISOString() },
 		},
 		problems,
 	);

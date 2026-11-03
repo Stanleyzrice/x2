@@ -14,6 +14,7 @@ import { settingsOf } from "./pricing.ts";
 import { readbackProblems, type SentInfo } from "./product.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
+import { catalogWriteBlock } from "./write-guard.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -71,16 +72,21 @@ const createOp: WriteOp<CreateP> = {
 	display: (p) => `建商品 ${p.name ?? `${p.shop}「${String(p.productInfo.name ?? "").slice(0, 24)}」`}`,
 	where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 	async prepare(sql, p) {
+		const blocked = await catalogWriteBlock(sql, p);
+		if (blocked) return { skip: blocked };
 		const now = await listingNow(sql, p.listingId);
 		if (!now || now.l.cancelled) return { skip: "商品稿已放弃" };
 		if (now.l.product_id) return { skip: `已经建好了（商品 ${now.l.product_id}）` };
 		if (now.s.paused) return { skip: `暂停上品：${now.s.paused}` };
 		if (!now.r.info) return { skip: `商品稿还缺：${now.r.problems.join("；")}` };
 		if (now.r.hash !== p.hash) return { skip: "商品稿刚改过：给人重新看过再 x2 listing publish --ids …" };
-		const freight = Number(now.l.pricing?.freightRmb ?? 0);
-		for (const v of now.r.product!.variants) {
-			const min = minPrice(v.costRmb, freight, v.weightKg!, now.s.params, now.s.preOrder);
-			if (min === null || min > v.priceTwd) return { skip: `按现在的店铺设置，规格 ${v.sku} 的售价 NT$${v.priceTwd} 不够（要 ${min ?? "—"}）：重新做商品稿` };
+		// 模板的上下限、快照由 productOf 现核；只给旧结算模型再核最低金额，不能叠加到模板上。
+		if (!now.s.template) {
+			const freight = Number(now.l.pricing?.freightRmb ?? 0);
+			for (const v of now.r.product!.variants) {
+				const min = minPrice(v.costRmb, freight, v.weightKg!, now.s.params, now.s.preOrder);
+				if (min === null || min > v.priceTwd) return { skip: `按现在的店铺设置，规格 ${v.sku} 的售价 NT$${v.priceTwd} 不够（要 ${min ?? "—"}）：重新做商品稿` };
+			}
 		}
 		await productPage();
 		return { params: p, before: {} };
@@ -136,6 +142,8 @@ const liveOp: WriteOp<LiveP> = {
 		if (!l || l.cancelled) return { skip: "商品稿已放弃" };
 		if (!l.product_id) return { skip: "还没建好（建商品没成功）" };
 		if (l.listed_at) return { skip: "已经上架了" };
+		const blocked = await catalogWriteBlock(sql, { ...p, productId: String(l.product_id) });
+		if (blocked) return { skip: blocked };
 		return { params: { ...p, productId: String(l.product_id) }, before: {} };
 	},
 	submit: (_sql, p) => listProduct.submit({ productId: p.productId! }),

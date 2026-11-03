@@ -697,6 +697,7 @@ import type { Pics } from "./pics.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf, usableWeights } from "./pricing.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type OfferLike, type ShopSettingsRow } from "./row.ts";
+import { templateParams } from "./template-pricing.ts";
 
 /** 一行商品稿：没给的格是空的 */
 const BLANK: ListingRow = {
@@ -742,6 +743,7 @@ const BLANK: ListingRow = {
 const shopRow: ShopSettingsRow = {
 	shop: "cheeroutdoor",
 	shop_id: "1554182542",
+	pricing_template: null,
 	fx: "4.4",
 	price_per_kg_rmb: "10.8",
 	label_fee_rmb: "1.5",
@@ -1150,11 +1152,82 @@ test("1688 的重量：小于 20 克的当作没给（照它核价会定得太�
 	);
 });
 
-test("重新核价（不读 1688）：1688 给的重量照用，没给的用「重量」；「重量」「国内运费」变了才要存", () => {
+test("定价模板接入报价和商品稿：两店都用 15–20%，不叠加旧的 25% 和 8 元门槛", () => {
+	for (const shop of ["ni1206", "cheeroutdoor"]) {
+		const s = settingsOf({
+			...shopRow,
+			shop,
+			pricing_template: templateParams.parse({ fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.15, maxMargin: 0.2 }),
+		});
+		const specs = colors();
+		const l = {
+			offer: { skus: specs.variants.map((v) => ({ skuId: v.skuId, weightKg: 0.15 })), tags: { freeShipping: true } },
+			variants: { ...specs, variants: specs.variants.map((v) => ({ ...v, costRmb: 28 })) },
+			pricing: { freightRmb: 0 },
+		};
+		const r = reprice(l, s)!;
+		assert.equal(r.changed, true);
+		assert.deepEqual(
+			r.specs.variants.map((v) => v.priceTwd),
+			[209, 209],
+		);
+		const saved = { ...l, variants: r.specs, pricing: { model: "template" as const, params: s.template!, freightRmb: 0 } };
+		assert.equal(reprice(saved, s)!.changed, false);
+		// jsonb 会重排 key：同一组参数不能反复触发核价写入。
+		assert.equal(reprice({ ...saved, pricing: { ...saved.pricing, params: Object.fromEntries(Object.entries(s.template!).reverse()) } }, s)!.changed, false);
+		const changed = settingsOf({
+			...shopRow,
+			shop,
+			pricing_template: templateParams.parse({ fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.18, maxMargin: 0.2 }),
+		});
+		assert.equal(reprice(saved, changed)!.changed, true);
+	}
+});
+
+test("模板核价保留未知成本；窄区间无尾 9 时选区间内整数，无整数时阻止上品", () => {
+	const s = settingsOf({
+		...shopRow,
+		pricing_template: templateParams.parse({ fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.15, maxMargin: 0.2 }),
+	});
+	const l = { offer: { skus: [{ skuId: "1", weightKg: 0.1 }], tags: { freeShipping: true } }, variants: colors() };
+	const specs = (costRmb: number) => ({ ...colors(), variants: [{ ...colors().variants[0]!, costRmb }] });
+	assert.equal(reprice({ ...l, variants: specs(5.13) }, s)!.specs.variants[0]!.priceTwd, 52);
+	assert.equal(reprice({ ...l, offer: { skus: [{ skuId: "1" }] }, variants: specs(5.13) }, s)!.specs.variants[0]!.priceTwd, null);
+	const narrow = settingsOf({
+		...shopRow,
+		pricing_template: templateParams.parse({ fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.15, maxMargin: 0.15 }),
+	});
+	assert.equal(reprice({ ...l, variants: specs(5.13) }, narrow)!.specs.variants[0]!.priceTwd, null);
+});
+
+test("报价展示当前模板、区间和条件毛利；旧价格和旧模板快照不能直接上品", () => {
+	const params = templateParams.parse({ fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.15, maxMargin: 0.2 });
+	const s = settingsOf({ ...shopRow, pricing_template: params });
+	const source = offerOf([], [[[], 28]]);
+	const o = { ...source, skus: source.skus.map((v) => ({ ...v, price: 28, weightKg: 0.15 })), freight: { costRmb: 0, to: "" } };
+	const q = quote(o, s, { weightKg: 1, freightRmb: 10 });
+	assert.equal(q.pricing.model, "template");
+	assert.equal(q.list[0]!.priceTwd, 209);
+	assert.deepEqual(q.list[0]!.rangeTwd, { min: 209, max: 221 });
+	assert.ok(q.list[0]!.margin! >= 0.15 && q.list[0]!.margin! <= 0.2);
+	const old = ready();
+	assert.equal(productOf(old, s).product, undefined);
+	assert.ok(productOf(old, s).problems.some((p) => p.includes("重新核价")));
+	const r = reprice(old, s)!;
+	const fresh = { ...old, variants: r.specs, pricing: { model: "template" as const, params, freightRmb: r.freightRmb } };
+	assert.ok(productOf(fresh, s).product);
+	assert.equal(productOf({ ...fresh, variants: old.variants }, s).product, undefined);
+});
+
+test("重新核价（不读 1688）：1688 给的重量照用，没给的用「重量」；成本、售价变了要存", () => {
 	const s = settingsOf(shopRow);
 	const specs: Specs = {
 		...colors(),
-		variants: colors().variants.map((v) => ({ ...v, weightKg: v.skuId === "1" ? 1.6 : null, priceTwd: v.skuId === "1" ? 295 : null })),
+		variants: colors().variants.map((v) => ({
+			...v,
+			weightKg: v.skuId === "1" ? 1.6 : null,
+			priceTwd: v.skuId === "1" ? minPrice(1, 0, 1.6, s.params, true) : null,
+		})),
 	};
 	const l = {
 		offer: { skus: [{ skuId: "1", weightKg: 1.6 }, { skuId: "2" }], tags: { freeShipping: true } },
@@ -1185,7 +1258,7 @@ test("重新核价（不读 1688）：1688 给的重量照用，没给的用「�
 	);
 	assert.deepEqual([reprice({ ...saved, freight_rmb: "5" }, s)!.freightRmb, reprice({ ...saved, freight_rmb: "5" }, s)!.changed], [5, true]);
 	assert.deepEqual(pricingProblems({ ...r.specs, variants: r.specs.variants.map((v) => ({ ...v, priceTwd: null })) }, []), [
-		"核价：有规格怎么定价都过不了毛利的两道门",
+		"核价：有规格缺少成本数据或没有满足毛利规则的整数售价",
 	]);
 });
 

@@ -169,7 +169,8 @@ type SentFields = Pick<
 	| "description_info"
 	| "model_list"
 	| "std_tier_variation_list"
->;
+> &
+	Partial<Pick<SentInfo, "min_purchase_limit">>;
 
 /** 图片 id：平台可能回地址，取最后一段、去掉查询串 */
 const imageId = (v: unknown) =>
@@ -190,6 +191,11 @@ export function readbackProblems(sent: SentFields, got: ProductInfo, channels: C
 	check("货号", got?.parent_sku === sent.parent_sku);
 	check("类目", JSON.stringify((got?.category_path ?? []).map(Number)) === JSON.stringify(sent.category_path));
 	check("重量", num(got?.weight?.value) === num(sent.weight.value));
+	// 旧的一件起购/未记此字段的写入维持原行为；显式多件起购必须读到对应原生数值，不能把缺失当落实。
+	if (sent.min_purchase_limit !== undefined && sent.min_purchase_limit > 1) {
+		const actual = got?.min_purchase_limit;
+		check("最低购买数量", (typeof actual === "number" || typeof actual === "string") && num(actual) === sent.min_purchase_limit);
+	}
 	check("主图", JSON.stringify((got?.images ?? []).map(imageId)) === JSON.stringify(sent.images));
 	check("尺码表", imageId(got?.size_chart_info?.size_chart) === imageId(sent.size_chart_info.size_chart));
 	check(

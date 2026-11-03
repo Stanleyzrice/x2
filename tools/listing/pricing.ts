@@ -3,6 +3,7 @@ import type { Offer } from "../../connectors/sites/1688/api.ts";
 import type { Mark } from "./pics.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
 import type { OfferLike, PriceInput, ShopSettingsRow } from "./row.ts";
+import { templateConfigParams, templatePrice } from "./template-pricing.ts";
 import { limitProblems, priceRange, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 
 export function settingsOf(row: ShopSettingsRow) {
@@ -30,6 +31,7 @@ export function settingsOf(row: ShopSettingsRow) {
 		shop: String(row.shop),
 		shopId: String(row.shop_id),
 		params,
+		template: row.pricing_template == null ? null : templateConfigParams.parse(row.pricing_template),
 		mark,
 		paused: row.paused ? String(row.paused) : null,
 		preOrder: Boolean(row.pre_order),
@@ -43,12 +45,43 @@ export function settingsOf(row: ShopSettingsRow) {
 }
 export type Settings = ReturnType<typeof settingsOf>;
 
+/** 模板启用后由模板独立核价，旧结算模型的最低金额、退损和费率不再叠加。 */
+export const pricingPolicy = (s: Settings) =>
+	s.template ? { model: "template" as const, params: s.template } : { model: "settlement" as const, params: s.params, preOrder: s.preOrder };
+
+function templateOf(v: Variant, freightRmb: number | null, p: NonNullable<Settings["template"]>) {
+	return templatePrice({ key: v.sku, costRmb: v.costRmb, weightKg: v.weightKg, freightRmb, currentTwd: v.priceTwd, units: 1 }, p);
+}
+
 export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): Variant[] {
 	return variants.map((v): Variant => {
+		const cleared = { ...v };
+		delete cleared.pricingProblem;
+		if (v.pricingInput) {
+			const explicit: Variant = {
+				...cleared,
+				costRmb: v.pricingInput.costRmb,
+				weightKg: v.pricingInput.chargeableWeightKg,
+				priceTwd: v.pricingInput.priceTwd,
+				stock: Math.min(v.stock, s.stockCap),
+			};
+			if (!s.template) explicit.pricingProblem = `核价：${v.sku} 的显式售价缺少模板参数，保留输入待核`;
+			else {
+				const result = templateOf(explicit, opts.freightRmb, s.template);
+				if (result.missing.length) explicit.pricingProblem = `核价：${v.sku} 缺${result.missing.join("、")}，保留输入待核`;
+				else if (!result.current || result.current.margin < s.template.minMargin - 1e-9 || result.current.margin > s.template.maxMargin + 1e-9)
+					explicit.pricingProblem = `核价：${v.sku} 指定售价 NT$${explicit.priceTwd} 的毛利率${result.current ? `${(result.current.margin * 100).toFixed(2)}%` : "未知"}不在输入区间${(s.template.minMargin * 100).toFixed(2)}%–${(s.template.maxMargin * 100).toFixed(2)}%，保留输入待核`;
+			}
+			return explicit;
+		}
 		const weightKg = v.weightKg && v.weightKg > 0 ? v.weightKg : opts.weightKg;
 		const stock = Math.min(v.stock, s.stockCap);
-		if (!weightKg || opts.freightRmb === null) return { ...v, weightKg, stock, priceTwd: null };
-		return { ...v, weightKg, stock, priceTwd: minPrice(v.costRmb, opts.freightRmb, weightKg, s.params, s.preOrder) };
+		if (!weightKg || opts.freightRmb === null) return { ...cleared, weightKg, stock, priceTwd: null };
+		if (s.template) {
+			const r = templateOf({ ...v, weightKg }, opts.freightRmb, s.template);
+			return { ...cleared, weightKg, stock, priceTwd: r.tailNine?.min ?? r.range?.min ?? null };
+		}
+		return { ...cleared, weightKg, stock, priceTwd: minPrice(v.costRmb, opts.freightRmb, weightKg, s.params, s.preOrder) };
 	});
 }
 
@@ -72,14 +105,18 @@ export function estimateNeeds(l: PriceInput): Need[] {
 	if (!l.offer || !specs) return [];
 	const weights = weightsOf(l.offer);
 	const needs: Need[] = [];
-	if (num(l.weight_kg) === null && specs.variants.some((v) => !weights.has(v.skuId))) needs.push("重量");
+	if (num(l.weight_kg) === null && specs.variants.some((v) => !v.pricingInput && !weights.has(v.skuId))) needs.push("重量");
 	if (freightOf(l.offer, l.freight_rmb) === null) needs.push("国内运费");
 	return needs;
 }
 
 export function pricingProblems(specs: Specs, needs: Need[]): string[] {
 	if (needs.length) return [`缺${needs.join("、")}：agent 估（x2 listing estimate）`];
-	return [...(specs.variants.some((v) => v.priceTwd === null) ? ["核价：有规格怎么定价都过不了毛利的两道门"] : []), ...limitProblems(specs)];
+	return [
+		...(specs.variants.some((v) => v.priceTwd === null) ? ["核价：有规格缺少成本数据或没有满足毛利规则的整数售价"] : []),
+		...specs.variants.flatMap((v) => (v.pricingProblem ? [v.pricingProblem] : [])),
+		...limitProblems(specs),
+	];
 }
 
 export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb: number | null; changed: boolean } | null {
@@ -92,7 +129,26 @@ export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb:
 		s,
 		{ weightKg: num(l.weight_kg), freightRmb },
 	);
-	const changed = (l.pricing?.freightRmb ?? null) !== freightRmb || variants.some((v, i) => v.weightKg !== specs.variants[i]!.weightKg);
+	const policy = pricingPolicy(s);
+	// jsonb 会重排 key，按 key 比较；老结算快照没存参数时靠重算后的售价判断。
+	const paramsChanged = l.pricing?.params
+		? JSON.stringify(Object.entries(l.pricing.params).sort()) !== JSON.stringify(Object.entries(policy.params).sort())
+		: policy.model === "template";
+	const changed =
+		(l.pricing?.model ?? "settlement") !== policy.model ||
+		paramsChanged ||
+		(policy.model === "settlement" && l.pricing?.preOrder !== undefined && l.pricing.preOrder !== policy.preOrder) ||
+		(l.pricing?.freightRmb ?? null) !== freightRmb ||
+		variants.some((v, i) => {
+			const before = specs.variants[i]!;
+			return (
+				v.costRmb !== before.costRmb ||
+				v.weightKg !== before.weightKg ||
+				v.priceTwd !== before.priceTwd ||
+				v.stock !== before.stock ||
+				v.pricingProblem !== before.pricingProblem
+			);
+		});
 	return { specs: { tiers: specs.tiers, variants }, freightRmb, changed };
 }
 
@@ -113,10 +169,13 @@ export function quote(o: Offer, s: Settings, assume: { weightKg: number; freight
 	const given = new Map(o.skus.map((k) => [k.skuId, k]));
 	const list = specs.variants.map((v) => {
 		const k = given.get(v.skuId);
+		const template = s.template ? templateOf(v, freightRmb, s.template) : null;
 		return {
 			sku: v.sku,
 			spec: (k?.attrs ?? []).filter(Boolean).join(" / ") || k?.name || "（单规格）",
 			priceTwd: v.priceTwd,
+			rangeTwd: template?.range ?? null,
+			margin: template?.current?.margin ?? null,
 			weightKg: v.weightKg,
 			weightAssumed: !((k?.weightKg ?? 0) > 0),
 			costRmb: v.costRmb,
@@ -129,6 +188,7 @@ export function quote(o: Offer, s: Settings, assume: { weightKg: number; freight
 		url: o.url,
 		title: o.title,
 		shop: s.shop,
+		pricing: pricingPolicy(s),
 		minQty: o.minQty,
 		tags: {
 			onePsale: Boolean(o.tags?.onePsale),
