@@ -1,0 +1,61 @@
+// Catalog 的网页响应形状；界面只展示工具返回的事实与计算结果。
+export type Supplier = { kind: "listing" | "chosen"; offerId: string; url: string; broken: string | null; selectedAt: string | null };
+export type Model = {
+	modelId: string | null;
+	sku: string | null;
+	name: string;
+	price: number | null;
+	stock: number | null;
+	tierIndex: number[];
+	image?: string | null;
+};
+export type Product = {
+	productId: string;
+	name: string;
+	parentSku: string | null;
+	cover: string | null;
+	status: number | null;
+	reportedStatus: number | null;
+	statusLabel: string;
+	unlisted: boolean | null;
+	models: Model[] | null;
+	priceMin: number | null;
+	priceMax: number | null;
+	stockTotal: number | null;
+	stockState: "in_stock" | "sold_out" | "unknown";
+	detailError: string | null;
+	imageError?: string | null;
+	suppliers: Supplier[];
+	supplierWarnings: string[];
+	statusChange?: { requestId: string; targetState: "listed" | "unlisted"; status: string; error: string | null } | null;
+};
+export type Snapshot = {
+	revision: string;
+	status: "running" | "complete" | "partial" | "failed";
+	startedAt: string;
+	capturedAt: string | null;
+	finishedAt: string | null;
+	source: "shopee";
+	scope: "all";
+	complete: boolean;
+	detailsComplete: boolean;
+	expectedCount: number | null;
+	productCount: number | null;
+	error: string | null;
+	phase: "listing" | "details" | null;
+	page: number | null;
+	observed: number | null;
+};
+export type CatalogResult = {
+	shop: string;
+	shopId: string;
+	snapshot: Snapshot | null;
+	lastAttempt: Snapshot | null;
+	rows: Product[];
+	total: number;
+	listedCount: number;
+	listedDetailsComplete: boolean;
+	page: number;
+	pageSize: number;
+	statuses: { status: number | null; label: string }[];
+};

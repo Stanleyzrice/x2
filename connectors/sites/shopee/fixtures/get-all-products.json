@@ -1,0 +1,16 @@
+{
+	"_fixture": "synthetic: all-state product list, not a live capture",
+	"code": 0,
+	"data": {
+		"page_info": { "total": "7" },
+		"products": [
+			{ "id": "25000000001", "name": "在售商品", "status": 1, "cover_image": "cover-a" },
+			{ "id": "25000000002", "name": "下架商品", "status": 8 },
+			{ "id": "25000000003", "name": "禁卖商品", "status": 3 },
+			{ "id": "25000000004", "name": "审核商品", "status": 2 },
+			{ "id": "25000000005", "name": "仍返回的删除商品", "status": 0 },
+			{ "id": "25000000006", "name": "新状态", "status": 17 },
+			{ "id": "9007199254740993123", "name": "状态未知", "status": null }
+		]
+	}
+}

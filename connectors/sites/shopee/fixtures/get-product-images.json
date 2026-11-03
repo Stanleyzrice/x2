@@ -1,0 +1,29 @@
+{
+	"code": 0,
+	"data": {
+		"product_info": {
+			"id": 25000000001,
+			"name": "圖片對應測試",
+			"status": 1,
+			"is_unlisted": false,
+			"images": ["tw-11134207-product-cover"],
+			"model_list": [
+				{ "id": 250000000011, "name": "相同名稱", "sku_image": "", "tier_index": [0, 1] },
+				{ "id": 250000000012, "name": "相同名稱", "sku_image": "", "tier_index": [1, 0] },
+				{ "id": 250000000013, "sku_image": "https://down-tw.img.susercontent.com/file/direct-model", "tier_index": [1, 1] },
+				{ "id": 250000000014, "sku_image": null, "tier_index": [2, 0] }
+			],
+			"std_tier_variation_list": [
+				{
+					"custom_value": "款式",
+					"value_list": [
+						{ "custom_value": "相同名稱", "image_id": "tw-11134207-first-style" },
+						{ "custom_value": "相同名稱", "image_id": "https://down-tw.img.susercontent.com/file/second-style" },
+						{ "custom_value": "缺圖" }
+					]
+				},
+				{ "custom_value": "尺寸", "value_list": [{ "custom_value": "小" }, { "custom_value": "大" }] }
+			]
+		}
+	}
+}

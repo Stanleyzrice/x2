@@ -16,6 +16,7 @@
 						"id": 250000000011,
 						"sku": "X2-12-1",
 						"name": "黑貓,60*90cm",
+						"image": "sg-11134275-0000model",
 						"price_detail": { "origin_price": "299" },
 						"stock_detail": { "total_seller_stock": 50 },
 						"statistics": { "sold_count": 3 },

@@ -6,7 +6,7 @@
 // - 类目推荐是 get_recommended_category（标题 + 已传的图 id）；get_image_category 已坏
 // - 规格最多两层（tier）；一个商品最多 100 个规格，规格之间价差不超过 5 倍
 // - 1000100256 是通用的字段校验失败码（缺尺码表也回它），不等于重复
-// - 直接开卖的发布路径回 10025；成功的配方是先发成下架（unlisted: true），人看过再上架
+// - 直接在售的创建路径曾返回 10025；现有成功请求样本的 unlisted 为 true
 
 import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
@@ -16,7 +16,16 @@ import { IMAGE, ItemId, ModelId, ORIGIN, type Req, seller, type Write, withData,
 
 const image = (id: unknown) => (!id ? "" : /^https?:\/\//.test(String(id)) ? String(id) : `${IMAGE}${id}`);
 
-export type Model = { modelId: ModelId; sku: string; name: string; price: number | null; stock: number | null; sold: number | null; tierIndex: number[] };
+export type Model = {
+	modelId: ModelId;
+	sku: string;
+	name: string;
+	price: number | null;
+	stock: number | null;
+	sold: number | null;
+	tierIndex: number[];
+	image?: string | null;
+};
 export type Product = { productId: ItemId; parentSku: string; name: string; cover: string; createdAt: string | null; models: Model[] };
 
 const scalar = z.union([z.string(), z.number()]).nullish();
@@ -41,6 +50,7 @@ export const liveList = withData(
 									id: idText.pipe(ModelId),
 									sku: z.string().nullish(),
 									name: z.string().nullish(),
+									image: z.string().nullish(),
 									price_detail: z.looseObject({ origin_price: scalar }).nullish(),
 									stock_detail: z.looseObject({ total_seller_stock: scalar }).nullish(),
 									statistics: z.looseObject({ sold_count: scalar }).nullish(),
@@ -91,33 +101,84 @@ export async function liveProducts(pageNo = 1, pageSize = 48): Promise<{ total: 
 
 export const STATUS: Record<number, string> = { 0: "删除", 1: "在售", 2: "审核中", 3: "禁卖", 8: "下架" };
 
-export async function allProducts(
-	pageNo = 1,
-	pageSize = 48,
-): Promise<{ total: number; rows: { productId: string; name: string; status: number; cover: string }[] }> {
-	const b = await seller(
-		"/api/v3/opt/mpsku/list/v2/search_product_list",
-		withData(
-			z
-				.looseObject({
-					page_info: pageInfo,
-					products: z
-						.array(z.looseObject({ id: idText, name: z.string().nullish(), status: z.union([z.number(), z.string()]), cover_image: z.string().nullish() }))
-						.nullish(),
-				})
-				.nullish(),
+export type ProductSummary = {
+	productId: string;
+	name: string;
+	status: number | null;
+	cover: string;
+	bulk?: { parentSku: string | null; models: (Model & { isDefault?: boolean })[] };
+};
+const allProductList = withData(
+	z.looseObject({
+		page_info: z.looseObject({ total: z.union([z.number(), z.string().regex(/^\d+$/)]) }),
+		products: z.array(
+			z.looseObject({
+				id: z.union([z.string().min(1), z.number().int().positive().refine(Number.isSafeInteger)]).transform(String),
+				name: z.string().nullish(),
+				status: scalar,
+				cover_image: z.string().nullish(),
+			}),
 		),
-		{ query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "all", need_ads: false } },
-	);
+	}),
+);
+
+/** 列表明确回了规格才提供 bulk；缺列表、截断提示或数量不符时由调用方另读详情。 */
+function bulkModels(p: z.output<typeof allProductList>["data"]["products"][number]): ProductSummary["bulk"] {
+	if (!Array.isArray(p.model_list) || !p.model_list.length) return undefined;
+	for (const [key, value] of Object.entries(p)) {
+		if (/model.*(?:count|num|total)|total.*model/i.test(key)) {
+			if (value == null || value === "" || !Number.isSafeInteger(Number(value)) || Number(value) !== p.model_list.length) return undefined;
+		} else if (/has_more|truncat|partial|incomplete/i.test(key) && ![false, 0, "false", "0"].includes(value as string | number | boolean)) return undefined;
+	}
+	const candidate = { data: { page_info: { total: 1 }, products: [p] } };
+	const parsed = liveList.safeParse(candidate);
+	if (!parsed.success) return undefined;
+	const nativeModels = parsed.data.data?.products?.[0]?.model_list;
+	const product = liveProductsOf(candidate).rows[0]!;
+	const models = product.models.map((m, i) => {
+		const isDefault = nativeModels?.[i]?.is_default;
+		return {
+			...m,
+			image: productImageUrl(nativeModels?.[i]?.image),
+			...(typeof isDefault === "boolean" ? { isDefault } : {}),
+			price: m.price !== null && Number.isFinite(m.price) && m.price >= 0 ? m.price : null,
+			stock: m.stock !== null && Number.isFinite(m.stock) && m.stock >= 0 ? m.stock : null,
+		};
+	});
+	return { parentSku: product.parentSku || null, models };
+}
+
+/** 全状态列表的回包解析；缺总数或列表不能当作空店铺。 */
+export function allProductsOf(raw: unknown): { total: number; rows: ProductSummary[] } {
+	const b = reply(allProductList, raw, "Shopee get_product_list(all)");
+	const total = Number(b.data.page_info.total);
+	if (!Number.isSafeInteger(total) || total < 0) throw new Error("Shopee get_product_list(all) 的回包变了：total 不是非负整数");
 	return {
-		total: Number(b.data?.page_info?.total ?? 0),
-		rows: (b.data?.products ?? []).map((p) => ({
-			productId: String(p.id),
-			name: String(p.name ?? ""),
-			status: Number(p.status),
-			cover: image(p.cover_image),
-		})),
+		total,
+		rows: b.data.products.map((p) => {
+			const bulk = bulkModels(p);
+			return {
+				productId: p.id,
+				name: p.name ?? "",
+				status: p.status == null || (typeof p.status === "string" && p.status.trim() === "") || !Number.isInteger(Number(p.status)) ? null : Number(p.status),
+				cover: image(p.cover_image),
+				...(bulk ? { bulk } : {}),
+			};
+		}),
 	};
+}
+
+/** 全状态列表与在售列表共用 get_product_list；search_product_list 不按 page_number 翻页。 */
+export function allProductsRequest(pageNo = 1, pageSize = 48): { path: string; request: Req } {
+	return {
+		path: "/api/v3/opt/mpsku/list/v2/get_product_list",
+		request: { query: { page_size: Math.min(48, pageSize), page_number: pageNo, list_type: "all", need_ads: false } },
+	};
+}
+
+export async function allProducts(pageNo = 1, pageSize = 48): Promise<{ total: number; rows: ProductSummary[] }> {
+	const { path, request } = allProductsRequest(pageNo, pageSize);
+	return allProductsOf(await seller(path, z.unknown(), request));
 }
 
 /** 商品的完整资料（product_info）：写只认识读回对账、上架、按货号找要用的格，别的原样留着 */
@@ -137,6 +198,7 @@ const productInfoShape = z.looseObject({
 			z.looseObject({
 				id: idText.pipe(ModelId).optional(),
 				name: z.string().nullish(),
+				sku_image: z.string().nullish(),
 				sku: z.string().nullish(),
 				tier_index: z.array(z.union([z.number(), z.string()])).nullish(),
 				stock_detail: z.looseObject({ total_seller_stock: scalar, seller_stock_info: z.array(z.looseObject({ sellable_stock: scalar })).nullish() }).nullish(),
@@ -154,6 +216,32 @@ const productInfoShape = z.looseObject({
 		.nullish(),
 });
 export type ProductInfo = z.output<typeof productInfoShape>;
+
+/** Shopee 图片字段是图片 id 或 HTTP(S) URL；空值和无法识别的值保留未知。 */
+export function productImageUrl(value: string | null | undefined): string | null {
+	const text = value?.trim();
+	if (!text) return null;
+	if (/^https?:\/\//i.test(text)) {
+		try {
+			const url = new URL(text);
+			return url.hostname ? url.href : null;
+		} catch {
+			return null;
+		}
+	}
+	return /^[a-z\d_-]+$/i.test(text) ? `${IMAGE}${text}` : null;
+}
+
+/** 详情的 sku_image 为空时，仅按第零层 tier_index 取对应 image_id，不按规格名称或商品封面猜图。 */
+export function productModelImage(info: ProductInfo, model: NonNullable<ProductInfo["model_list"]>[number]): string | null {
+	const direct = productImageUrl(model.sku_image);
+	if (direct) return direct;
+	const rawIndex = model.tier_index?.[0];
+	if (rawIndex === undefined || (typeof rawIndex === "string" && !rawIndex.trim())) return null;
+	const index = Number(rawIndex);
+	if (!Number.isSafeInteger(index) || index < 0) return null;
+	return productImageUrl(info.std_tier_variation_list?.[0]?.value_list?.[index]?.image_id);
+}
 
 /** 商品资料（get_product_info）的回包 → product_info（纯函数） */
 export const productInfoOf = (raw: unknown): ProductInfo =>

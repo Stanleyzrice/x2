@@ -21,7 +21,7 @@
 | | `oneOrder` | `GET /api/v3/order/get_one_order` |
 | | `arrangeDropoff`（写） | `POST /api/v3/shipment/init_order` |
 | `products.ts` | `liveProducts` | `GET /api/v3/opt/mpsku/list/v2/get_product_list?list_type=live_all`（一页最多 48） |
-| | `allProducts` | `GET /api/v3/opt/mpsku/list/v2/search_product_list?list_type=all` |
+| | `allProducts` | `GET /api/v3/opt/mpsku/list/v2/get_product_list?list_type=all`（page_number 分页，一页最多48） |
 | | `productInfo` | `GET /api/v3/product/get_product_info` |
 | | `channels` | `POST /api/v3/listing-upload/component/get_product_channel_info` |
 | | `countLimit` | `GET /api/v3/opt/mpsku/list/get_product_count_limit` |
@@ -32,6 +32,7 @@
 | | `shippingDays` | `GET /api/v3/product/get_product_constraints/` |
 | | `createProduct`（写） | `POST /api/v3/product/create_product_info` |
 | | `updateProduct`、`setUnlisted`（写） | `POST /api/v3/product/update_product_info` |
+| `variants.ts` | `addSizeProduct`（写） | 同一更新接口的 `name`、`description_info`、`std_tier_variation_list`、`model_list`；既有模型提交 `id`、`tier_index`、`price`，新模型使用 `id: 0` 和 `stock_setting_list`、货号、图片 |
 | | `edit-product`（写，只经业务工具调用） | 同上；`name` 和可选的 `model_list`（规格 id、tier_index、price），不交库存、规格名或商品其他字段 |
 | | `deleteProducts`（写） | `POST /api/v3/product/delete_product_info` |
 | | `uploadImage`（写） | 页面的 `UploadService.$instance.uploadImage`（webpack 模块里找） |
@@ -62,7 +63,7 @@
 | 做什么 | 页面 | 做法 |
 |---|---|---|
 | 回复评价 | `/portal/shop/rating`（评价管理） | 按钮 `[data-testid="reply-button"]`，从它的 React fiber 往上找 `memoizedProps.info`，核对 `commentId`、`orderId` 和评价原文；点开后在 `[data-testid="reply-modal"]` 的 textarea 里用原生的 value setter 填字、发 input 事件，再点 `[data-testid="reply-submit-button"]` |
-| 发聊聊 | `/new-webchat/conversations` | 消息走 WebSocket（SharedWorker `webchat/worker.js`，socket.io），不是 HTTP。做法：`window.postMessage({type: "MiniChatRedirect", userId, shopId, conversationId, isFromSearch: true})` 打开会话；在 `textarea[placeholder="輸入文字"]` 里填字；从 redux store 的 `conversationReducer`、`entityReducer.conversations` 核对会话和最新消息 id 没变；再点输入框旁边唯一的 `i` 图标 |
+| 发聊聊（`chat.ts` 的 `sendMessage`） | `/new-webchat/conversations` | 消息由页面的 SharedWorker/WebSocket 发送。`MiniChatRedirect` 打开指定会话；用原生 value setter 填入唯一可用的 `textarea[placeholder="輸入文字"]`，发 input 事件；核对 Redux 当前会话、买家、店铺、正文及 `latest_message_id` 均与确认引用一致，再只触发一次 Enter。提交结果须读回新消息核对 |
 | 建商品优惠券 | `/portal/marketing/vouchers/new?usecase=2` | 从输入框的 React fiber 找到表单对象（有 `fields["convertFields.items"]`），用 `form.setValuesIn` 填、`form.validate()`，再点「確認」 |
 | 广告：从自动选品里移出一个商品、单独开广告 | — | `POST /api/pas/v1/product/gms/item/edit`（`type: "delete"`）、`POST /api/pas/v1/product/publish`（`bidding_strategy: "roi_two"`，预算和 ROAS 乘 100000）；lilto 做过，没搬 |
 
@@ -71,10 +72,13 @@
 - 订单列表的 `order_list_tab`：100 全部、200 未付款、300 待出货、400 运送中、500 已完成。
 - 订单详情有两种外壳：`package_level_order_card`（分包裹的）、`order_card`。
 - 商品状态码：0 删除、1 在售、2 审核中、3 禁卖、8 下架。
+- 全状态目录分页使用 `get_product_list` 的 `list_type=all`、`page_number`、`page_size`。商品列表前端的 `search_product_list` 用于搜索/重置条件，不带页码；向它传 `page_number=2` 仍会重复第一页，不能拿来遍历目录。
+- `get_product_list(all)` 的商品行原生包含 `parent_sku`、`model_list`；规格用 `price_detail.origin_price`、`stock_detail.total_seller_stock`、`tier_index`。`allProducts` 在规格列表非空且没有截断/数量不符提示时提供 `bulk`；缺失规格仍须另读详情。有限核对的两个多规格商品及一个下架商品，列表与详情的 model id 集合相同；此证据不代表未来回包不会缺项。
+- `bulk.models[].isDefault` 只保留模型原生 boolean `is_default`。单 SKU 的空 `name`、`tier_index: [0]` 可以同时出现，不能仅凭空名字或层下标推定默认规格。
 - 属性的可选值在 `children`，`value_list` 恒空；值要一字不差地取自 `children` 的名字，编的值发布时被拒。
 - 规格最多两层；一个商品最多 100 个规格，规格之间价差不超过 5 倍。
 - `1000100256` 是通用的字段校验失败码（缺尺码表也回它），不等于重复。
-- 发布：直接开卖的路径回 10025；成功的配方是先发成下架（`unlisted: true`），人看过再上架。
+- 创建接口：直接在售的请求样本返回 10025；已验证成功的请求样本使用 `unlisted: true`。这是请求样本与接口响应记录。
 - 商品列表的上下架按钮使用 `update_product_info`，只交 `product_info: { unlisted }`，带 `Entrance-Identification: 1`（2026-10-30 读当前 product-list 模块的单件下架按钮）。普通编辑请求不带这个入口标识；不要为了下架擅自补尺码表或重交整份商品资料。
 - 列表下架还设置 `listingSignature`，请求拦截器发送 `sc-listing-sign`（MD5：原请求体 JSON + `SIGNCODE` + 四舍五入到秒的时间 + 当前 `SPC_CDS`）、`sc-listing-sign-t`、`sc-listing-sign-v: 1.0.0`；`SPC-SLT` 用当前店铺 id、页面公开固定串和当前 `SPC_CDS` 计算。不能只补入口标识而漏签名；这些会话值不进日志和写入记录。
 - 列表的批量下架使用 `product/update_product/?version=3.1.0&source=seller_center`，请求是 `[{ id, unlisted: true }]`，入口标识为 `2`（当前 `delistPublishedProducts`）。它与单件 `update_product_info` 不同，但两个入口都可能因旧商品缺尺码表而拒绝。x2 逐件交批量入口，解析 `data.result` 的商品 id、code，再读详情核对状态；不补尺码表、不重交商品内容。
@@ -87,8 +91,10 @@
 
 ## 回包样本
 
+- SKU 图片：`get_product_list` 的 `model_list[].image` 是图片 id；`get_product_info` 的 `model_list[].sku_image` 是字符串，可为空。为空时，图片由 `std_tier_variation_list[0].value_list[model.tier_index[0]].image_id` 对应，索引 0 也是有效值。尺寸层可能没有图片，不按名称匹配、不借用商品封面。图片 id 拼接 `https://down-tw.img.susercontent.com/file/`，已是 HTTP(S) URL 则直接使用，缺图保留 null。`fixtures/get-product-images.json` 保留此字段形状，覆盖零索引、重复名称、直接 URL 和缺图。
+
 `fixtures/unlist-product.json` 是 2026-10-30 列表批量入口成功下架的 `data` 摘录，商品 id 已替换。提交前后详情的 `is_unlisted` 从 false 变 true；详情的 `status` 可以暂时还是 1，因此对账不能只看 status。
 
-`fixtures/product-performance.json` 是 2026-10-30 从商品表现接口真回包抽取的有销量、零销量两条（其余字段省略，total 保留原值）；用于 id、确认件数和付款件数的解析。商品表现已逐项解析这些字段，缺少件数保留未知，不补零。下架的 `unlist-product` 经业务工具登记进写入引擎，只发一次 `update_product_info`，回读商品详情确认下架；首次须单件试跑。
+`fixtures/product-performance.json` 是 2026-10-30 从商品表现接口真回包抽取的有销量、零销量两条（其余字段省略，total 保留原值）；用于 id、确认件数和付款件数的解析。商品表现已逐项解析这些字段，缺少件数保留未知，不补零。`unlist-product` 的请求接口为 `update_product_info`，响应与商品状态字段见上述样本。
 
 `fixtures/*.json` 是解析过的回包（商品列表、订单卡片、商品资料、属性树、聊聊的会话和消息），api.test.ts 拿它们跑解析。都是照代码和上面记的写的（不是抓的真回包）。别的接口（经营数据、广告、优惠券、折扣、收入、售后、批量上架的记录）原样回，只解析外壳和列表那一层，没配样本。登录以后用 live.ts 读一遍，把真回包换进来（买家的名字、电话、地址、聊天内容换成假的）。
