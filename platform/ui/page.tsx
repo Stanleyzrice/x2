@@ -4,20 +4,61 @@ import { Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { api, fail, type Item, usePoll } from "./api.ts";
+import { api, fail, type Item, type PageSummary, usePoll } from "./api.ts";
 import { isGenerative, isInteractable, Render, tabOf } from "./registry.tsx";
 
 const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function PageView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
+export function PageView({ id, onDeleted, pages = [] }: { id: string; onDeleted: () => void; pages?: PageSummary[] }) {
 	const [page, error, reload] = usePoll(() => api.page(id), 3000, [id]);
 	const mobile = useIsMobile();
 	if (error) return <p className="p-6 text-sm text-destructive">{error}</p>;
 	if (!page) return <Skeleton className="m-6 h-40" />;
+	if (page.workspace)
+		return (
+			<div className="flex h-svh min-w-0 flex-col overflow-hidden">
+				<header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background/95 px-4">
+					<SidebarTrigger />
+					<span className="text-sm text-muted-foreground">{page.workspace.group ?? "工作台"}</span>
+					<span className="text-muted-foreground">/</span>
+					<h1 className="text-sm font-medium">{page.title}</h1>
+					{pages.filter((p) => p.workspace?.component === page.workspace!.component).length > 1 && (
+						<Select
+							value={page.id}
+							onValueChange={(value) => {
+								const next = pages.find((p) => p.id === value);
+								if (next?.workspace) location.hash = next.workspace.key;
+							}}
+						>
+							<SelectTrigger className="ml-auto" aria-label="切换工作区">
+								<SelectValue>{page.workspace.group}</SelectValue>
+							</SelectTrigger>
+							<SelectContent>
+								{pages
+									.filter((p) => p.workspace?.component === page.workspace!.component)
+									.map((p) => (
+										<SelectItem key={p.id} value={p.id}>
+											{p.workspace?.group}
+										</SelectItem>
+									))}
+							</SelectContent>
+						</Select>
+					)}
+				</header>
+				<div className="min-h-0 flex-1 overflow-auto bg-muted/20">
+					{page.items
+						.filter((i) => i.fixed)
+						.map((item) => (
+							<Render key={item.id} item={item} />
+						))}
+				</div>
+			</div>
+		);
 	const stream = page.items.filter(isGenerative);
 	const panel = page.items.filter(isInteractable);
 	const remove = () => {

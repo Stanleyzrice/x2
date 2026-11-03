@@ -8,8 +8,9 @@ import { outcomeText, schema } from "./cli.ts";
 import { close, db, setDatabase } from "./db/index.ts";
 import { openScratch } from "./db/scratch.ts";
 import { Usage } from "./errors.ts";
+import { startJobs } from "./jobs.ts";
 import { status } from "./status.ts";
-import { type Checked, findTool, flag, get, parseJson, str, strs, type Todo, type Toolkit } from "./tool.ts";
+import { type Checked, findTool, flag, get, parseJson, str, strs, type Todo, type Toolkit, toolkits } from "./tool.ts";
 import { catalog, createPage, deletePage, listPages, parseItem, push, showPage, update } from "./web/pages.ts";
 import { serve } from "./web/server.ts";
 import { exclusive, LOOK, verify, WriteId } from "./writes.ts";
@@ -80,6 +81,16 @@ export const platform: Toolkit = {
 			{ text: (r) => `不再提醒：${r.keys.join("、")}` },
 		),
 		schema: get("全部工具的说明和参数（JSON Schema）", undefined, async () => schema()),
+		worker: get("运行已注册的后台任务（Ctrl-C停止），不需要打开网页", undefined, async () => {
+			const stop = startJobs(
+				await db(),
+				toolkits().flatMap((k) => k.jobs ?? []),
+			);
+			console.error("后台任务正在运行（Ctrl-C停止）");
+			await new Promise<void>((ok) => process.once("SIGINT", ok).once("SIGTERM", ok));
+			await stop();
+			return { stopped: true };
+		}),
 		web: get(
 			"开网页（Ctrl-C 关掉）：侧栏是页，中间是 generative 组件，右边是 interactable 组件",
 			z.object({
@@ -98,7 +109,7 @@ export const platform: Toolkit = {
 					}
 					const { build } = await import("vite");
 					await build({ configFile: `${root}platform/ui/vite.config.ts`, logLevel: "warn" });
-					const { stop } = await serve(await db(), { host: p.host, port: p.port, dist: `${root}platform/ui/dist` });
+					const { stop } = await serve(await db(), { host: p.host, port: p.port, dist: `${root}platform/ui/dist`, background: !p.scratch });
 					const url = `http://${p.host === "0.0.0.0" ? "localhost" : p.host}:${p.port}`;
 					console.error(`网页：${url}（Ctrl-C 关掉）`);
 					await new Promise<void>((ok) => process.once("SIGINT", ok).once("SIGTERM", ok));

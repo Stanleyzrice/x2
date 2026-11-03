@@ -10,7 +10,7 @@ import { registerSite, type SiteDef } from "./browser/browser.ts";
 import { addSchema, type Sql } from "./db/index.ts";
 import { Usage } from "./errors.ts";
 import type { Table } from "./web/tables.ts";
-import type { Ran, WriteOp } from "./writes.ts";
+import type { Outcome, Ran, WriteOp } from "./writes.ts";
 
 export type Page<R = unknown> = { rows: R[]; next: string | null };
 
@@ -21,7 +21,7 @@ export type Show<O> = { text?: (out: O) => string; exit?: (out: O) => "error" | 
 type Common = { description: string; params: z.ZodObject } & Show<never>;
 export type ReadTool = Common & { kind: "read" } & ({ run: (p: never) => Promise<unknown> } | { page: (p: never, cursor: string | null) => Promise<Page> });
 export type Planned = { op: string; params: unknown };
-export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: never) => Promise<Planned[][]> };
+export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: never) => Promise<Planned[][]>; replay?: (sql: Sql, p: never) => Promise<Outcome> };
 export type Sent = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
 export type SubmitTool = Common & { kind: "write"; submit: (p: never) => Promise<Sent> };
 export type Tool = ReadTool | WriteTool | SubmitTool;
@@ -31,11 +31,16 @@ export type Todo = { kind: string; why: string; tool?: string; params?: Record<s
 export type Read = { what: string; who: string; ok: boolean; rows?: number; error?: string; blocked?: boolean };
 export type Checked = { read: Read[]; human: Reminder[]; todo: Todo[] };
 
+export type Workspace = { key: string; title: string; component: string; props: Record<string, unknown>; group?: string; icon?: string };
+export type Job = { name: string; hour: number; timeZone: string; run: (sql: Sql) => Promise<unknown> };
+
 export type Toolkit = {
 	name: string;
 	title: string;
 	kind: "platform" | "site" | "service" | "tool";
 	tools: Record<string, Tool>;
+	workspaces?: Workspace[];
+	jobs?: Job[];
 	site?: SiteDef;
 	scope?: { flag: string; description: string; run: <T>(value: string, fn: () => Promise<T>) => Promise<T> };
 	schema?: URL;

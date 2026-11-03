@@ -158,7 +158,10 @@ export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: str
 	if (isWrite(t)) {
 		const sql = await db();
 		const batches = await t.plan(sql, parsed.data as never);
-		return { value: await perform(sql, batches, { try: tryFlag === "true" }), tool: t };
+		return {
+			value: !batches.length && t.replay ? await t.replay(sql, parsed.data as never) : await perform(sql, batches, { try: tryFlag === "true" }),
+			tool: t,
+		};
 	}
 	if (!("page" in t)) return { value: await where(() => t.run(parsed.data as never)), tool: t };
 	return where(async () => {

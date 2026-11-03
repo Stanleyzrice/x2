@@ -74,3 +74,33 @@ create index if not exists page_items_page on page_items (page_id);
 alter table writes drop column if exists pid;
 alter table page_items add column if not exists answer jsonb;
 alter table page_items add column if not exists answered_at timestamptz;
+
+alter table pages add column if not exists workspace_key text;
+create unique index if not exists pages_workspace_key on pages (workspace_key);
+alter table page_items add column if not exists fixed boolean not null default false;
+create unique index if not exists page_items_fixed on page_items (page_id) where fixed;
+
+create table if not exists job_runs (
+	name text not null,
+	day text not null,
+	status text not null,
+	started_at timestamptz not null default now(),
+	finished_at timestamptz,
+	error text,
+	primary key (name, day)
+);
+alter table job_runs add column if not exists backend_pid int;
+
+create table if not exists web_confirmations (
+	token text primary key,
+	item_id bigint not null references page_items(id) on delete cascade,
+	action text not null,
+	tool text not null,
+	reference_hash text not null,
+	params jsonb not null,
+	display text not null,
+	state text not null default 'prepared',
+	expires_at timestamptz not null,
+	outcome jsonb,
+	created_at timestamptz not null default now()
+);

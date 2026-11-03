@@ -33,6 +33,7 @@ export type WriteOp<P = unknown, B = unknown> = {
 	display: (p: P) => string;
 	link?: string;
 	untried?: string;
+	tried?: (sql: Sql, p: P) => Promise<boolean>;
 	where: <T>(sql: Sql, p: P, fn: () => Promise<T>) => Promise<T>;
 	prepare: (sql: Sql, p: P) => Promise<Prepared<P, B>>;
 	submit: (sql: Sql, p: P) => Promise<Submitted>;
@@ -281,7 +282,7 @@ async function execute(sql: Sql, lock: number, opts: Opts, ops: Record<string, W
 			blocked,
 			stuck: halted,
 			untried: op?.untried,
-			tried: Boolean(opts.tryOps?.includes(w.op)),
+			tried: Boolean(opts.tryOps?.includes(w.op)) || Boolean(await op?.tried?.(sql, w.params)),
 		});
 		if (no || !op) {
 			await skip(no ?? `没有 ${w.op} 这个写操作`);

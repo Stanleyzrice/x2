@@ -1,5 +1,6 @@
 // product：几张商品卡，一行排几张（窄了自动换行）。图多张的左右翻（shadcn 的 carousel）；图不带 Referer（1688 的图挡别站的 Referer）；数字照中文的千分位写
 import { StarIcon } from "lucide-react";
+import { useLightbox } from "@/components/lightbox";
 import { Title } from "@/components/title.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,20 +14,23 @@ const priceText = (p: NonNullable<Product["price"]>) =>
 	p.max === undefined || p.max === p.min ? money(p.min, p.currency) : `${money(p.min, p.currency)}–${p.max.toLocaleString("zh-CN")}`;
 
 export function View({ props }: { props: Props }) {
+	const { open, lightbox } = useLightbox(props.products.flatMap((p) => p.images.map((src, i) => ({ src, alt: p.name, label: `${p.name} · 图片 ${i + 1}` }))));
+	const offsets = props.products.map((_, i) => props.products.slice(0, i).reduce((n, p) => n + p.images.length, 0));
 	return (
 		<div>
 			<Title>{props.title}</Title>
 			<div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
 				{props.products.map((p, i) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 快照，卡片不会变；同一个商品可以放两次（例 两家店）
-					<ProductCard key={i} product={p} />
+					<ProductCard key={i} product={p} openImage={(index) => open(offsets[i]! + index)} />
 				))}
 			</div>
+			{lightbox}
 		</div>
 	);
 }
 
-function ProductCard({ product: p }: { product: Product }) {
+function ProductCard({ product: p, openImage }: { product: Product; openImage: (index: number) => void }) {
 	const name = p.link ? (
 		<a href={p.link} target="_blank" rel="noreferrer" className="hover:underline">
 			{p.name}
@@ -46,7 +50,7 @@ function ProductCard({ product: p }: { product: Product }) {
 	].filter(Boolean);
 	return (
 		<Card size="sm" className="gap-2 overflow-hidden pt-0">
-			<Pictures images={p.images} alt={p.name} />
+			<Pictures images={p.images} alt={p.name} openImage={openImage} />
 			<CardContent className="flex flex-col gap-1">
 				<div className="line-clamp-2 text-sm font-medium">{name}</div>
 				{p.price && <div className="text-base font-semibold tabular-nums">{priceText(p.price)}</div>}
@@ -72,15 +76,24 @@ function ProductCard({ product: p }: { product: Product }) {
 	);
 }
 
-function Pictures({ images, alt }: { images: string[]; alt: string }) {
-	const img = (url: string) => <img src={url} alt={alt} loading="lazy" referrerPolicy="no-referrer" className="aspect-square w-full bg-muted object-cover" />;
-	if (images.length === 1) return img(images[0]!);
+function Pictures({ images, alt, openImage }: { images: string[]; alt: string; openImage: (index: number) => void }) {
+	const img = (url: string, index: number) => (
+		<button
+			type="button"
+			aria-label={`放大 ${alt} 图片 ${index + 1}`}
+			className="block w-full cursor-zoom-in focus-visible:outline-2 focus-visible:outline-ring"
+			onClick={() => openImage(index)}
+		>
+			<img src={url} alt={alt} loading="lazy" referrerPolicy="no-referrer" className="aspect-square w-full bg-muted object-cover" />
+		</button>
+	);
+	if (images.length === 1) return img(images[0]!, 0);
 	return (
 		<Carousel opts={{ loop: true }}>
 			<CarouselContent className="ml-0">
-				{images.map((url) => (
+				{images.map((url, index) => (
 					<CarouselItem key={url} className="pl-0">
-						{img(url)}
+						{img(url, index)}
 					</CarouselItem>
 				))}
 			</CarouselContent>

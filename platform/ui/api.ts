@@ -21,6 +21,9 @@ export const api = {
 	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
 	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
 	act: <T>(item: string, action: string, input: Record<string, unknown> = {}) => call<T>("POST", "/api/page/act", { item, action, input }),
+	prepare: (item: string, action: string, input: Record<string, unknown>) =>
+		call<{ token: string; display: string; expiresAt: string; trialRequired: boolean }>("POST", "/api/page/prepare", { item, action, input }),
+	confirm: <T>(token: string, trial = false) => call<T>("POST", "/api/page/confirm", { token, trial, confirmed: true }),
 	closeItem: (id: string) => call<unknown>("DELETE", `/api/page/item?id=${q(id)}`),
 	rows: (ref: unknown) => call<Row[]>("GET", `/api/rows?ref=${q(JSON.stringify(ref))}`),
 	set: (table: string, key: Key, col: string, value: unknown) => call<Row | null>("PATCH", "/api/rows", { table, key, col, value }),
@@ -43,25 +46,34 @@ export const fail = (e: Error) => toast.error(e.message);
 export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[]): [T | null, string | null, () => void] {
 	const [value, setValue] = useState<T | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const epoch = useRef(0);
+	const sequence = useRef(0);
 	const latest = useRef(read);
 	latest.current = read;
 	const load = useRef(() => {
+		const generation = epoch.current,
+			request = ++sequence.current;
 		latest.current().then(
 			(v) => {
+				if (generation !== epoch.current || request !== sequence.current) return;
 				setValue(v);
 				setError(null);
 			},
-			(e: Error) => setError(e.message),
+			(e: Error) => {
+				if (generation === epoch.current && request === sequence.current) setError(e.message);
+			},
 		);
 	}).current;
 	const key = JSON.stringify(deps);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: deps（key）变了才清掉重来；读的函数每次渲染都是新的，用 ref 里最新的
 	useEffect(() => {
+		epoch.current++;
 		setValue(null);
 		load();
 		const t = setInterval(load, ms);
 		window.addEventListener("focus", load);
 		return () => {
+			epoch.current++;
 			clearInterval(t);
 			window.removeEventListener("focus", load);
 		};

@@ -1,9 +1,11 @@
 // 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。
-// 碰站点只有一条路：组件在 schema.ts 里声明网页能替它调哪几个工具（actions，例 chat 读聊聊、写回复草稿），这里经注册表（platform/tool.ts 的 invoke）调；platform 仍然不 import connectors、tools，只认工具的 id。只调读工具
+// 组件在 schema.ts 声明可调用工具：actions 只调读工具；writePreviews/writeActions 经冻结预览和逐条确认进入写入引擎。
+// platform 不 import connectors、tools，只通过注册表认识工具 id。
 // GET /api/meta：每张表的列（类型从库里读）、表单；GET /api/rows?ref=：一个 datagrid 引用的行（ref 是它的 props 的 JSON，照组件的校验查过、grid.ts 拼成 SQL，只给要的列）；
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
 // GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查；
 // POST /api/page/act { item, action, input }：替组件调它声明的工具
+// POST /api/page/prepare { item, action, input }：冻结精确预览；POST /api/page/confirm { token, confirmed, trial }：确认一次写入
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -11,8 +13,11 @@ import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import type { Json, Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
+import { startJobs } from "../jobs.ts";
+import { toolkits } from "../tool.ts";
+import { confirmWrite, prepareConfirmation } from "./confirmations.ts";
 import { type Ref, refQuery } from "./grid.ts";
-import { act, answer, closeItem, deletePage, listPages, parseProps, showPage } from "./pages.ts";
+import { act, answer, closeItem, deletePage, ensureWorkspaces, listPages, parseProps, showPage } from "./pages.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Shown, type Table, tables } from "./tables.ts";
 
 /** 网页发来的请求体：一个 JSON 对象（各个接口再照自己要的格解析） */
@@ -88,8 +93,9 @@ function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly
 
 export async function serve(
 	sql: Sql,
-	{ host, port, dist }: { host: string; port: number; dist: string },
+	{ host, port, dist, background = true }: { host: string; port: number; dist: string; background?: boolean },
 ): Promise<{ port: number; stop: () => Promise<void> }> {
+	await ensureWorkspaces(sql);
 	const colTypes = await types(sql);
 	const table = (name: unknown) => {
 		const t = tables().find((x) => x.name === name);
@@ -174,6 +180,8 @@ export async function serve(
 			return { ok: true };
 		},
 		"POST /api/page/act": async (b) => act(sql, String(b?.item ?? ""), String(b?.action ?? ""), b?.input),
+		"POST /api/page/prepare": async (b) => prepareConfirmation(sql, String(b.item ?? ""), String(b.action ?? ""), b.input),
+		"POST /api/page/confirm": async (b) => confirmWrite(sql, b),
 		"DELETE /api/page/item": async (_, url) => {
 			await closeItem(sql, url.searchParams.get("id") ?? "");
 			return { ok: true };
@@ -231,8 +239,15 @@ export async function serve(
 		const route = api[`${req.method} ${url.pathname}`];
 		if (route) {
 			try {
+				if (req.method !== "GET") {
+					if (req.headers["sec-fetch-site"] === "cross-site") throw new Usage("不接受跨站操作");
+					if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw new Usage("操作必须来自当前 X2 页面");
+				}
 				let raw = "";
-				for await (const c of req) raw += c;
+				for await (const c of req) {
+					raw += c;
+					if (raw.length > 2 * 1024 * 1024) throw new Usage("请求体过大");
+				}
 				const b = body.safeParse(raw ? JSON.parse(raw) : {});
 				if (!b.success) throw new Usage("请求体要是一个 JSON 对象");
 				send(res, 200, "application/json", JSON.stringify(await route(b.data, url)));
@@ -254,5 +269,17 @@ export async function serve(
 
 	const server = createServer((req, res) => void handle(req, res));
 	await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, host, ok));
-	return { port: (server.address() as { port: number }).port, stop: () => new Promise<void>((ok) => server.close(() => ok())) };
+	const stopJobs = background
+		? startJobs(
+				sql,
+				toolkits().flatMap((k) => k.jobs ?? []),
+			)
+		: async () => {};
+	return {
+		port: (server.address() as { port: number }).port,
+		stop: async () => {
+			await stopJobs();
+			await new Promise<void>((ok) => server.close(() => ok()));
+		},
+	};
 }

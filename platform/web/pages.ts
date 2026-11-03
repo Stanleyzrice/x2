@@ -6,7 +6,7 @@ import { readdirSync } from "node:fs";
 import { z } from "zod";
 import type { Json, Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { invoke } from "../tool.ts";
+import { invoke, toolkits, type Workspace } from "../tool.ts";
 import { checkRef, type Ref } from "./grid.ts";
 import { tables } from "./tables.ts";
 
@@ -24,6 +24,8 @@ export type Component = {
 	answer?: (props: never) => z.ZodType;
 	actions?: Record<string, string>;
 	inputs?: string[];
+	writeActions?: Record<string, string>;
+	writePreviews?: Record<string, string>;
 };
 
 const UI = new URL("../ui/", import.meta.url);
@@ -38,7 +40,18 @@ async function collect(kind: Kind): Promise<Component[]> {
 	return Promise.all(
 		names.map(async (name) => {
 			const m = await import(new URL(`${name}/schema.ts`, dir).href);
-			return { name, kind, description: m.description, props: m.props, examples: m.examples, answer: m.answer, actions: m.actions, inputs: m.inputs };
+			return {
+				name,
+				kind,
+				description: m.description,
+				props: m.props,
+				examples: m.examples,
+				answer: m.answer,
+				actions: m.actions,
+				inputs: m.inputs,
+				writeActions: m.writeActions,
+				writePreviews: m.writePreviews,
+			};
 		}),
 	);
 }
@@ -49,8 +62,17 @@ export const COMPONENTS: ReadonlyMap<string, Component> = new Map((await Promise
 const REFS: Record<string, (props: never) => string[]> = { datagrid: (p: Ref) => checkRef(tables(), p) };
 
 /** invalid：库里存的参数和现在的组件对不上（组件改过、引用过时了）：说哪一格，网页上不画这个组件，免得悄悄变成别的查询 */
-export type Item = { id: PageItemId; component: string; props: unknown; at: string; answer: unknown; answeredAt: string | null; invalid?: string };
-export type Page = { id: PageId; title: string; createdAt: string; updatedAt: string; items: Item[] };
+export type Item = {
+	id: PageItemId;
+	component: string;
+	props: unknown;
+	at: string;
+	answer: unknown;
+	answeredAt: string | null;
+	invalid?: string;
+	fixed?: boolean;
+};
+export type Page = { id: PageId; title: string; createdAt: string; updatedAt: string; items: Item[]; workspace?: Workspace };
 export type PageSummary = Omit<Page, "items">;
 
 const names = () => [...COMPONENTS.keys()].join("、");
@@ -91,14 +113,30 @@ export const catalog = () =>
 	}));
 
 // 库里的一行（bigint 回字符串）
-type PageRow = { id: PageId; title: string; created_at: Date; updated_at: Date };
-type ItemRow = { id: PageItemId; component: string; props: unknown; created_at: Date; answer: unknown; answered_at: Date | null };
+type PageRow = { id: PageId; title: string; created_at: Date; updated_at: Date; workspace_key?: string | null };
+type ItemRow = { id: PageItemId; component: string; props: unknown; created_at: Date; answer: unknown; answered_at: Date | null; fixed?: boolean };
+
+export const workspaces = () => toolkits().flatMap((k) => k.workspaces ?? []);
+
+export async function ensureWorkspaces(sql: Sql): Promise<void> {
+	for (const w of workspaces()) {
+		const props = parseProps(w.component, w.props);
+		await sql.begin(async (tx) => {
+			const [p] = await tx<
+				{ id: PageId }[]
+			>`insert into pages (title, workspace_key) values (${w.title}, ${w.key}) on conflict (workspace_key) do update set title = excluded.title returning id`;
+			await tx`insert into page_items (page_id, component, props, fixed) values (${p!.id}, ${w.component}, ${tx.json(props as Json)}, true)
+				on conflict (page_id) where fixed do update set component = excluded.component, props = excluded.props`;
+		});
+	}
+}
 
 const summary = (r: PageRow): PageSummary => ({
 	id: r.id,
 	title: r.title,
 	createdAt: r.created_at.toISOString(),
 	updatedAt: r.updated_at.toISOString(),
+	...(r.workspace_key ? { workspace: workspaces().find((w) => w.key === r.workspace_key) } : {}),
 });
 
 export async function listPages(sql: Sql): Promise<PageSummary[]> {
@@ -113,7 +151,7 @@ export async function createPage(sql: Sql, title: string): Promise<PageSummary> 
 }
 
 export async function deletePage(sql: Sql, id: string): Promise<void> {
-	const r = await sql`delete from pages where id = ${pageId(id)} returning id`;
+	const r = await sql`delete from pages where id = ${pageId(id)} and workspace_key is null returning id`;
 	if (!r.length) throw new Usage(`没有页 ${id}`);
 }
 
@@ -131,6 +169,7 @@ export async function showPage(sql: Sql, id: string): Promise<Page> {
 				at: i.created_at.toISOString(),
 				answer: i.answer,
 				answeredAt: i.answered_at?.toISOString() ?? null,
+				fixed: Boolean(i.fixed),
 				...invalidOf(i.component, i.props),
 			}),
 		),
@@ -141,8 +180,9 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 	const { component, props } = parseItem(input);
 	const pid = pageId(id);
 	return sql.begin(async (tx) => {
-		const [s] = await tx`select id from pages where id = ${pid} for update`;
+		const [s] = await tx`select id, workspace_key from pages where id = ${pid} for update`;
 		if (!s) throw new Usage(`没有页 ${id}`);
+		if (s.workspace_key) throw new Usage("固定工作区不接收临时组件");
 		await tx`update pages set updated_at = now() where id = ${pid}`;
 		if (COMPONENTS.get(component)!.kind === "interactable") {
 			const same = (await tx`select id, props from page_items where page_id = ${pid} and component = ${component}`).find(
@@ -162,7 +202,7 @@ export async function push(sql: Sql, id: string, input: unknown): Promise<{ id: 
 export async function update(sql: Sql, item: string, input: unknown): Promise<{ id: string; component: string }> {
 	const id = itemId(item);
 	return sql.begin(async (tx) => {
-		const [i] = await tx`select component, page_id from page_items where id = ${id} for update`;
+		const [i] = await tx`select component, page_id, fixed from page_items where id = ${id} for update`;
 		if (!i) throw new Usage(`没有组件 ${item}（x2 page show 看编号）`);
 		const props = parseProps(i.component, input);
 		await tx`update page_items set props = ${tx.json(props as Json)} where id = ${id}`;
@@ -185,6 +225,7 @@ export async function answer(sql: Sql, item: string, input: unknown): Promise<vo
 	const id = itemId(item);
 	const [i] = await sql`select component, props, page_id from page_items where id = ${id}`;
 	if (!i) throw new Usage(`没有组件 ${item}`);
+	if (i.fixed) throw new Usage("固定工作区的引用由应用装配，不允许修改身份");
 	const a = parseAnswer(i.component, i.props, input);
 	await sql`update page_items set answer = ${sql.json(a as Json)}, answered_at = now() where id = ${id}`;
 	await sql`update pages set updated_at = now() where id = ${i.page_id}`;
@@ -210,7 +251,7 @@ export function actParams(props: unknown, input: unknown, inputs: readonly strin
 export async function closeItem(sql: Sql, item: string): Promise<void> {
 	itemId(item);
 	const interactable = [...COMPONENTS.values()].filter((c) => c.kind === "interactable").map((c) => c.name);
-	await sql`delete from page_items where id = ${item} and component in ${sql(interactable)}`;
+	await sql`delete from page_items where id = ${item} and not fixed and component in ${sql(interactable)}`;
 }
 
 /** 一个引用的样子：除了标题的参数，对象的键排好（jsonb 存进去会重排对象的键，不能直接比 JSON） */

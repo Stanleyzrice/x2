@@ -1,5 +1,6 @@
 // 一格：照列的类型显示；人能改的照类型给控件，改完就存（勾、选马上存，字离开输入框时存）。datagrid 的表格和卡片都用它
 import { useEffect, useState } from "react";
+import { type LightboxImage, useLightbox } from "@/components/lightbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,15 +29,7 @@ export function Show({ col, value, compact }: { col: Column; value: unknown; com
 	if (col.type === "bool") return <Checkbox checked={Boolean(value)} disabled aria-label={col.label} />;
 	if (col.type === "time") return <span className="whitespace-nowrap">{time(String(value))}</span>;
 	if (col.type === "number") return <span className="tabular-nums">{Number(value).toLocaleString("zh-CN")}</span>;
-	if (col.type === "image")
-		return (
-			<img
-				src={String(value)}
-				alt={col.label}
-				referrerPolicy="no-referrer"
-				className={compact ? "size-10 rounded object-cover" : "size-24 rounded object-cover"}
-			/>
-		);
+	if (col.type === "image") return <ImageCell src={String(value)} label={col.label} compact={compact} />;
 	if (col.type === "link")
 		return (
 			<a href={String(value)} target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">
@@ -88,16 +81,71 @@ export function Edit({ col, value, save }: { col: Column; value: unknown; save: 
 
 const STATE: Record<Pic["state"], string> = { used: "", removed: "已删除", dropped: "x2 去掉", extra: "超出张数" };
 
+function ImageCell({ src, label, compact }: { src: string; label: string; compact?: boolean | undefined }) {
+	const { open, lightbox } = useLightbox([{ src, alt: label, label }]);
+	return (
+		<>
+			<button
+				type="button"
+				aria-label={`放大${label}`}
+				className="cursor-zoom-in rounded focus-visible:outline-2 focus-visible:outline-ring"
+				onClick={(e) => {
+					e.stopPropagation();
+					open(0);
+				}}
+			>
+				<img src={src} alt={label} referrerPolicy="no-referrer" className={compact ? "size-10 rounded object-cover" : "size-24 rounded object-cover"} />
+			</button>
+			{lightbox}
+		</>
+	);
+}
+
 function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean | undefined; save?: Save }) {
+	const { open, lightbox } = useLightbox(pics.map((p) => ({ src: p.url, alt: p.label, label: [p.label, STATE[p.state]].filter(Boolean).join(" · ") })));
 	if (compact) {
-		const cover = pics.find((p) => p.role === "main" && p.state === "used");
-		return cover ? <img src={cover.url} alt={cover.label} className="size-14 rounded object-cover" /> : <span className="text-muted-foreground">—</span>;
+		const coverIndex = pics.findIndex((p) => p.role === "main" && p.state === "used");
+		const cover = pics[coverIndex];
+		return cover ? (
+			<>
+				<button
+					type="button"
+					aria-label={`放大${cover.label}`}
+					className="cursor-zoom-in rounded focus-visible:outline-2 focus-visible:outline-ring"
+					onClick={(e) => {
+						e.stopPropagation();
+						open(coverIndex);
+					}}
+				>
+					<img src={cover.url} alt={cover.label} referrerPolicy="no-referrer" className="size-14 rounded object-cover" />
+				</button>
+				{lightbox}
+			</>
+		) : (
+			<span className="text-muted-foreground">—</span>
+		);
 	}
 	return (
 		<div className="flex flex-wrap gap-3">
-			{pics.map((p) => (
+			{pics.map((p, index) => (
 				<figure key={`${p.label}:${p.id}`} className="w-32" title={p.why}>
-					<img src={p.url} alt={p.label} loading="lazy" className={`size-32 rounded-lg border object-cover ${p.state === "used" ? "" : "opacity-30"}`} />
+					<button
+						type="button"
+						aria-label={`放大${p.label}`}
+						className="cursor-zoom-in rounded-lg focus-visible:outline-2 focus-visible:outline-ring"
+						onClick={(e) => {
+							e.stopPropagation();
+							open(index);
+						}}
+					>
+						<img
+							src={p.url}
+							alt={p.label}
+							loading="lazy"
+							referrerPolicy="no-referrer"
+							className={`size-32 rounded-lg border object-cover ${p.state === "used" ? "" : "opacity-30"}`}
+						/>
+					</button>
 					<figcaption className="mt-1 flex items-center justify-between gap-1 text-xs">
 						<span className="truncate">{p.label}</span>
 						{STATE[p.state] && <Badge variant={p.state === "removed" ? "destructive" : "secondary"}>{STATE[p.state]}</Badge>}
@@ -105,7 +153,10 @@ function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean | undefi
 							<Button
 								size="xs"
 								variant={p.state === "removed" ? "secondary" : "destructive"}
-								onClick={() => save({ id: p.id, removed: p.state !== "removed" })}
+								onClick={(e) => {
+									e.stopPropagation();
+									save({ id: p.id, removed: p.state !== "removed" });
+								}}
 							>
 								{p.state === "removed" ? "放回" : "删"}
 							</Button>
@@ -113,13 +164,31 @@ function Pics({ pics, compact, save }: { pics: Pic[]; compact?: boolean | undefi
 					</figcaption>
 				</figure>
 			))}
+			{lightbox}
 		</div>
 	);
 }
 
 function GridCell({ grid, compact }: { grid: Grid; compact?: boolean | undefined }) {
+	const labelOf = (row: Grid["rows"][number]) =>
+		grid.columns.flatMap((col, i) => (col.numeric ? [] : [`${col.label}：${row.cells[i] ?? "—"}`])).join(" · ") || grid.imageLabel || "规格图";
+	const gallery: LightboxImage[] = [];
+	const imageIndex = new Map<string, number>();
+	for (const row of grid.rows) {
+		if (!row.image || imageIndex.has(row.image)) continue;
+		imageIndex.set(row.image, gallery.length);
+		const sameImageRows = grid.rows.filter((r) => r.image === row.image);
+		const label =
+			grid.columns
+				.flatMap((col, i) => (!col.numeric && sameImageRows.every((r) => r.cells[i] === row.cells[i]) ? [`${col.label}：${row.cells[i] ?? "—"}`] : []))
+				.join(" · ") ||
+			grid.imageLabel ||
+			"规格图";
+		gallery.push({ src: row.image, alt: label, label });
+	}
+	const { open, lightbox } = useLightbox(gallery);
 	if (compact) return <span className="whitespace-nowrap">{grid.summary}</span>;
-	const images = grid.rows.some((r) => r.image);
+	const images = gallery.length > 0;
 	return (
 		<div className="flex flex-col gap-2">
 			<div className="text-sm text-muted-foreground">{grid.caption}</div>
@@ -141,7 +210,20 @@ function GridCell({ grid, compact }: { grid: Grid; compact?: boolean | undefined
 								<TableRow key={r.key}>
 									{images && (
 										<TableCell>
-											{r.image && <img src={r.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-10 max-w-none rounded object-cover" />}
+											{r.image && (
+												<button
+													type="button"
+													aria-label={`放大${labelOf(r)}`}
+													className="cursor-zoom-in rounded focus-visible:outline-2 focus-visible:outline-ring"
+													onClick={(e) => {
+														e.stopPropagation();
+														const index = imageIndex.get(r.image ?? "");
+														if (index !== undefined) open(index);
+													}}
+												>
+													<img src={r.image} alt={labelOf(r)} loading="lazy" referrerPolicy="no-referrer" className="size-10 max-w-none rounded object-cover" />
+												</button>
+											)}
 										</TableCell>
 									)}
 									{r.cells.map((v, k) => (
@@ -156,6 +238,7 @@ function GridCell({ grid, compact }: { grid: Grid; compact?: boolean | undefined
 				</div>
 			)}
 			{grid.note && <div className="text-sm text-muted-foreground">{grid.note}</div>}
+			{lightbox}
 		</div>
 	);
 }
