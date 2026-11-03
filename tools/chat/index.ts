@@ -1,41 +1,102 @@
-// 聊聊（x2 chat <工具>）：卖家中心的买家聊天，读这家店的会话、一个会话的消息，让 Gemini 写回复草稿（人看、人改）。都在登录着这家店的浏览器里读。
-// 网页上的 chat 组件经网页服务调这几个工具（组件的 schema.ts 声明了调哪几个）。发消息还没有接上
+// Chat：会话事实、人工草稿与版本化建议；发送只经写工具和至多一次写入引擎。
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { gemini } from "../../connectors/services/gemini/api.ts";
-import { conversations, messages, unreplied } from "../../connectors/sites/shopee/chat.ts";
-import { shop as currentShop } from "../../connectors/sites/shopee/seller.ts";
-import { inAccount } from "../../platform/browser/browser.ts";
-import { get, str, type Toolkit } from "../../platform/tool.ts";
-import { conversationsOf, draftPrompt, messagesOf } from "./talk.ts";
+import { suggest } from "../../connectors/services/penna/api.ts";
+import { db } from "../../platform/db/index.ts";
+import { get, str, type Toolkit, write } from "../../platform/tool.ts";
+import { exclusive } from "../../platform/writes.ts";
+import { assertSuggestionContext, sendInput } from "./context.ts";
+import { pendingReplies } from "./pending.ts";
+import { chatDriver, listConversations } from "./read.ts";
+import { contextById, saveContext, saveDraft, threadState } from "./store.ts";
+import { draftPrompt } from "./talk.ts";
+import { historyDays, rollingWindow } from "./window.ts";
+import { CHAT_WRITES, planSend, preview, type ReplyParams, replaySend, replyWrite } from "./writes.ts";
 
-const shop = str("店铺（账号名，例 ni1206；也可以给店铺 id）");
-const conversation = z.object({ shop, conversationId: str("会话 id（x2 chat conversations 里的）") });
-
-async function read(p: z.infer<typeof conversation>) {
-	return inAccount("shopee", p.shop, async () => messagesOf(await messages(p.conversationId), (await currentShop()).shopId));
+const shop = str("店铺账号名或店铺id");
+const conversation = z.object({ shop, conversationId: str("选中的买家会话id") });
+const contextInput = conversation.extend({ historyDays, contextId: z.string().uuid().optional(), cursor: z.string().min(1).optional() });
+async function readContext(p: z.infer<typeof contextInput>) {
+	const sql = await db();
+	const previous = p.contextId ? await contextById(sql, p.shop, p.conversationId, p.contextId) : undefined;
+	const context = await saveContext(sql, await chatDriver.read(p.shop, p.conversationId, previous, p.cursor, rollingWindow(p.historyDays)));
+	return { context, ...(await threadState(sql, context)) };
 }
-
 export const chat: Toolkit = {
 	name: "chat",
-	title: "聊聊：读会话和消息，让 Gemini 写回复草稿",
+	title: "买家聊聊：读取、回复建议、人工草稿和确认发送",
 	kind: "tool",
+	schema: new URL("./schema.sql", import.meta.url),
 	tools: {
-		conversations: get(
-			"这家店最近的会话（最新的 50 个和「未回覆」的）：未回覆的排前面，再按最后一条从新到旧",
-			z.object({ shop }),
-			(p) => inAccount("shopee", p.shop, async () => conversationsOf(await conversations(), (await unreplied()).rows)),
-			{ text: (l) => l.map((c) => `${c.unreplied ? "[未回覆] " : ""}${c.id} ${c.buyer}：${c.lastText}`).join("\n") || "没有会话" },
+		pending: get("读取本店持久待核对发送的元数据；不返回旧消息正文、不发送", z.object({ shop }), async (p) => pendingReplies(await db(), p.shop)),
+		conversations: get("读取指定店铺的一页买家会话，返回rows、next与采集范围", z.object({ shop, cursor: z.string().optional(), historyDays }), (p) =>
+			listConversations(p.shop, p.cursor, rollingWindow(p.historyDays)),
 		),
-		messages: get("一个会话最近的 30 条消息，从旧到新；sender 是 buyer、us、auto（我们的自动回复）、platform、other_auto", conversation, read, {
-			text: (l) => l.map((m) => `${m.at} ${m.sender}：${m.text}`).join("\n"),
-		}),
+		messages: get("现读所选会话的上下文，返回范围、指纹、建议、人工稿和发送状态；cursor仅连续向前加载", contextInput, readContext),
 		draft: get(
-			"让 Gemini 照这个会话写一则回复的草稿（台湾繁体；不知道的不编）：给人看、人改，不会发出去",
-			conversation,
-			async (p) => ({
-				text: (await gemini(draftPrompt(p.shop, await read(p)), [])).trim(),
-			}),
-			{ text: (r) => r.text },
+			"经Penna gateway DeepSeek生成绑定上下文的建议；不覆盖人工草稿、不发送",
+			contextInput.extend({ policyPath: str("明确选择的客服规则Markdown路径") }),
+			async (p) => {
+				const { context } = await readContext(p),
+					sql = await db();
+				assertSuggestionContext(context);
+				const instructions = (await readFile(p.policyPath, "utf8")).trim();
+				if (!instructions) throw new Error("客服规则是空的");
+				const result = await suggest(instructions, draftPrompt(p.shop, context.messages));
+				const text = z.string().trim().min(1).max(2000).parse(result.text),
+					id = randomUUID();
+				await sql`insert into chat_suggestions (id, shop, shop_id, conversation_id, context_id, context_hash, latest_buyer_id, text, model) values (${id}, ${p.shop}, ${context.shopId}, ${p.conversationId}, ${context.id}, ${context.contextHash}, ${context.latestBuyerId}, ${text}, ${result.model})`;
+				return {
+					id,
+					text,
+					model: result.model,
+					contextId: context.id,
+					contextHash: context.contextHash,
+					shop: p.shop,
+					shopId: context.shopId,
+					conversationId: p.conversationId,
+					latestBuyerId: context.latestBuyerId,
+					range: context.range,
+					window: context.window,
+				};
+			},
 		),
+		"save-draft": get(
+			"按明确revision保存人工草稿；冲突不覆盖已有编辑",
+			conversation.extend({ contextId: z.string().uuid(), text: z.string().max(2000), revision: z.coerce.number().int().nonnegative() }),
+			async (p) => {
+				const sql = await db(),
+					context = await contextById(sql, p.shop, p.conversationId, p.contextId);
+				return saveDraft(sql, context, p.text, p.revision);
+			},
+		),
+		preview: get("读取精确收件方与待发正文，生成确认显示；不发送", sendInput, async (p) => preview(await db(), p)),
+		send: { ...write("仅发送用户确认的精确正文和上下文；requestId绑定内容，结果未知不重发", sendInput, planSend), replay: replaySend },
+		reconcile: get("只读回核对所选会话已有发送请求；不提交、不重发", conversation.extend({ requestId: z.string().uuid() }), async (p) => {
+			const sql = await db();
+			return exclusive(sql, async (lock) => {
+				const [intent] =
+					await sql`select shop_id from chat_intents where request_id = ${p.requestId} and shop = ${p.shop} and conversation_id = ${p.conversationId}`;
+				if (!intent) throw new Error("没有这个店铺会话的发送请求");
+				const [w] = await sql<
+					{ id: string; params: ReplyParams; readback: { before?: { ids: string[] } } | null; status: string; error: string | null }[]
+				>`select id::text, params, readback, status, error from writes where op = '聊聊回复' and key = ${`chat-reply:${p.requestId}`} order by id desc limit 1`;
+				if (!w) return { requestId: p.requestId, status: "未提交", error: null };
+				if (!["已提交", "结果未知", "不一致"].includes(w.status)) return { requestId: p.requestId, status: w.status, error: w.error };
+				const check = await replyWrite().check(w.params, w.readback?.before, false);
+				if (check.done === true) {
+					const updated =
+						await sql`update writes set status = '已核对', error = null, finished_at = now() where id = ${w.id} and status in ('已提交', '结果未知', '不一致') and exists (select 1 from pg_locks where pid = ${lock} and locktype = 'advisory' and granted) returning id`;
+					if (!updated.length) throw new Error("核对锁或写入状态已改变，未更新状态；请重新核对");
+				}
+				return {
+					requestId: p.requestId,
+					status: check.done === true ? "已核对" : "结果未知",
+					error: check.done === true ? null : "未找到可确认的新消息；没有重新发送",
+				};
+			});
+		}),
 	},
+	writes: CHAT_WRITES,
 };

@@ -1,16 +1,25 @@
-// chat 的参数：引用一家店的聊聊（给了会话就先选中它）。会话、消息每次现读，回复草稿让 Gemini 写；都经网页服务调 actions 里的工具（tools/chat）
+// Chat 页面保存店铺和客服规则引用；可变会话、草稿和确认数据由服务端校验。
 import { z } from "zod";
 import { title } from "../../props.ts";
 
-export const description =
-	"一家店的聊聊（引用，不是数据）：左边是这家店的会话（未回覆的在前面），右边是选中会话的消息，底下输入框，「生成回复」让 Gemini 写草稿进输入框、人改。给了 conversationId 先选中它，不给选第一个。发送还没接上";
+export const description = "固定店铺与显式读取窗口的买家聊聊：持续读取新消息，过期记录移出当前页面，保留人工草稿及逐条确认发送";
 export const props = z.strictObject({
 	title,
-	shop: z.string().min(1).describe("店铺（账号名，例 ni1206）"),
-	conversationId: z.string().min(1).optional().describe("先选中哪个会话（x2 chat conversations 里的 id）"),
+	shop: z.string().min(1),
+	policyPath: z.string().min(1),
+	historyDays: z.number().int().positive(),
+	conversationId: z.string().min(1).optional(),
 });
 export type Props = z.infer<typeof props>;
-export const actions = { conversations: "chat.conversations", messages: "chat.messages", draft: "chat.draft" };
-/** 网页能填的只有选中哪个会话；店照引用，网页换不了 */
-export const inputs = ["conversationId"];
-export const examples: z.input<typeof props>[] = [{ shop: "ni1206" }, { title: "问尺寸的买家", shop: "cheeroutdoor", conversationId: "1234567890" }];
+export const actions = {
+	pending: "chat.pending",
+	conversations: "chat.conversations",
+	messages: "chat.messages",
+	draft: "chat.draft",
+	saveDraft: "chat.save-draft",
+	reconcile: "chat.reconcile",
+};
+export const writeActions = { send: "chat.send" };
+export const writePreviews = { send: "chat.preview" };
+export const inputs = ["conversationId", "cursor", "contextId", "text", "revision", "requestId", "contextHash"];
+export const examples: z.input<typeof props>[] = [{ shop: "ni1206", policyPath: ".agents/skills/chat/SKILL.md", historyDays: 7 }];

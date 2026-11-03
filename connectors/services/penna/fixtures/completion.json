@@ -1,0 +1,6 @@
+{
+	"id": "fixture",
+	"model": "deepseek-flash",
+	"choices": [{ "message": { "role": "assistant", "content": "您好，請問您想了解哪個尺寸呢？" }, "finish_reason": "stop" }],
+	"usage": { "total_tokens": 42 }
+}
