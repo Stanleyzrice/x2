@@ -1,0 +1,14 @@
+{
+	"code": 0,
+	"data": {
+		"product_info": {
+			"id": 25000000002,
+			"name": "舊商品屬性樣本",
+			"attributes": [
+				{ "attribute_id": 100131, "attribute_values": [{ "value_id": 1112 }] },
+				{ "attribute_id": 100999, "attribute_values": [{ "raw_value": "nil" }] }
+			],
+			"description_info": { "description": "{\"field_list\":[{\"type\":0,\"value\":\"原商品介紹\"}]}", "description_type": "json" }
+		}
+	}
+}

@@ -22,6 +22,8 @@ export type Order = {
 	orderSn: string;
 	shopId: string;
 	status: string;
+	/** 分包裹订单保留每个包裹的状态，不能只凭第一个包裹决定是否采购。 */
+	packageStatuses?: string[];
 	shipBy: string | null;
 	total: number;
 	items: OrderItem[];
@@ -33,23 +35,35 @@ export const TAB = { all: 100, unpaid: 200, toShip: 300, shipping: 400, complete
 const scalar = z.union([z.string(), z.number()]).nullish();
 const ref = z.looseObject({ order_id: z.union([z.number(), z.string()]), shop_id: z.union([z.number(), z.string()]), region_id: z.string().nullish() });
 type Ref = z.output<typeof ref>;
+const orderIndexReply = withData(
+	z.looseObject({
+		index_list: z.array(ref),
+		pagination: z.looseObject({
+			total: z
+				.union([z.number(), z.string().regex(/^\d+$/)])
+				.transform(Number)
+				.pipe(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)),
+		}),
+	}),
+);
+
+export function orderIndexOf(raw: unknown): { total: number; refs: Ref[] } {
+	const b = reply(orderIndexReply, raw, "Shopee /api/v3/order/search_order_list_index");
+	return { total: b.data.pagination.total, refs: b.data.index_list };
+}
 
 export async function orderIndex(tab: number, pageNo = 1, pageSize = 40): Promise<{ total: number; refs: Ref[] }> {
 	// 没有 index_list 不能当成没有订单：是「回包变了」
-	const b = await seller(
-		"/api/v3/order/search_order_list_index",
-		withData(z.looseObject({ index_list: z.array(ref), pagination: z.looseObject({ total: scalar }).nullish() })),
-		{
-			body: {
-				order_list_tab: tab,
-				entity_type: 1,
-				pagination: { from_page_number: pageNo, page_number: pageNo, page_size: pageSize },
-				filter: { fulfillment_type: 0, is_drop_off: 0, fulfillment_source: 0, action_filter: 0 },
-				sort: { sort_type: 3, ascending: false },
-			},
+	const raw = await seller("/api/v3/order/search_order_list_index", z.unknown(), {
+		body: {
+			order_list_tab: tab,
+			entity_type: 1,
+			pagination: { from_page_number: pageNo, page_number: pageNo, page_size: pageSize },
+			filter: { fulfillment_type: 0, is_drop_off: 0, fulfillment_source: 0, action_filter: 0 },
+			sort: { sort_type: 3, ascending: false },
 		},
-	);
-	return { total: Number(b.data.pagination?.total ?? 0), refs: b.data.index_list };
+	});
+	return orderIndexOf(raw);
 }
 
 const time = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Number(seconds) * 1000).toISOString() : null);
@@ -90,7 +104,7 @@ const cards = withData(
 /** 订单详情（get_order_list_card_list）的回包 → 订单（纯函数）。refs 是这一批的订单 id、店铺 id */
 export function ordersOf(raw: unknown, refs: Ref[]): Order[] {
 	const b = reply(cards, raw, "Shopee /api/v3/order/get_order_list_card_list");
-	return b.data.card_list.map((w): Order => {
+	const out = b.data.card_list.map((w): Order => {
 		const card = (w.package_level_order_card ?? w.order_card)!;
 		const units = card.package_list?.length ? card.package_list : [card];
 		const packages = w.package_level_order_card
@@ -98,11 +112,14 @@ export function ordersOf(raw: unknown, refs: Ref[]): Order[] {
 			: (card.package_ext_info_list ?? []).map((ext) => ({ ext, f: card.fulfilment_info ?? {} }));
 		const items = units.flatMap((u) => (u.item_info_group?.item_info_list ?? []).flatMap((l) => l.item_list ?? []));
 		const orderId = String(card.order_ext_info?.order_id ?? "");
+		const reference = refs.find((r) => String(r.order_id) === orderId);
+		if (!reference) throw new Error(`Shopee 返回了未请求的订单 ${orderId || "（缺少编号）"}`);
 		return {
 			orderId,
 			orderSn: String(card.card_header?.order_sn ?? ""),
-			shopId: String(refs.find((r) => String(r.order_id) === orderId)?.shop_id ?? refs[0]!.shop_id),
+			shopId: String(reference.shop_id),
 			status: String(units[0]?.status_info?.status ?? card.status_info?.status ?? ""),
+			...(units.length > 1 ? { packageStatuses: units.map((u) => String(u.status_info?.status ?? "")) } : {}),
 			shipBy: time(card.order_ext_info?.ship_by_date),
 			// 订单卡片的金额是新台币乘 100000（2026-10-09：卡片 21000000，get_one_order 的 total_price 是 210）
 			total: Number(units[0]?.payment_info?.total_price ?? 0) / 100000,
@@ -126,6 +143,9 @@ export function ordersOf(raw: unknown, refs: Ref[]): Order[] {
 			})),
 		};
 	});
+	if (out.length !== refs.length || new Set(out.map((o) => o.orderId)).size !== refs.length)
+		throw new Error("Shopee 订单卡片不完整或存在重复订单，本次读取不完整");
+	return out;
 }
 
 export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {

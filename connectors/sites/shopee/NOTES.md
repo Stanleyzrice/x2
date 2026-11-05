@@ -33,6 +33,7 @@
 | | `createProduct`（写） | `POST /api/v3/product/create_product_info` |
 | | `updateProduct`、`setUnlisted`（写） | `POST /api/v3/product/update_product_info` |
 | `variants.ts` | `addSizeProduct`（写） | 同一更新接口的 `name`、`description_info`、`std_tier_variation_list`、`model_list`；既有模型提交 `id`、`tier_index`、`price`，新模型使用 `id: 0` 和 `stock_setting_list`、货号、图片 |
+| | `expandProduct`（写） | 同一更新接口，只显式交最终 `std_tier_variation_list`、`model_list` 及可选 `weight`；既有模型带原 `id`、新索引、原价、规格图，新模型带 `id: 0`、货号、显式库存、价格、规格图；不交标题、描述或旧库存 |
 | | `edit-product`（写，只经业务工具调用） | 同上；`name` 和可选的 `model_list`（规格 id、tier_index、price），不交库存、规格名或商品其他字段 |
 | | `deleteProducts`（写） | `POST /api/v3/product/delete_product_info` |
 | | `uploadImage`（写） | 页面的 `UploadService.$instance.uploadImage`（webpack 模块里找） |
@@ -70,6 +71,9 @@
 ## 踩过的坑
 
 - 订单列表的 `order_list_tab`：100 全部、200 未付款、300 待出货、400 运送中、500 已完成。
+- 待出货列表真回包的卡片状态是 `待出貨`；`get_one_order.create_time` 是真实下单时间（Unix 秒），`status` 是数字状态，不能与卡片的状态文字互换。
+- `search_order_list_index` 必须返回 `pagination.total`；缺失不能当作零单。卡片按请求的订单编号对应店铺，漏单、重复或返回未请求订单时读取失败，不补用第一张订单的店铺。
+- `fixtures/order-index.json` 是待出货索引的真回包字段摘录，订单和店铺编号已替换。
 - 订单详情有两种外壳：`package_level_order_card`（分包裹的）、`order_card`。
 - 商品状态码：0 删除、1 在售、2 审核中、3 禁卖、8 下架。
 - 全状态目录分页使用 `get_product_list` 的 `list_type=all`、`page_number`、`page_size`。商品列表前端的 `search_product_list` 用于搜索/重置条件，不带页码；向它传 `page_number=2` 仍会重复第一页，不能拿来遍历目录。
@@ -80,6 +84,14 @@
 - `1000100256` 是通用的字段校验失败码（缺尺码表也回它），不等于重复。
 - 创建接口：直接在售的请求样本返回 10025；已验证成功的请求样本使用 `unlisted: true`。这是请求样本与接口响应记录。
 - 商品列表的上下架按钮使用 `update_product_info`，只交 `product_info: { unlisted }`，带 `Entrance-Identification: 1`（2026-10-30 读当前 product-list 模块的单件下架按钮）。普通编辑请求不带这个入口标识；不要为了下架擅自补尺码表或重交整份商品资料。
+- 普通编辑的 `product_info` 可显式提交 `name`、`model_list`，改类目时同时交 `category_path` 和新类目的 `attributes`，不沿用旧类目属性。详情的 `category_path` 和 `attributes[].attribute_id/attribute_values[].value_id` 用于读回核对；站点可附带属性名称等字段。
+- 旧商品的自填属性可只有 `attribute_values[].raw_value`，没有 `value_id`（2026-11-05 原生回包见 `custom-attributes.json`）。读取保留 `raw_value` 和缺失的 id，不补零；显式修改类目属性的写入参数仍要求明确 `value_id`，不把自填属性当作枚举值重交。
+- `images` 是完整有序主图id列表，普通编辑可显式替换该字段；不补发 `model_list`、描述等其他字段。详情可返回图片id或完整图片URL，读回时按URL末段的id保持原顺序核对。
+- `description_info` 只在显式提供时发送，保留整个对象；`description` 是普通文字或富文本JSON字符串，`description_type` 为 `normal` 或 `json`。不把富文本内的图片与主图列表混用。
+- 普通编辑可显式提供完整 `size_chart_info`，`size_chart` 为已上传的Shopee图片id，其余字段原样保留；不提供时不发送。预览及提交前核对原完整对象（允许原图为空），读回核对目标完整对象；站点把图片id展开为URL时只归一化图片字段，不豁免其他字段差异。
+- 2026-11-04 实测追加详情图成功后，`get_product_info` 会在富文本图片项中省略提交的 `width`、`height`，保留 `type: 1` 和图片id；文字及图片顺序不变。样本 `get-product-description-images.json`。尺寸须在提交前按实际图片验证，读回以完整文字、图片id和顺序核对；只豁免站点省略的图片宽高，不忽略其他变化。
+- 规格更新用 `std_tier_variation_list` 的 `custom_value`、`value_list[].custom_value/image_id` 和 `model_list[].tier_index` 对应；新模型 `id: 0`，已有模型沿用原id。2026-11-04 已在 cheeroutdoor 单件确认单默认模型展开为8款和15款，保留原modelId、货号、价格及库存，并逐SKU读回图片。
+- 一层规格图挂在第一层 `value_list[].image_id`，`model_list[].sku_image` 须为空；传非空值会被 `100010263 sku_image.auth` 拒绝（model sku_image is only allowed for 2-tier variation）。两层规格可交显式model图片。更新回读可能延迟，未知先核对，不重交；属性数组返回顺序不稳定，指纹按attribute_id/value_id排序，仍核对属性值。
 - 列表下架还设置 `listingSignature`，请求拦截器发送 `sc-listing-sign`（MD5：原请求体 JSON + `SIGNCODE` + 四舍五入到秒的时间 + 当前 `SPC_CDS`）、`sc-listing-sign-t`、`sc-listing-sign-v: 1.0.0`；`SPC-SLT` 用当前店铺 id、页面公开固定串和当前 `SPC_CDS` 计算。不能只补入口标识而漏签名；这些会话值不进日志和写入记录。
 - 列表的批量下架使用 `product/update_product/?version=3.1.0&source=seller_center`，请求是 `[{ id, unlisted: true }]`，入口标识为 `2`（当前 `delistPublishedProducts`）。它与单件 `update_product_info` 不同，但两个入口都可能因旧商品缺尺码表而拒绝。x2 逐件交批量入口，解析 `data.result` 的商品 id、code，再读详情核对状态；不补尺码表、不重交商品内容。
 - 批量上架的草稿 id 是 `unpublished_product_id`；图还在摄取时发布会丢图。
@@ -91,6 +103,8 @@
 
 ## 回包样本
 
+- `fixtures/get-product-attributes.json` 是 2026-11-04 商品详情真回包的类目、属性摘录，商品 id 和名称已替换；用于类目修改前后的属性解析，不代表该编辑请求已获站点验证。
+- `fixtures/custom-attributes.json` 是 2026-11-05 旧商品详情真回包的最小摘录，商品 id、名称和描述已替换；保留枚举属性与仅有 `raw_value: "nil"` 的自填属性共存形状。
 - SKU 图片：`get_product_list` 的 `model_list[].image` 是图片 id；`get_product_info` 的 `model_list[].sku_image` 是字符串，可为空。为空时，图片由 `std_tier_variation_list[0].value_list[model.tier_index[0]].image_id` 对应，索引 0 也是有效值。尺寸层可能没有图片，不按名称匹配、不借用商品封面。图片 id 拼接 `https://down-tw.img.susercontent.com/file/`，已是 HTTP(S) URL 则直接使用，缺图保留 null。`fixtures/get-product-images.json` 保留此字段形状，覆盖零索引、重复名称、直接 URL 和缺图。
 
 `fixtures/unlist-product.json` 是 2026-10-30 列表批量入口成功下架的 `data` 摘录，商品 id 已替换。提交前后详情的 `is_unlisted` 从 false 变 true；详情的 `status` 可以暂时还是 1，因此对账不能只看 status。

@@ -5,11 +5,29 @@ import { test } from "node:test";
 import { z } from "zod";
 import { reply } from "../../../platform/reply.ts";
 import { conversation, message } from "./chat.ts";
-import { ordersOf } from "./orders.ts";
-import { attributesOf, liveProductsOf, performanceOf, productInfoOf, unlistRequest, unlistResult } from "./products.ts";
+import { orderIndexOf, ordersOf } from "./orders.ts";
+import { attributesOf, liveProductsOf, performanceOf, productAttribute, productInfoOf, unlistRequest, unlistResult } from "./products.ts";
+import { editProductInfo } from "./publish.ts";
 import { ItemId, listingHeaders } from "./seller.ts";
 
 const sample = (name: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+
+test("显式 Size Chart 只组装 size_chart_info，不连带主图、描述、规格或库存", () => {
+	const explicit = { title: "泳裝", sizeChartInfo: { size_chart: "tw-size-chart", size_chart_id: 0 } };
+	assert.deepEqual(editProductInfo(explicit), { name: "泳裝", size_chart_info: explicit.sizeChartInfo });
+	assert.deepEqual(editProductInfo({ title: "泳裝" }), { name: "泳裝" });
+});
+
+test("详情图真回包保留富文本原文和图片顺序，站点不回图片宽高", () => {
+	const p = productInfoOf(sample("get-product-description-images"));
+	const rich = JSON.parse(p.description_info!.description!) as { field_list: { type: number; value: string; width?: number; height?: number }[] };
+	const images = rich.field_list.filter((f) => f.type === 1);
+	assert.equal(p.description_info!.description_type, "json");
+	assert.equal(images.length, 4);
+	assert.equal(images[0]!.value, "tw-11134207-820l6-mv4hwnecl6h356");
+	assert.ok(images.every((f) => f.width === undefined && f.height === undefined));
+	assert.ok(rich.field_list[0]!.value.includes("商品介紹"));
+});
 
 test("列表签名：绑定请求体、店铺、当前会话，照网页把时间四舍五入到秒；缺登录态不提交", () => {
 	const a = listingHeaders('{"unlisted":true}', "348425", "test-cds", 1600000000500);
@@ -110,6 +128,38 @@ test("订单卡片：分包裹的和不分包裹的都认；金额除以 100000�
 	assert.throws(() => ordersOf({ data: { card_list: [{}] } }, refs), /card_list\[0\]：没有 package_level_order_card，也没有 order_card/);
 });
 
+test("订单卡片不能借第一张引用补店铺，漏单、重复或错单都报错", () => {
+	const refs = [
+		{ order_id: 210000000001, shop_id: 1554182542 },
+		{ order_id: 210000000002, shop_id: 1554182542 },
+	];
+	assert.throws(() => ordersOf(sample("get-order-list-card-list"), refs.slice(0, 1)), /订单/);
+	assert.throws(() => ordersOf(sample("get-order-list-card-list"), [...refs, { order_id: 3, shop_id: 1554182542 }]), /订单/);
+});
+
+test("订单列表总数缺失不是零单，真实零单与数字字符串可解析", () => {
+	const real = orderIndexOf(sample("order-index"));
+	assert.equal(real.total, 10);
+	assert.equal(real.refs.length, 10);
+	assert.deepEqual(orderIndexOf({ data: { index_list: [], pagination: { total: "0" } } }), { total: 0, refs: [] });
+	assert.throws(() => orderIndexOf({ data: { index_list: [] } }), /pagination/);
+	assert.throws(() => orderIndexOf({ data: { index_list: [], pagination: {} } }), /total/);
+	assert.throws(() => orderIndexOf({ data: { index_list: [], pagination: { total: -1 } } }), /total/);
+});
+
+test("分包裹订单保留所有包裹状态，不把已出货商品隐藏在首个待出货状态里", () => {
+	const raw = sample("get-order-list-card-list") as {
+		data: { card_list: { package_level_order_card?: { package_list: { status_info: { status: string } }[] } }[] };
+	};
+	const card = raw.data.card_list[0]!.package_level_order_card!;
+	card.package_list.push({ ...card.package_list[0]!, status_info: { status: "Shipped" } });
+	const result = ordersOf(raw, [
+		{ order_id: 210000000001, shop_id: 1554182542 },
+		{ order_id: 210000000002, shop_id: 1554182542 },
+	]);
+	assert.deepEqual(result[0]!.packageStatuses, ["To ship", "Shipped"]);
+});
+
 test("商品资料：读回对账、上架要用的格解析出来，别的原样留着", () => {
 	const p = productInfoOf(sample("get-product-info"));
 	assert.deepEqual(
@@ -119,7 +169,21 @@ test("商品资料：读回对账、上架要用的格解析出来，别的原�
 	assert.equal(p.model_list?.[0]?.stock_detail?.seller_stock_info?.[0]?.sellable_stock, 50);
 	assert.equal(p.model_list?.[0]?.id, "250000000011");
 	assert.equal(p.id, 25000000001);
+	assert.deepEqual(productInfoOf(sample("get-product-attributes")).attributes, [{ attribute_id: 100771, attribute_values: [{ value_id: 4004 }] }]);
 	assert.throws(() => productInfoOf({ code: 0, data: {} }), /get_product_info 的回包变了：data\.product_info 没有了/);
+});
+
+test("商品详情保留原生自填属性 raw_value，读不到 value_id 不补零；写入属性仍要求明确 value_id", () => {
+	const p = productInfoOf(sample("custom-attributes"));
+	assert.deepEqual(p.attributes, [
+		{ attribute_id: 100131, attribute_values: [{ value_id: 1112 }] },
+		{ attribute_id: 100999, attribute_values: [{ raw_value: "nil" }] },
+	]);
+	assert.equal(Object.hasOwn(p.attributes![1]!.attribute_values[0]!, "value_id"), false);
+	assert.equal(p.description_info?.description_type, "json");
+	assert.equal(productAttribute.safeParse(p.attributes?.[1]).success, false);
+	assert.equal(productAttribute.safeParse(p.attributes?.[0]).success, true);
+	assert.throws(() => productInfoOf({ code: 0, data: { product_info: { attributes: [{ attribute_id: 100999, attribute_values: [{}] }] } } }), /回包变了/);
 });
 
 test("属性树：必填、最多几个值、可选值（名字在 display_name 或 name）", () => {

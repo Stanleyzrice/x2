@@ -1,0 +1,13 @@
+{
+	"code": 0,
+	"data": {
+		"product_info": {
+			"id": 25000000001,
+			"name": "磨砂多卡位男士短夾",
+			"description_info": {
+				"description": "{\"field_list\":[{\"type\":0,\"value\":\"商品介紹\\n提供下列款式，請依選項的圖案、顏色、尺寸及入數選購。\\n\\n規格選擇\\n灰色：灰色\\n黑色：黑色\\n藍色：藍色\\n淺棕色：淺棕色\\n\\n使用提醒\\n每份實際內容依所選規格標示；情境圖片中的其他商品及擺飾不包含在該份商品內。\\n\"},{\"type\":1,\"value\":\"tw-11134207-820l6-mv4hwnecl6h356\"},{\"type\":1,\"value\":\"tw-11134207-820l6-mv4hwoww19tx56\"},{\"type\":1,\"value\":\"tw-11134207-820l6-mv4hwq7tj7ygf6\"},{\"type\":1,\"value\":\"tw-11134207-820lf-mv4d4exrl2pu82\"}]}",
+				"description_type": "json"
+			}
+		}
+	}
+}

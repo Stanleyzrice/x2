@@ -182,12 +182,28 @@ export async function allProducts(pageNo = 1, pageSize = 48): Promise<{ total: n
 }
 
 /** 商品的完整资料（product_info）：写只认识读回对账、上架、按货号找要用的格，别的原样留着 */
+export const productAttribute = z.looseObject({
+	attribute_id: z.coerce.number().int().positive(),
+	attribute_values: z.array(z.looseObject({ value_id: z.coerce.number().int().nonnegative() })),
+});
+
+// 原生自填属性可只返回 raw_value；读取保留原值，不能替它编一个可提交的 value_id。
+const readProductAttribute = z.looseObject({
+	attribute_id: z.coerce.number().int().positive(),
+	attribute_values: z.array(
+		z
+			.looseObject({ value_id: z.coerce.number().int().nonnegative().optional(), raw_value: z.string().optional() })
+			.refine((value) => value.value_id !== undefined || value.raw_value !== undefined, "属性值缺少 value_id 或 raw_value"),
+	),
+});
+
 const productInfoShape = z.looseObject({
 	name: z.string().nullish(),
 	parent_sku: z.string().nullish(),
 	status: scalar,
 	is_unlisted: z.boolean().nullish(),
 	category_path: z.array(z.union([z.number(), z.string()])).nullish(),
+	attributes: z.array(readProductAttribute).nullish(),
 	weight: z.looseObject({ value: scalar }).nullish(),
 	images: z.array(z.unknown()).nullish(),
 	size_chart_info: z.looseObject({ size_chart: z.unknown().optional() }).nullish(),

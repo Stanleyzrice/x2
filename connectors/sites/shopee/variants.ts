@@ -55,3 +55,24 @@ export const addSizeProduct = submit(
 		return w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
 	},
 );
+
+/** 单规格展开或扩充完整规格表；旧模型只更新索引/图/原价，不发送库存或货号。 */
+const retainedModel = existingModel.extend({ sku_image: z.string() });
+export const expandInfo = z.object({
+	std_tier_variation_list: addSizeInfo.shape.std_tier_variation_list.min(1).max(2),
+	model_list: z
+		.array(z.union([retainedModel, newModel]))
+		.min(1)
+		.max(100),
+	weight: z.object({ value: price, unit: z.literal(1) }).optional(),
+});
+export type ExpandInfo = z.output<typeof expandInfo>;
+export const expandProductInfo = (info: ExpandInfo) => ({ ...info, model_list: info.model_list.map((m) => ({ ...m, id: Number(m.id) })) });
+export const expandProduct = submit(
+	"展開商品規格和對應圖片，保留舊規格id、價格、貨號及庫存（只经业务工具的写工具调）",
+	z.object({ productId: ItemId.refine(positiveId), info: expandInfo }),
+	async (p) => {
+		const w = await updateProduct(p.productId, expandProductInfo(p.info));
+		return w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
+	},
+);

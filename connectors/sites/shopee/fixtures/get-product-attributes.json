@@ -1,0 +1,20 @@
+{
+	"code": 0,
+	"data": {
+		"product_info": {
+			"id": 25000000002,
+			"name": "鋁箔午餐保溫包 黑色斜紋款",
+			"category_path": [100636, 100717, 101220],
+			"attributes": [
+				{
+					"attribute_id": 100771,
+					"attribute_values": [
+						{
+							"value_id": 4004
+						}
+					]
+				}
+			]
+		}
+	}
+}

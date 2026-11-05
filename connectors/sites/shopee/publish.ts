@@ -2,7 +2,7 @@
 // 只经平台登记的写操作调用；这里解析接口响应，不决定提交时机或经营条件。
 import { z } from "zod";
 import { submit } from "../../../platform/tool.ts";
-import { allProducts, createProduct, productInfo, setUnlisted, unlistFromList, updateProduct } from "./products.ts";
+import { allProducts, createProduct, productAttribute, productInfo, setUnlisted, unlistFromList, updateProduct } from "./products.ts";
 import { ItemId, ModelId } from "./seller.ts";
 
 /** 从全部商品列表按名称筛选，再读详情匹配 parent_sku；同时覆盖在售和下架状态。 */
@@ -53,15 +53,33 @@ export const unlistProduct = submit(
 	},
 );
 
-export const editProduct = submit(
-	"修改商品名稱和規格價格（只经业务工具的写工具调）",
-	z.object({
-		productId: ItemId,
-		title: z.string().min(1),
-		models: z.array(z.object({ id: ModelId, tier_index: z.array(z.number().int().nonnegative()), price: z.string() })).optional(),
-	}),
-	async (p) => {
-		const w = await updateProduct(p.productId, { name: p.title, ...(p.models ? { model_list: p.models.map((m) => ({ ...m, id: Number(m.id) })) } : {}) });
-		return w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
-	},
-);
+export const productDescriptionInfo = z.looseObject({ description: z.string(), description_type: z.enum(["json", "normal"]) });
+export const productSizeChartInfo = z.looseObject({ size_chart: z.string().regex(/^[A-Za-z0-9_-]+$/, "须提供非空Shopee图片id，不是URL") });
+
+const editProductParams = z.object({
+	productId: ItemId,
+	title: z.string().min(1),
+	models: z.array(z.object({ id: ModelId, tier_index: z.array(z.number().int().nonnegative()), price: z.string() })).optional(),
+	categoryPath: z.array(z.number().int().positive()).min(1).optional(),
+	attributes: z.array(productAttribute).optional(),
+	images: z.array(z.string().min(1)).min(1).optional(),
+	descriptionInfo: productDescriptionInfo.optional(),
+	sizeChartInfo: productSizeChartInfo.optional(),
+});
+
+/** 只组装明确提供的字段，不携带库存或预览时的其他资料。 */
+export function editProductInfo(p: Omit<z.output<typeof editProductParams>, "productId">) {
+	return {
+		name: p.title,
+		...(p.models ? { model_list: p.models.map((m) => ({ ...m, id: Number(m.id) })) } : {}),
+		...(p.categoryPath ? { category_path: p.categoryPath, attributes: p.attributes ?? [] } : {}),
+		...(p.images ? { images: p.images } : {}),
+		...(p.descriptionInfo ? { description_info: p.descriptionInfo } : {}),
+		...(p.sizeChartInfo ? { size_chart_info: p.sizeChartInfo } : {}),
+	};
+}
+
+export const editProduct = submit("修改商品名稱、規格價格、顯式類目屬性、主圖、描述或Size Chart（只经业务工具的写工具调）", editProductParams, async (p) => {
+	const w = await updateProduct(p.productId, editProductInfo(p));
+	return w.kind === "refused" ? { kind: "refused", why: `${w.code ?? ""} ${w.why}`.trim() } : w;
+});
