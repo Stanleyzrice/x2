@@ -163,6 +163,17 @@ async function finishOriginal(sql: Sql, shop: string, p: Pic, base: Bytes, brows
 export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promise<Bytes> {
 	const p = [...(pics.main ?? []), ...(pics.detail ?? []), ...(pics.options ?? [])].find((x) => x.imageId === id);
 	if (!p) throw new Error(`图 ${id} 不在商品稿的图里：重做商品稿（x2 listing make）`);
+	if (!p.translated && p.sha) {
+		const [cached] = await sql`select source, bytes from images where sha256 = ${p.sha}`;
+		if (cached?.bytes) {
+			const saved = inspect(new Uint8Array(cached.bytes), "已保存的原图");
+			if (saved.sha256 === p.sha) return saved;
+		}
+		if (typeof cached?.source === "string" && /^(https?:|data:)/.test(cached.source) && cached.source !== p.from) {
+			const saved = await original(sql, cached.source).catch(() => null);
+			if (saved?.sha256 === p.sha) return saved;
+		}
+	}
 	if (!p.translated) return original(sql, p.from);
 	const [row] = await sql`select bytes from images where sha256 = ${p.translated}`;
 	if (!row?.bytes) throw new Error(`库里没有译图 ${p.translated.slice(0, 12)} 的字节：重做商品稿（x2 listing make）`);

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inspect } from "../../connectors/services/image/api.ts";
 import { SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
-import { originalImageUpload } from "./images.ts";
+import type { Sql } from "../../platform/db/index.ts";
+import { originalImageUpload, unmarked } from "./images.ts";
 import { listing } from "./index.ts";
 import { imageModeOf, type Pics } from "./pics.ts";
 import { imageNames } from "./product.ts";
@@ -38,6 +39,28 @@ test("原图上传输入逐字节保留PNG，不经过JPEG重编码或改变尺�
 	assert.equal(upload.final, base.sha256);
 	assert.deepEqual([upload.width, upload.height], [base.width, base.height]);
 	assert.deepEqual(base.bytes, bytes);
+});
+
+test("已上传图片审稿优先读取SHA一致的保存字节，无需重新访问CDN", async () => {
+	const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=", "base64");
+	const base = inspect(bytes);
+	const sql = (async () => [{ bytes }]) as unknown as Sql;
+	const got = await unmarked(sql, { main: [{ imageId: "published", sha: base.sha256, from: "http://127.0.0.1:1/unreachable.png" }] }, "published");
+	assert.deepEqual(Buffer.from(got.bytes), bytes);
+});
+
+test("原图审稿可复用已保存data URL；SHA不同的缓存字节不能冒充当前图", async () => {
+	const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=", "base64");
+	const base = inspect(bytes);
+	const source = `data:image/png;base64,${bytes.toString("base64")}`;
+	const sql = (async () => [{ source }]) as unknown as Sql;
+	const got = await unmarked(sql, { main: [{ imageId: "data-source", sha: base.sha256, from: "http://127.0.0.1:1/unreachable.png" }] }, "data-source");
+	assert.equal(got.sha256, base.sha256);
+	const other = Buffer.from(bytes);
+	other[other.length - 1] = other[other.length - 1]! ^ 1;
+	const mismatch = (async () => [{ bytes: other }]) as unknown as Sql;
+	const fallback = await unmarked(mismatch, { main: [{ imageId: "mismatch", sha: base.sha256, from: source }] }, "mismatch");
+	assert.equal(fallback.sha256, base.sha256);
 });
 
 test("原图规格按source URL对应，图片数组换序仍匹配原款式", () => {
