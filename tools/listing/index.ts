@@ -14,6 +14,7 @@ import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
 import { copyDraft, copyImages, copyImagesParams, copyParams } from "./copy.ts";
 import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
+import { EXPAND_WRITES, expandParams, planExpand, previewExpand } from "./expand.ts";
 import { unmarked } from "./images.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
 import { orderPrice, orderPricingInput } from "./order-pricing.ts";
@@ -551,6 +552,8 @@ export const listing: Toolkit = {
 		edit: write("人同意的现有商品修改：核对原标题、原价及指定的原类目、原主图或原描述，提交一次并读回；首次约一个商品 --try", editParams, planEdit),
 		"add-size-preview": get("现读现有商品，预览新增一个二级尺寸及逐款售价、库存；不提交", addSizeParams, async (p) => previewAddSize(await db(), p)),
 		"add-size": write("人同意的现有商品新增二级尺寸：核对预览指纹，保留旧规格和价格，提交一次并读回；首次单个商品 --try", addSizeParams, planAddSize),
+		"expand-preview": get("现读商品，预览已核价1688 SKU子集的完整规格及图片展开；不提交", expandParams, async (p) => previewExpand(await db(), p)),
+		expand: write("按显式1688 SKU映射展开规格和图片：原native指纹保护，保留原模型id、价格、货号及库存；首次单款--try", expandParams, planExpand),
 		"unlist-preview": get("现读指定商品的在售状态和期间销量：只预览，不下架；未知不当零", unlistParams, async (p) => previewUnlist(await db(), p)),
 		unlist: write("人同意下架的零销量商品：确认销量、已付款件数都为零才下架；记意图、提交一次、读回来核对，不删除", unlistParams, planUnlist),
 		cancel: get(
@@ -629,7 +632,7 @@ export const listing: Toolkit = {
 		const r = await listingsCheck(sql);
 		return { read: [], human: r.reminders, todo: r.todo };
 	},
-	writes: { ...LISTING_WRITES, ...UNLIST_WRITES, ...EDIT_WRITES, ...ADD_SIZE_WRITES },
+	writes: { ...LISTING_WRITES, ...UNLIST_WRITES, ...EDIT_WRITES, ...ADD_SIZE_WRITES, ...EXPAND_WRITES },
 	written,
 	tables: LISTING_TABLES,
 	schema: new URL("./schema.sql", import.meta.url),
