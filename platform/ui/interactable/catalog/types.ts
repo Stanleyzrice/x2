@@ -8,6 +8,18 @@ export type Model = {
 	stock: number | null;
 	tierIndex: number[];
 	image?: string | null;
+	imageSource?: "sku" | "product";
+	source?: {
+		offerId: string;
+		skuId: string;
+		specId: string;
+		name: string;
+		image: string | null;
+		url: string;
+		readAt: string | null;
+		basis: "listing_sku";
+	} | null;
+	sourceWarning?: string | null;
 };
 export type Product = {
 	productId: string;
@@ -25,6 +37,7 @@ export type Product = {
 	stockState: "in_stock" | "sold_out" | "unknown";
 	detailError: string | null;
 	imageError?: string | null;
+	detailReadAt?: string | null;
 	suppliers: Supplier[];
 	supplierWarnings: string[];
 	statusChange?: { requestId: string; targetState: "listed" | "unlisted"; status: string; error: string | null } | null;

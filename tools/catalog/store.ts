@@ -16,6 +16,7 @@ import {
 	supplierLinks,
 } from "./facts.ts";
 import { enrichProductImages, type ImageReader } from "./images.ts";
+import { type CatalogSourceRow, enrichProductSources } from "./sources.ts";
 import { statusChanges } from "./status.ts";
 
 type Shop = { shop: string; shop_id: string };
@@ -225,6 +226,11 @@ export async function readProduct(sql: Sql, shop: string, productId: string, ima
 		where p.shop = ${shop} and p.shop_id = ${target.shop_id} and p.product_id = ${productId}`;
 	if (!row) throw new Usage(`当前 Catalog 没有 ${shop} 的商品 ${productId}`);
 	const enriched = await enrichProductImages({ shop, shopId: target.shop_id }, row.facts, imageReader);
-	const [product] = await attachLinks(sql, shop, target.shop_id, [enriched]);
-	return { shop, shopId: target.shop_id, product: { ...product!, imageError: enriched.imageError } };
+	const sources = await sql<CatalogSourceRow[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId",
+		l.variants, jsonb_build_object('offerId', l.offer->'offerId', 'skus', l.offer->'skus') as offer, l.offer_read_at as "readAt"
+		from listings l join shop_settings s on s.shop = l.shop
+		where l.shop = ${shop} and s.shop_id = ${target.shop_id} and l.product_id = ${productId}`;
+	const withSources = enrichProductSources({ shop, shopId: target.shop_id }, enriched, sources);
+	const [product] = await attachLinks(sql, shop, target.shop_id, [withSources]);
+	return { shop, shopId: target.shop_id, product: { ...product!, imageError: enriched.imageError, detailReadAt: enriched.detailReadAt } };
 }

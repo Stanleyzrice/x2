@@ -1,8 +1,8 @@
-// 老快照缺 SKU 图片时只读所选商品；仅在响应中补图，不覆盖状态、价格、库存、货源或数据库事实。
-import { type ProductInfo, productInfo, productModelImage } from "../../connectors/sites/shopee/products.ts";
+// 打开单件商品时现读完整 Shopee 详情；只在响应中更新事实，不写回目录快照或外站。
+import { type ProductInfo, productImageUrl, productInfo } from "../../connectors/sites/shopee/products.ts";
 import { shop as identity } from "../../connectors/sites/shopee/seller.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
-import { checkIdentity, type Identity, type ProductFact } from "./facts.ts";
+import { checkIdentity, type Identity, type ProductFact, productFact } from "./facts.ts";
 
 export type ImageReader = {
 	where<T>(shopId: string, fn: () => Promise<T>): Promise<T>;
@@ -15,9 +15,7 @@ export async function enrichProductImages(
 	target: { shop: string; shopId: string },
 	fact: ProductFact,
 	reader: ImageReader = catalogImageReader,
-): Promise<ProductFact & { imageError: string | null }> {
-	if (!fact.models?.some((m) => m.image === undefined)) return { ...fact, imageError: null };
-	const missing = fact.models.map((m) => ({ ...m, image: m.image ?? null }));
+): Promise<ProductFact & { imageError: string | null; detailReadAt: string | null }> {
 	try {
 		const info = await reader.where(target.shopId, async () => {
 			checkIdentity(target, await reader.identity());
@@ -25,27 +23,29 @@ export async function enrichProductImages(
 			checkIdentity(target, await reader.identity());
 			return detail;
 		});
-		if (info.id != null && String(info.id) !== fact.productId) throw new Error("Shopee 图片详情商品编号不匹配");
-		const byId = new Map<string, NonNullable<ProductInfo["model_list"]>[number]>();
-		const duplicates = new Set<string>();
-		for (const model of info.model_list ?? []) {
-			if (!model.id) continue;
-			if (byId.has(model.id)) duplicates.add(model.id);
-			byId.set(model.id, model);
-		}
-		let unmatched = 0;
-		const models = fact.models.map((cached) => {
-			if (cached.image !== undefined) return cached;
-			const live = cached.modelId && !duplicates.has(cached.modelId) ? byId.get(cached.modelId) : undefined;
-			const sameTier = live && JSON.stringify((live.tier_index ?? []).map(Number)) === JSON.stringify(cached.tierIndex);
-			if (!sameTier || !live) {
-				unmatched++;
-				return { ...cached, image: null };
-			}
-			return { ...cached, image: productModelImage(info, live) };
-		});
-		return { ...fact, models, imageError: unmatched ? `${unmatched} 个 SKU 的图片未能按 modelId 和 tierIndex 明确对应，保留缺图` : null };
+		if (info.id == null || String(info.id) !== fact.productId) throw new Error("Shopee 详情商品编号不匹配或未返回");
+		if (!info.model_list?.length) throw new Error("Shopee 未返回规格明细");
+		const modelIds = info.model_list.map((m) => m.id);
+		if (modelIds.some((id) => !id) || new Set(modelIds).size !== modelIds.length) throw new Error("Shopee 规格编号缺失或重复");
+		const rawStatus = info.status;
+		const status = rawStatus != null && String(rawStatus).trim() && Number.isInteger(Number(rawStatus)) ? Number(rawStatus) : null;
+		const cover = typeof info.images?.[0] === "string" ? productImageUrl(info.images[0]) : null;
+		const fresh = productFact({ productId: fact.productId, name: fact.name, status, cover: cover ?? fact.cover ?? "" }, info);
+		const single = info.model_list.length === 1 && info.std_tier_variation_list?.length === 0;
+		const models = fresh.models!.map((model) => ({
+			...model,
+			name: single && model.name === "规格名未知" ? "默认规格" : model.name,
+			image: model.image ?? (single ? cover : null),
+			imageSource: model.image ? ("sku" as const) : single && cover ? ("product" as const) : undefined,
+		}));
+		const detailError =
+			single && fresh.detailError === "部分规格名称未返回"
+				? models.some((m) => m.modelId === null || m.price === null || m.stock === null)
+					? "部分规格的 id、价格或库存未返回"
+					: null
+				: fresh.detailError;
+		return { ...fresh, models, detailError, imageError: null, detailReadAt: new Date().toISOString() };
 	} catch (e) {
-		return { ...fact, models: missing, imageError: `SKU 图片读取失败：${(e as Error).message}` };
+		return { ...fact, imageError: `Shopee SKU 规格和图片读取失败，当前展示目录快照：${(e as Error).message}`, detailReadAt: null };
 	}
 }

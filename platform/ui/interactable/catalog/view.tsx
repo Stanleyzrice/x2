@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem } from "../../api.ts";
 import type { Props } from "./schema.ts";
-import type { CatalogResult, Product } from "./types.ts";
+import type { CatalogResult, Model, Product } from "./types.ts";
 
 const money = (n: number | null) =>
 	n === null ? "未知" : new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 2 }).format(n);
@@ -689,6 +689,43 @@ function Sources({ product: p, compact }: { product: Product; compact?: boolean 
 function Details({
 	item,
 	product,
+function SkuPhoto({ src, name, open }: { src: string | null | undefined; name: string; open: () => void }) {
+	const [failedSrc, setFailedSrc] = useState<string | null>(null);
+	const failed = Boolean(src && failedSrc === src);
+	if (!src || failed)
+		return (
+			<div className="flex size-16 shrink-0 items-center justify-center rounded-lg border bg-muted text-xs text-muted-foreground">
+				{failed ? "图片加载失败" : "未提供图片"}
+			</div>
+		);
+	return (
+		<button type="button" className="size-16 shrink-0 overflow-hidden rounded-lg border bg-muted" aria-label={`查看${name}图片`} onClick={open}>
+			<img src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-contain" onError={() => setFailedSrc(src)} />
+		</button>
+	);
+}
+
+function SourceSpec({ model: m, open }: { model: Model; open: () => void }) {
+	const s = m.source;
+	if (!s) return <p className="text-xs text-muted-foreground">{m.sourceWarning ?? "1688 规格待核对"}</p>;
+	return (
+		<div className="space-y-2">
+			<div className="flex items-start gap-3">
+				<SkuPhoto src={s.image} name={`1688 ${s.name}`} open={open} />
+				<div className="min-w-0 space-y-1">
+					<p className="text-sm font-medium">{s.name}</p>
+					<p className="break-all text-xs text-muted-foreground">SKU ID {s.skuId}</p>
+					<p className="break-all text-xs text-muted-foreground">Spec ID {s.specId}</p>
+					<a href={s.url} target="_blank" rel="noreferrer" className="text-xs text-primary underline-offset-2 hover:underline">
+						1688 来源 <ArrowUpRightIcon className="inline size-3" />
+					</a>
+				</div>
+			</div>
+			<p className="text-xs text-muted-foreground">已按上品 SKU 对应 · 来源采集 {time(s.readAt)}</p>
+		</div>
+	);
+}
+
 	close,
 	renderStatus,
 }: {
@@ -718,11 +755,14 @@ function Details({
 		};
 	}, [item, id]);
 	const p = loaded ?? product;
-	const modelImages = (p?.models ?? []).flatMap((m, row) => (m.image ? [{ src: m.image, alt: m.name, label: m.name, row }] : []));
+	const modelImages = (p?.models ?? []).flatMap((m, row) => [
+		...(m.image ? [{ src: m.image, alt: m.name, label: `Shopee · ${m.name}`, row, side: "shopee" }] : []),
+		...(m.source?.image ? [{ src: m.source.image, alt: m.source.name, label: `1688 · ${m.source.name}`, row, side: "1688" }] : []),
+	]);
 	const lightbox = useLightbox(modelImages);
 	return (
 		<Sheet open={Boolean(product)} onOpenChange={(open) => !open && close()}>
-			<SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+			<SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
 				<SheetHeader>
 					<SheetTitle>{p?.name ?? "商品详情"}</SheetTitle>
 					<SheetDescription>{p ? `商品 ${p.productId} · ${p.parentSku ?? "主 SKU 未提供"}` : "当前目录快照"}</SheetDescription>
@@ -742,11 +782,14 @@ function Details({
 							</div>
 						</div>
 						<Sources product={p} />
-						{(error || p.detailError || p.imageError) && (
-							<p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">
-								{error ?? p.detailError ?? p.imageError}
+						<p className="text-xs text-muted-foreground" role="status">
+							{!loaded && !error ? "正在读取 Shopee 最新规格与图片…" : p.detailReadAt ? `Shopee 详情读取 ${time(p.detailReadAt)}` : "当前展示目录快照"}
+						</p>
+						{[...new Set([error, p.detailError, p.imageError].filter(Boolean))].map((message) => (
+							<p key={message} role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">
+								{message}
 							</p>
-						)}
+						))}
 						<div>
 							<h3 className="mb-3 text-sm font-semibold">SKU 与规格</h3>
 							{p.models?.length ? (
@@ -754,7 +797,8 @@ function Details({
 									<Table>
 										<TableHeader>
 											<TableRow>
-												<TableHead>规格 / SKU</TableHead>
+												<TableHead>Shopee 规格 / SKU</TableHead>
+												<TableHead>对应 1688 规格</TableHead>
 												<TableHead>价格 TWD</TableHead>
 												<TableHead>库存</TableHead>
 											</TableRow>
@@ -764,30 +808,25 @@ function Details({
 												<TableRow key={m.modelId ?? `unknown-${i}`}>
 													<TableCell className="whitespace-normal">
 														<div className="flex items-center gap-3">
-															{m.image ? (
-																<button
-																	type="button"
-																	className="size-14 shrink-0 overflow-hidden rounded-lg border bg-muted"
-																	aria-label={`查看规格图片 ${m.name}`}
-																	onClick={() => lightbox.open(modelImages.findIndex((photo) => photo.row === i))}
-																>
-																	<img src={m.image} alt={m.name} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-contain" />
-																</button>
-															) : (
-																<div className="flex size-14 shrink-0 items-center justify-center rounded-lg border bg-muted text-xs text-muted-foreground">
-																	图片待补
-																</div>
-															)}
+															<SkuPhoto
+																src={m.image}
+																name={`Shopee ${m.name}`}
+																open={() => lightbox.open(modelImages.findIndex((photo) => photo.row === i && photo.side === "shopee"))}
+															/>
 															<div className="min-w-0">
 																<p className="font-medium">{m.name}</p>
 																<p className="mt-1 break-all text-xs text-muted-foreground">{m.sku ?? "SKU 未提供"}</p>
 																<p className="text-xs text-muted-foreground">Model ID {m.modelId ?? "未知"}</p>
 															</div>
+																{m.imageSource === "product" && <p className="text-xs text-muted-foreground">单规格商品图</p>}
 														</div>
 													</TableCell>
 													<TableCell className="whitespace-nowrap">{money(m.price)}</TableCell>
 													<TableCell>{m.stock ?? "未知"}</TableCell>
 												</TableRow>
+													<TableCell className="min-w-64 whitespace-normal align-top">
+														<SourceSpec model={m} open={() => lightbox.open(modelImages.findIndex((photo) => photo.row === i && photo.side === "1688"))} />
+													</TableCell>
 											))}
 										</TableBody>
 									</Table>

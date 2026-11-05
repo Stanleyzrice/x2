@@ -59,6 +59,21 @@ test("完整消费分页，商品详情保留规格名、SKU与字符串ID", asy
 	assert.equal(result.products[0]?.models?.[0]?.sku, "SKU-0");
 });
 
+test("多层规格缺少任一层值时不以剩余名称冒充完整规格", () => {
+	const detail = productInfoOf({
+		data: {
+			product_info: {
+				id: "1",
+				model_list: [{ id: "11", tier_index: [0, 1], price_info: { normal_price: 59 }, stock_detail: { total_seller_stock: 1 } }],
+				std_tier_variation_list: [{ value_list: [{ custom_value: "粉色" }] }, { value_list: [{ custom_value: "小号" }] }],
+			},
+		},
+	});
+	const result = productFact(summary("1"), detail);
+	assert.equal(result.models?.[0]?.name, "规格名未知");
+	assert.match(result.detailError ?? "", /规格名称未返回/);
+});
+
 test("分页列表已有 SKU 时直接保留价格库存，不对每个商品重复读取详情", async () => {
 	const page = allProductsOf({
 		data: {
@@ -123,7 +138,12 @@ test("多 SKU 缺规格名不能冒充默认规格或完整详情；无 tier 的
 	const r = reader([{ total: 1, rows: [summary("1")] }]);
 	r.detail = async () => unnamed(2);
 	assert.equal((await collectCatalog(target, r)).detailsComplete, false);
-	const single = productFact(summary("1"), unnamed(1));
+	const withoutTiers = productFact(summary("1"), unnamed(1));
+	assert.equal(withoutTiers.models?.[0]?.name, "规格名未知");
+	assert.match(withoutTiers.detailError ?? "", /规格名称未返回/);
+	const singleInfo = unnamed(1);
+	singleInfo.std_tier_variation_list = [];
+	const single = productFact(summary("1"), singleInfo);
 	assert.equal(single.models?.[0]?.name, "默认规格");
 	assert.equal(single.detailError, null);
 });

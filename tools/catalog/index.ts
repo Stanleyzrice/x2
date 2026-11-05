@@ -33,7 +33,7 @@ export const catalog: Toolkit = {
 		),
 		products: get("搜索当前目录快照，返回商品、价格库存、1688关联及采集/完整性/失败状态", queryParams, async (p) => readCatalog(await db(), p)),
 		product: get(
-			"读取当前快照商品的 SKU、价格库存及来源；旧快照缺 SKU 图片时只读该件 Shopee 详情补图，失败返回 imageError，不改缓存事实",
+			"读取该件 Shopee 最新规格、图片与价格库存，并按已有上品 SKU 对应 1688 规格；失败保留快照及错误，不修改网站或缓存",
 			z.object({ shop, productId: str("Shopee 商品 id") }),
 			async (p) => readProduct(await db(), p.shop, p.productId),
 		),

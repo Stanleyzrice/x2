@@ -3,12 +3,13 @@ name: catalog
 description: 查看指定 Shopee 店铺的在售或已下架商品、SKU、价格库存及1688关联；逐件确认后修改上架状态并读回核对。
 ---
 
-目标：查看店铺商品及读取完整性。固定 Catalog 入口默认显示在售（网站状态码 1），可切换已下架（状态码 8）；库存筛选独立，售罄不等于下架。CLI 在仓库根目录运行 `node x2.ts`。商品状态只按用户逐件选择与确认修改；不自动更改价格、库存或货源选择。
+仓库根目录运行 `node x2.ts`。Catalog 默认在售（状态码 1），可切换下架（8）；库存独立，售罄不等于下架。仅按用户逐件确认修改状态，不自动改价格、库存或货源。
 
-1. `catalog shops --json` 返回 `shops` 中已配置的 shop、shopId、快照时间及最近刷新状态；选择明确店铺，后续保持同一身份。
+1. `catalog shops --json` 查看 shop、shopId、快照时间和刷新状态；后续保持同一店铺身份。
 2. 需要最新事实时，`catalog sync --shop <shop> --scope all --json`。只读取网站当前返回的全部状态，包括在售、下架、禁卖、审核、仍可返回的删除商品和售罄商品；不承诺网站不再返回的历史记录。
 3. `catalog products --shop <shop> --status 1 --json` 读取当前快照中的在售商品；查看已下架时传 `--status 8`。可传 `--query <商品名或SKU>`、`--stock <all或in_stock或sold_out或unknown>`、`--page <页码>`、`--page-size <1至200>`。排查其他状态时，CLI 显式传 `--status all`、`--status unknown` 或网站状态码。
-4. 输出 `rows` 中的 productId 原样传给 `catalog product --shop <同一shop> --product-id <productId> --json`，查看 `product.models` 的 modelId、SKU、规格、价格与库存；ID保持字符串。
+4. 将 productId 原样传给 `catalog product --shop <同一shop> --product-id <productId> --json`，现读 Shopee 的 SKU、规格、图片、价格库存；`detailReadAt` 是读取时间，失败保留快照及 `imageError`。ID 保持字符串。
+5. `models[].source` 是同店同商品的上品 SKU 对应，核对 skuId+specId 后展示 1688 规格、图片与采集时间；缺失或冲突看 `sourceWarning`，不猜配。两站图片分别展示；确认无规格层的单 SKU 可用商品图。
 
 用户要改变某个现有商品状态时：
 
@@ -21,6 +22,6 @@ description: 查看指定 Shopee 店铺的在售或已下架商品、SKU、价�
 
 刷新期间查看 `lastAttempt.status/phase/page/observed`；刷新失败保留旧快照，展示旧采集时间，不把旧值称为刚采集成功。`ok:false` 或登录、滑块、店铺身份不符时停止该次刷新，交人处理后再读；不反复重试相同阻塞。
 
-未知价格、库存和缺失详情保留 null，不补零。售罄只按工具返回的 stockState 判断；删除商品详情不可读取时保留其概要和 detailError，不声称规格已完整。
+未知价格、库存和详情保留 null；售罄按 stockState 判断。删除商品详情不可读时保留概要和 detailError。
 
 `suppliers.kind=listing` 是商品稿记录的上品来源；`chosen` 是经店铺归属核对的已选货源。两者不同分别展示，broken 与 supplierWarnings 原样报告；缺少明确归属时不猜配、不自动选源。修改其他商品字段或选择货源时另行确认，并交对应工具处理。

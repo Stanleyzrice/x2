@@ -1,4 +1,4 @@
-// SKU 图片按需补读只改变响应的图片，fixture 验证身份、精确对应、失败和已有缓存兼容；不接触真实站点或DB。
+// 单件商品现读完整详情，规格扩展和层下标变化不沿用旧快照；读取失败明确回退且不写库。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { productInfoOf } from "../../connectors/sites/shopee/products.ts";
@@ -17,15 +17,12 @@ const cached: ProductFact = {
 	reportedStatus: 1,
 	statusLabel: "在售",
 	unlisted: false,
-	models: [
-		{ modelId: "11", sku: "SKU-A", name: "同名", tierIndex: [0, 1], price: 99, stock: 0 },
-		{ modelId: "12", sku: "SKU-B", name: "同名", tierIndex: [1, 0], price: null, stock: null },
-	],
-	priceMin: null,
-	priceMax: null,
-	stockTotal: null,
-	stockState: "unknown",
-	detailError: "已有缺项证据",
+	models: [{ modelId: "11", sku: "SKU-A", name: "默认规格", tierIndex: [0], price: 99, stock: 0, image: null }],
+	priceMin: 99,
+	priceMax: 99,
+	stockTotal: 0,
+	stockState: "sold_out",
+	detailError: null,
 };
 function reader() {
 	let reads = 0;
@@ -33,14 +30,24 @@ function reader() {
 		data: {
 			product_info: {
 				id: "42",
-				name: "更新的名称不覆盖缓存",
+				name: "当前商品资料",
+				parent_sku: "PARENT",
 				status: 8,
 				is_unlisted: true,
+				images: ["product-cover"],
 				model_list: [
-					{ id: "12", tier_index: [1, 0], sku_image: "", price_info: { normal_price: 999 } },
-					{ id: "11", tier_index: [0, 1], sku_image: "", stock_detail: { total_seller_stock: 100 } },
+					{ id: "12", sku: "SKU-B", tier_index: [0, 0], sku_image: "", price_info: { normal_price: 129 }, stock_detail: { total_seller_stock: 50 } },
+					{ id: "11", sku: "SKU-A", tier_index: [1, 0], sku_image: "", price_info: { normal_price: 159 }, stock_detail: { total_seller_stock: 10 } },
 				],
-				std_tier_variation_list: [{ value_list: [{ image_id: "style-zero" }, { image_id: "style-one" }] }],
+				std_tier_variation_list: [
+					{
+						value_list: [
+							{ custom_value: "杏粉色", image_id: "pink" },
+							{ custom_value: "灰色", image_id: "grey" },
+						],
+					},
+					{ value_list: [{ custom_value: "34×47×10cm" }] },
+				],
 			},
 		},
 	});
@@ -54,42 +61,86 @@ function reader() {
 	};
 	return { driver, reads: () => reads, value };
 }
-test("老快照按 exact modelId 和 tierIndex 补图，网站返回顺序和同名不影响对应，不覆盖价格库存状态", async () => {
+test("详情现读全部 SKU，包括新规格和移动的 tierIndex；价格库存状态与 Shopee 同次详情一致", async () => {
 	const f = reader();
 	const before = structuredClone(cached);
 	const result = await enrichProductImages(target, cached, f.driver);
 	assert.equal(f.reads(), 1);
 	assert.deepEqual(
-		result.models?.map((m) => m.image),
-		["https://down-tw.img.susercontent.com/file/style-zero", "https://down-tw.img.susercontent.com/file/style-one"],
+		result.models?.map(({ modelId, name, tierIndex, image, price, stock }) => ({ modelId, name, tierIndex, image, price, stock })),
+		[
+			{ modelId: "12", name: "杏粉色 / 34×47×10cm", tierIndex: [0, 0], image: "https://down-tw.img.susercontent.com/file/pink", price: 129, stock: 50 },
+			{ modelId: "11", name: "灰色 / 34×47×10cm", tierIndex: [1, 0], image: "https://down-tw.img.susercontent.com/file/grey", price: 159, stock: 10 },
+		],
 	);
-	assert.deepEqual({ ...result, models: cached.models, imageError: undefined }, { ...cached, imageError: undefined });
-	assert.deepEqual(cached, before);
+	assert.equal(result.name, "当前商品资料");
+	assert.equal(result.status, 8);
+	assert.equal(result.priceMin, 129);
+	assert.equal(result.priceMax, 159);
+	assert.equal(result.stockTotal, 60);
 	assert.equal(result.imageError, null);
+	assert.ok(result.detailReadAt);
+	assert.deepEqual(cached, before);
 });
-test("已知缺图 null 不触发补读；部分旧记录只补缺字段，保留已有图片", async () => {
-	const f = reader();
-	const known = { ...cached, models: cached.models!.map((m) => ({ ...m, image: null })) };
-	await enrichProductImages(target, known, f.driver);
-	assert.equal(f.reads(), 0);
-	const partial = { ...cached, models: [{ ...cached.models![0]!, image: "https://img.example/known.jpg" }, cached.models![1]!] };
-	const result = await enrichProductImages(target, partial, f.driver);
-	assert.equal(f.reads(), 1);
-	assert.equal(result.models?.[0]?.image, "https://img.example/known.jpg");
-});
-test("相同名字不能代替 modelId/tierIndex；规格变化、重复 id 或缺详情时保留 null 并说明", async () => {
-	for (const change of ["tier", "duplicate", "missing"] as const) {
+test("null 缺图、旧有图片和无规格缓存都只读一次真实详情", async () => {
+	for (const fact of [
+		cached,
+		{ ...cached, models: cached.models!.map((m) => ({ ...m, image: "https://img.example/old.jpg" })) },
+		{ ...cached, models: null },
+	]) {
 		const f = reader();
-		if (change === "tier") f.value.model_list![1]!.tier_index = [1, 1];
-		if (change === "duplicate") f.value.model_list!.push(f.value.model_list![1]!);
-		if (change === "missing") f.value.model_list = [];
-		const result = await enrichProductImages(target, cached, f.driver);
-		assert.equal(result.models?.[0]?.image, null);
-		assert.match(result.imageError ?? "", /未能.*对应/);
+		const result = await enrichProductImages(target, fact, f.driver);
+		assert.equal(f.reads(), 1);
+		assert.equal(result.models?.[0]?.image, "https://down-tw.img.susercontent.com/file/pink");
 	}
 });
-test("图片 GET/登录/店铺身份失败保留缓存，详情不整页报错，缺图明确为 null", async () => {
-	for (const failure of ["read", "identity", "product"] as const) {
+test("经详情确认的单 SKU 无变体可展示商品主图，多个 SKU 绝不借用主图", async () => {
+	for (const single of [true, false]) {
+		const f = reader();
+		f.value.images = ["product-image"];
+		f.value.std_tier_variation_list = [];
+		f.value.model_list = productInfoOf({
+			data: {
+				product_info: {
+					model_list: single
+						? [{ id: "11", tier_index: [] }]
+						: [
+								{ id: "11", tier_index: [] },
+								{ id: "12", tier_index: [] },
+							],
+				},
+			},
+		}).model_list;
+		const result = await enrichProductImages(target, cached, f.driver);
+		assert.equal(result.models?.[0]?.image, single ? "https://down-tw.img.susercontent.com/file/product-image" : null);
+		assert.equal(result.models?.[0]?.imageSource, single ? "product" : undefined);
+	}
+});
+test("单 SKU 仍有实际变体时不借用商品主图，原生 SKU 图保留来源", async () => {
+	const f = reader();
+	f.value.model_list = [f.value.model_list![0]!];
+	f.value.std_tier_variation_list![0]!.value_list![0]!.image_id = null;
+	const result = await enrichProductImages(target, cached, f.driver);
+	assert.equal(result.models?.[0]?.image, null);
+	assert.equal(result.models?.[0]?.imageSource, undefined);
+	f.value.model_list![0]!.sku_image = "direct-sku-image";
+	const direct = await enrichProductImages(target, cached, f.driver);
+	assert.equal(direct.models?.[0]?.image, "https://down-tw.img.susercontent.com/file/direct-sku-image");
+	assert.equal(direct.models?.[0]?.imageSource, "sku");
+});
+test("未返回变体列表不等于确认无变体，不借用主图或推定默认规格", async () => {
+	for (const tierIndex of [[], [0]]) {
+		const f = reader();
+		f.value.model_list = productInfoOf({ data: { product_info: { model_list: [{ id: "11", tier_index: tierIndex }] } } }).model_list;
+		f.value.std_tier_variation_list = undefined;
+		const result = await enrichProductImages(target, cached, f.driver);
+		assert.equal(result.models?.[0]?.image, null);
+		assert.equal(result.models?.[0]?.imageSource, undefined);
+		assert.equal(result.models?.[0]?.name, "规格名未知");
+	}
+});
+test("详情失败、店铺不符、商品编号不符及重复/缺失规格编号均回退原快照并说明", async () => {
+	for (const failure of ["read", "identity", "product", "duplicate", "model", "missing"] as const) {
 		const f = reader();
 		if (failure === "read")
 			f.driver.detail = async () => {
@@ -97,17 +148,16 @@ test("图片 GET/登录/店铺身份失败保留缓存，详情不整页报错�
 			};
 		if (failure === "identity") f.driver.identity = async () => ({ username: "other", shopId: "other" });
 		if (failure === "product") f.value.id = "other";
+		if (failure === "duplicate") f.value.model_list!.push(f.value.model_list![0]!);
+		if (failure === "model") f.value.model_list![0]!.id = undefined;
+		if (failure === "missing") f.value.model_list = [];
 		const result = await enrichProductImages(target, cached, f.driver);
-		assert.match(result.imageError ?? "", /读取失败/);
-		assert.deepEqual(
-			result.models?.map((m) => m.image),
-			[null, null],
-		);
-		assert.equal(result.status, cached.status);
-		assert.equal(result.stockTotal, cached.stockTotal);
+		assert.match(result.imageError ?? "", /读取失败.*快照/);
+		assert.equal(result.detailReadAt, null);
+		assert.deepEqual({ ...result, imageError: undefined, detailReadAt: undefined }, { ...cached, imageError: undefined, detailReadAt: undefined });
 	}
 });
-test("单件 product 读取可按需补图，整个DB路径只允许select，旧事实不写回", async () => {
+test("单件 product 的 DB 路径只允许 select，现读的多个 SKU 不写回旧快照", async () => {
 	const f = reader();
 	const run = async (strings: TemplateStringsArray): Promise<unknown[]> => {
 		if (!("raw" in strings)) return [];
@@ -124,9 +174,10 @@ test("单件 product 读取可按需补图，整个DB路径只允许select，旧
 		throw new Error(`不允许的fixture查询：${q}`);
 	};
 	const result = await readProduct(run as unknown as Sql, target.shop, cached.productId, f.driver);
-	assert.equal(result.product.models?.[0]?.image, "https://down-tw.img.susercontent.com/file/style-zero");
-	assert.equal(result.product.status, 1);
+	assert.equal(result.product.models?.length, 2);
+	assert.equal(result.product.models?.[0]?.image, "https://down-tw.img.susercontent.com/file/pink");
+	assert.equal(result.product.status, 8);
 	assert.deepEqual(result.product.suppliers, []);
 	assert.equal(result.product.imageError, null);
-	assert.equal(cached.models?.[0]?.image, undefined);
+	assert.equal(cached.models?.length, 1);
 });

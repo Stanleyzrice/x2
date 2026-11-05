@@ -4,6 +4,16 @@ import { productModelImage, STATUS } from "../../connectors/sites/shopee/product
 import { NeedsHuman } from "../../platform/errors.ts";
 
 export type StockState = "in_stock" | "sold_out" | "unknown";
+export type CatalogSource = {
+	offerId: string;
+	skuId: string;
+	specId: string;
+	name: string;
+	image: string | null;
+	url: string;
+	readAt: string | null;
+	basis: "listing_sku";
+};
 export type CatalogModel = {
 	modelId: string | null;
 	sku: string | null;
@@ -12,6 +22,9 @@ export type CatalogModel = {
 	stock: number | null;
 	tierIndex: number[];
 	image?: string | null;
+	imageSource?: "sku" | "product";
+	source?: CatalogSource | null;
+	sourceWarning?: string | null;
 };
 export type ProductFact = {
 	productId: string;
@@ -69,9 +82,9 @@ export function productFact(summary: ProductSummary, info: ProductInfo | null, d
 	const models: CatalogModel[] | null = info?.model_list
 		? info.model_list.map((m) => {
 				const tierIndex = (m.tier_index ?? []).map(Number);
-				const parts = tierIndex.map((i, a) => info.std_tier_variation_list?.[a]?.value_list?.[i]?.custom_value ?? "").filter(Boolean);
-				const name = (m.name?.trim() ? m.name : "") || parts.join(" / ");
-				const defaultModel = info.model_list!.length === 1 && !tierIndex.length && !info.std_tier_variation_list?.length;
+				const parts = tierIndex.map((i, a) => info.std_tier_variation_list?.[a]?.value_list?.[i]?.custom_value?.trim() ?? "");
+				const name = (m.name?.trim() ? m.name : "") || (parts.every(Boolean) ? parts.join(" / ") : "");
+				const defaultModel = info.model_list!.length === 1 && !tierIndex.length && info.std_tier_variation_list?.length === 0;
 				if (!name && !defaultModel) missingSpecification = true;
 				return {
 					modelId: m.id ?? null,
