@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, type PageSummary, usePoll } from "./api.ts";
+import { OrderNotifications } from "./interactable/procurement/view.tsx";
 import { PageView } from "./page.tsx";
 
 const route = () => {
@@ -48,6 +49,7 @@ function App() {
 	const current = pages?.find((p) => p.id === id || p.workspace?.key === id)?.id ?? (/^\d+$/.test(id) ? id : "");
 	return (
 		<SidebarProvider>
+			<OrderNotifications pages={pages ?? []} />
 			<Nav pages={pages ?? []} active={current} />
 			<SidebarInset className="min-w-0">
 				{current ? (

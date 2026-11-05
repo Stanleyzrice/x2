@@ -1,15 +1,16 @@
 // 现读：x2 status 每次经浏览器把要用的站点数据读进内存，不存库（只有订单写回库，给网页上看进度）。
-// 读什么：chanboss 的订单（两家店都在）；每个登录着的 1688 账号的购物车、采购单（带物流、进行中的退款）。
+// 采购现读 Shopee 待出货订单；每个登录着的 1688 账号的购物车、采购单（带物流、进行中的退款）。
 // 哪一样读不了就记下来（results）：检查照常算，x2 status 说哪样没读成（漏读不算做完）。
 // 同一个进程里 2 分钟内读过的复用（一批几项加购、x2 orders source 找完再检查，不用每次整套重读：1688 对频率敏感，读多了弹滑块）
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
-import { ChanbossOrderId, orders as chanbossOrders, type Order } from "../../connectors/sites/chanboss/api.ts";
+import { ChanbossOrderId, type Order } from "../../connectors/sites/chanboss/api.ts";
 import { challengeIn, inAccount, logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
-import type { Read } from "../../platform/tool.ts";
+import { type Read, toolkits } from "../../platform/tool.ts";
 import type { CartLine, Purchase } from "./allocate.ts";
+import { readShopeeOrders, shopeeOrderRow } from "./shopee.ts";
 import { refreshChosen } from "./source.ts";
 
 /** chanboss 状态：站上的代码 → chanboss 的词。paid、arrive 是推断的（2026-10-09 没有这两种状态的订单可核对） */
@@ -174,18 +175,19 @@ async function attempt<T>(results: Read[], what: string, who: string, fn: () => 
 	}
 }
 
-export async function readAll(sql: Sql, log: (s: string) => void = console.error): Promise<Reads> {
+export async function readAll(sql: Sql, log: (s: string) => void = console.error, shops = configuredOrderShops()): Promise<Reads> {
 	const results: Read[] = [];
-	log(`读 chanboss 订单${again("订单")}`);
+	const ordersKey = `Shopee订单:${[...shops].sort().join(",")}`;
+	log(`读 Shopee 待出货订单${again(ordersKey)}`);
 	await attempt(
 		results,
 		"订单",
-		"chanboss",
-		() => reuse("订单", () => writeOrders(sql)),
+		"shopee",
+		() => reuse(ordersKey, () => writeOrders(sql, shops)),
 		(n) => n,
 	);
 	const toBuy = (
-		await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.platform_status = '待出货' and o.chanboss_status = '待处理'`
+		await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货' and o.shop in ${sql(shops)}`
 	).map((r) => r.id as string);
 	if (toBuy.length) {
 		const key = `货源:${[...toBuy].sort().join(",")}`;
@@ -234,28 +236,44 @@ export async function read1688(sql: Sql, log: (s: string) => void = console.erro
 	return { cart, purchases, accounts, buyAccount: buy?.userId ?? null, results };
 }
 
-async function writeOrders(sql: Sql): Promise<number> {
-	const to = Math.floor(Date.now() / 1000),
-		from = to - 60 * 86400;
-	const raw: Order[] = [];
-	for (let n = 1; ; n++) {
-		const page = await chanbossOrders(from, to, n);
-		raw.push(...page.rows);
-		if (n >= page.pageCount || page.rows.length === 0) break;
+export function configuredOrderShops(): string[] {
+	const shops = [
+		...new Set(
+			toolkits()
+				.flatMap((k) => k.workspaces ?? [])
+				.filter((w) => w.component === "procurement")
+				.flatMap((w) => (Array.isArray(w.props.shops) ? w.props.shops.filter((shop): shop is string => typeof shop === "string" && Boolean(shop)) : [])),
+		),
+	];
+	if (!shops.length) throw new NeedsHuman("没有配置用于采购的 Shopee 店铺");
+	return shops;
+}
+
+/** 只有完整成功的 Shopee 待出货列表重新开放采购；读取失败或列表中消失的旧行保留历史，但不可继续加购。 */
+export async function writeOrders(sql: Sql, shops = configuredOrderShops()): Promise<number> {
+	let count = 0;
+	for (const shop of [...new Set(shops)]) {
+		await sql`update orders set procurement_eligible = false where shop = ${shop} and order_source = 'shopee'`;
+		const read = await readShopeeOrders(shop);
+		const rows = read.orders.map((order) => shopeeOrderRow(order, shop));
+		await sql.begin(async (tx) => {
+			await tx`update orders set procurement_eligible = false, shopee_sync_at = now() where shop = ${shop} and order_source = 'shopee'`;
+			for (const { items, ...row } of rows) {
+				const [existing] = await tx<{ shop_id: string | null }[]>`select shop_id from orders where sn = ${row.sn} for update`;
+				if (existing?.shop_id && existing.shop_id !== read.shopId) throw new Error(`订单 ${row.sn} 的历史店铺身份不符，停止同步`);
+				await tx`insert into orders ${tx({ ...row, items: tx.json(items), shopee_sync_at: new Date() })}
+					on conflict (sn) do update set shop = excluded.shop, shop_id = excluded.shop_id,
+					order_source = excluded.order_source, shopee_order_id = excluded.shopee_order_id, shopee_status = excluded.shopee_status,
+					procurement_eligible = excluded.procurement_eligible, shopee_sync_at = excluded.shopee_sync_at,
+					created_at = excluded.created_at, ship_by = excluded.ship_by, platform_status = excluded.platform_status,
+					items = excluded.items, items_text = excluded.items_text,
+					step = case when orders.order_source is distinct from excluded.order_source or orders.items is distinct from excluded.items
+						or orders.platform_status is distinct from excluded.platform_status then null else orders.step end,
+					step_detail = case when orders.order_source is distinct from excluded.order_source or orders.items is distinct from excluded.items
+						or orders.platform_status is distinct from excluded.platform_status then null else orders.step_detail end`;
+			}
+		});
+		count += rows.length;
 	}
-	const names = await logins("shopee")
-		.then((all) => new Map(all.map((l) => [l.account.id, l.account.name])))
-		.catch(() => new Map<string, string>());
-	const rows = raw.map(orderRow);
-	await sql.begin(async (tx) => {
-		for (const { shop_name, items, ...o } of rows) {
-			await tx`
-				insert into orders ${tx({ ...o, shop: names.get(o.shop_id) ?? shop_name, items: tx.json(items) })}
-				on conflict (sn) do update set
-					shop = excluded.shop, shop_id = excluded.shop_id, created_at = excluded.created_at, ship_by = excluded.ship_by, platform_status = excluded.platform_status,
-					chanboss_status = excluded.chanboss_status, chanboss_id = excluded.chanboss_id, chanboss_time = excluded.chanboss_time,
-					items = excluded.items, items_text = excluded.items_text, problem = excluded.problem, cancelled_at = excluded.cancelled_at`;
-		}
-	});
-	return rows.length;
+	return count;
 }

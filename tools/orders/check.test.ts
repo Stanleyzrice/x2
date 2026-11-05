@@ -391,3 +391,22 @@ test("规格不匹配：提醒写出照抄的一行和最像的几个；人写�
 	const gone = checkOrders(snap({ sources: [source({ chosen: true, skus, exceptions: "红色 L = 粉色 L" })] }));
 	assert.match(gone.reminders.find((i) => i.key === "sku:M1")!.detail, /规格例外中的「粉色 L」在货源「红T 货源」里已不存在/);
 });
+
+test("Shopee 主来源采购忽略历史 Chanboss 状态，读取失败不可加购，付款后不自动预报", () => {
+	const shopee = order("1", 1, { source: "shopee", shopeeOrderId: "S1", procurementEligible: true, chanbossStatus: "已打包" });
+	const s = snap({ orders: [shopee] });
+	assert.equal(checkOrders(s).todo.find((t) => t.kind === "加购")?.params.items[0]?.lines[0]?.sn, "1");
+	shopee.procurementEligible = false;
+	assert.equal(
+		checkOrders(s).todo.some((t) => t.kind === "加购"),
+		false,
+	);
+	shopee.procurementEligible = true;
+	s.purchases = [purchase(1)];
+	const result = checkOrders(s);
+	assert.equal(
+		result.todo.some((t) => t.kind === "加购" || t.kind === "预报"),
+		false,
+	);
+	assert.equal(result.orders.get("1")!.step, "待到齐");
+});

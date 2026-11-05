@@ -14,6 +14,10 @@ type SettingsRow = { late_days: number; channel: string; ship_wait_hours: number
 type OrderRow = {
 	sn: OrderSn;
 	shop: string | null;
+	shop_id: string | null;
+	order_source: "shopee" | "chanboss";
+	shopee_order_id: string | null;
+	procurement_eligible: boolean;
 	created_at: Date | null;
 	ship_by: Date | null;
 	platform_status: string | null;
@@ -57,6 +61,10 @@ export async function snapshot(sql: Sql, reads: Reads): Promise<Snapshot> {
 		orders: orders.map((o) => ({
 			sn: o.sn,
 			shop: o.shop,
+			source: o.order_source,
+			shopId: o.shop_id,
+			shopeeOrderId: o.shopee_order_id,
+			procurementEligible: o.procurement_eligible,
 			createdAt: o.created_at,
 			shipBy: o.ship_by,
 			platformStatus: o.platform_status ?? "",
@@ -107,7 +115,7 @@ function loginReminders(reads: Reads): Reminder[] {
 				due: null,
 				link: null,
 				title:
-					`登录：${r.what === "订单" ? "chanboss" : "1688"} ${reads.accounts.get(r.who) ?? (r.who === "chanboss" || r.who === "1688" ? "" : r.who)} 无法读取`.replace(
+					`登录：${r.what === "订单" ? "Shopee" : "1688"} ${reads.accounts.get(r.who) ?? (r.who === "chanboss" || r.who === "1688" ? "" : r.who)} 无法读取`.replace(
 						/\s+无法读取/,
 						" 无法读取",
 					),

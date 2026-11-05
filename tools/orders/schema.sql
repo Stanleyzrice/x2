@@ -78,3 +78,10 @@ create table if not exists orders (
 alter table sources add column if not exists sku_exceptions text;
 alter table arrival_issues alter column kind set default '损坏';
 alter table order_settings drop column if exists forecast_needs_approval;
+
+-- Shopee 是采购订单的主来源；保留历史 Chanboss 字段供显式预报使用，不把 Shopee 状态伪装成货代状态。
+alter table orders add column if not exists order_source text not null default 'chanboss';
+alter table orders add column if not exists shopee_order_id text;
+alter table orders add column if not exists shopee_status text;
+alter table orders add column if not exists procurement_eligible boolean not null default false;
+alter table orders add column if not exists shopee_sync_at timestamptz;

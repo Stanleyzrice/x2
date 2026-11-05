@@ -56,7 +56,13 @@ test("每个组件有说明、至少一个例子，例子过得了自己的校�
 test("固定入口唯一并引用已注册组件，所有保存的身份参数通过组件校验", () => {
 	const workspaces = TOOLKITS.flatMap((k) => k.workspaces ?? []);
 	assert.equal(new Set(workspaces.map((w) => w.key)).size, workspaces.length);
-	assert.equal(workspaces.length, 5);
+	assert.deepEqual(
+		workspaces.filter((w) => w.component === "catalog" || w.component === "chat").map((w) => ({ key: w.key, shop: w.props.shop })),
+		[
+			{ key: "catalog-cheeroutdoor", shop: "cheeroutdoor" },
+			{ key: "chat-cheeroutdoor", shop: "cheeroutdoor" },
+		],
+	);
 	for (const w of workspaces) {
 		assert.equal(COMPONENTS.get(w.component)?.kind, "interactable");
 		assert.doesNotThrow(() => parseProps(w.component, w.props), w.key);

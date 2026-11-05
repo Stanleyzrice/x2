@@ -1,5 +1,5 @@
 // 订单的写操作：加购（1688 购物车）、预报（chanboss）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
-// prepare 是业务上的保护：现读还该不该做（订单取消了、货源下架了、已经买了就不做）；提交是连接器的写（1688 的 cart-add、chanboss 的 forecast），读回对账用连接器的读（购物车、订单）
+// 加购现读 Shopee 订单与 1688 采购事实，不依赖货代；Chanboss 仅供显式预报。取消、规格数量变化、缺货或已采购都停止。
 import { z } from "zod";
 import { type CartLine, Gone, OfferId, cart as readCart, offer as readOffer, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import { cartAdd } from "../../connectors/sites/1688/index.ts";
@@ -9,6 +9,7 @@ import { inAccount } from "../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
 import { buyAccount } from "./read.ts";
+import { readCartOrders, validateCartOrder } from "./shopee.ts";
 import { current } from "./status.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -51,12 +52,28 @@ const cart: WriteOp<CartP, { inCart: number }> = {
 		const covered = (await current(sql)).covered;
 		const dup = p.lines.filter((l) => covered.has(`${l.sn}:${l.modelId}`));
 		if (dup.length) return { skip: `订单 ${dup.map((l) => l.sn).join("、")} 的货已经买了或者在购物车里了（刚读的采购单、购物车）` };
-		const live = await liveOrders([...new Set(p.lines.map((l) => l.sn))]);
-		for (const l of p.lines) {
-			const o = live.get(l.sn);
-			if (!o) return { skip: `chanboss 上读不到订单 ${l.sn}` };
-			if (o.platform_status !== "READY_TO_SHIP") return { skip: `订单 ${l.sn} 不是待出货了（${o.platform_status}）` };
-			if (o.status !== "paid") return { skip: `订单 ${l.sn} 在 chanboss 上已经不是待处理了（${o.status}）：在别处买过了？` };
+		const sns = [...new Set(p.lines.map((l) => l.sn))];
+		const stored = await sql<
+			{ sn: string; shop: string | null; shop_id: string | null; shopee_order_id: string | null; order_source: string; procurement_eligible: boolean }[]
+		>`
+			select sn, shop, shop_id, shopee_order_id, order_source, procurement_eligible from orders where sn in ${sql(sns)}`;
+		if (
+			stored.length !== sns.length ||
+			stored.some((o) => o.order_source !== "shopee" || !o.shop || !o.shop_id || !o.shopee_order_id || !o.procurement_eligible)
+		)
+			return { skip: "订单尚未完整从 Shopee 读取，先刷新订单再采购" };
+		for (const shop of new Set(stored.map((o) => o.shop!))) {
+			const group = stored.filter((o) => o.shop === shop);
+			const live = await readCartOrders(
+				shop,
+				group.map((o) => ({ order_id: o.shopee_order_id!, shop_id: o.shop_id! })),
+			);
+			for (const row of group)
+				validateCartOrder(
+					live.find((o) => o.orderId === row.shopee_order_id),
+					{ sn: row.sn, shopee_order_id: row.shopee_order_id!, shop_id: row.shop_id! },
+					p.lines.filter((l) => l.sn === row.sn),
+				);
 		}
 		const broken = async (why: string) => {
 			await sql`update sources set broken = ${why}, read_at = now() where offer_id = ${p.offerId} and chosen`;

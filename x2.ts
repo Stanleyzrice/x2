@@ -20,7 +20,7 @@ import { orders } from "./tools/orders/index.ts";
 import { refreshAll, reimbursement } from "./tools/reimbursement/index.ts";
 import { selection } from "./tools/selection/index.ts";
 
-catalog.workspaces = ["ni1206", "cheeroutdoor"].map((shop) => ({
+catalog.workspaces = ["cheeroutdoor"].map((shop) => ({
 	key: `catalog-${shop}`,
 	title: "Catalog",
 	group: shop,
@@ -28,7 +28,7 @@ catalog.workspaces = ["ni1206", "cheeroutdoor"].map((shop) => ({
 	props: { shop, defaultStatus: "1" },
 	icon: "package",
 }));
-chat.workspaces = ["ni1206", "cheeroutdoor"].map((shop) => ({
+chat.workspaces = ["cheeroutdoor"].map((shop) => ({
 	key: `chat-${shop}`,
 	title: "Chat",
 	group: shop,
@@ -36,6 +36,16 @@ chat.workspaces = ["ni1206", "cheeroutdoor"].map((shop) => ({
 	props: { shop, policyPath: ".agents/skills/chat/SKILL.md", historyDays: 7 },
 	icon: "message",
 }));
+orders.workspaces = [
+	{
+		key: "procurement",
+		title: "Procurement",
+		group: "采购",
+		component: "procurement",
+		props: { shops: ["cheeroutdoor"] },
+		icon: "package",
+	},
+];
 const reimbursementRefresh = { name: "reimbursement-refresh", hour: 20, timeZone: "Asia/Shanghai", run: refreshAll };
 reimbursement.jobs = [reimbursementRefresh];
 reimbursement.workspaces = [

@@ -12,6 +12,10 @@ export type Item = { itemId: string; modelId: string; chanbossModelId: string; n
 export type Order = {
 	sn: OrderSn;
 	shop: string | null;
+	source?: "shopee" | "chanboss";
+	shopId?: string | null;
+	shopeeOrderId?: string | null;
+	procurementEligible?: boolean;
 	createdAt: Date | null;
 	shipBy: Date | null;
 	platformStatus: string;
@@ -116,8 +120,9 @@ const issueText = (x: Issue) => `${x.item ? `${x.item} ` : ""}${x.kind}${x.qty ?
 
 export const isCancelled = (o: Order) => o.platformStatus === "不成立" || o.platformStatus === "取消中";
 export const isPacked = (o: Order) =>
-	o.chanbossStatus === "已打包" || o.chanbossStatus === "已出库" || ["已出货", "已完成", "退货退款"].includes(o.platformStatus);
-export const isOpen = (o: Order) => o.platformStatus === "待出货" && !isPacked(o);
+	(o.source !== "shopee" && (o.chanbossStatus === "已打包" || o.chanbossStatus === "已出库")) || ["已出货", "已完成", "退货退款"].includes(o.platformStatus);
+export const isOpen = (o: Order) => o.platformStatus === "待出货" && !isPacked(o) && (o.source !== "shopee" || o.procurementEligible === true);
+export const needsPurchase = (o: Order) => isOpen(o) && (o.source === "shopee" || o.chanbossStatus === "待处理");
 
 export function checkOrders(s: Snapshot): Result {
 	const reminders: Reminder[] = [];
@@ -195,7 +200,7 @@ export function checkOrders(s: Snapshot): Result {
 			continue;
 		}
 		const sources = o.items.map((i) => ({ i, src: sourceOf(i), line: lineOf.get(`${o.sn}:${i.modelId}`) }));
-		const needsBuy = o.chanbossStatus === "待处理";
+		const needsBuy = needsPurchase(o);
 		const sourced = sources.every((x) => x.src.state === "有" || x.src.state === "新");
 		const carted = sources.every((x) => x.line && x.line.state !== "不见了");
 		const paid = sources.every((x) => x.line?.state === "已付款");
@@ -217,7 +222,7 @@ export function checkOrders(s: Snapshot): Result {
 			step = "待加购";
 			if (sources.some((x) => flying.has(`${o.sn}:${x.i.modelId}`))) stepDetail = "加购的结果还没核清";
 		} else if (!paid) step = "待 1688 付款";
-		else if (needsBuy) {
+		else if (needsBuy && o.source !== "shopee") {
 			step = "待预报";
 			if (forecastFlying.has(o.sn)) stepDetail = "预报的结果还没核清";
 		} else if (destination === "寄到我们这里") {
@@ -269,7 +274,7 @@ export function checkOrders(s: Snapshot): Result {
 				if (o.shipBy && (!p.due || o.shipBy < p.due)) p.due = o.shipBy;
 				paySet.set(line.account, p);
 			}
-		if (needsBuy && paid && !forecastFlying.has(o.sn) && destination !== "两边都有") {
+		if (needsBuy && o.source !== "shopee" && paid && !forecastFlying.has(o.sn) && destination !== "两边都有") {
 			const byChanboss = destination === "寄到 chanboss";
 			const ready = !byChanboss || sources.every((x) => (x.line?.purchases ?? []).every((p) => p.trackingNo));
 			if (ready)
@@ -352,7 +357,7 @@ export function checkOrders(s: Snapshot): Result {
 				title: `取消：订单 ${o.sn} 已取消，购物车里还有 ${inCart.reduce((n, l) => n + l.cartQty, 0)} 件待删除`,
 				detail: inCart.map((l) => `${label(o.items.find((i) => i.modelId === l.modelId)!)} × ${l.cartQty}（账号 ${who(l.account)}）`).join("\n"),
 			});
-		if (o.chanbossStatus === "已预报") unforecast.push(o.sn);
+		if (o.source !== "shopee" && o.chanbossStatus === "已预报") unforecast.push(o.sn);
 		let where: string | null = null;
 		let what = "";
 		let due: Date | null = null;

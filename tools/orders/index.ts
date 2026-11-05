@@ -4,6 +4,7 @@ import { db, type Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { get, parseJson, str, strs, type Toolkit, write } from "../../platform/tool.ts";
 import { checkOrders } from "./check.ts";
+import { monitor, monitorParams, planPurchase, purchaseParams, purchasePreview, purchaseResult, selectionParams, syncMonitor } from "./procurement.ts";
 import { readAll } from "./read.ts";
 import { findSources, setException } from "./source.ts";
 import { current, ordersCheck, snapshot } from "./status.ts";
@@ -45,6 +46,13 @@ export const orders: Toolkit = {
 	title: "订单：找货源、加购、预报",
 	kind: "tool",
 	tools: {
+		monitor: get("读取当前店铺的 Shopee 待出货订单快照", monitorParams, async (p) => monitor(await db(), p.shops)),
+		"monitor-sync": get("只读刷新 Shopee 待出货订单，不加购", monitorParams, async (p) => syncMonitor(await db(), p.shops)),
+		"purchase-preview": get("现读订单、货源、采购单和购物车，预览选中订单的精确加购内容", selectionParams, async (p) => purchasePreview(await db(), p)),
+		purchase: write("确认采购预览后，把选中订单加入 1688 购物车，由人付款下单", purchaseParams, planPurchase),
+		"purchase-result": get("只查询原采购确认的结果，不重新提交加购", monitorParams.extend({ requestId: z.string().uuid() }), async (p) =>
+			purchaseResult(await db(), p.shops, p.requestId),
+		),
 		source: get(
 			"给店里的商品找货源（以图搜图）；不给商品就找检查算出来缺货源、货源不可用的",
 			z.object({ items: strs("店里的商品 id").optional(), url: z.string().url().optional().describe("人贴的 1688 链接（只给一个商品时）") }),
