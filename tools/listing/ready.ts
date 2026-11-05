@@ -1,5 +1,6 @@
 // 商品稿 → 要建的商品（product_info），和还缺什么。检查、x2 listing publish、建商品都用它：交给 x2 时的 product_info 和执行时现组的一样，才算人看过的就是要建的
 import { createHash } from "node:crypto";
+import { categoryAllowed } from "./category.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, pricingProblems, reprice, type Settings } from "./pricing.ts";
 import { type Product, productInfo, usedPics } from "./product.ts";
@@ -19,6 +20,8 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 	problems.push(...pricingProblems(specs, estimateNeeds(l)), ...structureProblems(specs));
 	if (s.template && reprice(l, s)?.changed) problems.push("核价：模板规则、成本或售价已变，待重新核价（x2 status）");
 	if (!l.category_path?.length) problems.push("未定类目");
+	else if (!categoryAllowed(String(l.category_path[l.category_path.length - 1]), s.categories, l.category_exception))
+		problems.push("类目：不在本店允许的类目里，且未记录本稿类目例外");
 	if (!l.days_to_ship) problems.push("未定备货天数");
 	if (problems.length) return { problems: [...new Set(problems)] };
 	const pics = (l.images ?? {}) as Pics;

@@ -131,3 +131,6 @@ alter table shop_settings add column if not exists pricing_template jsonb;
 
 -- 单稿最低购买数量；null 沿用 shop_settings.min_purchase，不改全店配置。
 alter table listings add column if not exists min_purchase int check (min_purchase > 0);
+
+-- 用户授权的单稿类目例外，保存叶子和理由；null仍按全店允许范围。
+alter table listings add column if not exists category_exception jsonb;

@@ -2,6 +2,7 @@
 import { z } from "zod";
 import type { Freight, Offer, OfferId, Tags } from "../../connectors/sites/1688/api.ts";
 import type { Audit } from "./audit.ts";
+import type { CategoryException } from "./category.ts";
 import type { Pics } from "./pics.ts";
 import type { Product } from "./product.ts";
 import type { TemplateParams } from "./template-pricing.ts";
@@ -40,6 +41,8 @@ export type ListingRow = {
 	category_id: string | null;
 	category_path: number[] | null;
 	category_name: string | null;
+	/** 显式单稿类目例外，仅绑定该叶子，不扩展全店允许范围。 */
+	category_exception?: CategoryException | null;
 	attributes: Product["attributes"] | null;
 	attributes_text: string | null;
 	days_to_ship: number | null;

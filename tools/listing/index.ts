@@ -239,14 +239,22 @@ export const listing: Toolkit = {
 		),
 		make: get(
 			"做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；不给编号就做所有还没做好的。几份同时做：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（queue.ts）",
-			z.object({
-				ids: ids.optional(),
-				jobs: z.coerce.number().int().min(1).max(10).default(3).describe("几份同时做"),
-				imageMode: z
-					.enum(["processed", "original"])
-					.optional()
-					.describe("本稿图片模式：original上传1688原图，不译图不加水印；不传沿用稿件模式，旧稿保持处理图"),
-			}),
+			z
+				.object({
+					ids: ids.optional(),
+					jobs: z.coerce.number().int().min(1).max(10).default(3).describe("几份同时做"),
+					sourceSkuIds: z
+						.preprocess(parseJson, z.array(z.string().min(1)).min(1))
+						.optional()
+						.describe("本次只做指定1688 skuId，JSON数组；仅限单稿，其他规格保存为排除"),
+					mainImages: z.preprocess(parseJson, z.array(z.url()).min(1).max(12)).optional().describe("本次明确选择的主图URL，JSON数组；仅限单稿"),
+					detailImages: z.preprocess(parseJson, z.array(z.url()).max(16)).optional().describe("本次明确选择的详情图URL，JSON数组，[]表示不用详情图；仅限单稿"),
+					imageMode: z
+						.enum(["processed", "original"])
+						.optional()
+						.describe("本稿图片模式：original上传1688原图，不译图不加水印；不传沿用稿件模式，旧稿保持处理图"),
+				})
+				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿"),
 			async (p) => {
 				const sql = await db();
 				const want =
@@ -257,7 +265,12 @@ export const listing: Toolkit = {
 				if (!want.length) return [];
 				const before = await namesOf(sql, want);
 				const settled = await each(want, p.jobs, async (id) => {
-					const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`), { imageMode: p.imageMode });
+					const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`), {
+						imageMode: p.imageMode,
+						sourceSkuIds: p.sourceSkuIds,
+						mainImages: p.mainImages,
+						detailImages: p.detailImages,
+					});
 					const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 					const specs = l ? specsOf(l.variants) : null;
 					const needs = l ? estimateNeeds(l) : [];
@@ -508,8 +521,15 @@ export const listing: Toolkit = {
 		),
 		category: get(
 			"人在终端里定了类目：写成人定的类目（要是叶子、在本店允许的类目里；建了商品的不改），属性、备货天数清掉，再 x2 listing make（有类目就不再问 Shopee 推荐）。类目 id 见 x2 shopee category-tree",
-			z.object({ id, category: z.string().regex(/^\d+$/).describe("叶子类目 id") }),
-			async (p) => setCategory(await db(), p.id, p.category, (shopId) => inAccount("shopee", shopId, () => categoryTree())),
+			z
+				.object({
+					id,
+					category: z.string().regex(/^\d+$/).describe("叶子类目 id"),
+					allowOutsideShop: flag("显式允许本稿使用店铺清单外的指定叶子，不改全店设置").default(false),
+					reason: z.string().trim().min(1).optional().describe("本稿类目例外的用户授权与理由"),
+				})
+				.refine((p) => !p.allowOutsideShop || Boolean(p.reason), "允许清单外类目须写明本稿授权理由"),
+			async (p) => setCategory(await db(), p.id, p.category, (shopId) => inAccount("shopee", shopId, () => categoryTree()), p),
 			{
 				text: (r) => {
 					const notes = [r.cancelled ? "这份已放弃：要上就去掉「放弃」" : "", r.before && r.before !== r.category ? `原来是「${r.before}」` : ""].filter(
@@ -527,8 +547,8 @@ export const listing: Toolkit = {
 			z.object({ ids }),
 			(sql, p) => publishPlan(sql, [...new Set(p.ids as string[])]),
 		),
-		"edit-preview": get("现读商品原标题和价格，预览标题与指定规格价格修改；不提交", editParams, async (p) => previewEdit(await db(), p)),
-		edit: write("人同意的现有商品标题与价格修改：原标题和原价逐字核对、提交一次、读回来核对；首次约一个商品 --try", editParams, planEdit),
+		"edit-preview": get("现读商品原值，预览标题、指定规格价格、显式类目属性、主图或描述修改；不提交", editParams, async (p) => previewEdit(await db(), p)),
+		edit: write("人同意的现有商品修改：核对原标题、原价及指定的原类目、原主图或原描述，提交一次并读回；首次约一个商品 --try", editParams, planEdit),
 		"add-size-preview": get("现读现有商品，预览新增一个二级尺寸及逐款售价、库存；不提交", addSizeParams, async (p) => previewAddSize(await db(), p)),
 		"add-size": write("人同意的现有商品新增二级尺寸：核对预览指纹，保留旧规格和价格，提交一次并读回；首次单个商品 --try", addSizeParams, planAddSize),
 		"unlist-preview": get("现读指定商品的在售状态和期间销量：只预览，不下架；未知不当零", unlistParams, async (p) => previewUnlist(await db(), p)),
@@ -615,7 +635,13 @@ export const listing: Toolkit = {
 	schema: new URL("./schema.sql", import.meta.url),
 };
 
-export async function setCategory(sql: Sql, id: ListingId, category: string, tree: (shopId: string) => Promise<Category[]>) {
+export async function setCategory(
+	sql: Sql,
+	id: ListingId,
+	category: string,
+	tree: (shopId: string) => Promise<Category[]>,
+	options: { allowOutsideShop?: boolean; reason?: string } = {},
+) {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Usage(`没有商品稿 ${id}`);
 	const name = listingName(l);
@@ -627,7 +653,9 @@ export async function setCategory(sql: Sql, id: ListingId, category: string, tre
 	const found = leafPath(await tree(s.shopId), category);
 	if ("error" in found) throw new Usage(`${name}：${found.error}`);
 	const full = found.names.join(" > ");
-	const no = categoryBlock(name, l, category, full, s.categories);
+	if (options.allowOutsideShop && !options.reason?.trim()) throw new Usage("允许清单外类目须写明本稿授权理由");
+	const exception = options.allowOutsideShop ? { categoryId: category, reason: options.reason!.trim() } : null;
+	const no = categoryBlock(name, l, category, full, s.categories, exception);
 	if (no) throw new Usage(no);
 	const problems =
 		String(l.problems ?? "")
@@ -635,7 +663,7 @@ export async function setCategory(sql: Sql, id: ListingId, category: string, tre
 			.filter((x) => x && !CATEGORY_PROBLEM.test(x))
 			.join("\n") || null;
 	const [done] = await sql`update listings set category_path = ${sql.json(found.path)}, category_id = ${category}, category_name = ${full},
-		attributes = null, attributes_text = null, days_to_ship = null, problems = ${problems}, updated_at = now()
+		category_exception = ${exception ? sql.json(exception) : null}, attributes = null, attributes_text = null, days_to_ship = null, problems = ${problems}, updated_at = now()
 		where id = ${id} and product_id is null and listed_at is null returning id`;
 	if (!done) throw new Usage(`${name}刚建了商品：不改类目`);
 	const r = await listingsCheck(sql, [id]);
@@ -644,6 +672,7 @@ export async function setCategory(sql: Sql, id: ListingId, category: string, tre
 		name,
 		category: full,
 		categoryPath: found.path,
+		categoryException: exception,
 		before: (l.category_name as string | null) ?? null,
 		cancelled: Boolean(l.cancelled),
 		step: r.steps.get(id)?.step ?? null,

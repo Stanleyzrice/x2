@@ -9,12 +9,13 @@ import { attributes as attributeTree, type Category, categoryTree, recommendedCa
 import { logins } from "../../platform/browser/browser.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
-import { daysToShip, pickAttributes, recommendedPath } from "./category.ts";
+import { categoryAllowed, daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages } from "./images.ts";
 import { type ImageMode, imageModeOf, type Pics } from "./pics.ts";
 import { freightOf, num, pricingPolicy, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
+import { sourceScope } from "./source-scope.ts";
 import { nicknameFor } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
@@ -55,10 +56,11 @@ export async function make(
 	sql: Sql,
 	id: string,
 	log: (s: string) => void = console.error,
-	options: { imageMode?: ImageMode } = {},
+	options: { imageMode?: ImageMode; sourceSkuIds?: string[]; mainImages?: string[]; detailImages?: string[] } = {},
 ): Promise<{ id: string; problems: string[] }> {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
+	if (l.product_id && (options.sourceSkuIds || options.mainImages || options.detailImages)) throw new Error("已建商品不能重新指定货源或图片范围");
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
 	const imageMode = imageModeOf(options.imageMode, l.images);
@@ -72,16 +74,19 @@ export async function make(
 		if (e instanceof Gone) return save(sql, id, {}, ["货源：已在 1688 下架"]);
 		throw e;
 	}
-	const detail = o.detailUrl
-		? await from1688(() => detailImages(o.detailUrl!)).catch((e) => {
-				log(`详情图取不到：${(e as Error).message}`);
-				return [] as string[];
-			})
-		: [];
+	const removed = sourceScope(o, options.sourceSkuIds, l.removed_variants ?? []);
+	const detail =
+		options.detailImages ??
+		(o.detailUrl
+			? await from1688(() => detailImages(o.detailUrl!)).catch((e) => {
+					log(`详情图取不到：${(e as Error).message}`);
+					return [] as string[];
+				})
+			: []);
 
 	const freight = freightOf(o, l.freight_rmb);
 	const { specs, problems } = specsAndPrices(o, s, {
-		removed: l.removed_variants ?? [],
+		removed,
 		prev: specsOf(l.variants),
 		weightKg: num(l.weight_kg),
 		freightRmb: freight,
@@ -95,7 +100,7 @@ export async function make(
 			mark: s.mark,
 			imageMode,
 			browser,
-			main: (o.images ?? [o.image]).slice(0, CANDIDATE_MAIN),
+			main: (options.mainImages ?? o.images ?? [o.image]).slice(0, CANDIDATE_MAIN),
 			detail: detail.slice(0, CANDIDATE_DETAIL),
 			options: (specs.tiers[0]?.options ?? []).map((x) => x.image).filter((x): x is string => Boolean(x)),
 		},
@@ -124,7 +129,8 @@ export async function make(
 				const names = await categoryNames().catch(() => new Map<string, string>());
 				const name = names.size || !kept ? path.map((c) => names.get(String(c)) ?? String(c)).join(" > ") : (l.category_name ?? path.join(" > "));
 				Object.assign(out, { category_path: path, category_id: leaf, category_name: name });
-				if (s.categories && !s.categories.has(String(leaf))) problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
+				if (!categoryAllowed(String(leaf), s.categories, l.category_exception))
+					problems.push(`类目：推荐的「${names.get(String(leaf)) ?? leaf}」不在本店允许的类目里`);
 				const attrs = pickAttributes(await attributeTree(leaf));
 				Object.assign(out, { attributes: attrs.attributes, attributes_text: attrs.text.join("\n") || null });
 				if (attrs.missing.length) problems.push(`属性：必填的「${attrs.missing.join("、")}」待人工填写`);
@@ -155,6 +161,7 @@ export async function make(
 			},
 			offer_read_at: new Date(),
 			variants: specs,
+			removed_variants: removed,
 			pricing: { ...pricingPolicy(s), freightRmb: freight, at: new Date().toISOString() },
 		},
 		problems,
@@ -162,7 +169,7 @@ export async function make(
 }
 
 async function save(sql: Sql, id: string, fields: Record<string, unknown>, problems: string[]): Promise<{ id: string; problems: string[] }> {
-	const json = new Set(["images", "offer", "variants", "pricing", "attributes", "category_path"]);
+	const json = new Set(["images", "offer", "variants", "pricing", "attributes", "category_path", "removed_variants"]);
 	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as Json) : v]));
 	await sql`update listings set ${sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() })} where id = ${id}`;
 	return { id, problems };

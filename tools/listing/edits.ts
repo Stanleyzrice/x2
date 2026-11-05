@@ -1,4 +1,6 @@
 // 人说了的改动现在能不能做、改成什么：放弃、定类目、保留的图、估重量和国内运费。纯的判断，库的读写在 index.ts
+
+import { categoryAllowed } from "./category.ts";
 import type { Pic, Pics } from "./pics.ts";
 import { freightOf, type Need } from "./pricing.ts";
 import { LABEL, numbered } from "./product.ts";
@@ -24,9 +26,10 @@ export function categoryBlock(
 	category: string,
 	full: string,
 	allowed: Set<string> | null,
+	exception?: unknown,
 ): string | null {
 	if (l.product_id || l.listed_at) return `${name}已经建了商品（商品 ${l.product_id ?? "—"}）：不改类目`;
-	if (allowed && !allowed.has(category)) return `${name}：「${full}」不在 ${l.shop} 允许的类目里（店铺设置的「允许的类目」）`;
+	if (!categoryAllowed(category, allowed, exception)) return `${name}：「${full}」不在 ${l.shop} 允许的类目里（店铺设置的「允许的类目」）`;
 	return null;
 }
 

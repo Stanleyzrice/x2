@@ -3,9 +3,20 @@
 // 属性：只送必填的，值一字不差取自属性树（编的值发布被拒）：只有「是 / 否」的选「否」，有「其他」「一般」的选它，不然选第一个；
 // 要填字的必填属性（属性树里没有可选值）不拿标题编，交给人。备货天数取这个类目的上限（10、15、30 天）
 // 推荐的不对、不在本店允许的类目里：人定（x2 listing category --id <商品稿> --category <叶子类目 id>），做商品稿不再问推荐
+import { z } from "zod";
 import type { Attribute, Category, Recommended } from "../../connectors/sites/shopee/products.ts";
 
 export const CATEGORY_PROBLEM = /^(类目|属性|备货天数)：/;
+
+export const categoryExceptionSchema = z.object({ categoryId: z.string().regex(/^\d+$/), reason: z.string().trim().min(1) });
+export type CategoryException = z.output<typeof categoryExceptionSchema>;
+
+/** 显式单稿例外只对该叶子有效；未记录理由、改成其他类目都仍按店铺范围检查。 */
+export function categoryAllowed(category: string, allowed: Set<string> | null, exception?: unknown): boolean {
+	if (!allowed || allowed.has(category)) return true;
+	const parsed = categoryExceptionSchema.safeParse(exception);
+	return Boolean(parsed.success && parsed.data.categoryId === category);
+}
 
 export function leafPath(tree: Category[], id: string): { path: number[]; names: string[] } | { error: string } {
 	const find = (list: Category[], up: Category[]): Category[] | null => {
