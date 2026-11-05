@@ -28,6 +28,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, type PageSummary, usePoll } from "./api.ts";
 import { OrderNotifications } from "./interactable/procurement/view.tsx";
 import { PageView } from "./page.tsx";
+import { preloadPage, usePagePreload } from "./preload.ts";
 
 const route = () => {
 	try {
@@ -48,6 +49,7 @@ function App() {
 		return () => window.removeEventListener("hashchange", on);
 	}, []);
 	const current = pages?.find((p) => p.id === id || p.workspace?.key === id)?.id ?? (/^\d+$/.test(id) ? id : "");
+	usePagePreload(pages ?? [], current);
 	return (
 		<SidebarProvider>
 			<OrderNotifications pages={pages ?? []} />
@@ -132,6 +134,8 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 						isActive={p.id === active}
 						render={<a href={`#${p.workspace?.key ?? p.id}`} />}
 						onClick={() => setOpenMobile(false)}
+						onMouseEnter={() => void preloadPage(p.id)}
+						onFocus={() => void preloadPage(p.id)}
 					>
 						<Icon />
 						<span className="truncate">{p.title}</span>

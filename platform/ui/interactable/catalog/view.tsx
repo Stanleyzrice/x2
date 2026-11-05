@@ -75,7 +75,8 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 	const [layout, setLayout] = useState<"table" | "cards">("table");
 	const [received, setData] = useState<{ key: string; value: CatalogResult } | null>(null);
 	const queryKey = JSON.stringify([query, status, stock, page]);
-	const data = received?.key === queryKey ? received.value : null;
+	const input = { shop: props.shop, query, status, stock, page, pageSize: 50 };
+	const data = received?.key === queryKey ? received.value : api.peekCatalogProducts(item.id, input);
 	const [error, setError] = useState<string | null>(null);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
@@ -106,13 +107,14 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 			if (result.shop !== props.shop) throw new Error("状态结果店铺不符，请重新读取");
 			const receipt = { productId: result.productId, ...result.statusChange };
 			if (remember(receipt) && !PENDING.has(receipt.status)) {
+				api.invalidateCatalog(item.id);
 				setNotice(receipt);
 				setPage(1);
 				setVersion((v) => v + 1);
 			}
 			return receipt;
 		},
-		[props.shop, remember],
+		[props.shop, remember, item.id],
 	);
 	useEffect(() => {
 		const pending = Object.values(receipts).filter((r) => PENDING.has(r.status));
@@ -149,7 +151,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 		setLoading(true);
 		const read = () => {
 			const id = ++request;
-			api.act<CatalogResult>(item.id, "products", { query, status, stock, page, pageSize: 50 }).then(
+			api.catalogProducts(item.id, { shop: props.shop, query, status, stock, page, pageSize: 50 }, true).then(
 				(result) => {
 					if (!stopped && id === request) {
 						setData({ key: queryKey, value: result });
@@ -173,13 +175,14 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 			clearInterval(timer);
 			window.removeEventListener("focus", read);
 		};
-	}, [item.id, query, status, stock, page, version, queryKey]);
+	}, [item.id, props.shop, query, status, stock, page, version, queryKey]);
 	const refresh = async () => {
 		setRefreshing(true);
 		setSyncError(null);
 		try {
 			const result = await api.act<CatalogResult & { ok: boolean; error: string | null }>(item.id, "sync");
 			if (!result.ok) setSyncError(result.error);
+			api.invalidateCatalog(item.id);
 			setPage(1);
 			setVersion((v) => v + 1);
 		} catch (e) {
@@ -686,9 +689,6 @@ function Sources({ product: p, compact }: { product: Product; compact?: boolean 
 	);
 }
 
-function Details({
-	item,
-	product,
 function SkuPhoto({ src, name, open }: { src: string | null | undefined; name: string; open: () => void }) {
 	const [failedSrc, setFailedSrc] = useState<string | null>(null);
 	const failed = Boolean(src && failedSrc === src);
@@ -726,6 +726,9 @@ function SourceSpec({ model: m, open }: { model: Model; open: () => void }) {
 	);
 }
 
+function Details({
+	item,
+	product,
 	close,
 	renderStatus,
 }: {
@@ -815,18 +818,18 @@ function SourceSpec({ model: m, open }: { model: Model; open: () => void }) {
 															/>
 															<div className="min-w-0">
 																<p className="font-medium">{m.name}</p>
+																{m.imageSource === "product" && <p className="text-xs text-muted-foreground">单规格商品图</p>}
 																<p className="mt-1 break-all text-xs text-muted-foreground">{m.sku ?? "SKU 未提供"}</p>
 																<p className="text-xs text-muted-foreground">Model ID {m.modelId ?? "未知"}</p>
 															</div>
-																{m.imageSource === "product" && <p className="text-xs text-muted-foreground">单规格商品图</p>}
 														</div>
+													</TableCell>
+													<TableCell className="min-w-64 whitespace-normal align-top">
+														<SourceSpec model={m} open={() => lightbox.open(modelImages.findIndex((photo) => photo.row === i && photo.side === "1688"))} />
 													</TableCell>
 													<TableCell className="whitespace-nowrap">{money(m.price)}</TableCell>
 													<TableCell>{m.stock ?? "未知"}</TableCell>
 												</TableRow>
-													<TableCell className="min-w-64 whitespace-normal align-top">
-														<SourceSpec model={m} open={() => lightbox.open(modelImages.findIndex((photo) => photo.row === i && photo.side === "1688"))} />
-													</TableCell>
 											))}
 										</TableBody>
 									</Table>

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
+import type { CatalogResult } from "./interactable/catalog/types.ts";
+import { readCache } from "./read-cache.ts";
 
 export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
 export type Column = Meta["columns"][number];
@@ -19,15 +21,29 @@ async function call<T>(method: string, path: string, body?: unknown, keepalive =
 	return data as T;
 }
 const q = encodeURIComponent;
+const pageCache = readCache<Page>();
+const catalogCache = readCache<CatalogResult>();
+type CatalogQuery = { shop: string; query: string; status: string; stock: string; page: number; pageSize: number };
+const catalogKey = (item: string, input: CatalogQuery) =>
+	`${item}:${JSON.stringify([input.shop, input.query, input.status, input.stock, input.page, input.pageSize])}`;
 
 export const api = {
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),
-	page: (id: string) => call<Page>("GET", `/api/page?id=${q(id)}`),
-	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
+	page: (id: string, force = false) => pageCache.read(id, () => call<Page>("GET", `/api/page?id=${q(id)}`), force),
+	peekPage: (id: string) => pageCache.peek(id),
+	deletePage: async (id: string) => {
+		await call<unknown>("DELETE", `/api/page?id=${q(id)}`);
+		pageCache.invalidate(id);
+	},
 	deletePages: async (ids: string[]) => {
 		const result = await call<{ deleted: string[] }>("POST", "/api/pages/delete", { ids });
+		for (const id of result.deleted) pageCache.invalidate(id);
 		return result;
 	},
+	catalogProducts: (item: string, input: CatalogQuery, force = false) =>
+		catalogCache.read(catalogKey(item, input), () => call<CatalogResult>("POST", "/api/page/act", { item, action: "products", input }), force),
+	peekCatalogProducts: (item: string, input: CatalogQuery) => catalogCache.peek(catalogKey(item, input)),
+	invalidateCatalog: (item: string) => catalogCache.invalidate(`${item}:`),
 	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
 	note: (item: string, rowId: string, text: string) => call<{ updatedAt: string }>("POST", "/api/page/note", { item, note: { rowId, text } }, true),
 	act: <T>(item: string, action: string, input: Record<string, unknown> = {}) => call<T>("POST", "/api/page/act", { item, action, input }),
@@ -53,13 +69,15 @@ export const meta = (table: string) => {
 export const keyOf = (row: Row) => JSON.stringify(row._key);
 export const fail = (e: Error) => toast.error(e.message);
 
-export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[]): [T | null, string | null, () => void] {
-	const [value, setValue] = useState<T | null>(null);
+export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[], initial: T | null = null): [T | null, string | null, () => void] {
+	const [value, setValue] = useState<T | null>(initial);
 	const [error, setError] = useState<string | null>(null);
 	const epoch = useRef(0);
 	const sequence = useRef(0);
 	const latest = useRef(read);
 	latest.current = read;
+	const cached = useRef(initial);
+	cached.current = initial;
 	const load = useRef(() => {
 		const generation = epoch.current,
 			request = ++sequence.current;
@@ -78,7 +96,8 @@ export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[]):
 	// biome-ignore lint/correctness/useExhaustiveDependencies: deps（key）变了才清掉重来；读的函数每次渲染都是新的，用 ref 里最新的
 	useEffect(() => {
 		epoch.current++;
-		setValue(null);
+		setValue(cached.current);
+		setError(null);
 		load();
 		const t = setInterval(load, ms);
 		window.addEventListener("focus", load);

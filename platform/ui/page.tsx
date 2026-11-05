@@ -15,7 +15,7 @@ import { isGenerative, isInteractable, Render, tabOf } from "./registry.tsx";
 const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
 export function PageView({ id, onDeleted, pages = [] }: { id: string; onDeleted: () => void; pages?: PageSummary[] }) {
-	const [page, error, reload] = usePoll(() => api.page(id), 3000, [id]);
+	const [page, error, reload] = usePoll(() => api.page(id, true), 3000, [id], api.peekPage(id));
 	const mobile = useIsMobile();
 	if (error) return <p className="p-6 text-sm text-destructive">{error}</p>;
 	if (!page) return <Skeleton className="m-6 h-40" />;
