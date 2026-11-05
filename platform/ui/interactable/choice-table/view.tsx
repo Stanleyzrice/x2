@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { api, type Item as PageItem } from "../../api.ts";
 import type { Answer, Decision, Props } from "./schema.ts";
 
@@ -38,7 +39,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const rows = props.rows.filter(
 		(r) =>
 			(filter === "all" || (decisions[r.id] ?? "pending") === filter) &&
-			(!needle || [r.code, r.id, r.name, r.description, ...r.tags, ...r.cells].join(" ").toLocaleLowerCase().includes(needle)),
+			(!needle || [r.code, r.id, r.name, r.description, item.notes?.[r.id], ...r.tags, ...r.cells].join(" ").toLocaleLowerCase().includes(needle)),
 	);
 	const choose = async (r: Props["rows"][number], value: Decision) => {
 		if (busy) return;
@@ -132,8 +133,18 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 												)}
 											</div>
 										</div>
+										{props.editableNotes && (
+											<DescriptionEditor
+												itemId={item.id}
+												rowId={r.id}
+												label={props.noteLabel ?? "自定义描述"}
+												name={r.code ?? r.name}
+												saved={item.notes?.[r.id] ?? ""}
+												updatedAt={item.notesAt ?? ""}
+											/>
+										)}
 									</TableCell>
-									<TableCell className="min-w-32 align-top">
+									<TableCell className="min-w-32 space-y-3 align-top">
 										{r.link ? (
 											<a
 												href={r.link}
@@ -147,6 +158,18 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 										) : (
 											<Badge variant="outline">暂定</Badge>
 										)}
+										{r.links?.map((link) => (
+											<a
+												key={link.url}
+												href={link.url}
+												target="_blank"
+												rel="noreferrer"
+												className="flex items-start gap-1 whitespace-normal break-all text-sm text-primary underline-offset-4 hover:underline"
+											>
+												<ExternalLinkIcon className="mt-0.5 size-3.5 shrink-0" />
+												{link.label}
+											</a>
+										))}
 									</TableCell>
 									{r.cells.map((v, i) => (
 										<TableCell key={props.columns[i]} className="min-w-32 max-w-60 whitespace-pre-wrap align-top text-sm tabular-nums">
@@ -201,6 +224,124 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 				{!rows.length && <p className="p-8 text-center text-sm text-muted-foreground">没有符合筛选的商品</p>}
 			</div>
 			{lightbox}
+		</div>
+	);
+}
+
+function DescriptionEditor({
+	itemId,
+	rowId,
+	label,
+	name,
+	saved,
+	updatedAt,
+}: {
+	itemId: string;
+	rowId: string;
+	label: string;
+	name: string;
+	saved: string;
+	updatedAt: string;
+}) {
+	const [value, setValue] = useState(saved);
+	const [focused, setFocused] = useState(false);
+	const [status, setStatus] = useState<"saved" | "dirty" | "saving" | "error">("saved");
+	const [error, setError] = useState("");
+	const draft = useRef(saved);
+	const confirmed = useRef(saved);
+	const savedAt = useRef(updatedAt);
+	const pending = useRef(false);
+	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+	// 同一行一次只送一个请求；输入过程中旧请求完成后，再送最新文本，避免旧内容最后落库。
+	const save = async () => {
+		if (pending.current || draft.current === confirmed.current) return;
+		pending.current = true;
+		setStatus("saving");
+		setError("");
+		try {
+			do {
+				const text = draft.current;
+				const result = await api.note(itemId, rowId, text);
+				confirmed.current = text;
+				savedAt.current = result.updatedAt;
+			} while (draft.current !== confirmed.current);
+			setStatus("saved");
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+			setStatus("error");
+		} finally {
+			pending.current = false;
+		}
+	};
+	const saveRef = useRef(save);
+	saveRef.current = save;
+
+	useEffect(() => {
+		if (focused || pending.current || draft.current !== confirmed.current || updatedAt < savedAt.current) return;
+		draft.current = saved;
+		confirmed.current = saved;
+		savedAt.current = updatedAt;
+		setValue(saved);
+		setStatus("saved");
+	}, [saved, updatedAt, focused]);
+
+	useEffect(
+		() => () => {
+			clearTimeout(timer.current);
+			void saveRef.current();
+		},
+		[],
+	);
+
+	const id = `description-${itemId}-${rowId}`;
+	return (
+		<div className="mt-3 flex flex-col gap-1.5">
+			<label htmlFor={id} className="text-xs font-medium">
+				{label}
+			</label>
+			<Textarea
+				id={id}
+				aria-label={`${name} ${label}`}
+				value={value}
+				maxLength={4000}
+				rows={3}
+				placeholder="填写你的描述、想法或备注…"
+				className="min-h-24 resize-y bg-background text-sm"
+				onFocus={() => setFocused(true)}
+				onChange={(e) => {
+					draft.current = e.target.value;
+					setValue(e.target.value);
+					setStatus("dirty");
+					setError("");
+					clearTimeout(timer.current);
+					timer.current = setTimeout(() => void saveRef.current(), 700);
+				}}
+				onBlur={() => {
+					setFocused(false);
+					clearTimeout(timer.current);
+					void saveRef.current();
+				}}
+			/>
+			<span className="text-xs text-muted-foreground" aria-live="polite">
+				{status === "saving"
+					? "保存中…"
+					: status === "dirty"
+						? "未保存"
+						: status === "error"
+							? "保存失败，内容已保留"
+							: value
+								? "已保存"
+								: "停止输入后自动保存"}
+			</span>
+			{error && (
+				<div role="alert" className="text-xs text-destructive">
+					{error}
+					<Button size="xs" variant="ghost" onClick={() => void saveRef.current()}>
+						重试保存
+					</Button>
+				</div>
+			)}
 		</div>
 	);
 }

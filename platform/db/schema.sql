@@ -74,6 +74,8 @@ create index if not exists page_items_page on page_items (page_id);
 alter table writes drop column if exists pid;
 alter table page_items add column if not exists answer jsonb;
 alter table page_items add column if not exists answered_at timestamptz;
+alter table page_items add column if not exists notes jsonb not null default '{}'::jsonb;
+alter table page_items add column if not exists notes_at timestamptz;
 
 alter table pages add column if not exists workspace_key text;
 create unique index if not exists pages_workspace_key on pages (workspace_key);

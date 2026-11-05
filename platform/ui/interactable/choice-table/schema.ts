@@ -10,6 +10,11 @@ const row = z.strictObject({
 	image: url.nullable().optional(),
 	link: url.nullable().optional().describe("缺失时显示暂定，不猜链接"),
 	linkText: z.string().trim().min(1).max(100).optional(),
+	links: z
+		.array(z.strictObject({ label: z.string().trim().min(1).max(100), url }))
+		.max(4)
+		.optional()
+		.describe("同一行的补充链接，如竞品或依据"),
 	description: z.string().trim().max(1200).optional(),
 	tags: z.array(z.string().trim().min(1).max(40)).max(4).default([]),
 	cells: z
@@ -19,7 +24,7 @@ const row = z.strictObject({
 });
 
 export const description =
-	"带图片和链接的逐行选择表。每行两个可改标签的选择按钮，点击自动保存；支持搜索、按决定筛选、撤回选择。没有链接显示暂定，答案按行合并，不覆盖其他行。";
+	"带图片和链接的逐行选择表，可补充竞品等链接并开启逐行自定义描述。描述独立自动保存，不改变选用决定。每行两个可改标签的选择按钮，点击自动保存；支持搜索、按决定筛选、撤回选择。没有链接显示暂定，答案按行合并，不覆盖其他行。";
 export const props = z
 	.strictObject({
 		title,
@@ -27,6 +32,8 @@ export const props = z
 		positiveLabel: z.string().trim().min(1).max(20).default("选用"),
 		negativeLabel: z.string().trim().min(1).max(20).default("不选"),
 		linkLabel: z.string().trim().min(1).max(40).default("查看链接"),
+		editableNotes: z.boolean().optional().describe("允许人按行编辑自己的描述，独立于选用决定保存"),
+		noteLabel: z.string().trim().min(1).max(40).optional(),
 		columns: z.array(z.string().trim().min(1).max(50)).max(8).default([]),
 		rows: z.array(row).min(1).max(500),
 	})
@@ -41,6 +48,9 @@ export const answerMode = "merge";
 export const answer = (p: Props) =>
 	z.partialRecord(z.enum(p.rows.map((r) => r.id) as [string, ...string[]]), decision).refine((a) => Object.keys(a).length > 0, "至少选择一行");
 export type Answer = z.infer<ReturnType<typeof answer>>;
+
+export const note = (p: Props) =>
+	p.editableNotes ? z.strictObject({ rowId: z.enum(p.rows.map((r) => r.id) as [string, ...string[]]), text: z.string().max(4000) }) : z.never();
 
 export const examples: z.input<typeof props>[] = [
 	{

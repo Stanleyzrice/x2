@@ -7,8 +7,13 @@ import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
 export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
 export type Column = Meta["columns"][number];
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-	const r = await fetch(path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+async function call<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
+	const r = await fetch(path, {
+		method,
+		headers: { "content-type": "application/json" },
+		body: body === undefined ? undefined : JSON.stringify(body),
+		keepalive,
+	});
 	const data = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
 	if (!r.ok) throw new Error(data.error ?? `${r.status}`);
 	return data as T;
@@ -19,7 +24,12 @@ export const api = {
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),
 	page: (id: string) => call<Page>("GET", `/api/page?id=${q(id)}`),
 	deletePage: (id: string) => call<unknown>("DELETE", `/api/page?id=${q(id)}`),
+	deletePages: async (ids: string[]) => {
+		const result = await call<{ deleted: string[] }>("POST", "/api/pages/delete", { ids });
+		return result;
+	},
 	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
+	note: (item: string, rowId: string, text: string) => call<{ updatedAt: string }>("POST", "/api/page/note", { item, note: { rowId, text } }, true),
 	act: <T>(item: string, action: string, input: Record<string, unknown> = {}) => call<T>("POST", "/api/page/act", { item, action, input }),
 	prepare: (item: string, action: string, input: Record<string, unknown>) =>
 		call<{ token: string; display: string; expiresAt: string; trialRequired: boolean }>("POST", "/api/page/prepare", { item, action, input }),

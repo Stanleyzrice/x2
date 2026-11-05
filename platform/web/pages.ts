@@ -22,6 +22,8 @@ export type Component = {
 	examples: unknown[];
 	/** 拿到的 props 是照这个组件的 props 解析过的（各个组件不一样，写成 never） */
 	answer?: (props: never) => z.ZodType;
+	/** 人按行填写的描述，独立保存，不占用选用决定。 */
+	note?: (props: never) => z.ZodType<{ rowId: string; text: string }>;
 	/** 逐行选择只送改动的键；普通 choice 仍整份替换。 */
 	answerMode?: "merge";
 	actions?: Record<string, string>;
@@ -49,6 +51,7 @@ async function collect(kind: Kind): Promise<Component[]> {
 				props: m.props,
 				examples: m.examples,
 				answer: m.answer,
+				note: m.note,
 				answerMode: m.answerMode,
 				actions: m.actions,
 				inputs: m.inputs,
@@ -72,6 +75,8 @@ export type Item = {
 	at: string;
 	answer: unknown;
 	answeredAt: string | null;
+	notes?: Record<string, string>;
+	notesAt?: string | null;
 	invalid?: string;
 	fixed?: boolean;
 };
@@ -117,7 +122,17 @@ export const catalog = () =>
 
 // 库里的一行（bigint 回字符串）
 type PageRow = { id: PageId; title: string; created_at: Date; updated_at: Date; workspace_key?: string | null };
-type ItemRow = { id: PageItemId; component: string; props: unknown; created_at: Date; answer: unknown; answered_at: Date | null; fixed?: boolean };
+type ItemRow = {
+	id: PageItemId;
+	component: string;
+	props: unknown;
+	created_at: Date;
+	answer: unknown;
+	answered_at: Date | null;
+	notes: Record<string, string>;
+	notes_at: Date | null;
+	fixed?: boolean;
+};
 
 export const workspaces = () => toolkits().flatMap((k) => k.workspaces ?? []);
 
@@ -142,8 +157,14 @@ const summary = (r: PageRow): PageSummary => ({
 	...(r.workspace_key ? { workspace: workspaces().find((w) => w.key === r.workspace_key) } : {}),
 });
 
+/** 已停用的固定工作区保留历史，但不降级成临时页或接受旧链接访问。 */
+export function pageVisible(workspaceKey: string | null | undefined, registered: readonly string[]): boolean {
+	return !workspaceKey || registered.includes(workspaceKey);
+}
+
 export async function listPages(sql: Sql): Promise<PageSummary[]> {
-	return (await sql<PageRow[]>`select * from pages order by updated_at desc`).map(summary);
+	const registered = workspaces().map((w) => w.key);
+	return (await sql<PageRow[]>`select * from pages order by updated_at desc`).filter((p) => pageVisible(p.workspace_key, registered)).map(summary);
 }
 
 export async function createPage(sql: Sql, title: string): Promise<PageSummary> {
@@ -158,9 +179,45 @@ export async function deletePage(sql: Sql, id: string): Promise<void> {
 	if (!r.length) throw new Usage(`没有页 ${id}`);
 }
 
+type DeletionPage = { id: string; workspace_key: string | null; fixed: boolean };
+
+/** 批量选择先全量校验，再进入删除；任何固定页或缺失编号都拒绝整批。 */
+export function deletablePageIds(input: unknown, pages: readonly DeletionPage[]): PageId[] {
+	const parsed = z.array(PageId).min(1).max(1000).safeParse(input);
+	if (!parsed.success) throw new Usage("请选择 1–1000 个有效的页编号");
+	const ids = [...new Set(parsed.data)];
+	for (const id of ids) {
+		const page = pages.find((p) => p.id === id);
+		if (!page) throw new Usage(`页 ${id} 不存在，请刷新后重新选择`);
+		if (page.workspace_key !== null || page.fixed) throw new Usage(`页 ${id} 是固定工作区，不能删除`);
+	}
+	return ids;
+}
+
+export async function deletePages(sql: Sql, input: unknown): Promise<{ deleted: string[] }> {
+	const parsed = z.array(PageId).min(1).max(1000).safeParse(input);
+	if (!parsed.success) throw new Usage("请选择 1–1000 个有效的页编号");
+	const ids = [...new Set(parsed.data)];
+	return sql.begin(async (tx) => {
+		const pages = await tx<DeletionPage[]>`select p.id, p.workspace_key,
+			exists(select 1 from page_items i where i.page_id = p.id and i.fixed) as fixed
+			from pages p where p.id in ${tx(ids)} order by p.id for update`;
+		const selected = deletablePageIds(ids, pages);
+		await tx`delete from pages where id in ${tx(selected)} and workspace_key is null`;
+		return { deleted: selected };
+	});
+}
+
 export async function showPage(sql: Sql, id: string): Promise<Page> {
 	const [s] = await sql<PageRow[]>`select * from pages where id = ${pageId(id)}`;
-	if (!s) throw new Usage(`没有页 ${id}`);
+	if (
+		!s ||
+		!pageVisible(
+			s.workspace_key,
+			workspaces().map((w) => w.key),
+		)
+	)
+		throw new Usage(`没有页 ${id}`);
 	const items = await sql<ItemRow[]>`select * from page_items where page_id = ${s.id} order by id`;
 	return {
 		...summary(s),
@@ -172,6 +229,8 @@ export async function showPage(sql: Sql, id: string): Promise<Page> {
 				at: i.created_at.toISOString(),
 				answer: i.answer,
 				answeredAt: i.answered_at?.toISOString() ?? null,
+				notes: i.notes,
+				notesAt: i.notes_at?.toISOString() ?? null,
 				fixed: Boolean(i.fixed),
 				...invalidOf(i.component, i.props),
 			}),
@@ -231,6 +290,34 @@ export function nextAnswer(component: string, props: unknown, previous: unknown,
 	const patch = z.record(z.string(), z.unknown()).safeParse(parsed);
 	if (!before.success || !patch.success) throw new Usage("逐行答案不是对象，保留原答案，未保存");
 	return { ...before.data, ...patch.data };
+}
+
+/** 描述只能写到组件允许的行；清空某行时仍保留其他行和原换行。 */
+export function nextNotes(component: string, props: unknown, previous: unknown, input: unknown): Record<string, string> {
+	const c = COMPONENTS.get(component);
+	if (!c?.note) throw new Usage(`${component} 不支持自定义描述`);
+	const parsed = c.note(c.props.parse(props) as never).safeParse(input);
+	if (!parsed.success) throw new Usage(`描述不对：${parsed.error.issues.map((x) => `${x.path.join(".") || "note"}：${x.message}`).join("；")}`);
+	const before = z.record(z.string(), z.string()).safeParse(previous ?? {});
+	if (!before.success) throw new Usage("原描述数据不对，保留原描述，未保存");
+	return { ...before.data, [parsed.data.rowId]: parsed.data.text };
+}
+
+/** 只改描述，不改答案或组件参数；锁住行后合并，多个窗口编辑不同行不会互相覆盖。 */
+export async function saveNote(sql: Sql, item: string, input: unknown): Promise<{ updatedAt: string }> {
+	const id = itemId(item);
+	return sql.begin(async (tx) => {
+		const [i] = await tx<{ component: string; props: unknown; notes: unknown; page_id: PageId; fixed: boolean }[]>`
+			select component, props, notes, page_id, fixed from page_items where id = ${id} for update`;
+		if (!i) throw new Usage(`没有组件 ${item}`);
+		if (i.fixed) throw new Usage("固定工作区不支持此描述入口");
+		const notes = nextNotes(i.component, i.props, i.notes, input);
+		const [saved] = await tx<
+			{ notes_at: Date }[]
+		>`update page_items set notes = ${tx.json(notes)}, notes_at = clock_timestamp() where id = ${id} returning notes_at`;
+		await tx`update pages set updated_at = now() where id = ${i.page_id}`;
+		return { updatedAt: saved!.notes_at.toISOString() };
+	});
 }
 
 /** 人在网页上回答：锁住这一份答案再合并，多个窗口选不同行也不会互相覆盖。 */

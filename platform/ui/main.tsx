@@ -1,11 +1,12 @@
 // 固定工作区和临时页共用注册组件；导航与首页只显示服务端提供的引用，不读取业务数据。
 import "./app.css";
-import { ArrowRightIcon, FileTextIcon, HouseIcon, MessageSquareIcon, MoonIcon, PackageIcon, ReceiptIcon, StoreIcon, SunIcon } from "lucide-react";
+import { ArrowRightIcon, FileTextIcon, HouseIcon, MessageSquareIcon, MoonIcon, PackageIcon, ReceiptIcon, StoreIcon, SunIcon, Trash2Icon } from "lucide-react";
 import { ThemeProvider, useTheme } from "next-themes";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Sidebar,
 	SidebarContent,
@@ -50,7 +51,14 @@ function App() {
 	return (
 		<SidebarProvider>
 			<OrderNotifications pages={pages ?? []} />
-			<Nav pages={pages ?? []} active={current} />
+			<Nav
+				pages={pages ?? []}
+				active={current}
+				onDeleted={(deleted) => {
+					if (deleted.includes(route())) location.hash = "home";
+					reload();
+				}}
+			/>
 			<SidebarInset className="min-w-0">
 				{current ? (
 					<PageView
@@ -70,14 +78,61 @@ function App() {
 	);
 }
 
-function Nav({ pages, active }: { pages: PageSummary[]; active: string }) {
+function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: string; onDeleted: (ids: string[]) => void }) {
 	const { setOpenMobile } = useSidebar();
+	const [managing, setManaging] = useState(false);
+	const [selected, setSelected] = useState<Set<string>>(new Set());
+	const [deleting, setDeleting] = useState(false);
+	const [deleteError, setDeleteError] = useState<string | null>(null);
+	const temporary = pages.filter((p) => !p.workspace);
+	const picked = temporary.filter((p) => selected.has(p.id));
+	const toggle = (id: string, checked: boolean) => {
+		setSelected((before) => {
+			const next = new Set(before);
+			if (checked) next.add(id);
+			else next.delete(id);
+			return next;
+		});
+	};
+	const cancel = () => {
+		setManaging(false);
+		setSelected(new Set());
+		setDeleteError(null);
+	};
+	const remove = async () => {
+		if (deleting || !picked.length) return;
+		if (!confirm(`删除选中的 ${picked.length} 个临时页面？\n${picked.map((p) => p.title).join("\n")}`)) return;
+		setDeleting(true);
+		setDeleteError(null);
+		try {
+			const result = await api.deletePages(picked.map((p) => p.id));
+			cancel();
+			onDeleted(result.deleted);
+		} catch (e) {
+			setDeleteError((e as Error).message);
+		} finally {
+			setDeleting(false);
+		}
+	};
 	const entries = (list: PageSummary[]) =>
 		list.map((p) => {
 			const Icon = iconOf(p.workspace?.icon);
 			return (
-				<SidebarMenuItem key={p.id}>
-					<SidebarMenuButton isActive={p.id === active} render={<a href={`#${p.workspace?.key ?? p.id}`} />} onClick={() => setOpenMobile(false)}>
+				<SidebarMenuItem key={p.id} className="flex items-center gap-2">
+					{managing && !p.workspace && (
+						<Checkbox
+							className="ml-2 shrink-0"
+							aria-label={`选择页面 ${p.title}`}
+							checked={selected.has(p.id)}
+							disabled={deleting}
+							onCheckedChange={(checked) => toggle(p.id, checked === true)}
+						/>
+					)}
+					<SidebarMenuButton
+						isActive={p.id === active}
+						render={<a href={`#${p.workspace?.key ?? p.id}`} />}
+						onClick={() => setOpenMobile(false)}
+					>
 						<Icon />
 						<span className="truncate">{p.title}</span>
 					</SidebarMenuButton>
@@ -114,10 +169,39 @@ function Nav({ pages, active }: { pages: PageSummary[]; active: string }) {
 						<SidebarMenu>{entries(pages.filter((p) => p.workspace && (p.workspace.group ?? "工作台") === group))}</SidebarMenu>
 					</SidebarGroup>
 				))}
-				{pages.some((p) => !p.workspace) && (
+				{temporary.length > 0 && (
 					<SidebarGroup>
-						<SidebarGroupLabel>临时页面</SidebarGroupLabel>
-						<SidebarMenu>{entries(pages.filter((p) => !p.workspace))}</SidebarMenu>
+						<div className="flex items-center justify-between gap-2">
+							<SidebarGroupLabel>临时页面</SidebarGroupLabel>
+							<Button size="sm" variant="ghost" disabled={deleting} onClick={() => (managing ? cancel() : setManaging(true))}>
+								{managing ? "取消" : "多选删除"}
+							</Button>
+						</div>
+						{managing && (
+							<div className="mb-2 space-y-2 px-2">
+								<div className="flex items-center justify-between gap-2">
+									<Button
+										size="sm"
+										variant="ghost"
+										disabled={deleting}
+										onClick={() => setSelected(picked.length === temporary.length ? new Set() : new Set(temporary.map((p) => p.id)))}
+									>
+										{picked.length === temporary.length ? "取消全选" : "全选"}
+									</Button>
+									<span className="text-xs text-muted-foreground">已选 {picked.length} 页</span>
+								</div>
+								<Button className="w-full" size="sm" variant="destructive" disabled={deleting || !picked.length} onClick={() => void remove()}>
+									<Trash2Icon />
+									{deleting ? "删除中…" : `删除选中（${picked.length}）`}
+								</Button>
+								{deleteError && (
+									<p role="alert" className="text-xs text-destructive">
+										{deleteError}
+									</p>
+								)}
+							</div>
+						)}
+						<SidebarMenu>{entries(temporary)}</SidebarMenu>
 					</SidebarGroup>
 				)}
 			</SidebarContent>

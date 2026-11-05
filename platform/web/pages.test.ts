@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Usage } from "../errors.ts";
-import { actParams, invalidOf, nextAnswer, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
+import { actParams, deletablePageIds, invalidOf, nextAnswer, nextNotes, pageVisible, parseAnswer, parseItem, parseProps, refKey } from "./pages.ts";
 
 test("页：没有的组件说有哪些；参数不对说哪一格", () => {
 	assert.throws(
@@ -109,6 +109,53 @@ test("逐行选择只接受表内商品及明确决定，空答案不替人作�
 	assert.throws(() => parseAnswer("choice-table", props, { first: "publish" }), /答案不对/);
 });
 
+test("逐行选择可保留同一商品的货源与竞品链接，只接受 HTTP 地址", () => {
+	const row = {
+		id: "sku-1",
+		name: "商品一",
+		link: "https://detail.1688.com/offer/1.html",
+		links: [{ label: "竞品", url: "https://shopee.tw/product/1/2" }],
+	};
+	const parsed = parseProps("choice-table", { rows: [row] }) as { rows: { link: string; links: { label: string; url: string }[] }[] };
+	assert.equal(parsed.rows[0]!.link, row.link);
+	assert.deepEqual(parsed.rows[0]!.links, row.links);
+	assert.throws(() => parseProps("choice-table", { rows: [{ ...row, links: [{ label: "竞品", url: "javascript:alert(1)" }] }] }));
+});
+
+test("逐行选择表可以单独开启自定义描述，原有行和选择标签保持兼容", () => {
+	const props = { editableNotes: true, noteLabel: "自定义描述", rows: [{ id: "first", name: "商品一" }] };
+	assert.doesNotThrow(() => parseProps("choice-table", props));
+	assert.deepEqual(parseAnswer("choice-table", props, { first: "no" }), { first: "no" });
+});
+
+test("自定义描述逐行合并、允许清空并保留换行，不覆盖其他商品的描述", () => {
+	const props = {
+		editableNotes: true,
+		rows: [
+			{ id: "first", name: "商品一" },
+			{ id: "second", name: "商品二" },
+		],
+	};
+	const first = nextNotes("choice-table", props, null, { rowId: "first", text: "  我的描述\n下一行  " });
+	const both = nextNotes("choice-table", props, first, { rowId: "second", text: "另一个商品" });
+	assert.deepEqual(both, { first: "  我的描述\n下一行  ", second: "另一个商品" });
+	assert.deepEqual(nextNotes("choice-table", props, both, { rowId: "first", text: "" }), { first: "", second: "另一个商品" });
+	assert.deepEqual(first, { first: "  我的描述\n下一行  " });
+});
+
+test("自定义描述只允许已开启的表内行，不能夹带选用决定或覆盖损坏的原数据", () => {
+	const props = { editableNotes: true, rows: [{ id: "first", name: "商品一" }] };
+	assert.throws(() => nextNotes("choice-table", { ...props, editableNotes: false }, {}, { rowId: "first", text: "描述" }), /描述不对/);
+	assert.throws(() => nextNotes("choice-table", props, {}, { rowId: "missing", text: "描述" }), /描述不对/);
+	assert.throws(() => nextNotes("choice-table", props, {}, { rowId: "first", text: "字".repeat(4001) }), /描述不对/);
+	assert.throws(() => nextNotes("choice-table", props, {}, { rowId: "first", text: "描述", decision: "yes" }), /描述不对/);
+	assert.throws(() => nextNotes("choice-table", props, "旧数据损坏", { rowId: "first", text: "描述" }), /保留原描述/);
+	assert.deepEqual(nextNotes("choice-table", props, { removed: "之前记录的描述" }, { rowId: "first", text: "新描述" }), {
+		removed: "之前记录的描述",
+		first: "新描述",
+	});
+});
+
 test("逐行保存保留其他行的决定，撤回只影响指定行；普通单选保持整体替换", () => {
 	const props = {
 		rows: [
@@ -125,4 +172,28 @@ test("逐行保存保留其他行的决定，撤回只影响指定行；普通�
 	assert.deepEqual(nextAnswer("choice", { question: "选哪个", options: [{ label: "A" }, { label: "B" }] }, { picked: ["A"] }, { picked: ["B"] }), {
 		picked: ["B"],
 	});
+});
+
+test("批量删页：重复编号只删一次，混入固定工作区或不存在的页就整批拒绝", () => {
+	const pages = [
+		{ id: "1", workspace_key: null, fixed: false },
+		{ id: "2", workspace_key: null, fixed: false },
+		{ id: "3", workspace_key: "catalog-shop", fixed: true },
+		{ id: "4", workspace_key: null, fixed: true },
+	];
+	assert.deepEqual(deletablePageIds(["1", "2", "1"], pages), ["1", "2"]);
+	assert.throws(() => deletablePageIds(["1", "3"], pages), /固定工作区/);
+	assert.throws(() => deletablePageIds(["1", "4"], pages), /固定工作区/);
+	assert.throws(() => deletablePageIds(["1", "99"], pages), /不存在/);
+});
+
+test("批量删页：空选择、非数字编号和错误请求不执行删除", () => {
+	for (const input of [[], ["1", "oops"], [1], { ids: ["1"] }, null]) assert.throws(() => deletablePageIds(input, []), /选择|编号/);
+});
+
+test("停用的固定工作区不降级为临时页，旧链接也不能打开；临时页保留", () => {
+	assert.equal(pageVisible(null, ["catalog-cheeroutdoor"]), true);
+	assert.equal(pageVisible("catalog-cheeroutdoor", ["catalog-cheeroutdoor"]), true);
+	assert.equal(pageVisible("catalog-ni1206", ["catalog-cheeroutdoor"]), false);
+	assert.equal(pageVisible("chat-ni1206", ["catalog-cheeroutdoor"]), false);
 });

@@ -5,6 +5,8 @@
 // PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
 // GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查；
 // POST /api/page/act { item, action, input }：替组件调它声明的工具
+// POST /api/pages/delete { ids }：整批校验后只删除临时页
+// POST /api/page/note { item, note: { rowId, text } }：人在允许的行填写描述，独立于选用决定保存
 // POST /api/page/prepare { item, action, input }：冻结精确预览；POST /api/page/confirm { token, confirmed, trial }：确认一次写入
 
 import { readFile } from "node:fs/promises";
@@ -17,7 +19,7 @@ import { startJobs } from "../jobs.ts";
 import { toolkits } from "../tool.ts";
 import { confirmWrite, prepareConfirmation } from "./confirmations.ts";
 import { type Ref, refQuery } from "./grid.ts";
-import { act, answer, closeItem, deletePage, ensureWorkspaces, listPages, parseProps, showPage } from "./pages.ts";
+import { act, answer, closeItem, deletePage, deletePages, ensureWorkspaces, listPages, parseProps, saveNote, showPage } from "./pages.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Shown, type Table, tables } from "./tables.ts";
 
 /** 网页发来的请求体：一个 JSON 对象（各个接口再照自己要的格解析） */
@@ -170,6 +172,7 @@ export async function serve(
 		},
 
 		"GET /api/pages": async () => listPages(sql),
+		"POST /api/pages/delete": async (b) => deletePages(sql, b.ids),
 		"GET /api/page": async (_, url) => showPage(sql, url.searchParams.get("id") ?? ""),
 		"DELETE /api/page": async (_, url) => {
 			await deletePage(sql, url.searchParams.get("id") ?? "");
@@ -179,6 +182,7 @@ export async function serve(
 			await answer(sql, String(b?.item ?? ""), b?.answer);
 			return { ok: true };
 		},
+		"POST /api/page/note": async (b) => saveNote(sql, String(b?.item ?? ""), b?.note),
 		"POST /api/page/act": async (b) => act(sql, String(b?.item ?? ""), String(b?.action ?? ""), b?.input),
 		"POST /api/page/prepare": async (b) => prepareConfirmation(sql, String(b.item ?? ""), String(b.action ?? ""), b.input),
 		"POST /api/page/confirm": async (b) => confirmWrite(sql, b),
