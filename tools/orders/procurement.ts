@@ -5,7 +5,17 @@ import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { Outcome, Ran } from "../../platform/writes.ts";
 import { checkOrders } from "./check.ts";
-import { type ProcurementItem, type ProcurementListingRow, type ProcurementSourceRow, procurementLines } from "./procurement-items.ts";
+import {
+	assertProcurementAvailable,
+	type EvidenceCatalog,
+	type EvidenceListing,
+	type EvidenceSource,
+	procurementTarget,
+	readPurchaseEvidence,
+	summarizePurchase,
+} from "./procurement-evidence.ts";
+import { type ProcurementItem, procurementLines } from "./procurement-items.ts";
+import { type MatchNeed, matchProcurement } from "./procurement-matches.ts";
 import { purchaseState, samePurchase, selectPurchase } from "./purchase.ts";
 import { readAll, reuse, writeOrders } from "./read.ts";
 import { snapshot } from "./status.ts";
@@ -29,39 +39,95 @@ type MonitorRow = {
 };
 const syncs = new WeakMap<Sql, Map<string, { at: string | null; error: string | null }>>();
 const scopeKey = (shops: string[]) => JSON.stringify([...new Set(shops)].sort());
+type ProcurementRefresh = (sql: Sql) => Promise<{ account: string; loginId: string; capturedAt: string | null }>;
+let refreshProcurement: ProcurementRefresh | null = null;
+export function setProcurementRefresh(refresh: ProcurementRefresh) {
+	refreshProcurement = refresh;
+}
+
+async function refreshPurchases(sql: Sql) {
+	if (!refreshProcurement) throw new Usage("尚未装配当前采购账号的 1688 订单同步，不能确认采购状态");
+	return refreshProcurement(sql);
+}
+
 export async function monitor(sql: Sql, shops: string[]) {
-	const rows = await sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
+	const [rows, historical, evidence] = await Promise.all([
+		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
 		exists (select 1 from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
 			and w.status in ('待执行', '已提交', '结果未知', '不一致') and l->>'sn' = o.sn) as cart_pending,
 		exists (select 1 from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
 			and w.status in ('成功', '已核对') and l->>'sn' = o.sn) as cart_done
 		from orders o where o.shop in ${sql(shops)} and o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货'
-		order by o.created_at desc nulls last, o.sn desc`;
-	const itemIds = [...new Set(rows.flatMap((row) => row.items.map((item) => item.itemId)))];
-	const sources = itemIds.length
-		? await sql<ProcurementSourceRow[]>`select item_id as "itemId", offer_id as "offerId", title, item_image as "itemImage", broken
+		order by o.created_at desc nulls last, o.sn desc`,
+		// 其他店铺及已履约需求一起分配数量，不能把以前已购买的件数重新分给当前待采购订单。
+		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
+		false as cart_pending, false as cart_done from orders o where o.order_source = 'shopee'
+		and o.platform_status in ('待出货', '已出货', '已完成', '退货退款')`,
+		readPurchaseEvidence(sql),
+	]);
+	const demands = [...new Map([...historical, ...rows].map((row) => [row.sn, row])).values()];
+	const itemIds = [...new Set(demands.flatMap((row) => row.items.map((item) => item.itemId)))];
+	const demandShops = [...new Set(demands.map((row) => row.shop))];
+	// 两类已有货源索引互不依赖，并发读取，首屏不等待外站同步。
+	const [sources, listings, catalog] = await Promise.all([
+		itemIds.length
+			? sql<EvidenceSource[]>`select item_id as "itemId", offer_id as "offerId", title, item_image as "itemImage", broken, skus, sku_exceptions as exceptions
 			from sources where site = '1688' and chosen and item_id in ${sql(itemIds)}`
-		: [];
-	const listings = itemIds.length
-		? await sql<ProcurementListingRow[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId", l.title
+			: [],
+		itemIds.length
+			? sql<EvidenceListing[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId", l.title, l.variants,
+			jsonb_build_object('offerId', l.offer->'offerId', 'skus', l.offer->'skus') as offer
 			from listings l join shop_settings s on s.shop = l.shop
-			where l.shop in ${sql(shops)} and l.product_id in ${sql(itemIds)} and not l.cancelled`
-		: [];
+			where l.shop in ${sql(demandShops)} and l.product_id in ${sql(itemIds)} and not l.cancelled`
+			: [],
+		itemIds.length
+			? sql<EvidenceCatalog[]>`select p.shop, p.shop_id as "shopId", p.product_id as "productId", p.models
+			from catalog_products p join catalog_heads h on h.shop = p.shop and h.shop_id = p.shop_id and h.revision = p.revision
+			where p.shop in ${sql(demandShops)} and p.product_id in ${sql(itemIds)}`
+			: [],
+	]);
+	const needs: MatchNeed[] = demands.flatMap((row) =>
+		row.items.map((item) => ({
+			sn: row.sn,
+			modelId: item.modelId,
+			qty: item.qty,
+			createdAt: row.created_at?.toISOString() ?? null,
+			offerIds: [
+				...new Set([
+					...sources.filter((source) => source.itemId === item.itemId).map((source) => source.offerId),
+					...listings
+						.filter((listing) => listing.shop === row.shop && listing.shopId === row.shop_id && listing.productId === item.itemId)
+						.map((listing) => listing.offerId),
+				]),
+			].filter((offerId) => /^\d+$/.test(offerId)),
+			...procurementTarget({ shop: row.shop, shopId: row.shop_id }, item, sources, listings, catalog),
+		})),
+	);
+	const matches = matchProcurement(needs, evidence.records, evidence.coverage);
 	const sync = syncs.get(sql)?.get(scopeKey(shops));
 	return {
 		checkedAt: sync?.at ?? null,
 		error: sync?.error ?? null,
-		orders: rows.map((r) => ({
-			sn: r.sn,
-			shop: r.shop,
-			createdAt: r.created_at?.toISOString() ?? null,
-			shipBy: r.ship_by?.toISOString() ?? null,
-			items: r.items_text ?? "",
-			lines: procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings),
-			step: r.cart_pending ? "加购待核对" : r.cart_done ? "已加购，请核对购物车" : (r.step ?? "待采购检查"),
-			cartPending: r.cart_pending,
-			cartDone: r.cart_done,
-		})),
+		purchases: evidence.coverage,
+		orders: rows.map((r) => {
+			const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings).map((line) => ({
+				...line,
+				purchase: matches.get(`${r.sn}:${line.modelId}`)!,
+			}));
+			const purchase = summarizePurchase(lines.map((line) => line.purchase));
+			return {
+				sn: r.sn,
+				shop: r.shop,
+				createdAt: r.created_at?.toISOString() ?? null,
+				shipBy: r.ship_by?.toISOString() ?? null,
+				items: r.items_text ?? "",
+				lines,
+				purchase,
+				step: purchase.label,
+				cartPending: r.cart_pending,
+				cartDone: r.cart_done,
+			};
+		}),
 	};
 }
 
@@ -74,6 +140,7 @@ export async function syncMonitor(sql: Sql, shops: string[]) {
 			`procurement-monitor:${key}`,
 			async () => {
 				await writeOrders(sql, shops);
+				await refreshPurchases(sql);
 				return new Date().toISOString();
 			},
 			60_000,
@@ -87,6 +154,9 @@ export async function syncMonitor(sql: Sql, shops: string[]) {
 
 async function selected(sql: Sql, p: z.infer<typeof selectionParams>) {
 	await writeOrders(sql, p.shops);
+	await refreshPurchases(sql);
+	const latest = await monitor(sql, p.shops);
+	assertProcurementAvailable(latest.orders, p.orders);
 	const reads = await readAll(sql, undefined, p.shops);
 	const bad = reads.results.find((r) => !r.ok);
 	if (bad) throw new Usage(`${bad.what}读取失败，停止采购以避免重复：${bad.error ?? "未知原因"}`);

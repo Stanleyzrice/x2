@@ -16,9 +16,21 @@ import { register, type Toolkit } from "./platform/tool.ts";
 import { catalog } from "./tools/catalog/index.ts";
 import { chat } from "./tools/chat/index.ts";
 import { listing } from "./tools/listing/index.ts";
-import { orders } from "./tools/orders/index.ts";
-import { refreshAll, reimbursement } from "./tools/reimbursement/index.ts";
+import { buyAccount, orders, setProcurementRefresh } from "./tools/orders/index.ts";
+import { refreshAccount, refreshAll, reimbursement } from "./tools/reimbursement/index.ts";
 import { selection } from "./tools/selection/index.ts";
+
+// 采购状态复用完整的账号采购事实；装配层协调业务工具，订单模块只读共享快照。
+setProcurementRefresh(async (sql) => {
+	const account = await buyAccount(sql);
+	if (!account) throw new Error("请先配置 1688 采购账号");
+	const result = await refreshAccount(sql, { id: account.userId, name: account.loginId });
+	if (result.status !== "succeeded") throw new Error(result.error ?? "1688 采购订单仍在同步，保留上次成功快照");
+	const [saved] = await sql<
+		{ capturedAt: Date | null }[]
+	>`select last_success_at as "capturedAt" from reimbursement_accounts where account_id = ${account.userId}`;
+	return { account: account.userId, loginId: account.loginId, capturedAt: saved?.capturedAt?.toISOString() ?? null };
+});
 
 catalog.workspaces = ["cheeroutdoor"].map((shop) => ({
 	key: `catalog-${shop}`,
