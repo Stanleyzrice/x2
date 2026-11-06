@@ -126,3 +126,46 @@ test("订单行返回独立人工标记、默认版本和已报帐时间，不�
 	assert.equal(result.summary.amountDisplay, "¥2.20");
 	assert.equal(result.pendingSummary.amountDisplay, "¥1.10");
 });
+
+test("已付款记录、完整汇总和同步状态并发读取，限定账号页面不查全局状态", async () => {
+	for (const accounts of [undefined, ["A"]]) {
+		let active = 0,
+			peak = 0;
+		const queries: string[] = [];
+		const sql = ((strings: TemplateStringsArray) => {
+			if (!("raw" in strings)) return {};
+			const text = strings.join("?").trim();
+			if (!text.startsWith("select")) return {};
+			queries.push(text);
+			peak = Math.max(peak, ++active);
+			return new Promise<unknown[]>((resolve) => {
+				setImmediate(() => {
+					active--;
+					resolve(
+						text.includes("originalMinor")
+							? [
+									{ minor: "123", reported: false },
+									{ minor: null, reported: true },
+								]
+							: [],
+					);
+				});
+			});
+		}) as unknown as Sql;
+		const result = await listRecords(sql, { accounts, search: "", offset: 50 });
+		assert.equal(peak, accounts ? 3 : 4);
+		assert.equal(queries.length, accounts ? 3 : 4);
+		assert.equal(
+			queries.some((query) => query.includes("r.account_id is null")),
+			!accounts,
+		);
+		assert.equal(result.global, null);
+		assert.equal(result.total, 2);
+		assert.equal(result.summary.amountMinor, "123");
+		assert.equal(result.summary.missingCount, 1);
+		assert.equal(result.pendingSummary.amountMinor, "123");
+		assert.equal(result.pendingSummary.missingCount, 0);
+		assert.equal(result.offset, 50);
+		assert.equal(result.limit, 50);
+	}
+});

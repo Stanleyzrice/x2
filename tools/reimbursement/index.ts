@@ -3,16 +3,12 @@ import { z } from "zod";
 import { db, type Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, type Toolkit } from "../../platform/tool.ts";
-import { paymentRange, present, type StoredPurchase, summarizeOriginalAmounts } from "./facts.ts";
+import { exportRecords } from "./export.ts";
+import { present, type StoredPurchase, summarizeOriginalAmounts } from "./facts.ts";
+import { checkScope, recordFilter, recordQuery, type Scope, scope } from "./query.ts";
 import { refreshAccount, refreshAll, runLockPresent } from "./sync.ts";
 
-export { refreshAll } from "./sync.ts";
-
-const scope = z.object({ accounts: z.array(z.string().min(1)).min(1).optional(), account: z.string().min(1).optional() });
-type Scope = z.infer<typeof scope>;
-function checkScope(p: Scope): void {
-	if (p.account && p.accounts && !p.accounts.includes(p.account)) throw new Usage("采购账号不在当前页面允许范围内");
-}
+export { refreshAccount, refreshAll } from "./sync.ts";
 
 export async function accountStates(sql: Sql, allowed?: string[]) {
 	const live = runLockPresent(sql);
@@ -43,46 +39,43 @@ export async function accountStates(sql: Sql, allowed?: string[]) {
 }
 
 export async function listRecords(sql: Sql, p: Scope & { search: string; offset: number; paidFrom?: string; paidTo?: string }) {
-	checkScope(p);
-	const range = paymentRange(p.paidFrom, p.paidTo);
-	const filter = sql`where o.paid_at is not null
- ${p.accounts ? sql`and o.account_id in ${sql(p.accounts)}` : sql``}
- ${p.account ? sql`and o.account_id = ${p.account}` : sql``}
- ${range.from ? sql`and o.paid_at >= ${range.from}` : sql``}
- ${range.toExclusive ? sql`and o.paid_at < ${range.toExclusive}` : sql``}
- ${p.search ? sql`and (o.order_id ilike ${`%${p.search}%`} or o.fact->>'supplier' ilike ${`%${p.search}%`} or (o.fact->'items')::text ilike ${`%${p.search}%`})` : sql``}`;
-	const rows = await sql<
-		{
-			account: string;
-			accountName: string;
-			fact: StoredPurchase;
-			capturedAt: Date;
-			revision: string;
-			absentFromLatest: boolean;
-			reported: boolean;
-			reportRevision: number;
-			reportedAt: Date | null;
-		}[]
-	>`select o.account_id as account, a.name as "accountName", o.fact, o.captured_at as "capturedAt", o.revision, o.revision <> a.revision as "absentFromLatest",
+	const filter = recordFilter(sql, p);
+	const live = runLockPresent(sql);
+	// 订单页、完整匹配金额和同步状态互不依赖，并行读取避免远端库往返累加。
+	const [rows, amounts, [latest], accounts] = await Promise.all([
+		sql<
+			{
+				account: string;
+				accountName: string;
+				fact: StoredPurchase;
+				capturedAt: Date;
+				revision: string;
+				absentFromLatest: boolean;
+				reported: boolean;
+				reportRevision: number;
+				reportedAt: Date | null;
+			}[]
+		>`select o.account_id as account, a.name as "accountName", o.fact, o.captured_at as "capturedAt", o.revision, o.revision <> a.revision as "absentFromLatest",
  coalesce(m.reported, false) as reported, coalesce(m.revision, 0) as "reportRevision", case when m.reported then m.updated_at end as "reportedAt"
  from reimbursement_orders o join reimbursement_accounts a on a.account_id = o.account_id
  left join reimbursement_marks m on m.account_id = o.account_id and m.order_id = o.order_id ${filter}
- order by o.paid_at desc, o.account_id, o.order_id limit 50 offset ${p.offset}`;
-	const amounts = await sql<
-		{ minor: string | null; reported: boolean }[]
-	>`select o.fact->'receipt'->>'originalMinor' as minor, coalesce(m.reported, false) as reported
- from reimbursement_orders o left join reimbursement_marks m on m.account_id = o.account_id and m.order_id = o.order_id ${filter}`;
+ order by o.paid_at desc, o.account_id, o.order_id limit 50 offset ${p.offset}`,
+		sql<{ minor: string | null; reported: boolean }[]>`select o.fact->'receipt'->>'originalMinor' as minor, coalesce(m.reported, false) as reported
+ from reimbursement_orders o left join reimbursement_marks m on m.account_id = o.account_id and m.order_id = o.order_id ${filter}`,
+		p.accounts
+			? Promise.resolve([])
+			: sql<
+					{ status: string; error: string | null; startedAt: Date; finishedAt: Date | null }[]
+				>`select case when r.status = 'running' and not ${live} then 'interrupted' else r.status end as status,
+ case when r.status = 'running' and not ${live} then '上次同步进程已中断；保留最后成功记录' else r.error end as error,
+ r.started_at as "startedAt", r.finished_at as "finishedAt" from reimbursement_runs r where r.account_id is null order by r.started_at desc limit 1`,
+		accountStates(sql, p.accounts),
+	]);
 	const summary = summarizeOriginalAmounts(amounts.map((a) => a.minor));
 	const pendingSummary = summarizeOriginalAmounts(amounts.filter((a) => !a.reported).map((a) => a.minor));
-	const live = runLockPresent(sql);
-	const [latest] = await sql<
-		{ status: string; error: string | null; startedAt: Date; finishedAt: Date | null }[]
-	>`select case when r.status = 'running' and not ${live} then 'interrupted' else r.status end as status,
- case when r.status = 'running' and not ${live} then '上次同步进程已中断；保留最后成功记录' else r.error end as error,
- r.started_at as "startedAt", r.finished_at as "finishedAt" from reimbursement_runs r where r.account_id is null order by r.started_at desc limit 1`;
 	return {
 		query: { account: p.account ?? null, accounts: p.accounts ?? null, search: p.search, paidFrom: p.paidFrom ?? "", paidTo: p.paidTo ?? "", offset: p.offset },
-		accounts: await accountStates(sql, p.accounts),
+		accounts,
 		global: p.accounts ? null : (latest ?? null),
 		total: summary.orderCount,
 		summary,
@@ -138,13 +131,15 @@ export const reimbursement: Toolkit = {
 		),
 		list: get(
 			"按账号、搜索和付款日期查询采购单，汇总全部匹配原实付及未报帐原实付；日期按Asia/Shanghai包含起止日，不扣退款，未知金额单独计数",
-			scope.extend({
-				search: z.string().default(""),
-				paidFrom: z.string().optional().describe("付款起始日 YYYY-MM-DD，包含当天；不给是全部历史"),
-				paidTo: z.string().optional().describe("付款截止日 YYYY-MM-DD，包含当天"),
+			recordQuery.extend({
 				offset: z.coerce.number().int().nonnegative().default(0),
 			}),
 			async (p) => listRecords(await db(), p),
+		),
+		export: get(
+			"导出当前账号、搜索和付款日期内全部已付款采购订单及商品明细为xlsx，返回文件名、MIME和base64；同一只读快照，不刷新或修改人工标记",
+			recordQuery,
+			async (p) => exportRecords(await db(), p),
 		),
 		"mark-reported": get(
 			"人工设置本地是否已报帐标记，可撤销；不是外部报帐提交或批准，需传当前reportRevision防止覆盖并发修改",

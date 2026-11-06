@@ -13,6 +13,11 @@ export const props = z.strictObject({
 		.describe("实际注册的后台刷新时间；不给不承诺自动刷新"),
 });
 export type Props = z.infer<typeof props>;
-export const actions = { list: "reimbursement.list", refresh: "reimbursement.refresh", markReported: "reimbursement.mark-reported" };
+export const actions = {
+	list: "reimbursement.list",
+	refresh: "reimbursement.refresh",
+	markReported: "reimbursement.mark-reported",
+	export: "reimbursement.export",
+};
 export const inputs = ["account", "search", "paidFrom", "paidTo", "offset", "orderId", "reported", "revision"];
 export const examples: z.input<typeof props>[] = [{ title: "采购报账" }];

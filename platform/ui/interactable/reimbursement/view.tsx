@@ -1,5 +1,5 @@
 // 采购记录只展示服务端保存的事实与金额；同步走后台任务，轮询只读 DB，不在组件内重算成本或读取外站。
-import { ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, ExternalLinkIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLightbox } from "@/components/lightbox";
 import { Badge } from "@/components/ui/badge";
@@ -81,6 +81,8 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const [selected, setSelected] = useState<RecordRow | null>(null);
 	const [starting, setStarting] = useState(false);
 	const [refreshError, setRefreshError] = useState<string | null>(null);
+	const [exporting, setExporting] = useState(false);
+	const [exportError, setExportError] = useState<string | null>(null);
 	const [markError, setMarkError] = useState<string | null>(null);
 	const [marking, setMarking] = useState<Record<string, "saving" | MarkReceipt>>({});
 	const markingRef = useRef(new Set<string>());
@@ -151,6 +153,29 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			.then(reload, (e: Error) => setRefreshError(e.message))
 			.finally(() => setStarting(false));
 	};
+	const download = async () => {
+		setExporting(true);
+		setExportError(null);
+		try {
+			const file = await api.act<{ filename: string; mime: string; base64: string }>(item.id, "export", {
+				...(account === "all" ? {} : { account }),
+				search,
+				paidFrom,
+				paidTo,
+			});
+			const bytes = Uint8Array.from(atob(file.base64), (character) => character.charCodeAt(0));
+			const url = URL.createObjectURL(new Blob([bytes], { type: file.mime }));
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = file.filename;
+			link.click();
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		} catch (e) {
+			setExportError((e as Error).message);
+		} finally {
+			setExporting(false);
+		}
+	};
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-5 p-4 sm:p-6">
 			<header className="flex flex-wrap items-start justify-between gap-3">
@@ -163,11 +188,27 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 							: "未配置后台刷新，可手动刷新"}
 					</p>
 				</div>
-				<Button variant="outline" onClick={refresh} disabled={starting || data?.accounts.some((a) => a.status === "running")}>
-					<RefreshCwIcon className={starting ? "animate-spin" : ""} />
-					{starting ? "正在刷新…" : "刷新采购记录"}
-				</Button>
+				<div className="flex flex-wrap gap-2">
+					<Button
+						variant="outline"
+						onClick={download}
+						title="导出当前筛选的全部已付款采购记录，包含所有分页"
+						disabled={exporting || !data || query !== search || Object.values(marking).some((state) => state === "saving")}
+					>
+						<DownloadIcon />
+						{exporting ? "正在导出…" : "导出 Excel"}
+					</Button>
+					<Button variant="outline" onClick={refresh} disabled={starting || data?.accounts.some((a) => a.status === "running")}>
+						<RefreshCwIcon className={starting ? "animate-spin" : ""} />
+						{starting ? "正在刷新…" : "刷新采购记录"}
+					</Button>
+				</div>
 			</header>
+			{exportError && (
+				<p role="alert" className="text-sm text-destructive">
+					{exportError}
+				</p>
+			)}
 			{(error || refreshError || data?.global?.error) && (
 				<div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
 					{refreshError ?? error ?? data?.global?.error}。上次成功记录继续保留。
