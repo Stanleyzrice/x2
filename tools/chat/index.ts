@@ -8,7 +8,7 @@ import { get, str, type Toolkit, write } from "../../platform/tool.ts";
 import { exclusive } from "../../platform/writes.ts";
 import { assertSuggestionContext, sendInput } from "./context.ts";
 import { pendingReplies } from "./pending.ts";
-import { chatDriver, listConversations } from "./read.ts";
+import { listConversations, readDisplay } from "./read.ts";
 import { contextById, saveContext, saveDraft, threadState } from "./store.ts";
 import { draftPrompt } from "./talk.ts";
 import { historyDays, rollingWindow } from "./window.ts";
@@ -20,7 +20,7 @@ const contextInput = conversation.extend({ historyDays, contextId: z.string().uu
 async function readContext(p: z.infer<typeof contextInput>) {
 	const sql = await db();
 	const previous = p.contextId ? await contextById(sql, p.shop, p.conversationId, p.contextId) : undefined;
-	const context = await saveContext(sql, await chatDriver.read(p.shop, p.conversationId, previous, p.cursor, rollingWindow(p.historyDays)));
+	const context = await saveContext(sql, await readDisplay(p.shop, p.conversationId, previous, p.cursor, rollingWindow(p.historyDays)));
 	return { context, ...(await threadState(sql, context)) };
 }
 export const chat: Toolkit = {

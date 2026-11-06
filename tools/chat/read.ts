@@ -6,12 +6,21 @@ import { inAccount } from "../../platform/browser/browser.ts";
 import type { Sent } from "../../platform/tool.ts";
 import { type Context, makeContext, type Target } from "./context.ts";
 import { compareMessages, conversationsOf, type Message, messagesOf } from "./talk.ts";
+import { recentTargets } from "./targets.ts";
 import { type HistoryWindow, inWindow } from "./window.ts";
 
+const displayTargets = recentTargets();
 function target(shop: string, account: { shopId: string; userId: string }, c: Raw): Target {
 	if (c.shop_id != null && String(c.shop_id) !== account.shopId) throw new Error("Shopee Chat 返回其他店铺的会话");
 	if (!c.to_id || c.official_chat?.official_conv_type || (c.opposite_user_role != null && c.opposite_user_role !== 1)) throw new Error("不是可确认的买家会话");
-	return { shop, ...account, conversationId: String(c.id), buyerId: String(c.to_id), buyerName: c.to_name ?? String(c.to_id) };
+	return {
+		shop,
+		shopId: account.shopId,
+		userId: account.userId,
+		conversationId: String(c.id),
+		buyerId: String(c.to_id),
+		buyerName: c.to_name ?? String(c.to_id),
+	};
 }
 function nextConversation(rows: Raw[], cursor = ""): string | null {
 	if (rows.length < 50) return null;
@@ -47,6 +56,10 @@ export async function listConversations(shop: string, cursor: string | undefined
 		for (const r of rows) if (r.shop_id != null && String(r.shop_id) !== a.shopId) throw new Error("会话列表店铺身份不一致");
 		const after = await identity();
 		if (after.shopId !== a.shopId || after.userId !== a.userId) throw new Error("读取期间切换了账号");
+		for (const row of rows) {
+			if (!row.to_id || row.official_chat?.official_conv_type || (row.opposite_user_role != null && row.opposite_user_role !== 1)) continue;
+			displayTargets.remember(target(shop, a, row));
+		}
 		return {
 			shop,
 			shopId: a.shopId,
@@ -121,10 +134,12 @@ async function readChat(
 	previous: Context | undefined,
 	cursor: string | undefined,
 	window: HistoryWindow | null,
+	display = false,
 ): Promise<Context> {
 	return inAccount("shopee", shop, async () => {
 		const a = await identity(),
-			t = target(shop, { shopId: a.shopId, userId: a.userId }, await find(conversationId));
+			cached = display ? displayTargets.peek(shop, a, conversationId) : undefined,
+			t = cached ?? target(shop, a, await find(conversationId));
 		if (previous && (previous.shop !== shop || previous.shopId !== a.shopId || previous.conversationId !== conversationId || previous.buyerId !== t.buyerId))
 			throw new Error("历史上下文不属于当前店铺或会话");
 		const range = await readMessageRange(
@@ -135,9 +150,12 @@ async function readChat(
 		);
 		const after = await identity();
 		if (after.shopId !== a.shopId || after.userId !== a.userId) throw new Error("读取期间切换了账号");
+		if (!cached) displayTargets.remember(t);
 		return makeContext(t, range.messages, range.next, randomUUID(), new Date(), window ?? undefined);
 	});
 }
+export const readDisplay = (shop: string, conversationId: string, previous: Context | undefined, cursor: string | undefined, window: HistoryWindow) =>
+	readChat(shop, conversationId, previous, cursor, window, true);
 export const chatDriver: ChatDriver = {
 	read: (shop, conversationId, previous, cursor, window) => {
 		if (!window) throw new Error("读取 Chat 必须显式指定窗口");

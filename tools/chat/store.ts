@@ -4,13 +4,10 @@ import type { Context } from "./context.ts";
 import { replyTried } from "./trial.ts";
 
 export async function saveContext(sql: Sql, context: Context): Promise<Context> {
-	await sql`insert into chat_contexts (id, shop, shop_id, conversation_id, context_hash, data) values (${context.id}, ${context.shop}, ${context.shopId}, ${context.conversationId}, ${context.contextHash}, ${sql.json(context as unknown as Json)}) on conflict (shop, shop_id, conversation_id, context_hash) do nothing`;
 	const [r] = await sql<
 		{ data: Context }[]
-	>`select data from chat_contexts where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId} and context_hash = ${context.contextHash}`;
-	const current = { ...context, id: r!.data.id };
-	await sql`update chat_contexts set data = ${sql.json(current as unknown as Json)} where id = ${current.id}`;
-	return current;
+	>`insert into chat_contexts (id, shop, shop_id, conversation_id, context_hash, data) values (${context.id}, ${context.shop}, ${context.shopId}, ${context.conversationId}, ${context.contextHash}, ${sql.json(context as unknown as Json)}) on conflict (shop, shop_id, conversation_id, context_hash) do update set data = jsonb_set(excluded.data, '{id}', to_jsonb(chat_contexts.id)) returning data`;
+	return r!.data;
 }
 export async function contextById(sql: Sql, shop: string, conversationId: string, id: string): Promise<Context> {
 	const [r] = await sql<{ data: Context }[]>`select data from chat_contexts where id = ${id} and shop = ${shop} and conversation_id = ${conversationId}`;
@@ -18,24 +15,27 @@ export async function contextById(sql: Sql, shop: string, conversationId: string
 	return r.data;
 }
 export async function threadState(sql: Sql, context: Context) {
-	const [draft] = await sql<
-		{ text: string; revision: number }[]
-	>`select text, revision from chat_drafts where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId}`;
-	const [suggestion] = await sql<
-		{ id: string; text: string; context_hash: string; model: string; latest_buyer_id: string | null }[]
-	>`select id, text, context_hash, model, latest_buyer_id from chat_suggestions where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId} order by created_at desc limit 1`;
-	const [intent] = await sql<
-		{ request_id: string }[]
-	>`select request_id from chat_intents where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId} order by created_at desc limit 1`;
+	// 各项互不依赖，避免共享远端库的延迟按查询次数累加；最新 intent 的写入状态最后读取。
+	const [[draft], [suggestion], [intent], [pending], tried] = await Promise.all([
+		sql<
+			{ text: string; revision: number }[]
+		>`select text, revision from chat_drafts where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId}`,
+		sql<
+			{ id: string; text: string; context_hash: string; model: string; latest_buyer_id: string | null }[]
+		>`select id, text, context_hash, model, latest_buyer_id from chat_suggestions where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId} order by created_at desc limit 1`,
+		sql<
+			{ request_id: string }[]
+		>`select request_id from chat_intents where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId} order by created_at desc limit 1`,
+		sql<
+			{ key: string; status: string; error: string | null }[]
+		>`select key, status, error from writes where op = '聊聊回复' and target = ${`chat:${context.shopId}:${context.conversationId}`} and status in ('待执行', '已提交', '结果未知', '不一致') order by id desc limit 1`,
+		replyTried(sql),
+	]);
 	const [write] = intent
 		? await sql<
 				{ status: string; error: string | null }[]
 			>`select status, error from writes where op = '聊聊回复' and key = ${`chat-reply:${intent.request_id}`} order by id desc limit 1`
 		: [];
-	const [pending] = await sql<
-		{ key: string; status: string; error: string | null }[]
-	>`select key, status, error from writes where op = '聊聊回复' and target = ${`chat:${context.shopId}:${context.conversationId}`} and status in ('待执行', '已提交', '结果未知', '不一致') order by id desc limit 1`;
-	const tried = await replyTried(sql);
 	return {
 		draft: draft ?? { text: "", revision: 0 },
 		suggestion: suggestion

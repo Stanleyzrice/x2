@@ -20,33 +20,11 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
+import { type Conversation, type Inbox, inboxSnapshots, type Suggestion, snapshotKey, type ThreadData, threadSnapshots, type Window } from "./cache.ts";
 import type { Props } from "./schema.ts";
 
-type Conversation = { id: string; buyer: string; lastText: string; lastAt: string | null; unread: number; unreplied: boolean };
-type Window = { days: number; from: string; to: string };
 type Pending = { conversationId: string; buyerName: string | null; requestId: string; status: string; error: string | null };
 type PendingInbox = { shop: string; rows: Pending[]; capturedAt: string };
-type Inbox = { shop: string; rows: Conversation[]; next: string | null; capturedAt: string; scope: string; window: Window };
-type Msg = { id: string; sender: "buyer" | "us" | "auto" | "platform" | "other_auto"; text: string; at: string };
-type Suggestion = { id: string; text: string; contextHash: string; model: string };
-type ThreadData = {
-	context: {
-		id: string;
-		shopId: string;
-		buyerName: string;
-		buyerId: string;
-		messages: Msg[];
-		window?: Window;
-		contextHash: string;
-		latestBuyerId: string | null;
-		nextCursor: string | null;
-		range: { from: string | null; to: string | null; count: number; complete: boolean };
-	};
-	draft: { text: string; revision: number };
-	suggestion: Suggestion | null;
-	reply: { requestId: string; status: string; error: string | null } | null;
-	trialRequired: boolean;
-};
 type Confirmation = { token: string; display: string; contextHash: string; text: string; requestId: string };
 const at = (iso: string | null) =>
 	iso ? new Date(iso).toLocaleString("zh-TW", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -60,8 +38,14 @@ function inWindow(value: string | null, window: Window | undefined, now: number,
 }
 
 export function View({ props, item }: { props: Props; item: PageItem }) {
-	const [received, error, refresh] = usePoll(() => api.act<Inbox>(item.id, "conversations"), 30_000, [item.id, props.shop, props.historyDays]);
-	const inbox = received?.shop === props.shop ? received : null;
+	const inboxKey = snapshotKey(item.id, props.shop, props.historyDays);
+	const [received, error, refresh] = usePoll(
+		() => inboxSnapshots.read(inboxKey, () => api.act<Inbox>(item.id, "conversations")),
+		30_000,
+		[item.id, props.shop, props.historyDays],
+		inboxSnapshots.peek(inboxKey),
+	);
+	const inbox = received?.shop === props.shop && received.window.days === props.historyDays ? received : null;
 	const shownDays = inbox?.window.days ?? props.historyDays;
 	const [pendingReceived, pendingReadError, refreshPending] = usePoll(() => api.act<PendingInbox>(item.id, "pending"), 30_000, [item.id, props.shop]);
 	const pending = pendingReceived?.shop === props.shop ? pendingReceived : null;
@@ -254,6 +238,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 				<Badge variant="secondary">買家聊聊</Badge>
 				<Badge variant="outline">最近{shownDays}天</Badge>
 				<span className="text-xs text-muted-foreground">持續更新，記錄滿{shownDays}天移出目前頁面</span>
+				{inbox ? <span className="ml-auto text-xs text-muted-foreground">上次讀取 {at(inbox.capturedAt)}</span> : null}
 			</div>
 			<div className="min-h-0 grow">
 				<ResizablePanelGroup orientation="horizontal">
@@ -268,7 +253,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						</Button>
 						{current ? (
 							<Thread
-								key={`${props.shop}:${current}:${props.historyDays}`}
+								key={`${item.id}:${props.shop}:${current}:${props.historyDays}`}
 								item={item.id}
 								shop={props.shop}
 								conversationId={current}
@@ -286,10 +271,12 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 }
 
 function Thread({ item, shop, conversationId, now, historyDays }: { item: string; shop: string; conversationId: string; now: number; historyDays: number }) {
-	const [data, setData] = useState<ThreadData | null>(null),
+	const cacheKey = snapshotKey(item, shop, historyDays, conversationId);
+	const [data, setData] = useState<ThreadData | null>(() => threadSnapshots.peek(cacheKey)),
 		[error, setError] = useState<string | null>(null),
 		[busy, setBusy] = useState(false),
-		[reading, setReading] = useState(false);
+		[reading, setReading] = useState(false),
+		[live, setLive] = useState(false);
 	const [text, setText] = useState(""),
 		[revision, setRevision] = useState(0),
 		[dirty, setDirty] = useState(false),
@@ -298,7 +285,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		[confirmation, setConfirmation] = useState<Confirmation | null>(null),
 		[trial, setTrial] = useState(false),
 		[uncertain, setUncertain] = useState<string | null>(null);
-	const contextId = useRef<string | null>(null),
+	const contextId = useRef<string | null>(data?.context.id ?? null),
 		loading = useRef(false),
 		mounted = useRef(false),
 		initialized = useRef(false),
@@ -314,23 +301,29 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 			loading.current = true;
 			setReading(true);
 			try {
-				const result = await api.act<ThreadData>(item, "messages", {
-					conversationId,
-					...(contextId.current ? { contextId: contextId.current } : {}),
-					...(cursor ? { cursor } : {}),
-				});
+				const result = await threadSnapshots.read(cacheKey, () =>
+					api.act<ThreadData>(item, "messages", {
+						conversationId,
+						...(contextId.current ? { contextId: contextId.current } : {}),
+						...(cursor ? { cursor } : {}),
+					}),
+				);
 				if (!mounted.current) return;
 				contextId.current = result.context.id;
 				setData(result);
+				setLive(true);
 				setError(null);
 			} catch (e) {
-				if (mounted.current) setError((e as Error).message);
+				if (mounted.current) {
+					setLive(false);
+					setError((e as Error).message);
+				}
 			} finally {
 				loading.current = false;
 				if (mounted.current) setReading(false);
 			}
 		},
-		[item, conversationId],
+		[item, conversationId, cacheKey],
 	);
 	useEffect(() => {
 		mounted.current = true;
@@ -343,7 +336,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		};
 	}, [load]);
 	useEffect(() => {
-		if (!data || initialized.current) return;
+		if (!data || !live || initialized.current) return;
 		initialized.current = true;
 		let initial = data.draft.text;
 		try {
@@ -363,7 +356,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		setText(initial);
 		textRef.current = initial;
 		setRevision(data.draft.revision);
-	}, [data, shop, conversationId]);
+	}, [data, live, shop, conversationId]);
 	const edit = (value: string) => {
 		setText(value);
 		textRef.current = value;
@@ -372,7 +365,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		if (key) localStorage.setItem(key, JSON.stringify({ text: value, revision }));
 	};
 	const persist = async () => {
-		if (!data || !dirty) return;
+		if (!data || !live || reading || !dirty) return;
 		const value = textRef.current;
 		const saved = await api.act<{ text: string; revision: number }>(item, "saveDraft", { conversationId, contextId: data.context.id, text: value, revision });
 		setRevision(saved.revision);
@@ -391,13 +384,13 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		}
 	};
 	const generate = async () => {
-		if (!data || !visibleMessages.length || windowChanged) return;
+		if (!data || !live || reading || !visibleMessages.length || windowChanged) return;
 		const id = ++generation.current;
 		const result = await api.act<Suggestion>(item, "draft", { conversationId, contextId: data.context.id });
 		if (mounted.current && generation.current === id) setSuggestion(result);
 	};
 	const prepare = async () => {
-		if (!data) return;
+		if (!data || !live || reading) return;
 		if (!data.context.window || data.context.messages.some((m) => !inWindow(m.at, data.context.window, Date.now(), historyDays)))
 			throw new Error("讀取範圍已更新或缺少範圍，請重新讀取後確認");
 		await persist();
@@ -412,6 +405,8 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 	};
 	const confirm = async () => {
 		if (
+			!live ||
+			reading ||
 			!confirmation ||
 			!data?.context.window ||
 			confirmation.contextHash !== data.context.contextHash ||
@@ -461,6 +456,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 						{data.context.buyerId} · 最近{shownDays}天 {visibleMessages.length} 則 · {at(visibleMessages[0]?.at ?? null)} —{" "}
 						{at(visibleMessages.at(-1)?.at ?? null)}
 						{windowChanged ? " · 讀取範圍已更新，等待重新讀取" : !data.context.range.complete ? " · 範圍內尚有較早訊息" : ` · 已到最近${shownDays}天範圍起點`}
+						{` · ${live ? "讀取" : "快取"} ${at(data.context.capturedAt)}${reading ? " · 更新中…" : ""}`}
 					</p>
 				</div>
 				<Button variant="ghost" size="icon" aria-label="重新讀取訊息" onClick={() => void load()} disabled={reading}>
@@ -514,7 +510,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 							{stale ? (
 								<Badge variant="destructive">上下文已更新</Badge>
 							) : (
-								<Button size="sm" variant="ghost" onClick={() => edit(chosen.text)}>
+								<Button size="sm" variant="ghost" disabled={!live || reading} onClick={() => edit(chosen.text)}>
 									採用建議
 								</Button>
 							)}
@@ -554,23 +550,29 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 					aria-label="人工回覆草稿"
 					placeholder="編輯回覆，再確認收件方與正文"
 					value={text}
+					disabled={!live && !initialized.current}
 					onChange={(e) => edit(e.target.value)}
 					maxLength={2000}
 					rows={3}
 				/>
 				<div className="flex flex-wrap items-center gap-2">
-					<Button variant="outline" size="sm" disabled={busy || windowChanged || !visibleMessages.length} onClick={() => void perform(generate)}>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={busy || !live || reading || windowChanged || !visibleMessages.length}
+						onClick={() => void perform(generate)}
+					>
 						<SparklesIcon />
 						產生建議
 					</Button>
-					<Button variant="ghost" size="sm" disabled={busy || !dirty} onClick={() => void perform(persist)}>
+					<Button variant="ghost" size="sm" disabled={busy || !live || reading || !dirty} onClick={() => void perform(persist)}>
 						<CheckIcon />
 						{dirty ? "儲存草稿" : "已儲存"}
 					</Button>
 					<span className="ml-auto text-xs text-muted-foreground">{text.length}/2000</span>
 					<Button
 						size="sm"
-						disabled={busy || pending || windowChanged || !text.trim() || !visibleMessages.some((m) => m.sender === "buyer")}
+						disabled={busy || !live || reading || pending || windowChanged || !text.trim() || !visibleMessages.some((m) => m.sender === "buyer")}
 						onClick={() => void perform(prepare)}
 					>
 						<SendIcon />
@@ -603,7 +605,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 							取消
 						</Button>
 						<Button
-							disabled={busy || windowChanged || (data.trialRequired && !trial) || confirmation?.contextHash !== data.context.contextHash}
+							disabled={busy || !live || reading || windowChanged || (data.trialRequired && !trial) || confirmation?.contextHash !== data.context.contextHash}
 							onClick={() => void perform(confirm)}
 						>
 							發送這一則
