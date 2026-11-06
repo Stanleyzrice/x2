@@ -12,20 +12,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem, type PageSummary, usePoll } from "../../api.ts";
 import type { Props } from "./schema.ts";
-import type { Monitor, OrderLine, PurchaseResult } from "./types.ts";
+import { monitorSync, preserveMonitor } from "./sync.ts";
+import type { Monitor, OrderLine, PurchaseMatch, PurchaseResult } from "./types.ts";
 
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
-const reads = new Map<string, { at: number; value: Promise<Monitor> }>();
-const readMonitor = (item: string, force = false) => {
-	const previous = reads.get(item);
-	if (!force && previous && Date.now() - previous.at < 45_000) return previous.value;
-	const value = api.act<Monitor>(item, "sync");
-	reads.set(item, { at: Date.now(), value });
-	value.catch(() => {
-		if (reads.get(item)?.value === value) reads.delete(item);
-	});
-	return value;
-};
+const syncMonitor = monitorSync(
+	async (item, shops) => {
+		// 所有同步入口先保留快照；外站同步期间会暂时关闭订单采购资格。
+		await api.procurementMonitor(item, shops);
+		api.beginProcurementSync(item, shops);
+		try {
+			return await api.act<Monitor>(item, "sync");
+		} finally {
+			api.endProcurementSync(item, shops);
+		}
+	},
+	(item, shops, value) => api.setProcurementMonitor(item, shops, preserveMonitor(api.peekProcurementMonitor(item, shops), value)),
+	(item) => api.procurementMonitorEpoch(item),
+);
 const seen = new Set<string>();
 
 export function OrderNotifications({ pages }: { pages: PageSummary[] }) {
@@ -41,11 +45,12 @@ export function OrderNotifications({ pages }: { pages: PageSummary[] }) {
 				const page = await api.page(id);
 				const item = page.items.find((i) => i.fixed && i.component === "procurement");
 				if (!item || stopped) return;
-				const data = await readMonitor(item.id);
+				const shops = (item.props as Props).shops;
+				const data = await syncMonitor(item.id, shops);
 				if (stopped || data.error || !data.checkedAt) return;
 				const fresh = data.orders.filter((o) => {
 					const key = `x2-order-notified:${o.shop}:${o.sn}`;
-					if (o.cartDone || o.cartPending || seen.has(key)) return false;
+					if (o.purchase?.state === "paid" || o.purchase?.state === "unpaid" || o.cartDone || o.cartPending || seen.has(key)) return false;
 					try {
 						if (localStorage.getItem(key)) return false;
 					} catch {
@@ -116,7 +121,44 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	return <Procurement key={`${item.id}:${props.shops.join(",")}`} props={props} item={item} />;
 }
 function Procurement({ props, item }: { props: Props; item: PageItem }) {
-	const [data, error, reload] = usePoll(() => readMonitor(item.id), 60_000, [item.id]);
+	const [data, error, reload] = usePoll(
+		() => api.procurementMonitor(item.id, props.shops),
+		60_000,
+		[item.id, props.shops],
+		api.peekProcurementMonitor(item.id, props.shops),
+	);
+	const [syncing, setSyncing] = useState(false);
+	const [syncError, setSyncError] = useState<string | null>(null);
+	const syncRead = useRef<(force?: boolean) => Promise<void>>(async () => {});
+	useEffect(() => {
+		let stopped = false;
+		let reading = false;
+		const read = async (force = false) => {
+			if (reading) return;
+			reading = true;
+			setSyncing(true);
+			try {
+				if (stopped) return;
+				await syncMonitor(item.id, props.shops, force);
+				if (!stopped) {
+					setSyncError(null);
+					reload();
+				}
+			} catch (e) {
+				if (!stopped) setSyncError((e as Error).message);
+			} finally {
+				reading = false;
+				if (!stopped) setSyncing(false);
+			}
+		};
+		syncRead.current = read;
+		void read();
+		const timer = setInterval(() => void read(), 60_000);
+		return () => {
+			stopped = true;
+			clearInterval(timer);
+		};
+	}, [item.id, props.shops, reload]);
 	const [selected, setSelected] = useState<string[]>([]);
 	const [busy, setBusy] = useState(false);
 	const lock = useRef(false);
@@ -125,8 +167,10 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	const storageKey = `x2-procurement-pending:${item.id}:${props.shops.join(",")}`;
 	const [pending, setPending] = useState(() => saved(storageKey));
 	const [result, setResult] = useState<PurchaseResult | null>(null);
-	const available = data?.orders.filter((o) => !o.cartDone && !o.cartPending) ?? [];
-	const selectedOrders = selected.filter((sn) => available.some((o) => o.sn === sn));
+	// 勾选用于读取和核对；是否允许加购由预览及确认的服务端实时检查决定。
+	const selectable = data?.orders.filter((o) => !o.cartPending) ?? [];
+	const selectedOrders = selected.filter((sn) => selectable.some((o) => o.sn === sn));
+	const selectionNeedsReview = selectable.some((o) => selectedOrders.includes(o.sn) && !o.purchase?.canPurchase);
 	useEffect(() => {
 		if (!pending) return;
 		let stopped = false;
@@ -139,7 +183,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					localStorage.removeItem(storageKey);
 					setPending(null);
 					setSelected([]);
-					reads.delete(item.id);
+					api.invalidateProcurementMonitor(item.id);
 					reload();
 				}
 			} catch (e) {
@@ -212,29 +256,32 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					<h2 className="text-2xl font-semibold">订单采购</h2>
 					<p className="text-sm text-muted-foreground">{props.shops.join("、")} · X2 打开时每分钟检查新订单，点击开始采购后加入 1688 购物车。</p>
 				</div>
-				<Button
-					variant="outline"
-					disabled={busy}
-					onClick={() => {
-						reads.delete(item.id);
-						reload();
-					}}
-				>
+				<Button variant="outline" disabled={busy || syncing} onClick={() => void syncRead.current(true)}>
 					<RefreshCwIcon />
-					刷新订单
+					{syncing ? "正在更新订单…" : "刷新订单"}
 				</Button>
 			</header>
 			<div className="flex flex-wrap items-center gap-3 text-sm">
-				<Badge variant="secondary">待采购 {available.length}</Badge>
+				<Badge variant="secondary">可选订单 {selectable.length}</Badge>
 				<span className="text-muted-foreground">Shopee 最近读取：{data?.checkedAt ? time(data.checkedAt) : "尚未读取"}</span>
+				{syncing ? <span className="text-xs text-muted-foreground">展示订单快照 · 后台更新中…</span> : null}
 				<a className="ml-auto inline-flex items-center gap-1 underline underline-offset-4" href="https://seller.shopee.tw/" target="_blank" rel="noreferrer">
 					打开 Shopee Seller Centre
 					<ArrowUpRightIcon className="size-4" />
 				</a>
 			</div>
-			{(error || data?.error || actionError) && (
+			<div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+				<span>1688 采购账号：{data?.purchases?.loginId ?? data?.purchases?.account ?? "尚未核对"}</span>
+				<span>采购订单同步：{data?.purchases?.capturedAt ? time(data.purchases.capturedAt) : "尚未同步"}</span>
+				{data?.purchases?.error ? (
+					<span role="alert" className="text-destructive">
+						{data.purchases.error}
+					</span>
+				) : null}
+			</div>
+			{(error || data?.error || syncError || actionError) && (
 				<p role="alert" className="rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
-					{actionError ?? data?.error ?? error}
+					{actionError ?? syncError ?? data?.error ?? error}
 				</p>
 			)}
 			{pending && (
@@ -284,12 +331,9 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 						<div className="space-y-1 text-sm text-muted-foreground">
 							<p>已选 {selectedOrders.length} 张订单</p>
 							<p className="text-xs">按下单时间倒序 · 最新订单在前</p>
+							{selectionNeedsReview ? <p className="text-xs">所选订单含需核对的采购状态，将先读取核对；勾选不会加购或付款。</p> : null}
 						</div>
-						<Button
-							className="ml-auto"
-							disabled={busy || Boolean(pending) || !selectedOrders.length || !data?.checkedAt || Boolean(data.error)}
-							onClick={() => void start()}
-						>
+						<Button className="ml-auto" disabled={busy || Boolean(pending) || !selectedOrders.length} onClick={() => void start()}>
 							<ShoppingCartIcon />
 							{busy ? "正在读取采购信息…" : "开始采购"}
 						</Button>
@@ -297,7 +341,13 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					{!data ? (
 						<Skeleton className="m-4 h-48" />
 					) : !data.orders.length ? (
-						<p className="p-12 text-center text-sm text-muted-foreground">当前没有 Shopee 待出货订单。</p>
+						<p className="p-12 text-center text-sm text-muted-foreground">
+							{data.error || syncError
+								? "暂时无法确认待出货订单，请查看读取错误后重试。"
+								: data.checkedAt
+									? "当前订单快照没有 Shopee 待出货订单。"
+									: "尚未取得已核对的 Shopee 待出货订单，正在后台更新…"}
+						</p>
 					) : (
 						<Table>
 							<TableHeader>
@@ -306,9 +356,9 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 										<Checkbox
 											aria-label="全选待采购订单"
 											disabled={Boolean(pending)}
-											checked={Boolean(available.length) && selectedOrders.length === available.length}
-											indeterminate={selectedOrders.length > 0 && selectedOrders.length < available.length}
-											onCheckedChange={(checked) => setSelected(checked === true ? available.map((o) => o.sn) : [])}
+											checked={Boolean(selectable.length) && selectedOrders.length === selectable.length}
+											indeterminate={selectedOrders.length > 0 && selectedOrders.length < selectable.length}
+											onCheckedChange={(checked) => setSelected(checked === true ? selectable.map((o) => o.sn) : [])}
 										/>
 									</TableHead>
 									<TableHead>订单</TableHead>
@@ -325,7 +375,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 											<Checkbox
 												aria-label={`选择订单 ${order.sn}`}
 												checked={selectedOrders.includes(order.sn)}
-												disabled={Boolean(pending) || order.cartDone || order.cartPending}
+												disabled={Boolean(pending) || order.cartPending}
 												onCheckedChange={(checked) =>
 													setSelected((before) => (checked === true ? [...new Set([...before, order.sn])] : before.filter((sn) => sn !== order.sn)))
 												}
@@ -349,7 +399,14 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 												<p className="whitespace-pre-wrap">{order.items}</p>
 											)}
 										</TableCell>
-										<TableCell className="text-sm">{order.step}</TableCell>
+										<TableCell className="min-w-52 text-sm">
+											<ProcurementStatus purchase={order.purchase} />
+											{order.cartPending ? (
+												<p className="mt-1 text-xs text-muted-foreground">加购请求待核对</p>
+											) : order.cartDone ? (
+												<p className="mt-1 text-xs text-muted-foreground">已有加购记录</p>
+											) : null}
+										</TableCell>
 										<TableCell className="whitespace-nowrap text-xs">{time(order.shipBy)}</TableCell>
 									</TableRow>
 								))}
@@ -359,7 +416,8 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 				</CardContent>
 			</Card>
 			<p className="text-xs text-muted-foreground">
-				1688 链接对应商品，规格匹配在开始采购时核对。缺少已选货源、规格不匹配、订单取消或已有采购时会停止并显示原因。加入购物车后由你核对、付款下单。
+				采购状态按 1688
+				订单的商品、规格、时间及数量匹配；匹配记录不等于已付款。同规格采购数量只分配一次，缺少对应或资料时显示待核对。加入购物车后由你核对、付款下单。
 			</p>
 			<Dialog
 				open={Boolean(preview)}
@@ -387,6 +445,25 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	);
 }
 
+function ProcurementStatus({ purchase }: { purchase: PurchaseMatch | undefined }) {
+	if (!purchase) return <Badge variant="outline">等待 1688 采购记录</Badge>;
+	const records = [...new Map(purchase.matches.map((record) => [record.orderId, record])).values()];
+	return (
+		<div className="space-y-1.5">
+			<Badge variant={purchase.state === "paid" ? "secondary" : "outline"}>{purchase.label}</Badge>
+			<p className="text-xs text-muted-foreground">
+				需求 {purchase.requiredQty} 件 · 已付 {purchase.paidQty} 件{purchase.unpaidQty ? ` · 待付 ${purchase.unpaidQty} 件` : ""}
+			</p>
+			{records.map((record) => (
+				<a key={record.orderId} href={record.url} target="_blank" rel="noreferrer" className="block break-all text-xs underline underline-offset-4">
+					1688 订单 {record.orderId} <ArrowUpRightIcon className="inline size-3" />
+				</a>
+			))}
+			{purchase.reason ? <p className="max-w-72 text-xs text-muted-foreground">{purchase.reason}</p> : null}
+		</div>
+	);
+}
+
 function ProductLine({ line }: { line: OrderLine }) {
 	return (
 		<div className="flex items-start gap-3">
@@ -396,6 +473,11 @@ function ProductLine({ line }: { line: OrderLine }) {
 				<p className="break-words text-xs text-muted-foreground">
 					{line.spec || "规格未提供"} · 数量 × {line.qty}
 				</p>
+				{line.purchase ? (
+					<span className="text-xs text-muted-foreground">
+						{line.purchase.label} · 已付 {line.purchase.paidQty}/{line.purchase.requiredQty} 件
+					</span>
+				) : null}
 				{line.sources.length ? (
 					<div className="space-y-1.5">
 						{line.sources.map((source) => (

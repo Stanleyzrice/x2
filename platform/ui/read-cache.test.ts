@@ -51,3 +51,21 @@ test("重读失败保留缓存并允许重试，容量有界", async () => {
 	await cache.read("c", async () => 4);
 	assert.equal(cache.peek("a"), null);
 });
+
+test("同步结果回填后旧的只读请求不能覆盖，新值按回填时间保鲜", async () => {
+	let now = 0;
+	const cache = readCache<number>(30, 2, () => now);
+	const delayed = Promise.withResolvers<number>();
+	const reading = cache.read("shop:1", () => delayed.promise);
+	await Promise.resolve();
+	now = 20;
+	cache.set("shop:1", 2);
+	assert.equal(cache.peek("shop:1"), 2);
+	delayed.resolve(1);
+	await reading;
+	assert.equal(cache.peek("shop:1"), 2);
+	now = 49;
+	assert.equal(await cache.read("shop:1", async () => 3), 2);
+	now = 50;
+	assert.equal(await cache.read("shop:1", async () => 3), 3);
+});

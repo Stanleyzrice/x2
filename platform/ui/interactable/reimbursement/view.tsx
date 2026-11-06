@@ -93,10 +93,19 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 		}, 250);
 		return () => clearTimeout(timer);
 	}, [query]);
+	const input = { ...(props.accounts ? { accounts: props.accounts } : {}), ...(account === "all" ? {} : { account }), search, paidFrom, paidTo, offset };
+	const scopeKey = JSON.stringify([item.id, input]);
+	const readScope = useRef<string | null>(null);
 	const [loaded, error, reload] = usePoll(
-		() => api.act<Data>(item.id, "list", { ...(account === "all" ? {} : { account }), search, paidFrom, paidTo, offset }),
+		() => {
+			// 首次打开当前筛选先使用短时快照，后续轮询与聚焦仍读取最新标记和进度。
+			const force = readScope.current === scopeKey;
+			readScope.current = scopeKey;
+			return api.reimbursementRecords<Data>(item.id, input, force);
+		},
 		5000,
 		[item.id, props.accounts, account, search, paidFrom, paidTo, offset],
+		api.peekReimbursementRecords<Data>(item.id, input),
 	);
 	const expected = { account: account === "all" ? null : account, accounts: props.accounts ?? null, search, paidFrom, paidTo, offset };
 	const data = loaded && JSON.stringify(loaded.query) === JSON.stringify(expected) ? loaded : null;
@@ -133,6 +142,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			if (result.account !== row.account || result.orderId !== row.orderId || result.reported !== reported)
 				throw new Error("报帐标记返回的订单身份或状态不一致，请重新读取");
 			setMarking((old) => ({ ...old, [key]: { revision: result.revision, reported: result.reported } }));
+			api.invalidateReimbursementRecords(item.id);
 			reload();
 		} catch (e) {
 			setMarkError((e as Error).message);
@@ -142,6 +152,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 				delete next[key];
 				return next;
 			});
+			api.invalidateReimbursementRecords(item.id);
 			reload();
 		}
 	};
@@ -150,8 +161,12 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 		setRefreshError(null);
 		api
 			.act(item.id, "refresh", account === "all" ? {} : { account })
-			.then(reload, (e: Error) => setRefreshError(e.message))
-			.finally(() => setStarting(false));
+			.catch((e: Error) => setRefreshError(e.message))
+			.finally(() => {
+				api.invalidateReimbursementRecords(item.id);
+				reload();
+				setStarting(false);
+			});
 	};
 	const download = async () => {
 		setExporting(true);

@@ -1,4 +1,4 @@
-// 页面导航前只预读 X2 的页面和 Catalog 快照；后台预加载不请求 Shopee，也不执行任何写入。
+// 页面导航前只预读 X2 保存的页面、商品、采购和报账快照；不请求外站，也不执行任何写入。
 import { useEffect } from "react";
 import { api, type PageSummary } from "./api.ts";
 
@@ -7,10 +7,18 @@ export async function preloadPage(id: string): Promise<void> {
 		const page = await api.page(id);
 		await Promise.all(
 			page.items
-				.filter((item) => item.component === "catalog" && !item.invalid)
+				.filter((item) => !item.invalid && ["catalog", "procurement", "reimbursement"].includes(item.component))
 				.map((item) => {
-					const props = item.props as { shop: string; defaultStatus?: string };
-					return api.catalogProducts(item.id, { shop: props.shop, query: "", status: props.defaultStatus ?? "1", stock: "all", page: 1, pageSize: 50 });
+					if (item.component === "catalog") {
+						const props = item.props as { shop: string; defaultStatus?: string };
+						return api.catalogProducts(item.id, { shop: props.shop, query: "", status: props.defaultStatus ?? "1", stock: "all", page: 1, pageSize: 50 });
+					}
+					if (item.component === "procurement") {
+						const props = item.props as { shops: string[] };
+						return api.procurementMonitor(item.id, props.shops);
+					}
+					const props = item.props as { accounts?: string[] };
+					return api.reimbursementRecords(item.id, { accounts: props.accounts, search: "", paidFrom: "", paidTo: "", offset: 0 });
 				}),
 		);
 	} catch {

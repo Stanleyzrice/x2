@@ -11,6 +11,9 @@ export function readCache<T>(ttl = 30_000, limit = 80, now = Date.now) {
 		peek(key: string): T | null {
 			return entries.get(key)?.value ?? null;
 		},
+		set(key: string, value: T) {
+			put(key, { value, at: now() });
+		},
 		async read(key: string, load: () => Promise<T>, force = false): Promise<T> {
 			const previous = entries.get(key);
 			if (previous?.pending) return previous.pending;

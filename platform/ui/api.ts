@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
 import type { CatalogResult } from "./interactable/catalog/types.ts";
+import { preserveMonitor } from "./interactable/procurement/sync.ts";
+import type { Monitor } from "./interactable/procurement/types.ts";
 import { readCache } from "./read-cache.ts";
 
 export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
@@ -23,9 +25,17 @@ async function call<T>(method: string, path: string, body?: unknown, keepalive =
 const q = encodeURIComponent;
 const pageCache = readCache<Page>();
 const catalogCache = readCache<CatalogResult>();
+const procurementCache = readCache<Monitor>(15_000, 20);
+const procurementEpochs = new Map<string, number>();
+const procurementSyncs = new Map<string, number>();
+const reimbursementCache = readCache<unknown>(15_000);
 type CatalogQuery = { shop: string; query: string; status: string; stock: string; page: number; pageSize: number };
 const catalogKey = (item: string, input: CatalogQuery) =>
 	`${item}:${JSON.stringify([input.shop, input.query, input.status, input.stock, input.page, input.pageSize])}`;
+const procurementKey = (item: string, shops: string[]) => `${item}:${JSON.stringify([...new Set(shops)].sort())}`;
+export type ReimbursementQuery = { accounts?: string[]; account?: string; search: string; paidFrom: string; paidTo: string; offset: number };
+const reimbursementKey = (item: string, input: ReimbursementQuery) =>
+	`${item}:${JSON.stringify([input.accounts ?? null, input.account ?? null, input.search, input.paidFrom, input.paidTo, input.offset])}`;
 
 export const api = {
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),
@@ -44,6 +54,41 @@ export const api = {
 		catalogCache.read(catalogKey(item, input), () => call<CatalogResult>("POST", "/api/page/act", { item, action: "products", input }), force),
 	peekCatalogProducts: (item: string, input: CatalogQuery) => catalogCache.peek(catalogKey(item, input)),
 	invalidateCatalog: (item: string) => catalogCache.invalidate(`${item}:`),
+	procurementMonitor: (item: string, shops: string[], force = false) => {
+		const key = procurementKey(item, shops);
+		const cached = procurementCache.peek(key);
+		// 同步暂时关闭旧订单的采购资格，保留已显示内容；人工操作失效后仍允许重新核对。
+		if (procurementSyncs.has(key) && cached) return Promise.resolve(cached);
+		return procurementCache.read(
+			key,
+			async () => {
+				const current = await call<Monitor>("POST", "/api/page/act", { item, action: "monitor", input: {} });
+				return preserveMonitor(procurementCache.peek(key), current);
+			},
+			force,
+		);
+	},
+	peekProcurementMonitor: (item: string, shops: string[]) => procurementCache.peek(procurementKey(item, shops)),
+	setProcurementMonitor: (item: string, shops: string[], value: Monitor) => procurementCache.set(procurementKey(item, shops), value),
+	beginProcurementSync: (item: string, shops: string[]) => {
+		const key = procurementKey(item, shops);
+		procurementSyncs.set(key, (procurementSyncs.get(key) ?? 0) + 1);
+	},
+	endProcurementSync: (item: string, shops: string[]) => {
+		const key = procurementKey(item, shops);
+		const count = procurementSyncs.get(key) ?? 0;
+		if (count > 1) procurementSyncs.set(key, count - 1);
+		else procurementSyncs.delete(key);
+	},
+	procurementMonitorEpoch: (item: string) => procurementEpochs.get(item) ?? 0,
+	invalidateProcurementMonitor: (item: string) => {
+		procurementEpochs.set(item, (procurementEpochs.get(item) ?? 0) + 1);
+		procurementCache.invalidate(`${item}:`);
+	},
+	reimbursementRecords: <T>(item: string, input: ReimbursementQuery, force = false) =>
+		reimbursementCache.read(reimbursementKey(item, input), () => call<T>("POST", "/api/page/act", { item, action: "list", input }), force) as Promise<T>,
+	peekReimbursementRecords: <T>(item: string, input: ReimbursementQuery) => reimbursementCache.peek(reimbursementKey(item, input)) as T | null,
+	invalidateReimbursementRecords: (item: string) => reimbursementCache.invalidate(`${item}:`),
 	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
 	note: (item: string, rowId: string, text: string) => call<{ updatedAt: string }>("POST", "/api/page/note", { item, note: { rowId, text } }, true),
 	act: <T>(item: string, action: string, input: Record<string, unknown> = {}) => call<T>("POST", "/api/page/act", { item, action, input }),
