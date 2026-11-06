@@ -2,11 +2,24 @@
 // 每开一条到库的连接先看本机端口通不通，不通就 ssh -fN 开一条留在后台：电脑睡了、断了网，ssh 自己退出，下次连库再开，开着的网页不用重启。几个进程同时开只有一个占到端口，别的看端口通了就行
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { connect, type Socket } from "node:net";
+import { connect, Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import { NeedsHuman } from "../errors.ts";
 
 const CONFIG = fileURLToPath(new URL("../../ops/ssh_config", import.meta.url));
+
+/** postgres 的 socket 工厂直接抛错会耗尽连接池；转为连接的 error/close 事件，保留原错误并让池释放后重试。 */
+export async function postgresSocket(openSocket: () => Promise<Socket>): Promise<Socket> {
+	try {
+		return await openSocket();
+	} catch (error) {
+		const failed = new Socket();
+		// 驱动会先写启动包；缓冲写入，等它装好监听再发出原错误，避免未连接写入的错误抢先覆盖。
+		failed.cork();
+		setImmediate(() => failed.destroy(error instanceof Error ? error : new Error(String(error))));
+		return failed;
+	}
+}
 
 async function reach(host: string, port: number): Promise<Socket | null> {
 	const s = connect({ host, port });
@@ -26,7 +39,11 @@ export async function open(url: string, alias: string): Promise<Socket> {
 	const port = Number(u.port || 5432);
 	const first = await reach(host, port);
 	if (first) return first;
-	const ssh = spawn("ssh", ["-F", CONFIG, "-fN", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", alias], { stdio: "ignore" });
+	const ssh = spawn(
+		"ssh",
+		["-F", CONFIG, "-fN", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ConnectTimeout=10", "-o", "ConnectionAttempts=1", alias],
+		{ stdio: "ignore" },
+	);
 	const [code] = await once(ssh, "exit").catch(() => [null]);
 	const s = await reach(host, port);
 	if (!s)

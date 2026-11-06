@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";
 import { NeedsHuman } from "../errors.ts";
-import { open } from "./tunnel.ts";
+import { open, postgresSocket } from "./tunnel.ts";
 
 export type Sql = postgres.Sql;
 /** 写进 jsonb 的值：postgres 的类型只认 JSONValue。我们写进去的都是 JSON 能表示的（解析过的参数、回包、算出来的对象），写的地方 as Json */
@@ -36,7 +36,7 @@ export function client(url: string, max: number): Sql {
 	// postgres.js 支持 socket，类型里没写，所以不写成字面量
 	// application_name：等写入锁时说是谁拿着（postgres 只收 ASCII）
 	const connection = { application_name: `x2 ${host} pid ${process.pid}` };
-	const options = { onnotice: () => {}, max, connection, ...(ssh ? { socket: () => open(url, ssh) } : {}) };
+	const options = { onnotice: () => {}, max, connection, ...(ssh ? { socket: () => postgresSocket(() => open(url, ssh)) } : {}) };
 	return postgres(url, options);
 }
 
