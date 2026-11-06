@@ -56,3 +56,5 @@
 `fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。都是照代码和上面记的字段写的（不是抓的真回包）：`offer.json` 的值取自一个真货源解析后的样子，反推成商品页上的几块。登录以后用 live.ts 读一遍，把真回包换进来（买家、卖家的名字、电话、地址换成假的）。
 
 `purchases.ts` 使用同一采购列表接口，金额字段保留为整数分字符串，缺失为 null；只用 `gmtPayment` 作为付款时间证据，不从状态名推定已付款。分页汇总缺失、不安全数字 ID 或金额会报错。供应商只读取明确的 sellerCompanyName、sellerLoginId 或 sellerInfo 对应字段；既有采购回包样本未含这些字段，缺失时返回 null。`buyer-order-facts.json` 为在既有合成样本上扩充的解析用 fixture，覆盖缺项、长金额和供应商字段，不是 live 证据。
+
+`PurchaseFact.items[].fulfillment` 保留逐行履约事实：`specId`、`entryStatus` → `status`、`entryStatusLabel` → `statusLabel`；`entryExtension` 的 `refundIdForAs` / `refundStatusForAs`（售后）优先于 `refundId` / `refundStatus`（售中），没有退款单号时 `refund` 为 null，缺失状态不借用另一阶段或整单状态。新解析始终输出该对象，字段缺失为 null；旧缓存未带对象时履约信息未知。规格和退款 ID 同样保留精确字符串，拒绝不安全数字；这些字段不改变金额、付款时间和报账凭证的含义。

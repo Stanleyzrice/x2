@@ -27,6 +27,66 @@ test("完成状态不替代付款时间证据，缺失金额、数量和供应�
 	assert.equal(row.items[0]!.quantity, null);
 	assert.equal(row.items[0]!.unitPriceMinor, null);
 	assert.equal(row.items[0]!.image, null);
+	assert.deepEqual(row.items[0]!.fulfillment, { specId: null, status: null, statusLabel: null, refund: null });
+});
+
+test("采购履约读取逐行状态和售中退款，保留规格ID而不借用整单状态", () => {
+	assert.deepEqual(purchaseFactsOf(sample()).rows[0]!.items[0]!.fulfillment, {
+		specId: "3071830fb9e7fcd58cfdc4a4b5f0d8d5",
+		status: "waitbuyerreceive",
+		statusLabel: "已发货",
+		refund: { id: "TQ0000000000000001", stage: "售中", status: "waitselleragree" },
+	});
+});
+
+test("售后退款优先，长规格与退款ID原样保留，缺失售后状态不借用售中状态", () => {
+	const raw = sample();
+	const body = JSON.parse(raw.data.result) as { data: { data: { orderEntries: Record<string, unknown>[] }[] } };
+	const entry = body.data.data[0]!.orderEntries[0]!;
+	entry.specId = "9007199254740993123";
+	entry.entryExtension = {
+		refundId: "TQ0000000000000001",
+		refundStatus: "refundsuccess",
+		refundIdForAs: "9007199254740993124",
+		refundStatusForAs: "waitselleragree",
+	};
+	raw.data.result = JSON.stringify(body);
+	const row = purchaseFactsOf(raw).rows[0]!;
+	assert.deepEqual(row.items[0]!.fulfillment, {
+		specId: "9007199254740993123",
+		status: "waitbuyerreceive",
+		statusLabel: "已发货",
+		refund: { id: "9007199254740993124", stage: "售后", status: "waitselleragree" },
+	});
+	entry.entryExtension = { refundId: "TQ0000000000000001", refundStatus: "refundsuccess", refundIdForAs: "9007199254740993124" };
+	raw.data.result = JSON.stringify(body);
+	assert.deepEqual(purchaseFactsOf(raw).rows[0]!.items[0]!.fulfillment?.refund, { id: "9007199254740993124", stage: "售后", status: null });
+	assert.equal(row.paidMinor, "3230");
+	assert.equal(row.paymentEvidence, "gmtPayment");
+});
+
+test("退款只有状态没有单号时保留null；空售后单号不覆盖售中退款", () => {
+	const raw = sample();
+	const body = JSON.parse(raw.data.result) as { data: { data: { orderEntries: Record<string, unknown>[] }[] } };
+	const entry = body.data.data[0]!.orderEntries[0]!;
+	entry.entryExtension = { refundStatus: "refundsuccess", refundStatusForAs: "waitselleragree" };
+	raw.data.result = JSON.stringify(body);
+	assert.equal(purchaseFactsOf(raw).rows[0]!.items[0]!.fulfillment?.refund, null);
+	entry.entryExtension = { refundId: "TQ0000000000000001", refundStatus: "refundclose", refundIdForAs: "" };
+	raw.data.result = JSON.stringify(body);
+	assert.deepEqual(purchaseFactsOf(raw).rows[0]!.items[0]!.fulfillment?.refund, { id: "TQ0000000000000001", stage: "售中", status: "refundclose" });
+});
+
+test("规格与退款ID拒绝不安全数字，不把丢精度的ID用于履约关联", () => {
+	for (const field of ["specId", "refundId", "refundIdForAs"]) {
+		const raw = sample();
+		const body = JSON.parse(raw.data.result) as { data: { data: { orderEntries: Record<string, unknown>[] }[] } };
+		const entry = body.data.data[0]!.orderEntries[0]!;
+		if (field === "specId") entry.specId = Number.MAX_SAFE_INTEGER + 1;
+		else entry.entryExtension = { [field]: Number.MAX_SAFE_INTEGER + 1 };
+		raw.data.result = JSON.stringify(body);
+		assert.throws(() => purchaseFactsOf(raw), /ID.*不安全/);
+	}
 });
 
 test("真实零分与未知分开；不安全的number或非整数分拒绝解析", () => {

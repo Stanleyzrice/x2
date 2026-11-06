@@ -13,11 +13,15 @@ const item = z.looseObject({
 	id: scalar,
 	sourceId: scalar,
 	skuId: scalar,
+	specId: scalar,
 	productName: scalar,
 	mainSummImageUrl: z.string().nullish(),
 	price: scalar,
 	quantity: z.union([z.looseObject({ realAmount: scalar, calAmount: scalar }), z.string(), z.number()]).nullish(),
 	specInfo: z.looseObject({ specItems: z.array(z.looseObject({ specValue: scalar })).nullish() }).nullish(),
+	entryStatus: scalar,
+	entryStatusLabel: scalar,
+	entryExtension: z.looseObject({ refundId: scalar, refundStatus: scalar, refundIdForAs: scalar, refundStatusForAs: scalar }).nullish(),
 });
 const order = z.looseObject({
 	idStr: z.string().nullish(),
@@ -58,6 +62,12 @@ export type PurchaseFact = {
 		spec: string | null;
 		quantity: string | null;
 		unitPriceMinor: string | null;
+		fulfillment?: {
+			specId: string | null;
+			status: string | null;
+			statusLabel: string | null;
+			refund: { id: string; stage: "售中" | "售后"; status: string | null } | null;
+		};
 	}[];
 };
 export type PurchasePage = { total: number; pages: number; rows: PurchaseFact[] };
@@ -66,6 +76,22 @@ const textOf = (value: string | number | null | undefined) => (value === null ||
 function exactId(value: string | number | null | undefined): string | null {
 	if (typeof value === "number" && !Number.isSafeInteger(value)) throw new Error("1688 采购单 ID 是不安全的数字，不能准确关联订单");
 	return textOf(value);
+}
+
+function fulfillmentOf(entry: z.infer<typeof item>): NonNullable<PurchaseFact["items"][number]["fulfillment"]> {
+	const extra = entry.entryExtension;
+	const afterSale = exactId(extra?.refundIdForAs);
+	const duringSale = exactId(extra?.refundId);
+	return {
+		specId: exactId(entry.specId),
+		status: textOf(entry.entryStatus),
+		statusLabel: textOf(entry.entryStatusLabel),
+		refund: afterSale
+			? { id: afterSale, stage: "售后", status: textOf(extra?.refundStatusForAs) }
+			: duringSale
+				? { id: duringSale, stage: "售中", status: textOf(extra?.refundStatus) }
+				: null,
+	};
 }
 
 /** 采购行给的是完整图片 URL；协议相对地址用 HTTPS，不把未知 id 拼成猜测的 CDN 地址。 */
@@ -138,6 +164,7 @@ export function purchaseFactsOf(raw: unknown): PurchasePage {
 							.join(" / ") || null,
 					quantity: textOf(typeof i.quantity === "object" && i.quantity !== null ? (i.quantity.realAmount ?? i.quantity.calAmount) : i.quantity),
 					unitPriceMinor: minorOf(i.price),
+					fulfillment: fulfillmentOf(i),
 				})),
 			};
 		}),
