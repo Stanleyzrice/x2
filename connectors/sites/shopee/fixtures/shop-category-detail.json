@@ -1,0 +1,26 @@
+{
+	"code": 0,
+	"message": "success",
+	"data": {
+		"list": [
+			{
+				"id": 12345,
+				"name": "測試分類",
+				"status": "active",
+				"sort_weight": 8,
+				"type": "customized",
+				"collection_type": "customized",
+				"category_id": 0,
+				"is_global_category": false,
+				"product_count": 0,
+				"product_id_list": [25000000001, 25000000002],
+				"global_attributes_abnormal": false,
+				"system_category_not_existed": false,
+				"fe_category_name": "",
+				"cover_image_type": 0,
+				"cover_image": "",
+				"parent_shop_category_id": 0
+			}
+		]
+	}
+}

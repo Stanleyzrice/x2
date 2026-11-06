@@ -16,6 +16,9 @@
 | 文件 | 函数 | 接口 |
 |---|---|---|
 | `seller.ts` | `shop` | `GET /api/selleraccount/shop_info/`（shop_id 是店铺 id）、`GET /api/selleraccount/user_info/`（user_id 是卖家账号，不是店铺 id）、`GET /api/v3/general/get_shop_info/` |
+| `shop-categories.ts` | `shopCategories`、`shopCategory`、`shopCategoryDrafts` | `GET /api/shopcategory/v4/category/get_collection_list/`、`get_collection/`、`get_collection_draft_list/` |
+| | `createShopCategoryDraft`、`createShopCategory`（写） | `POST /api/shopcategory/v4/category/create_collection_draft/`、`create_parent_or_sub_category/` |
+| | `setShopCategoryStatus`、`sortShopCategories`（写） | `POST /api/shopcategory/v4/category/update_category/`、`update_shop_collection_sequence/` |
 | `orders.ts` | `orderIndex`、`orders`、`toShipOrders` | `POST /api/v3/order/search_order_list_index` |
 | | `orderCards` | `POST /api/v3/order/get_order_list_card_list`（一次最多 5 张） |
 | | `oneOrder` | `GET /api/v3/order/get_one_order` |
@@ -70,6 +73,12 @@
 
 ## 踩过的坑
 
+- Shop Categories 是买家浏览用的店铺导览分类，独立于商品详情的 `category_path`。`get_collection_list` 的 `product_count` 仅表示有效成员；`get_collection?collection_ids=<id>` 的 `product_id_list` 可能保留异常或已不可售的成员，不能看到 count 为零就认定分类为空。
+- 空草稿池的 `get_collection_draft_list` 原生响应是 `data: {}`，页面为缺失的 `draft_list` 补 `[]`。只有这个已确认空池字段允许缺失，分类详情的成员字段仍必填。页面读取草稿行的 `id`、`name`；UI 内部把 id 转负数作标记，接口提交使用正 id。
+- 分类创建遵循页面的两步接口：先以 `name` 创建草稿，再用 `create_parent_or_sub_category` 的 `independent_shop_category` 提交 `name`、`collection_type: customized`、`to_delete_draft_id`、`product_id_list`。各步只提交一次，草稿转换结果用正式分类完整成员与草稿消失分别核对。
+- `update_category` 显示状态请求仅交 `shop_category_id` 与 `status: active|inactive`；隐藏不删除分类或成员。排序接口交完整 `collection_list: [{id, sort_weight}]`，页面按目标顺序赋予从列表长度递减到 1 的权重。请求字段为 snake_case；生产页面 request 默认启用 requestCaseOptions，UI camelCase 不能直接作为线上 JSON 合约。
+- 分类接口与参数依据卖家中心 `decoration/category` 当前页面的生产 JavaScript：category chunk 6 的 module199/200 提供 helper 与 endpoint，chunk11 提供草稿和正式分类创建、状态切换，chunk5 提供排序。解析样本取自真实读取；写响应在第一次已授权操作前尚无成功样本。
+
 - 订单列表的 `order_list_tab`：100 全部、200 未付款、300 待出货、400 运送中、500 已完成。
 - 待出货列表真回包的卡片状态是 `待出貨`；`get_one_order.create_time` 是真实下单时间（Unix 秒），`status` 是数字状态，不能与卡片的状态文字互换。
 - `search_order_list_index` 必须返回 `pagination.total`；缺失不能当作零单。卡片按请求的订单编号对应店铺，漏单、重复或返回未请求订单时读取失败，不补用第一张订单的店铺。
@@ -102,6 +111,8 @@
 - 聊聊不调 `conversation/enter`、`conversation/open`：会把消息标成已读。
 
 ## 回包样本
+
+- `fixtures/shop-category-list.json`、`shop-category-detail.json` 为 2026-11-05 当前 Shop Categories 列表、详情真回包摘录，分类 id、名称和成员 id 已替换；保留有效商品数为零但仍有异常成员的字段关系。`shop-category-drafts.json` 是同次读取的空草稿池原生 `data: {}`。
 
 - `fixtures/get-product-attributes.json` 是 2026-11-04 商品详情真回包的类目、属性摘录，商品 id 和名称已替换；用于类目修改前后的属性解析，不代表该编辑请求已获站点验证。
 - `fixtures/custom-attributes.json` 是 2026-11-05 旧商品详情真回包的最小摘录，商品 id、名称和描述已替换；保留枚举属性与仅有 `raw_value: "nil"` 的自填属性共存形状。

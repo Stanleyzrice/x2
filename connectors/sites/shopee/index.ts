@@ -38,6 +38,15 @@ import {
 import { createListing, editProduct, listProduct, unlistProduct } from "./publish.ts";
 import { cases } from "./returns.ts";
 import { seller, shop } from "./seller.ts";
+import {
+	createShopCategoryDraftTool,
+	createShopCategoryTool,
+	setShopCategoryStatusTool,
+	shopCategories,
+	shopCategory,
+	shopCategoryDrafts,
+	sortShopCategoriesTool,
+} from "./shop-categories.ts";
 import { addSizeProduct, expandProduct } from "./variants.ts";
 
 const TABS = { all: TAB.all, unpaid: TAB.unpaid, "to-ship": TAB.toShip, shipping: TAB.shipping, completed: TAB.completed } as const;
@@ -55,6 +64,13 @@ const tools = {
 	"edit-product": editProduct,
 	"add-size-product": addSizeProduct,
 	"expand-product": expandProduct,
+	"create-shop-category-draft": createShopCategoryDraftTool,
+	"create-shop-category": createShopCategoryTool,
+	"set-shop-category-status": setShopCategoryStatusTool,
+	"sort-shop-categories": sortShopCategoriesTool,
+	"shop-categories": all("店铺导览分类（非商品平台类目），含显示状态、排序和有效商品数", undefined, shopCategories),
+	"shop-category": get("指定店铺分类及完整商品成员（包含异常成员），不是平台 category_path", z.object({ id: str("店铺分类 id") }), (p) => shopCategory(p.id)),
+	"shop-category-drafts": all("店铺分类草稿，尚未转换成正式分类", undefined, shopCategoryDrafts),
 	shop: get("当前登录的店铺：shopId（店铺 id）、userId（卖家账号 id）、店名、账号名、评分", undefined, () => shop()),
 
 	orders: all(

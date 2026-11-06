@@ -2,6 +2,20 @@
 import { z } from "zod";
 import { db } from "../../platform/db/index.ts";
 import { get, str, type Toolkit, write } from "../../platform/tool.ts";
+import {
+	planShopCategoryCreate,
+	planShopCategoryDraft,
+	planShopCategorySort,
+	planShopCategoryStatus,
+	readShopCategories,
+	replayShopCategory,
+	SHOP_CATEGORY_WRITES,
+	shopCategoryCreateInput,
+	shopCategoryDraftInput,
+	shopCategoryReadInput,
+	shopCategorySortInput,
+	shopCategoryStatusInput,
+} from "./shop-categories.ts";
 import { CATALOG_STATUS_WRITES, planStatus, previewStatus, readStatusResult, reconcileStatus, replayStatus, statusInput, statusReference } from "./status.ts";
 import { catalogShops, readCatalog, readProduct, syncCatalog } from "./store.ts";
 
@@ -37,6 +51,23 @@ export const catalog: Toolkit = {
 			z.object({ shop, productId: str("Shopee 商品 id") }),
 			async (p) => readProduct(await db(), p.shop, p.productId),
 		),
+		"shop-categories": get("现读店铺导航分类与草稿；--ids 可读取指定分类完整商品成员", shopCategoryReadInput, async (p) => readShopCategories(await db(), p)),
+		"create-shop-category-draft": {
+			...write("按已确认名称创建店铺分类草稿；结果未知不重发，首次 --try", shopCategoryDraftInput, planShopCategoryDraft),
+			replay: (sql, p) => replayShopCategory(sql, "draft", p),
+		},
+		"create-shop-category": {
+			...write("按已确认草稿创建店铺分类并归入指定商品；完整成员读回核对，首次 --try", shopCategoryCreateInput, planShopCategoryCreate),
+			replay: (sql, p) => replayShopCategory(sql, "create", p),
+		},
+		"shop-category-status": {
+			...write("修改店铺分类显示；隐藏仅限当前有效商品数为零的分类，首次 --try", shopCategoryStatusInput, planShopCategoryStatus),
+			replay: (sql, p) => replayShopCategory(sql, "status", p),
+		},
+		"sort-shop-categories": {
+			...write("按给定全部分类 id 排序；不改变分类成员，首次 --try", shopCategorySortInput, planShopCategorySort),
+			replay: (sql, p) => replayShopCategory(sql, "sort", p),
+		},
 		"status-preview": get("现读身份和单件商品状态，冻结上下架目标并生成精确确认；不提交", statusInput, async (p) => previewStatus(await db(), p)),
 		"set-status": {
 			...write("仅修改人工确认商品的上下架状态；requestId绑定冻结事实，结果未知不重发；首次按方向 --try", statusInput, planStatus),
@@ -47,7 +78,7 @@ export const catalog: Toolkit = {
 			reconcileStatus(await db(), p),
 		),
 	},
-	writes: CATALOG_STATUS_WRITES,
+	writes: { ...CATALOG_STATUS_WRITES, ...SHOP_CATEGORY_WRITES },
 	tables: [
 		{
 			name: "catalog_current_products",
