@@ -149,13 +149,15 @@ export async function syncCatalog(sql: Sql, shop: string, makeReader?: () => Cat
 }
 
 export type CatalogQuery = { shop: string; query: string; status: string; stock: string; page: number; pageSize: number };
-type FactRow = { facts: ProductFact };
-export async function readCatalog(sql: Sql, p: CatalogQuery) {
+type CatalogFact = ProductFact & { modelsDeferred?: boolean };
+type FactRow = { facts: CatalogFact };
+export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
 	const target = await configured(sql, p.shop);
-	const [good] = await sql<
-		Batch[]
-	>`select b.* from catalog_syncs b join catalog_heads h on h.revision = b.id where h.shop = ${p.shop} and h.shop_id = ${target.shop_id}`;
-	const [last] = await sql<Batch[]>`select * from catalog_syncs where shop = ${p.shop} and shop_id = ${target.shop_id} order by started_at desc limit 1`;
+	// 同一阶段的只读查询并发发起，避免远程数据库的网络往返逐条累加。
+	const [[good], [last]] = await Promise.all([
+		sql<Batch[]>`select b.* from catalog_syncs b join catalog_heads h on h.revision = b.id where h.shop = ${p.shop} and h.shop_id = ${target.shop_id}`,
+		sql<Batch[]>`select * from catalog_syncs where shop = ${p.shop} and shop_id = ${target.shop_id} order by started_at desc limit 1`,
+	]);
 	const snapshot = good ? batchOf(good) : null;
 	const lastAttempt = last ? batchOf(last) : null;
 	if (!good)
@@ -175,16 +177,18 @@ export async function readCatalog(sql: Sql, p: CatalogQuery) {
 	const filter = sql`shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id}
 		and (${p.status} = 'all' or (${p.status} = 'unknown' and status is null) or status::text = ${p.status}) and (${p.stock} = 'all' or stock_state = ${p.stock})
 		and (${p.query} = '' or position(lower(${p.query}) in lower(name || ' ' || product_id || ' ' || coalesce(parent_sku, '') || ' ' || coalesce(models::text, ''))) > 0)`;
-	const [count] = await sql<{ total: number; listedCount: number; listedDetailsComplete: boolean }[]>`
+	const [[count], rows, statuses] = await Promise.all([
+		sql<{ total: number; listedCount: number; listedDetailsComplete: boolean }[]>`
 		select count(*) filter (where ${filter})::int as total,
 			count(*) filter (where status = 1)::int as "listedCount",
 			count(*) filter (where status = 1 and facts->>'detailError' is not null) = 0 as "listedDetailsComplete"
-		from catalog_products where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id}`;
-	const rows = await sql<
-		FactRow[]
-	>`select facts from catalog_products where ${filter} order by name, product_id limit ${p.pageSize} offset ${(p.page - 1) * p.pageSize}`;
-	const statuses = await sql<{ status: number | null; label: string }[]>`select distinct status, status_label as label from catalog_products
-		where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id} order by status nulls last`;
+		from catalog_products where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id}`,
+		// 网页列表不展示 SKU 明细，在数据库端裁掉大字段，避免先经远程连接传输后再删。
+		sql<FactRow[]>`select ${summary ? sql`(facts - 'models') || jsonb_build_object('models', null, 'modelsDeferred', true)` : sql`facts`} as facts
+		from catalog_products where ${filter} order by name, product_id limit ${p.pageSize} offset ${(p.page - 1) * p.pageSize}`,
+		sql<{ status: number | null; label: string }[]>`select distinct status, status_label as label from catalog_products
+		where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id} order by status nulls last`,
+	]);
 	const linked = await attachLinks(
 		sql,
 		p.shop,
@@ -206,26 +210,30 @@ export async function readCatalog(sql: Sql, p: CatalogQuery) {
 	};
 }
 
-async function attachLinks(sql: Sql, shop: string, shopId: string, facts: ProductFact[]) {
+async function attachLinks(sql: Sql, shop: string, shopId: string, facts: CatalogFact[]) {
 	const ids = facts.map((f) => f.productId);
 	if (!ids.length) return [];
-	const listings = await sql<ListingLink[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId"
-		from listings l join shop_settings s on s.shop = l.shop where l.product_id in ${sql(ids)}`;
-	const chosen = await sql<ChosenLink[]>`select item_id as "productId", offer_id as "offerId", broken, chosen_at::text as "selectedAt"
-		from sources where chosen and item_id in ${sql(ids)}`;
-	const owners = await sql<Ownership[]>`select distinct i->>'itemId' as "productId", o.shop_id as "shopId"
-		from orders o cross join lateral jsonb_array_elements(o.items) i where i->>'itemId' in ${sql(ids)}`;
-	const changes = await statusChanges(sql, shop, shopId, ids);
+	const [listings, chosen, owners, changes] = await Promise.all([
+		sql<ListingLink[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId"
+		from listings l join shop_settings s on s.shop = l.shop where l.product_id in ${sql(ids)}`,
+		sql<ChosenLink[]>`select item_id as "productId", offer_id as "offerId", broken, chosen_at::text as "selectedAt"
+		from sources where chosen and item_id in ${sql(ids)}`,
+		sql<Ownership[]>`select distinct i->>'itemId' as "productId", o.shop_id as "shopId"
+		from orders o cross join lateral jsonb_array_elements(o.items) i where i->>'itemId' in ${sql(ids)}`,
+		statusChanges(sql, shop, shopId, ids),
+	]);
 	return facts.map((f) => ({ ...f, ...supplierLinks(shop, shopId, f.productId, listings, chosen, owners), statusChange: changes.get(f.productId) ?? null }));
 }
 
-export async function readProduct(sql: Sql, shop: string, productId: string, imageReader?: ImageReader) {
+export async function readProduct(sql: Sql, shop: string, productId: string, imageReader?: ImageReader, cacheOnly = false) {
 	const target = await configured(sql, shop);
 	const [row] = await sql<FactRow[]>`select p.facts from catalog_products p join catalog_heads h
 		on h.shop = p.shop and h.shop_id = p.shop_id and h.revision = p.revision
 		where p.shop = ${shop} and p.shop_id = ${target.shop_id} and p.product_id = ${productId}`;
 	if (!row) throw new Usage(`当前 Catalog 没有 ${shop} 的商品 ${productId}`);
-	const enriched = await enrichProductImages({ shop, shopId: target.shop_id }, row.facts, imageReader);
+	const enriched = cacheOnly
+		? { ...row.facts, imageError: null, detailReadAt: null }
+		: await enrichProductImages({ shop, shopId: target.shop_id }, row.facts, imageReader);
 	const sources = await sql<CatalogSourceRow[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId",
 		l.variants, jsonb_build_object('offerId', l.offer->'offerId', 'skus', l.offer->'skus') as offer, l.offer_read_at as "readAt"
 		from listings l join shop_settings s on s.shop = l.shop

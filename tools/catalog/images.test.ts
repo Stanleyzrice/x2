@@ -180,4 +180,19 @@ test("单件 product 的 DB 路径只允许 select，现读的多个 SKU 不写�
 	assert.deepEqual(result.product.suppliers, []);
 	assert.equal(result.product.imageError, null);
 	assert.equal(cached.models?.length, 1);
+	const cacheOnly = await readProduct(
+		run as unknown as Sql,
+		target.shop,
+		cached.productId,
+		{
+			...f.driver,
+			detail: async () => {
+				throw new Error("缓存单件禁止读取外站");
+			},
+		},
+		true,
+	);
+	assert.equal(cacheOnly.product.models?.length, 1);
+	assert.equal(cacheOnly.product.imageError, null);
+	assert.equal(cacheOnly.product.detailReadAt, null);
 });

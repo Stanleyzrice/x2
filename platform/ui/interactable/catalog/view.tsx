@@ -149,9 +149,9 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 		let stopped = false;
 		let request = version;
 		setLoading(true);
-		const read = () => {
+		const read = (force = false) => {
 			const id = ++request;
-			api.catalogProducts(item.id, { shop: props.shop, query, status, stock, page, pageSize: 50 }, true).then(
+			api.catalogProducts(item.id, { shop: props.shop, query, status, stock, page, pageSize: 50 }, force).then(
 				(result) => {
 					if (!stopped && id === request) {
 						setData({ key: queryKey, value: result });
@@ -168,12 +168,13 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 			);
 		};
 		read();
-		const timer = setInterval(read, 15_000);
-		window.addEventListener("focus", read);
+		const timer = setInterval(() => read(true), 15_000);
+		const onFocus = () => read();
+		window.addEventListener("focus", onFocus);
 		return () => {
 			stopped = true;
 			clearInterval(timer);
-			window.removeEventListener("focus", read);
+			window.removeEventListener("focus", onFocus);
 		};
 	}, [item.id, props.shop, query, status, stock, page, version, queryKey]);
 	const refresh = async () => {
@@ -739,25 +740,40 @@ function Details({
 }) {
 	const [loaded, setLoaded] = useState<Product | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [reading, setReading] = useState(false);
 	const id = product?.productId;
 	useEffect(() => {
 		let stopped = false;
 		setLoaded(null);
 		setError(null);
-		if (id)
-			api.act<{ product: Product }>(item, "product", { productId: id }).then(
-				(r) => {
-					if (!stopped) setLoaded(r.product);
-				},
-				(e: Error) => {
-					if (!stopped) setError(e.message);
-				},
-			);
+		setReading(Boolean(id));
+		const read = async () => {
+			if (!id) return;
+			try {
+				const cached = await api.act<{ product: Product }>(item, "cachedProduct", { productId: id });
+				if (!stopped) setLoaded(cached.product);
+			} catch {
+				// 缓存单件不可读时仍尝试现读；概要不把尚未加载的规格当成网站缺项。
+			}
+			if (stopped) return;
+			try {
+				const current = await api.act<{ product: Product }>(item, "product", { productId: id });
+				if (!stopped) {
+					setLoaded(current.product);
+					setError(null);
+				}
+			} catch (e) {
+				if (!stopped) setError((e as Error).message);
+			} finally {
+				if (!stopped) setReading(false);
+			}
+		};
+		void read();
 		return () => {
 			stopped = true;
 		};
 	}, [item, id]);
-	const p = loaded ?? product;
+	const p = loaded?.productId === product?.productId ? loaded : product;
 	const modelImages = (p?.models ?? []).flatMap((m, row) => [
 		...(m.image ? [{ src: m.image, alt: m.name, label: `Shopee · ${m.name}`, row, side: "shopee" }] : []),
 		...(m.source?.image ? [{ src: m.source.image, alt: m.source.name, label: `1688 · ${m.source.name}`, row, side: "1688" }] : []),
@@ -786,7 +802,7 @@ function Details({
 						</div>
 						<Sources product={p} />
 						<p className="text-xs text-muted-foreground" role="status">
-							{!loaded && !error ? "正在读取 Shopee 最新规格与图片…" : p.detailReadAt ? `Shopee 详情读取 ${time(p.detailReadAt)}` : "当前展示目录快照"}
+							{reading ? "当前展示目录快照 · 正在读取 Shopee 最新规格与图片…" : p.detailReadAt ? `Shopee 详情读取 ${time(p.detailReadAt)}` : "当前展示目录快照"}
 						</p>
 						{[...new Set([error, p.detailError, p.imageError].filter(Boolean))].map((message) => (
 							<p key={message} role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">
@@ -834,8 +850,10 @@ function Details({
 										</TableBody>
 									</Table>
 								</div>
+							) : p.modelsDeferred ? (
+								<p className="text-sm text-muted-foreground">{reading ? "正在读取规格明细…" : "规格明细暂未加载，请关闭后重试。"}</p>
 							) : (
-								<p className="text-sm text-muted-foreground">网站未提供可展示的规格明细。</p>
+								<p className="text-sm text-muted-foreground">当前尚未取得可展示的规格明细。</p>
 							)}
 						</div>
 					</div>

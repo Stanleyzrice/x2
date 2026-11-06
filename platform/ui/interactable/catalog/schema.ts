@@ -7,7 +7,8 @@ export const props = z.strictObject({ title, shop: z.string().min(1), scope: z.l
 export type Props = z.infer<typeof props>;
 export const actions = {
 	shops: "catalog.shops",
-	products: "catalog.products",
+	products: "catalog.summaries",
+	cachedProduct: "catalog.cached-product",
 	product: "catalog.product",
 	sync: "catalog.sync",
 	statusResult: "catalog.status-result",

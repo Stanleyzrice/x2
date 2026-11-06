@@ -31,6 +31,7 @@ export type Product = {
 	statusLabel: string;
 	unlisted: boolean | null;
 	models: Model[] | null;
+	modelsDeferred?: boolean;
 	priceMin: number | null;
 	priceMax: number | null;
 	stockTotal: number | null;
