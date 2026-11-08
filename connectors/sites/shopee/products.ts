@@ -487,79 +487,98 @@ type WebpackChunks = { push: (chunk: [string[], Record<string, never>, (req: Web
 type Uploader = { uploadImage: (file: File, opts: Record<string, unknown>) => Promise<{ data?: { resourceId?: unknown }; error?: unknown } | null> };
 type UploadWindow = Record<string, unknown> & { __x2Upload?: Uploader | null };
 
+/** 准备页面已有的上传服务，不传图片；动态块须按原生 loader 一并加载依赖，不能只加载 upload 块。 */
+export async function prepareUploadService(context?: UploadWindow): Promise<boolean> {
+	const w = context ?? (window as unknown as UploadWindow);
+	if (typeof w.__x2Upload?.uploadImage === "function") return true;
+	const reqs: WebpackRequire[] = await new Promise((resolve) => {
+		const found: WebpackRequire[] = [];
+		const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
+		let pending = names.length;
+		if (!pending) return resolve(found);
+		for (const n of names) {
+			try {
+				(w[n] as WebpackChunks).push([
+					[`__x2_up_${n}_${Date.now()}`],
+					{},
+					(req: WebpackRequire) => {
+						found.push(req);
+						if (--pending <= 0) resolve(found);
+					},
+				]);
+			} catch {
+				if (--pending <= 0) resolve(found);
+			}
+		}
+		setTimeout(() => resolve(found), 3000);
+	});
+	for (const req of reqs) {
+		const uploadChunks = new Set<number>();
+		for (let i = 0; i < 600; i++) {
+			try {
+				if (/upload\./.test(String(req.u?.(i) ?? ""))) uploadChunks.add(i);
+			} catch {}
+		}
+		const chunks = new Set(uploadChunks);
+		// 页面现有 loader 如 Promise.all([r.e(63),r.e(36)])：63 提供 UploadService，36 只创建实例。
+		// 必须先完整加载依赖，再 require 模块，避免缺依赖时留下半初始化的 webpack 缓存。
+		for (const source of Object.values(req.m ?? {}).map(String)) {
+			for (const group of source.matchAll(/Promise\.all\(\[([^\]]+)\]\)/g)) {
+				const ids = [...group[1]!.matchAll(/\.e\(\s*(\d+)\s*\)/g)].map((m) => Number(m[1]));
+				if (ids.some((id) => uploadChunks.has(id))) for (const id of ids) chunks.add(id);
+			}
+		}
+		try {
+			await Promise.all([...chunks].map((id) => req.e(id)));
+		} catch {
+			continue;
+		}
+		for (const [id, factory] of Object.entries(req.m ?? {})) {
+			if (!/UploadService|uploadImage|uploadapi\/api\/v1\/image/.test(String(factory))) continue;
+			let mod: Record<string, unknown> | null;
+			try {
+				mod = req(id);
+			} catch {
+				continue;
+			}
+			for (const value of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
+				const candidate = value as Uploader | { $instance?: Uploader } | null;
+				const uploader =
+					candidate && typeof (candidate as Uploader).uploadImage === "function"
+						? (candidate as Uploader)
+						: typeof (candidate as { $instance?: Uploader } | null)?.$instance?.uploadImage === "function"
+							? (candidate as { $instance: Uploader }).$instance
+							: null;
+				if (uploader) {
+					w.__x2Upload = uploader;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 export async function uploadImages(files: { base64: string; mime: string }[], biz = 4207): Promise<string[]> {
 	const p = await productPage();
+	let ready = false;
+	for (let i = 0; i < 5 && !ready; i++) {
+		ready = await p.run(prepareUploadService);
+		if (!ready) await new Promise((r) => setTimeout(r, 2000));
+	}
+	if (!ready) throw new Error("没找到页面的 UploadService：先在浏览器里打开一次新增商品页");
 	const ids: string[] = [];
 	for (const [i, f] of files.entries()) {
 		if (i > 0) await new Promise((r) => setTimeout(r, 500));
 		const ext = f.mime === "image/png" ? "png" : f.mime === "image/webp" ? "webp" : "jpg";
 		const r = await p.run(
 			async (b64: string, filename: string, mime: string, biz: number) => {
-				const w = window as unknown as UploadWindow;
-				const find = async (): Promise<Uploader | null> => {
-					const reqs: WebpackRequire[] = await new Promise((resolve) => {
-						const found: WebpackRequire[] = [];
-						const names = Object.keys(w).filter((k) => /^webpackChunk/.test(k));
-						let pending = names.length;
-						if (!pending) return resolve(found);
-						for (const n of names) {
-							try {
-								(w[n] as WebpackChunks).push([
-									[`__x2_up_${n}_${Date.now()}`],
-									{},
-									(req: WebpackRequire) => {
-										found.push(req);
-										if (--pending <= 0) resolve(found);
-									},
-								]);
-							} catch {
-								if (--pending <= 0) resolve(found);
-							}
-						}
-						setTimeout(() => resolve(found), 3000);
-					});
-					for (const req of reqs) {
-						// 上传模块在按需加载的代码块里：先把名字里带 upload. 的代码块都加载了
-						for (let i = 0; i < 600; i++) {
-							let u: unknown;
-							try {
-								u = req.u?.(i);
-							} catch {
-								continue;
-							}
-							if (u && /upload\./.test(String(u))) {
-								try {
-									await req.e(i);
-								} catch {}
-							}
-						}
-						const mods = req.m ?? {};
-						for (const id in mods) {
-							if (!/uploadImage|uploadapi\/api\/v1\/image/.test(String(mods[id]))) continue;
-							let mod: Record<string, unknown> | null;
-							try {
-								mod = req(id);
-							} catch {
-								continue;
-							}
-							for (const v of mod ? [mod.UploadService, mod.default, mod, ...Object.values(mod)] : []) {
-								const c = v as { prototype?: { uploadImage?: unknown }; $instance?: Uploader } | null;
-								if (typeof v === "function" && typeof c?.prototype?.uploadImage === "function" && typeof c.$instance?.uploadImage === "function")
-									return c.$instance;
-							}
-						}
-					}
-					return null;
-				};
-				for (let i = 0; i < 5 && !w.__x2Upload; i++) {
-					w.__x2Upload = await find();
-					if (!w.__x2Upload) await new Promise((r) => setTimeout(r, 2000));
-				}
-				if (!w.__x2Upload) return { error: "没找到页面的 UploadService：先在浏览器里打开一次新增商品页" };
+				const uploader = (window as unknown as UploadWindow).__x2Upload;
+				if (!uploader) return { error: "页面的 UploadService 已失效，请重新读取新增商品页" };
 				const bin = atob(b64);
 				const bytes = new Uint8Array(bin.length);
 				for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-				const res = await w.__x2Upload.uploadImage(new File([bytes], filename, { type: mime }), { biz, func: ["compress"], useMms: true });
+				const res = await uploader.uploadImage(new File([bytes], filename, { type: mime }), { biz, func: ["compress"], useMms: true });
 				const id = res?.data?.resourceId;
 				return id ? { imageId: String(id) } : { error: `传图没有回图片 id：${JSON.stringify(res?.error ?? res).slice(0, 200)}` };
 			},
