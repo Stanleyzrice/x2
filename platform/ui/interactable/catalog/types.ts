@@ -37,6 +37,9 @@ export type Product = {
 	stockTotal: number | null;
 	stockState: "in_stock" | "sold_out" | "unknown";
 	detailError: string | null;
+	productImages?: string[] | null;
+	description?: { blocks: ({ type: "text"; text: string } | { type: "image"; src: string })[]; error: string | null } | null;
+	sizeChartImage?: string | null;
 	imageError?: string | null;
 	detailReadAt?: string | null;
 	suppliers: Supplier[];

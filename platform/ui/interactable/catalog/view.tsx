@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem } from "../../api.ts";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
+import { DetailsContent } from "./details-content.tsx";
 import type { Props } from "./schema.ts";
 import type { CatalogResult, Model, Product } from "./types.ts";
 
@@ -742,6 +743,7 @@ function Details({
 	const [loaded, setLoaded] = useState<Product | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [reading, setReading] = useState(false);
+	const contentRef = useRef<HTMLDivElement>(null);
 	const id = product?.productId;
 	useEffect(() => {
 		let stopped = false;
@@ -802,8 +804,15 @@ function Details({
 							</div>
 						</div>
 						<Sources product={p} />
+						<Button variant="outline" size="sm" onClick={() => contentRef.current?.scrollIntoView({ block: "start" })}>
+							查看商品描述与详情图
+						</Button>
 						<p className="text-xs text-muted-foreground" role="status">
-							{reading ? "当前展示目录快照 · 正在读取 Shopee 最新规格与图片…" : p.detailReadAt ? `Shopee 详情读取 ${time(p.detailReadAt)}` : "当前展示目录快照"}
+							{reading
+								? "当前展示目录快照 · 正在读取 Shopee 最新规格、商品描述与图片…"
+								: p.detailReadAt
+									? `Shopee 详情读取 ${time(p.detailReadAt)}`
+									: "当前展示目录快照"}
 						</p>
 						{[...new Set([error, p.detailError, p.imageError].filter(Boolean))].map((message) => (
 							<p key={message} role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">
@@ -856,6 +865,9 @@ function Details({
 							) : (
 								<p className="text-sm text-muted-foreground">当前尚未取得可展示的规格明细。</p>
 							)}
+						</div>
+						<div ref={contentRef} className="scroll-mt-4">
+							<DetailsContent key={p.productId} product={p} reading={reading} />
 						</div>
 					</div>
 				)}

@@ -208,7 +208,7 @@ const productInfoShape = z.looseObject({
 	images: z.array(z.unknown()).nullish(),
 	size_chart_info: z.looseObject({ size_chart: z.unknown().optional() }).nullish(),
 	pre_order_info: z.record(z.string(), z.unknown()).nullish(),
-	description_info: z.looseObject({ description: z.string().nullish() }).nullish(),
+	description_info: z.looseObject({ description: z.string().nullish(), description_type: z.string().nullish() }).nullish(),
 	model_list: z
 		.array(
 			z.looseObject({

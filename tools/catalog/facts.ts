@@ -4,6 +4,8 @@ import { productModelImage, STATUS } from "../../connectors/sites/shopee/product
 import { NeedsHuman } from "../../platform/errors.ts";
 
 export type StockState = "in_stock" | "sold_out" | "unknown";
+export type DescriptionBlock = { type: "text"; text: string } | { type: "image"; src: string };
+export type ProductDescription = { blocks: DescriptionBlock[]; error: string | null };
 export type CatalogSource = {
 	offerId: string;
 	skuId: string;
@@ -41,6 +43,9 @@ export type ProductFact = {
 	stockTotal: number | null;
 	stockState: StockState;
 	detailError: string | null;
+	productImages?: string[] | null;
+	description?: ProductDescription | null;
+	sizeChartImage?: string | null;
 };
 export type Identity = { shopId: string; username: string };
 export type CatalogReader = {

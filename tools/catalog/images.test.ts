@@ -154,8 +154,38 @@ test("详情失败、店铺不符、商品编号不符及重复/缺失规格编�
 		const result = await enrichProductImages(target, cached, f.driver);
 		assert.match(result.imageError ?? "", /读取失败.*快照/);
 		assert.equal(result.detailReadAt, null);
-		assert.deepEqual({ ...result, imageError: undefined, detailReadAt: undefined }, { ...cached, imageError: undefined, detailReadAt: undefined });
+		assert.deepEqual(
+			{ ...result, imageError: undefined, detailReadAt: undefined, productImages: undefined, description: undefined, sizeChartImage: undefined },
+			{ ...cached, imageError: undefined, detailReadAt: undefined, productImages: undefined, description: undefined, sizeChartImage: undefined },
+		);
+		assert.equal(Boolean(result.productImages?.length), ["duplicate", "model", "missing"].includes(failure));
 	}
+});
+
+test("SKU 未返回时仍展示同次读取的商品描述和详情图，身份错误时不展示其他店内容", async () => {
+	const f = reader();
+	f.value.model_list = [];
+	f.value.description_info = {
+		description_type: "json",
+		description: JSON.stringify({
+			field_list: [
+				{ type: 0, value: "尺寸以规格选择为准" },
+				{ type: 1, value: "detail-size" },
+			],
+		}),
+	};
+	const result = await enrichProductImages(target, cached, f.driver);
+	assert.deepEqual(result.description, {
+		blocks: [
+			{ type: "text", text: "尺寸以规格选择为准" },
+			{ type: "image", src: "https://down-tw.img.susercontent.com/file/detail-size" },
+		],
+		error: null,
+	});
+	assert.deepEqual(result.models, cached.models);
+	assert.match(result.imageError ?? "", /规格.*快照/);
+	f.driver.identity = async () => ({ username: "other", shopId: "other" });
+	assert.equal((await enrichProductImages(target, cached, f.driver)).description, undefined);
 });
 test("单件 product 的 DB 路径只允许 select，现读的多个 SKU 不写回旧快照", async () => {
 	const f = reader();

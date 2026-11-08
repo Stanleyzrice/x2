@@ -2,6 +2,7 @@
 import { type ProductInfo, productImageUrl, productInfo } from "../../connectors/sites/shopee/products.ts";
 import { shop as identity } from "../../connectors/sites/shopee/seller.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
+import { productContent } from "./description.ts";
 import { checkIdentity, type Identity, type ProductFact, productFact } from "./facts.ts";
 
 export type ImageReader = {
@@ -16,6 +17,7 @@ export async function enrichProductImages(
 	fact: ProductFact,
 	reader: ImageReader = catalogImageReader,
 ): Promise<ProductFact & { imageError: string | null; detailReadAt: string | null }> {
+	let content: ReturnType<typeof productContent> | undefined;
 	try {
 		const info = await reader.where(target.shopId, async () => {
 			checkIdentity(target, await reader.identity());
@@ -24,6 +26,8 @@ export async function enrichProductImages(
 			return detail;
 		});
 		if (info.id == null || String(info.id) !== fact.productId) throw new Error("Shopee 详情商品编号不匹配或未返回");
+		// 描述和图片与 SKU 独立，规格未返回时仍保留同次读取的有效详情内容。
+		content = productContent(info);
 		if (!info.model_list?.length) throw new Error("Shopee 未返回规格明细");
 		const modelIds = info.model_list.map((m) => m.id);
 		if (modelIds.some((id) => !id) || new Set(modelIds).size !== modelIds.length) throw new Error("Shopee 规格编号缺失或重复");
@@ -44,8 +48,8 @@ export async function enrichProductImages(
 					? "部分规格的 id、价格或库存未返回"
 					: null
 				: fresh.detailError;
-		return { ...fresh, models, detailError, imageError: null, detailReadAt: new Date().toISOString() };
+		return { ...fresh, ...content, models, detailError, imageError: null, detailReadAt: new Date().toISOString() };
 	} catch (e) {
-		return { ...fact, imageError: `Shopee SKU 规格和图片读取失败，当前展示目录快照：${(e as Error).message}`, detailReadAt: null };
+		return { ...fact, ...content, imageError: `Shopee SKU 规格和图片读取失败，当前展示规格目录快照：${(e as Error).message}`, detailReadAt: null };
 	}
 }
