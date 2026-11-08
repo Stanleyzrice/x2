@@ -5,3 +5,6 @@ node_modules/
 # Claude Code 子 agent 的临时工作目录
 .claude/worktrees/
 platform/ui/dist/
+
+# 本机生成的运营交付文件，不作为源代码提交。
+artifacts/
