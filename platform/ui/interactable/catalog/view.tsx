@@ -9,10 +9,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem } from "../../api.ts";
+import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import type { Props } from "./schema.ts";
 import type { CatalogResult, Model, Product } from "./types.ts";
 
@@ -781,8 +782,8 @@ function Details({
 	const lightbox = useLightbox(modelImages);
 	return (
 		<Sheet open={Boolean(product)} onOpenChange={(open) => !open && close()}>
-			<SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
-				<SheetHeader>
+			<ResizableSheetContent storageKey="x2:catalog-detail-width:v1" defaultWidth={896}>
+				<SheetHeader className="pr-12">
 					<SheetTitle>{p?.name ?? "商品详情"}</SheetTitle>
 					<SheetDescription>{p ? `商品 ${p.productId} · ${p.parentSku ?? "主 SKU 未提供"}` : "当前目录快照"}</SheetDescription>
 				</SheetHeader>
@@ -858,7 +859,7 @@ function Details({
 						</div>
 					</div>
 				)}
-			</SheetContent>
+			</ResizableSheetContent>
 			{lightbox.lightbox}
 		</Sheet>
 	);

@@ -9,10 +9,11 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fail, keyOf, type Meta, type Row, meta as readMeta, usePoll } from "../../api.ts";
+import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import { Edit, type Save, Show } from "./cells.tsx";
 import type { Props } from "./schema.ts";
 
@@ -83,12 +84,12 @@ export function View({ props }: { props: Props }) {
 				))
 			)}
 			<Sheet open={Boolean(row)} onOpenChange={(o) => !o && setOpened(null)}>
-				<SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+				<ResizableSheetContent storageKey="x2:datagrid-detail-width:v1">
 					<SheetHeader>
 						<SheetTitle>{row ? String(row[shown.columns[0]!.name] ?? "—") : ""}</SheetTitle>
 					</SheetHeader>
 					{row && <Fields meta={shown} row={row} save={saver(row)} />}
-				</SheetContent>
+				</ResizableSheetContent>
 			</Sheet>
 		</div>
 	);

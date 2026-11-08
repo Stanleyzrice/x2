@@ -9,10 +9,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
+import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import type { Props } from "./schema.ts";
 
 type Account = {
@@ -473,7 +474,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 					if (!open) setSelected(null);
 				}}
 			>
-				<SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+				<ResizableSheetContent storageKey="x2:reimbursement-detail-width:v1">
 					<SheetHeader>
 						<SheetTitle>采购订单明细</SheetTitle>
 					</SheetHeader>
@@ -502,7 +503,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 							</div>
 						</div>
 					)}
-				</SheetContent>
+				</ResizableSheetContent>
 			</Sheet>
 		</div>
 	);
