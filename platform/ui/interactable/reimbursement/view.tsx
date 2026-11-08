@@ -208,11 +208,11 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 					<Button
 						variant="outline"
 						onClick={download}
-						title="导出当前筛选的全部已付款采购记录，包含所有分页"
+						title="导出当前筛选内未勾选已报帐的订单，包含所有分页"
 						disabled={exporting || !data || query !== search || Object.values(marking).some((state) => state === "saving")}
 					>
 						<DownloadIcon />
-						{exporting ? "正在导出…" : "导出 Excel"}
+						{exporting ? "正在导出…" : "导出未报账"}
 					</Button>
 					<Button variant="outline" onClick={refresh} disabled={starting || data?.accounts.some((a) => a.status === "running")}>
 						<RefreshCwIcon className={starting ? "animate-spin" : ""} />

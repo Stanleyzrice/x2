@@ -137,7 +137,7 @@ export const reimbursement: Toolkit = {
 			async (p) => listRecords(await db(), p),
 		),
 		export: get(
-			"导出当前账号、搜索和付款日期内全部已付款采购订单及商品明细为xlsx，返回文件名、MIME和base64；同一只读快照，不刷新或修改人工标记",
+			"仅导出未勾选已报帐的订单：订单截图、总价、产品成本单价、购买数量、实际付款、订单号、报账金额总计；总计按每单原实付加总仅展示一次，不修改报帐标记",
 			recordQuery,
 			async (p) => exportRecords(await db(), p),
 		),
