@@ -27,6 +27,7 @@ export const queryParams = z.object({
 		.string()
 		.default("all")
 		.refine((s) => s === "all" || s === "unknown" || /^-?\d+$/.test(s), "状态须为 all、unknown 或网站状态码"),
+	category: z.string().default("all").describe("目录推断品类"),
 	stock: z.enum(["all", "in_stock", "sold_out", "unknown"]).default("all"),
 	page: z.coerce.number().int().positive().default(1),
 	pageSize: z.coerce.number().int().min(1).max(200).default(50),

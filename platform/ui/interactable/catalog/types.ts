@@ -71,6 +71,7 @@ export type CatalogResult = {
 	rows: Product[];
 	total: number;
 	listedCount: number;
+	categories: { name: string; count: number }[];
 	listedDetailsComplete: boolean;
 	page: number;
 	pageSize: number;

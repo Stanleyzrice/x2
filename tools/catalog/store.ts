@@ -5,6 +5,7 @@ import { shop as identity } from "../../connectors/sites/shopee/seller.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman, Usage } from "../../platform/errors.ts";
+import { CATEGORY_RULES, UNCATEGORIZED } from "./categories.ts";
 import { type EncodedSourceSnapshot, enrichEncodedProductSources, readEncodedSourceSnapshots } from "./encoded-sources.ts";
 import {
 	type CatalogReader,
@@ -149,7 +150,7 @@ export async function syncCatalog(sql: Sql, shop: string, makeReader?: () => Cat
 	return { ...result, ...(await readCatalog(sql, { shop, query: "", status: "all", stock: "all", page: 1, pageSize: 50 })) };
 }
 
-export type CatalogQuery = { shop: string; query: string; status: string; stock: string; page: number; pageSize: number };
+export type CatalogQuery = { shop: string; query: string; status: string; stock: string; category?: string; page: number; pageSize: number };
 type CatalogFact = ProductFact & { modelsDeferred?: boolean };
 type FactRow = { facts: CatalogFact };
 export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
@@ -174,11 +175,16 @@ export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
 			page: p.page,
 			pageSize: p.pageSize,
 			statuses: [],
+			categories: [],
 		};
+	let categoryExpression = sql`${UNCATEGORIZED}::text`;
+	for (const [label, pattern] of [...CATEGORY_RULES].reverse())
+		categoryExpression = sql`case when name ~* ${pattern} then ${label}::text else ${categoryExpression} end`;
 	const filter = sql`shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id}
 		and (${p.status} = 'all' or (${p.status} = 'unknown' and status is null) or status::text = ${p.status}) and (${p.stock} = 'all' or stock_state = ${p.stock})
-		and (${p.query} = '' or position(lower(${p.query}) in lower(name || ' ' || product_id || ' ' || coalesce(parent_sku, '') || ' ' || coalesce(models::text, ''))) > 0)`;
-	const [[count], rows, statuses] = await Promise.all([
+		and (${p.category ?? "all"} = 'all' or ${categoryExpression} = ${p.category ?? "all"})
+ and (${p.query} = '' or position(lower(${p.query}) in lower(name || ' ' || product_id || ' ' || coalesce(parent_sku, '') || ' ' || coalesce(models::text, ''))) > 0)`;
+	const [[count], rows, statuses, categories] = await Promise.all([
 		sql<{ total: number; listedCount: number; listedDetailsComplete: boolean }[]>`
 		select count(*) filter (where ${filter})::int as total,
 			count(*) filter (where status = 1)::int as "listedCount",
@@ -189,6 +195,10 @@ export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
 		from catalog_products where ${filter} order by name, product_id limit ${p.pageSize} offset ${(p.page - 1) * p.pageSize}`,
 		sql<{ status: number | null; label: string }[]>`select distinct status, status_label as label from catalog_products
 		where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id} order by status nulls last`,
+		sql<{ name: string; count: number }[]>`select ${categoryExpression} as name, count(*)::int as count from catalog_products
+ where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id}
+ and (${p.status} = 'all' or (${p.status} = 'unknown' and status is null) or status::text = ${p.status})
+ group by 1 order by count desc, name`,
 	]);
 	const linked = await attachLinks(
 		sql,
@@ -208,6 +218,7 @@ export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
 		page: p.page,
 		pageSize: p.pageSize,
 		statuses,
+		categories,
 	};
 }
 

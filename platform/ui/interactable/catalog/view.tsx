@@ -71,13 +71,14 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 function Catalog({ props, item }: { props: Props; item: PageItem }) {
 	const [search, setSearch] = useState("");
 	const [query, setQuery] = useState("");
+	const [category, setCategory] = useState("all");
 	const [stock, setStock] = useState("all");
 	const [status, setStatus] = useState<string>(props.defaultStatus);
 	const [page, setPage] = useState(1);
 	const [layout, setLayout] = useState<"table" | "cards">("table");
 	const [received, setData] = useState<{ key: string; value: CatalogResult } | null>(null);
-	const queryKey = JSON.stringify([query, status, stock, page]);
-	const input = { shop: props.shop, query, status, stock, page, pageSize: 50 };
+	const queryKey = JSON.stringify([query, status, stock, category, page]);
+	const input = { shop: props.shop, query, status, stock, category, page, pageSize: 50 };
 	const data = received?.key === queryKey ? received.value : api.peekCatalogProducts(item.id, input);
 	const [error, setError] = useState<string | null>(null);
 	const [syncError, setSyncError] = useState<string | null>(null);
@@ -153,7 +154,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 		setLoading(true);
 		const read = (force = false) => {
 			const id = ++request;
-			api.catalogProducts(item.id, { shop: props.shop, query, status, stock, page, pageSize: 50 }, force).then(
+			api.catalogProducts(item.id, { shop: props.shop, query, status, stock, category, page, pageSize: 50 }, force).then(
 				(result) => {
 					if (!stopped && id === request) {
 						setData({ key: queryKey, value: result });
@@ -178,7 +179,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 			clearInterval(timer);
 			window.removeEventListener("focus", onFocus);
 		};
-	}, [item.id, props.shop, query, status, stock, page, version, queryKey]);
+	}, [item.id, props.shop, query, status, stock, category, page, version, queryKey]);
 	const refresh = async () => {
 		setRefreshing(true);
 		setSyncError(null);
@@ -297,6 +298,39 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 				<Metric label="当前查询" value={data ? String(data.total) : "—"} note={`${status === "1" ? "在售" : "未上架（下架）"}范围 · 商品名 / SKU / 库存筛选`} />
 				<Metric label="采集时间" value={time(data?.snapshot?.capturedAt)} note="最近成功读取的 Shopee 数据" compact />
 			</div>
+			{data?.snapshot && (
+				<section className="rounded-xl border p-4" aria-label="商品品类">
+					<h3 className="font-semibold">商品品类</h3>
+					<p className="mb-3 mt-1 text-xs text-muted-foreground">按商品名称推断 · 数量为当前上架状态范围，未叠加搜索和库存筛选</p>
+					<div className="flex flex-wrap gap-2">
+						<Button
+							size="sm"
+							variant={category === "all" ? "default" : "outline"}
+							aria-pressed={category === "all"}
+							onClick={() => {
+								setCategory("all");
+								setPage(1);
+							}}
+						>
+							全部品类
+						</Button>
+						{data.categories?.map((c) => (
+							<Button
+								key={c.name}
+								size="sm"
+								variant={category === c.name ? "default" : "outline"}
+								aria-pressed={category === c.name}
+								onClick={() => {
+									setCategory(c.name);
+									setPage(1);
+								}}
+							>
+								{c.name} · {c.count}
+							</Button>
+						))}
+					</div>
+				</section>
+			)}
 			{actionError && (
 				<div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
 					{actionError}

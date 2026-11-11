@@ -29,9 +29,9 @@ const procurementCache = readCache<Monitor>(15_000, 20);
 const procurementEpochs = new Map<string, number>();
 const procurementSyncs = new Map<string, number>();
 const reimbursementCache = readCache<unknown>(15_000);
-type CatalogQuery = { shop: string; query: string; status: string; stock: string; page: number; pageSize: number };
+type CatalogQuery = { shop: string; query: string; status: string; stock: string; category?: string; page: number; pageSize: number };
 const catalogKey = (item: string, input: CatalogQuery) =>
-	`${item}:${JSON.stringify([input.shop, input.query, input.status, input.stock, input.page, input.pageSize])}`;
+	`${item}:${JSON.stringify([input.shop, input.query, input.status, input.stock, input.category ?? "all", input.page, input.pageSize])}`;
 const procurementKey = (item: string, shops: string[]) => `${item}:${JSON.stringify([...new Set(shops)].sort())}`;
 export type ReimbursementQuery = { accounts?: string[]; account?: string; search: string; paidFrom: string; paidTo: string; offset: number };
 const reimbursementKey = (item: string, input: ReimbursementQuery) =>

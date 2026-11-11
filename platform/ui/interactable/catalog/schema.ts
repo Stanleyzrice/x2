@@ -16,5 +16,5 @@ export const actions = {
 };
 export const writeActions = { setStatus: "catalog.set-status" };
 export const writePreviews = { setStatus: "catalog.status-preview" };
-export const inputs = ["query", "status", "stock", "page", "pageSize", "productId", "targetState", "requestId"];
+export const inputs = ["query", "status", "stock", "category", "page", "pageSize", "productId", "targetState", "requestId"];
 export const examples: z.input<typeof props>[] = [{ shop: "ni1206" }, { shop: "cheeroutdoor", title: "cheeroutdoor Catalog" }];

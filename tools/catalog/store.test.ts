@@ -60,6 +60,9 @@ function fixture(hasSnapshot = true, options: { fact?: ProductFact; sources?: Ca
 		} else if (q.includes(" as facts from catalog_products")) {
 			stage = 1;
 			rows = [{ facts: q.includes("facts - 'models'") ? { ...currentFact, models: null, modelsDeferred: true } : currentFact }];
+		} else if (q.includes("group by 1")) {
+			stage = 1;
+			rows = [{ name: "待分类", count: 89 }];
 		} else if (q.startsWith("select distinct status")) {
 			stage = 1;
 			rows = [{ status: 1, label: "已上架" }];
@@ -93,7 +96,7 @@ function fixture(hasSnapshot = true, options: { fact?: ProductFact; sources?: Ca
 test("缓存目录并发读取独立数据，保留分页总数、快照及精确店铺货源归属", async () => {
 	const f = fixture();
 	const result = await readCatalog(f.sql, { shop: "fixture", query: "SKU", status: "1", stock: "all", page: 2, pageSize: 50 });
-	assert.deepEqual(f.peak, [2, 3, 5]);
+	assert.deepEqual(f.peak, [2, 4, 5]);
 	assert.equal(result.shopId, "10");
 	assert.equal(result.snapshot?.revision, "revision");
 	assert.equal(result.snapshot?.capturedAt, "2026-11-01T00:01:00.000Z");
@@ -114,7 +117,7 @@ test("缓存目录并发读取独立数据，保留分页总数、快照及精�
 		["201"],
 	);
 	assert.equal(result.rows[0]?.statusChange, null);
-	assert.equal(f.queries.length, 11);
+	assert.equal(f.queries.length, 12);
 	const pageQuery = f.queries.find((q) => q.text.includes(" as facts from catalog_products"))!;
 	assert.deepEqual(pageQuery.values.slice(-2), [50, 50]);
 });
@@ -170,7 +173,7 @@ test("列表概要用当前缓存规格精确核对货源，保留延后模型�
 	assert.equal(result.rows[0]!.models, null);
 	assert.equal(result.rows[0]!.modelsDeferred, true);
 	assert.equal(result.rows[0]!.stockTotal, current.stockTotal);
-	assert.deepEqual(f.peak, [2, 3, 5]);
+	assert.deepEqual(f.peak, [2, 4, 5]);
 });
 
 test("列表货源不混入异店、异账号、异商品、失败快照或不匹配规格", async () => {
