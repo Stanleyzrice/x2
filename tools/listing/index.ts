@@ -29,6 +29,7 @@ import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { listingSizeChartParams, setListingSizeChart } from "./size-chart.ts";
+import { skuImagesSchema } from "./sku-images.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { templateConfigParams, templateItem, templateParams, templatePrice } from "./template-pricing.ts";
@@ -258,12 +259,16 @@ export const listing: Toolkit = {
 						.describe("本次只做指定1688 skuId，JSON数组；仅限单稿，其他规格保存为排除"),
 					mainImages: z.preprocess(parseJson, z.array(z.url()).min(1).max(12)).optional().describe("本次明确选择的主图URL，JSON数组；仅限单稿"),
 					detailImages: z.preprocess(parseJson, z.array(z.url()).max(16)).optional().describe("本次明确选择的详情图URL，JSON数组，[]表示不用详情图；仅限单稿"),
+					skuImages: z
+						.preprocess(parseJson, skuImagesSchema)
+						.optional()
+						.describe("本次按已选skuId指定审核后的规格图，JSON数组[{skuId,url}]；仅限单稿，不改原货源"),
 					imageMode: z
 						.enum(["processed", "original"])
 						.optional()
 						.describe("本稿图片模式：original上传1688原图，不译图不加水印；不传沿用稿件模式，旧稿保持处理图"),
 				})
-				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿"),
+				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages || p.skuImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿"),
 			async (p) => {
 				const sql = await db();
 				const want =
@@ -279,6 +284,7 @@ export const listing: Toolkit = {
 						sourceSkuIds: p.sourceSkuIds,
 						mainImages: p.mainImages,
 						detailImages: p.detailImages,
+						skuImages: p.skuImages,
 					});
 					const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 					const specs = l ? specsOf(l.variants) : null;

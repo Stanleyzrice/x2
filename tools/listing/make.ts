@@ -16,6 +16,7 @@ import { freightOf, num, pricingPolicy, reprice, type Settings, settingsOf, spec
 import { purchaseLimitOf } from "./purchase-limit.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
+import { type SkuImage, withSkuImages } from "./sku-images.ts";
 import { sourceScope } from "./source-scope.ts";
 import { nicknameFor } from "./text.ts";
 import { specsOf } from "./variants.ts";
@@ -60,11 +61,12 @@ export async function make(
 	sql: Sql,
 	id: string,
 	log: (s: string) => void = console.error,
-	options: { imageMode?: ImageMode; sourceSkuIds?: string[]; mainImages?: string[]; detailImages?: string[] } = {},
+	options: { imageMode?: ImageMode; sourceSkuIds?: string[]; mainImages?: string[]; detailImages?: string[]; skuImages?: SkuImage[] } = {},
 ): Promise<{ id: string; problems: string[] }> {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
-	if (l.product_id && (options.sourceSkuIds || options.mainImages || options.detailImages)) throw new Error("已建商品不能重新指定货源或图片范围");
+	if (l.product_id && (options.sourceSkuIds || options.mainImages || options.detailImages || options.skuImages))
+		throw new Error("已建商品不能重新指定货源或图片范围");
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
 	const imageMode = imageModeOf(options.imageMode, l.images);
@@ -89,13 +91,14 @@ export async function make(
 			: []);
 
 	const freight = freightOf(o, l.freight_rmb);
-	const { specs, problems } = specsAndPrices(o, s, {
+	const { specs: sourceSpecs, problems } = specsAndPrices(o, s, {
 		removed,
 		prev: specsOf(l.variants),
 		weightKg: num(l.weight_kg),
 		freightRmb: freight,
 		minimumPurchase: purchaseLimitOf(l, s.minPurchase),
 	});
+	const specs = withSkuImages(sourceSpecs, options.skuImages);
 
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
 	const pics: Pics = await makeImages(
