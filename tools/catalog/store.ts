@@ -5,6 +5,7 @@ import { shop as identity } from "../../connectors/sites/shopee/seller.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman, Usage } from "../../platform/errors.ts";
+import { type EncodedSourceSnapshot, enrichEncodedProductSources, readEncodedSourceSnapshots } from "./encoded-sources.ts";
 import {
 	type CatalogReader,
 	type ChosenLink,
@@ -213,7 +214,8 @@ export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
 async function attachLinks(sql: Sql, shop: string, shopId: string, facts: CatalogFact[]) {
 	const ids = facts.map((f) => f.productId);
 	if (!ids.length) return [];
-	const [listings, chosen, owners, changes] = await Promise.all([
+	type VerifiedSourceRow = EncodedSourceSnapshot & { shop: string; shopId: string; productId: string; models: ProductFact["models"] };
+	const [listings, chosen, owners, changes, verified] = await Promise.all([
 		sql<ListingLink[]>`select l.shop, s.shop_id as "shopId", l.product_id as "productId", l.offer_id as "offerId"
 		from listings l join shop_settings s on s.shop = l.shop where l.product_id in ${sql(ids)}`,
 		sql<ChosenLink[]>`select item_id as "productId", offer_id as "offerId", broken, chosen_at::text as "selectedAt"
@@ -221,8 +223,27 @@ async function attachLinks(sql: Sql, shop: string, shopId: string, facts: Catalo
 		sql<Ownership[]>`select distinct i->>'itemId' as "productId", o.shop_id as "shopId"
 		from orders o cross join lateral jsonb_array_elements(o.items) i where i->>'itemId' in ${sql(ids)}`,
 		statusChanges(sql, shop, shopId, ids),
+		sql<VerifiedSourceRow[]>`select c.shop, c.shop_id as "shopId", c.product_id as "productId", c.offer_id as "offerId",
+		c.offer, c.error, c.read_at as "readAt", p.models
+		from catalog_source_offers c join catalog_current_products p on p.shop = c.shop and p.shop_id = c.shop_id and p.product_id = c.product_id
+		where c.shop = ${shop} and c.shop_id = ${shopId} and c.product_id in ${sql(ids)}`,
 	]);
-	return facts.map((f) => ({ ...f, ...supplierLinks(shop, shopId, f.productId, listings, chosen, owners), statusChange: changes.get(f.productId) ?? null }));
+	return facts.map((f) => {
+		const links = supplierLinks(shop, shopId, f.productId, listings, chosen, owners);
+		const own = verified.filter((row) => row.shop === shop && row.shopId === shopId && row.productId === f.productId);
+		const models =
+			(f.models ?? own[0]?.models)?.map((model) =>
+				model.source || model.sourceWarning ? model : { ...model, source: null, sourceWarning: "未保存此商品的 SKU 货源对应" },
+			) ?? null;
+		const checked = enrichEncodedProductSources({ ...f, models }, own);
+		for (const model of checked.models ?? []) {
+			const source = model.source;
+			if (source?.basis !== "encoded_sku" || links.suppliers.some((link) => link.offerId === source.offerId)) continue;
+			if (links.suppliers.length) links.supplierWarnings.push("已核对规格来源与其他货源记录不同，分别展示，请人工核对");
+			links.suppliers.push({ kind: "verified", offerId: source.offerId, url: source.url, broken: null, selectedAt: null });
+		}
+		return { ...f, ...links, statusChange: changes.get(f.productId) ?? null };
+	});
 }
 
 export async function readProduct(sql: Sql, shop: string, productId: string, imageReader?: ImageReader, cacheOnly = false) {
@@ -238,7 +259,24 @@ export async function readProduct(sql: Sql, shop: string, productId: string, ima
 		l.variants, jsonb_build_object('offerId', l.offer->'offerId', 'skus', l.offer->'skus') as offer, l.offer_read_at as "readAt"
 		from listings l join shop_settings s on s.shop = l.shop
 		where l.shop = ${shop} and s.shop_id = ${target.shop_id} and l.product_id = ${productId}`;
-	const withSources = enrichProductSources({ shop, shopId: target.shop_id }, enriched, sources);
+	const listedSources = enrichProductSources({ shop, shopId: target.shop_id }, enriched, sources);
+	const snapshots =
+		cacheOnly || !enriched.detailReadAt
+			? await sql<EncodedSourceSnapshot[]>`select offer_id as "offerId", offer, error, read_at as "readAt"
+			from catalog_source_offers where shop = ${shop} and shop_id = ${target.shop_id} and product_id = ${productId}`
+			: await readEncodedSourceSnapshots(listedSources);
+	if (!cacheOnly && enriched.detailReadAt) {
+		for (const snapshot of snapshots) {
+			await sql`insert into catalog_source_offers (shop, shop_id, product_id, offer_id, offer, error, read_at)
+				select ${shop}, ${target.shop_id}, ${productId}, ${snapshot.offerId},
+					${snapshot.offer == null ? null : sql.json(snapshot.offer as Json)}, ${snapshot.error}, ${snapshot.readAt}
+				where exists (select 1 from shop_settings where shop = ${shop} and shop_id = ${target.shop_id})
+				on conflict (shop, shop_id, product_id, offer_id) do update
+				set offer = excluded.offer, error = excluded.error, read_at = excluded.read_at
+				where catalog_source_offers.read_at <= excluded.read_at`;
+		}
+	}
+	const withSources = enrichEncodedProductSources(listedSources, snapshots);
 	const [product] = await attachLinks(sql, shop, target.shop_id, [withSources]);
 	return { shop, shopId: target.shop_id, product: { ...product!, imageError: enriched.imageError, detailReadAt: enriched.detailReadAt } };
 }

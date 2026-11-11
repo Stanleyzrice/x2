@@ -197,6 +197,8 @@ test("单件 product 的 DB 路径只允许 select，现读的多个 SKU 不写�
 		if (q.startsWith("select p.facts from catalog_products")) return [{ facts: cached }];
 		if (
 			q.startsWith("select l.shop") ||
+			q.startsWith("select c.shop") ||
+			q.startsWith('select offer_id as "offerId"') ||
 			q.startsWith("select item_id") ||
 			q.startsWith("select distinct i->>") ||
 			q.startsWith("select distinct on (i.product_id)")

@@ -47,6 +47,18 @@ create table if not exists catalog_heads (
 create or replace view catalog_current_products as
 	select p.* from catalog_products p join catalog_heads h on h.shop = p.shop and h.shop_id = p.shop_id and h.revision = p.revision;
 
+-- 旧商品按货号现读核对的货源事实；独立于商品稿及人工选用，不改变采购货源。
+create table if not exists catalog_source_offers (
+	shop text not null,
+	shop_id text not null,
+	product_id text not null,
+	offer_id text not null,
+	offer jsonb,
+	error text,
+	read_at timestamptz not null,
+	primary key (shop, shop_id, product_id, offer_id)
+);
+
 -- 每个 request_id 冻结一个人工确认的商品状态修改，重复确认或核对不得重新提交。
 create table if not exists catalog_status_intents (
 	request_id text primary key,

@@ -47,11 +47,11 @@ export const catalog: Toolkit = {
 		),
 		products: get("搜索当前目录快照，返回商品、价格库存、1688关联及采集/完整性/失败状态", queryParams, async (p) => readCatalog(await db(), p)),
 		summaries: get("搜索目录快照概要，SKU 明细延后读取；不读外站", queryParams, async (p) => readCatalog(await db(), p, true)),
-		"cached-product": get("读取单件目录缓存及已有货源规格；不读外站", z.object({ shop, productId: str("Shopee 商品 id") }), async (p) =>
+		"cached-product": get("读取单件目录缓存、商品稿及已核对的货源规格；不读外站", z.object({ shop, productId: str("Shopee 商品 id") }), async (p) =>
 			readProduct(await db(), p.shop, p.productId, undefined, true),
 		),
 		product: get(
-			"读取该件 Shopee 最新规格、图片与价格库存，并按已有上品 SKU 对应 1688 规格；失败保留快照及错误，不修改网站或缓存",
+			"读取该件 Shopee 最新详情；缺少商品稿关联时现读并缓存货号对应的 1688 规格，不修改网站或采购选用",
 			z.object({ shop, productId: str("Shopee 商品 id") }),
 			async (p) => readProduct(await db(), p.shop, p.productId),
 		),

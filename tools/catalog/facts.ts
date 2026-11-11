@@ -14,7 +14,7 @@ export type CatalogSource = {
 	image: string | null;
 	url: string;
 	readAt: string | null;
-	basis: "listing_sku";
+	basis: "listing_sku" | "encoded_sku";
 };
 export type CatalogModel = {
 	modelId: string | null;
@@ -175,7 +175,7 @@ export async function collectCatalog(expected: { shop: string; shopId: string },
 	return { products, expectedCount: first.total, complete: true as const, detailsComplete: products.every((p) => p.detailError === null) };
 }
 
-export type SupplierLink = { kind: "listing" | "chosen"; offerId: string; url: string; broken: string | null; selectedAt: string | null };
+export type SupplierLink = { kind: "listing" | "chosen" | "verified"; offerId: string; url: string; broken: string | null; selectedAt: string | null };
 export type ListingLink = { shop: string; shopId: string; productId: string; offerId: string };
 export type ChosenLink = { productId: string; offerId: string; broken: string | null; selectedAt: string | null };
 export type Ownership = { productId: string; shopId: string | null };

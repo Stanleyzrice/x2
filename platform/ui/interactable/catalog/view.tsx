@@ -667,18 +667,33 @@ function ProductCard({ product: p, open, renderStatus }: { product: Product; ope
 }
 
 function Sources({ product: p, compact }: { product: Product; compact?: boolean }) {
+	const modelSources = [...new Map((p.models ?? []).flatMap((m) => (m.source ? [[m.source.offerId, m.source] as const] : []))).values()];
+	const label = (kind: string) => (kind === "listing" ? "上品来源" : kind === "verified" ? "已核对规格来源" : "已选货源");
 	return (
 		<div className="flex flex-col gap-1.5">
 			{p.suppliers.length ? (
 				p.suppliers.map((s) => (
 					<div key={`${s.kind}:${s.offerId}`} className="min-w-0">
-						{!compact && <p className="mb-1 text-xs text-muted-foreground">{s.kind === "listing" ? "上品来源" : "已选货源"}</p>}
+						{!compact && <p className="mb-1 text-xs text-muted-foreground">{label(s.kind)}</p>}
 						<a href={s.url} target="_blank" rel="noreferrer" className="block break-all text-xs text-primary underline-offset-2 hover:underline">
-							{compact ? (s.kind === "listing" ? "上品来源" : "已选货源") : s.url}
+							{compact ? label(s.kind) : s.url}
 							<ArrowUpRightIcon className="ml-1 inline size-3" />
 						</a>
 						{s.broken && <p className="text-xs text-destructive">不可用：{s.broken}</p>}
 					</div>
+				))
+			) : modelSources.length ? (
+				modelSources.map((source) => (
+					<a
+						key={source.offerId}
+						href={source.url}
+						target="_blank"
+						rel="noreferrer"
+						className="block break-all text-xs text-primary underline-offset-2 hover:underline"
+					>
+						{compact ? "已核对规格来源" : source.url}
+						<ArrowUpRightIcon className="ml-1 inline size-3" />
+					</a>
 				))
 			) : (
 				<span className="text-xs text-muted-foreground">链接待补</span>
@@ -724,7 +739,9 @@ function SourceSpec({ model: m, open }: { model: Model; open: () => void }) {
 					</a>
 				</div>
 			</div>
-			<p className="text-xs text-muted-foreground">已按上品 SKU 对应 · 来源采集 {time(s.readAt)}</p>
+			<p className="text-xs text-muted-foreground">
+				{s.basis === "encoded_sku" ? "已核对货号与 1688 规格" : "已按上品 SKU 对应"} · 来源采集 {time(s.readAt)}
+			</p>
 		</div>
 	);
 }

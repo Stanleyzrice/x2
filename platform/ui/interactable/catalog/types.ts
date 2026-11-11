@@ -1,5 +1,5 @@
 // Catalog 的网页响应形状；界面只展示工具返回的事实与计算结果。
-export type Supplier = { kind: "listing" | "chosen"; offerId: string; url: string; broken: string | null; selectedAt: string | null };
+export type Supplier = { kind: "listing" | "chosen" | "verified"; offerId: string; url: string; broken: string | null; selectedAt: string | null };
 export type Model = {
 	modelId: string | null;
 	sku: string | null;
@@ -17,7 +17,7 @@ export type Model = {
 		image: string | null;
 		url: string;
 		readAt: string | null;
-		basis: "listing_sku";
+		basis: "listing_sku" | "encoded_sku";
 	} | null;
 	sourceWarning?: string | null;
 };
