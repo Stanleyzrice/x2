@@ -28,6 +28,9 @@ export const CHANNEL_NAMES: Record<string, string> = {
 	"30020": "新竹物流",
 };
 
+/** 原生物流档位与买家运费，由agent按实际包装及站点可选项显式提供。 */
+export type ChannelOption = { channelId: string; sizeId: number; priceTwd: number };
+
 export type Product = {
 	parentSku: string;
 	title: string;
@@ -38,6 +41,7 @@ export type Product = {
 	daysToShip: number;
 	minPurchase: number;
 	channels: string[];
+	channelOptions?: ChannelOption[];
 	tiers: Tier[];
 	variants: (Variant & { priceTwd: number })[];
 	images: string[];
@@ -109,7 +113,28 @@ export function productInfo(p: Product) {
 	const known = new Set(CHANNELS.map((c) => String(c.channelid)));
 	const unknown = p.channels.filter((c) => !known.has(c));
 	if (unknown.length) throw new Error(`不认得的物流渠道：${unknown.join("、")}`);
-	const logistics_channels = CHANNELS.map((c) => ({ ...c, enabled: p.channels.includes(String(c.channelid)) && c.channelid !== 30019 }));
+	const options = new Map<string, ChannelOption>();
+	for (const option of p.channelOptions ?? []) {
+		if (
+			!known.has(option.channelId) ||
+			!p.channels.includes(option.channelId) ||
+			options.has(option.channelId) ||
+			!Number.isInteger(option.sizeId) ||
+			option.sizeId < 0 ||
+			!Number.isFinite(option.priceTwd) ||
+			option.priceTwd < 0
+		)
+			throw new Error(`物流渠道 ${option.channelId} 的档位或运费输入无效`);
+		options.set(option.channelId, option);
+	}
+	const logistics_channels = CHANNELS.map((c) => {
+		const option = options.get(String(c.channelid));
+		return {
+			...c,
+			...(option ? { sizeid: option.sizeId, price: String(option.priceTwd) } : {}),
+			enabled: p.channels.includes(String(c.channelid)) && c.channelid !== 30019,
+		};
+	});
 	if (!logistics_channels.some((c) => c.enabled)) throw new Error("未开任何物流渠道");
 	const fields: Record<string, unknown>[] = [
 		{
@@ -182,7 +207,7 @@ const imageId = (v: unknown) =>
 const num = (v: unknown) => Number(v);
 
 /** 读回来的商品资料（ProductInfo）、物流渠道和提交的（SentInfo）逐项比；sent 只看比对用到的几格（存在写入里再读出来的也是它） */
-export function readbackProblems(sent: SentFields, got: ProductInfo, channels: Channel[]): string[] {
+export function readbackProblems(sent: SentFields, got: ProductInfo, channels: Channel[], channelOptions: ChannelOption[] = []): string[] {
 	const problems: string[] = [];
 	const check = (name: string, ok: boolean) => {
 		if (!ok) problems.push(`${name}和提交的不一致`);
@@ -205,6 +230,23 @@ export function readbackProblems(sent: SentFields, got: ProductInfo, channels: C
 	const enabled = new Set(channels.filter((c) => c.enabled).map((c) => String(c.channel_id ?? c.channelid ?? "")));
 	const wanted = new Set(sent.logistics_channels.filter((c) => c.enabled).map((c) => String(c.channelid)));
 	check("物流渠道", enabled.size === wanted.size && [...wanted].every((c) => enabled.has(c)));
+	// 旧写入未保存显式档位时保持原有核对；本次明确输入的档位、金额必须从原生字段读到，不以缺失/默认0替代。
+	const hasNumber = (value: unknown) => (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) && Number.isFinite(num(value));
+	for (const option of channelOptions) {
+		const actual = channels.find((c) => String(c.channel_id ?? c.channelid ?? "") === option.channelId);
+		const expected = sent.logistics_channels.find((c) => String(c.channelid) === option.channelId);
+		const size = actual?.size_id ?? actual?.sizeid;
+		check(
+			`物流渠道 ${option.channelId} 档位`,
+			Boolean(actual?.enabled && expected?.enabled && hasNumber(size) && num(size) === expected.sizeid && expected.sizeid === option.sizeId),
+		);
+		check(
+			`物流渠道 ${option.channelId} 运费`,
+			Boolean(
+				actual?.enabled && expected?.enabled && hasNumber(actual.price) && num(actual.price) === num(expected.price) && num(expected.price) === option.priceTwd,
+			),
+		);
+	}
 	const fieldsOf = (info: { description?: string | null } | null | undefined) =>
 		((JSON.parse(String(info?.description ?? "{}")) as { field_list?: { type: unknown; value: unknown }[] }).field_list ?? []).map((x) => [
 			Number(x.type),

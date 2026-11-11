@@ -11,6 +11,7 @@ import type { Ran } from "../../platform/writes.ts";
 import { ADD_SIZE_WRITES, addSizeParams, planAddSize, previewAddSize } from "./add-size.ts";
 import { AUDIT_DROP, type Audit, type AuditIssue, auditDropped, auditIssues, auditKey, dropAudited, issueLine, restoreAudited } from "./audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
+import { listingChannelsParams, setListingChannels } from "./channels.ts";
 import { copyDraft, copyImages, copyImagesParams, copyParams } from "./copy.ts";
 import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
@@ -88,6 +89,9 @@ export const listing: Toolkit = {
 			copyImages(await db(), p),
 		),
 		"purchase-limit": get("保存单份未建商品稿的最低购买数量，不改全店设置或已建商品", purchaseLimitParams, async (p) => setPurchaseLimit(await db(), p)),
+		channels: get("保存未建商品稿的显式物流渠道集合，不改全店或已建商品；空值旧稿沿用店铺配置", listingChannelsParams, async (p) =>
+			setListingChannels(await db(), p),
+		),
 		"pricing-inputs": get("保存逐规格的显式进价、计费重量和售价，保留1688原始事实；核对当前毛利目标，不改已建商品", pricingInputsParams, async (p) =>
 			setPricingInputs(await db(), p),
 		),
@@ -374,6 +378,8 @@ export const listing: Toolkit = {
 					attributes: l.attributes_text,
 					variants: specs?.variants.length ?? 0,
 					minPurchase: l.min_purchase ?? null,
+					channelIds: l.channel_ids ?? null,
+					channelOptions: l.channel_options ?? null,
 					tiers,
 					weights: [...new Set((specs?.variants ?? []).map((v) => v.weightKg))],
 					needs: estimateNeeds(l),

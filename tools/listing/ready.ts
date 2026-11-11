@@ -1,6 +1,7 @@
 // 商品稿 → 要建的商品（product_info），和还缺什么。检查、x2 listing publish、建商品都用它：交给 x2 时的 product_info 和执行时现组的一样，才算人看过的就是要建的
 import { createHash } from "node:crypto";
 import { categoryAllowed } from "./category.ts";
+import { channelsOf } from "./channels.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, pricingProblems, reprice, type Settings } from "./pricing.ts";
 import { type Product, productInfo, usedPics } from "./product.ts";
@@ -42,7 +43,8 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 		preOrder: s.preOrder,
 		daysToShip: Number(l.days_to_ship),
 		minPurchase: purchaseLimitOf(l, s.minPurchase),
-		channels: s.channels,
+		channels: channelsOf(l, s.channels),
+		...(l.channel_options ? { channelOptions: l.channel_options } : {}),
 		tiers,
 		variants: specs.variants.map((v) => ({ ...v, priceTwd: v.priceTwd! })),
 		images: usedPics(pics, "main", removed).map(({ pic }) => pic.imageId!),

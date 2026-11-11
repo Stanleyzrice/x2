@@ -134,3 +134,9 @@ alter table listings add column if not exists min_purchase int check (min_purcha
 
 -- 用户授权的单稿类目例外，保存叶子和理由；null仍按全店允许范围。
 alter table listings add column if not exists category_exception jsonb;
+
+-- 单稿物流渠道覆盖；null 沿用 shop_settings.channels，不改变全店或旧稿默认。
+alter table listings add column if not exists channel_ids jsonb;
+
+-- 显式原生运费档位及金额；不按商品尺寸在代码里推断经营选择。
+alter table listings add column if not exists channel_options jsonb;

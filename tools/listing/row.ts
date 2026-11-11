@@ -4,7 +4,7 @@ import type { Freight, Offer, OfferId, Tags } from "../../connectors/sites/1688/
 import type { Audit } from "./audit.ts";
 import type { CategoryException } from "./category.ts";
 import type { Pics } from "./pics.ts";
-import type { Product } from "./product.ts";
+import type { ChannelOption, Product } from "./product.ts";
 import type { TemplateParams } from "./template-pricing.ts";
 
 export type PricingSnapshot = {
@@ -32,6 +32,10 @@ export type ListingRow = {
 	freight_rmb: string | null;
 	/** 单稿最低购买数量；null 或旧快照未提供时沿用店铺默认。 */
 	min_purchase?: number | null;
+	/** 单稿启用的物流渠道；null 或旧快照缺列沿用店铺配置。 */
+	channel_ids?: string[] | null;
+	/** 单稿逐渠道的原生档位、运费覆盖；null/缺列保留既有默认。 */
+	channel_options?: ChannelOption[] | null;
 	title: string | null;
 	description: string | null;
 	note: string | null;

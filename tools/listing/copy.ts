@@ -74,6 +74,8 @@ export function copyDraftFields(source: ListingRow, sourceShop: Pick<ShopSetting
 		...(source.weight_override !== undefined ? { weight_override: source.weight_override } : {}),
 		freight_rmb: source.freight_rmb,
 		min_purchase: purchaseLimitOf(source, sourceShop.min_purchase),
+		...(source.channel_ids !== undefined ? { channel_ids: source.channel_ids } : {}),
+		...(source.channel_options !== undefined ? { channel_options: source.channel_options } : {}),
 		title: source.title,
 		description: source.description,
 		note: source.note,
@@ -107,6 +109,8 @@ export function copyDraftFields(source: ListingRow, sourceShop: Pick<ShopSetting
 
 const jsonFields = new Set([
 	"offer",
+	"channel_ids",
+	"channel_options",
 	"category_path",
 	"attributes",
 	"variants",

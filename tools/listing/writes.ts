@@ -9,6 +9,7 @@ import { createListing, findByParentSku, listProduct } from "../../connectors/si
 import { inAccount } from "../../platform/browser/browser.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
+import { channelOptionSchema } from "./channels.ts";
 import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
 import { readbackProblems, type SentInfo } from "./product.ts";
@@ -60,6 +61,7 @@ const createParams = z.object({
 	// 检查时照 productInfo() 组的（ready.ts），存进写入再读出来还是它
 	productInfo: z.record(z.string(), z.unknown()).pipe(z.custom<SentInfo>()),
 	hash: z.string(),
+	channelOptions: z.array(channelOptionSchema).optional(),
 	name: z.string().optional(),
 });
 type CreateP = z.infer<typeof createParams>;
@@ -112,7 +114,7 @@ const createOp: WriteOp<CreateP> = {
 			if (i) await sleep(3000);
 			const info = await productInfo(id);
 			const path = (p.productInfo.category_path as number[]) ?? [];
-			problems = readbackProblems(p.productInfo, info, await channels(id, path[path.length - 1]!));
+			problems = readbackProblems(p.productInfo, info, await channels(id, path[path.length - 1]!), p.channelOptions);
 			if (!problems.length) break;
 		}
 		return { done: problems.length === 0, readback: { productId: id, problems } };

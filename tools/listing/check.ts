@@ -192,7 +192,19 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 		ready.push({
 			id,
 			writes: [
-				{ op: "建商品", params: { listingId: id, shop: l.shop, shopId: s.shopId, parentSku: r.product.parentSku, productInfo: r.info!, hash: r.hash!, name } },
+				{
+					op: "建商品",
+					params: {
+						listingId: id,
+						shop: l.shop,
+						shopId: s.shopId,
+						parentSku: r.product.parentSku,
+						productInfo: r.info!,
+						hash: r.hash!,
+						name,
+						...(r.product.channelOptions?.length ? { channelOptions: r.product.channelOptions } : {}),
+					},
+				},
 				{ op: "上架", params: { listingId: id, shop: l.shop, shopId: s.shopId, parentSku: r.product.parentSku, title: r.product.title, name } },
 			],
 		});
