@@ -5,6 +5,7 @@ import type { Audit } from "./audit.ts";
 import type { CategoryException } from "./category.ts";
 import type { Pics } from "./pics.ts";
 import type { ChannelOption, Product } from "./product.ts";
+import type { SizeChart } from "./size-chart.ts";
 import type { TemplateParams } from "./template-pricing.ts";
 
 export type PricingSnapshot = {
@@ -54,6 +55,8 @@ export type ListingRow = {
 	/** 规格：现在的样子照 variants.ts 的 specsOf 认，旧格式认不出是 null */
 	variants: unknown;
 	images: Partial<Pics>;
+	/** 单稿已审核尺码图、来源与源规格指纹；null/旧快照缺列表示未设置。 */
+	size_chart?: SizeChart | null;
 	/** 上次核价：用的参数、国内运费、时间（make.ts 的 savePrices 写的） */
 	pricing: PricingSnapshot | null;
 	audit: Partial<Audit> | null;

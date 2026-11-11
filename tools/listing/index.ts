@@ -28,6 +28,7 @@ import { purchaseLimitParams, setPurchaseLimit } from "./purchase-limit.ts";
 import { each } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
+import { listingSizeChartParams, setListingSizeChart } from "./size-chart.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { templateConfigParams, templateItem, templateParams, templatePrice } from "./template-pricing.ts";
@@ -89,6 +90,9 @@ export const listing: Toolkit = {
 			copyImages(await db(), p),
 		),
 		"purchase-limit": get("保存单份未建商品稿的最低购买数量，不改全店设置或已建商品", purchaseLimitParams, async (p) => setPurchaseLimit(await db(), p)),
+		"size-chart": get("上传并保存未建商品稿已审核的尺码图，记录来源与证据；已保存图须显式替换", listingSizeChartParams, async (p) =>
+			setListingSizeChart(await db(), p),
+		),
 		channels: get("保存未建商品稿的显式物流渠道集合，不改全店或已建商品；空值旧稿沿用店铺配置", listingChannelsParams, async (p) =>
 			setListingChannels(await db(), p),
 		),

@@ -7,6 +7,7 @@ import { estimateNeeds, pricingProblems, reprice, type Settings } from "./pricin
 import { type Product, productInfo, usedPics } from "./product.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
 import type { ListingRow } from "./row.ts";
+import { sizeChartOf } from "./size-chart.ts";
 import { OLD_SPECS, specsOf, structureProblems } from "./variants.ts";
 
 export function productOf(l: ListingRow, s: Settings): { product?: Product; info?: Record<string, unknown>; hash?: string; problems: string[] } {
@@ -24,6 +25,12 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 	else if (!categoryAllowed(String(l.category_path[l.category_path.length - 1]), s.categories, l.category_exception))
 		problems.push("类目：不在本店允许的类目里，且未记录本稿类目例外");
 	if (!l.days_to_ship) problems.push("未定备货天数");
+	let sizeChart: string | null = null;
+	try {
+		sizeChart = sizeChartOf(l);
+	} catch (e) {
+		problems.push((e as Error).message);
+	}
 	if (problems.length) return { problems: [...new Set(problems)] };
 	const pics = (l.images ?? {}) as Pics;
 	const removed = new Set<string>([...((l.removed_images ?? []) as string[])]);
@@ -50,7 +57,7 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 		images: usedPics(pics, "main", removed).map(({ pic }) => pic.imageId!),
 		detail: usedPics(pics, "detail", removed).map(({ pic }) => ({ id: pic.imageId!, width: pic.width!, height: pic.height! })),
 		optionImages,
-		sizeChart: null,
+		sizeChart,
 	};
 	try {
 		const info = productInfo(product);

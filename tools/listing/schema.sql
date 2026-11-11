@@ -140,3 +140,6 @@ alter table listings add column if not exists channel_ids jsonb;
 
 -- 显式原生运费档位及金额；不按商品尺寸在代码里推断经营选择。
 alter table listings add column if not exists channel_options jsonb;
+
+-- 单稿已审核尺码图与来源、证据、源规格指纹；独立保存，不被重做主图覆盖。
+alter table listings add column if not exists size_chart jsonb;
