@@ -123,3 +123,5 @@
 `fixtures/product-performance.json` 是 2026-10-30 从商品表现接口真回包抽取的有销量、零销量两条（其余字段省略，total 保留原值）；用于 id、确认件数和付款件数的解析。商品表现已逐项解析这些字段，缺少件数保留未知，不补零。`unlist-product` 的请求接口为 `update_product_info`，响应与商品状态字段见上述样本。
 
 `fixtures/*.json` 是解析过的回包（商品列表、订单卡片、商品资料、属性树、聊聊的会话和消息），api.test.ts 拿它们跑解析。都是照代码和上面记的写的（不是抓的真回包）。别的接口（经营数据、广告、优惠券、折扣、收入、售后、批量上架的记录）原样回，只解析外壳和列表那一层，没配样本。登录以后用 live.ts 读一遍，把真回包换进来（买家的名字、电话、地址、聊天内容换成假的）。
+
+- `fixtures/get-product-default-model.json`：get_product_info 的脱敏单规格回包；`is_default: true` 且变体层与选项均为空占位时为默认规格，`tier_index: [0]` 不代表存在实际选项。

@@ -215,6 +215,7 @@ const productInfoShape = z.looseObject({
 				id: idText.pipe(ModelId).optional(),
 				name: z.string().nullish(),
 				sku_image: z.string().nullish(),
+				is_default: z.boolean().nullish(),
 				sku: z.string().nullish(),
 				tier_index: z.array(z.union([z.number(), z.string()])).nullish(),
 				stock_detail: z.looseObject({ total_seller_stock: scalar, seller_stock_info: z.array(z.looseObject({ sellable_stock: scalar })).nullish() }).nullish(),
@@ -246,6 +247,21 @@ export function productImageUrl(value: string | null | undefined): string | null
 		}
 	}
 	return /^[a-z\d_-]+$/i.test(text) ? `${IMAGE}${text}` : null;
+}
+
+/** 默认单规格也可能带一层空占位变体；只接受网站明确标记，且不能有实际选项。 */
+export function isDefaultProductModel(info: ProductInfo): boolean {
+	if (info.model_list?.length !== 1) return false;
+	if (info.std_tier_variation_list?.length === 0) return true;
+	return (
+		info.model_list[0]!.is_default === true &&
+		info.std_tier_variation_list?.length === 1 &&
+		!info.std_tier_variation_list[0]!.custom_value?.trim() &&
+		info.std_tier_variation_list[0]!.value_list?.length === 1 &&
+		!info.std_tier_variation_list[0]!.value_list[0]!.custom_value?.trim() &&
+		info.model_list[0]!.tier_index?.length === 1 &&
+		Number(info.model_list[0]!.tier_index[0]) === 0
+	);
 }
 
 /** 详情的 sku_image 为空时，仅按第零层 tier_index 取对应 image_id，不按规格名称或商品封面猜图。 */

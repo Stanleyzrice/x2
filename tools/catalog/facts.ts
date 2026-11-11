@@ -1,6 +1,6 @@
 // Catalog 的网站事实归一化、完整分页检查与已有货源归属校验；不选择或修改货源。
 import type { ProductInfo, ProductSummary } from "../../connectors/sites/shopee/products.ts";
-import { productModelImage, STATUS } from "../../connectors/sites/shopee/products.ts";
+import { isDefaultProductModel, productModelImage, STATUS } from "../../connectors/sites/shopee/products.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 
 export type StockState = "in_stock" | "sold_out" | "unknown";
@@ -89,7 +89,7 @@ export function productFact(summary: ProductSummary, info: ProductInfo | null, d
 				const tierIndex = (m.tier_index ?? []).map(Number);
 				const parts = tierIndex.map((i, a) => info.std_tier_variation_list?.[a]?.value_list?.[i]?.custom_value?.trim() ?? "");
 				const name = (m.name?.trim() ? m.name : "") || (parts.every(Boolean) ? parts.join(" / ") : "");
-				const defaultModel = info.model_list!.length === 1 && !tierIndex.length && info.std_tier_variation_list?.length === 0;
+				const defaultModel = isDefaultProductModel(info);
 				if (!name && !defaultModel) missingSpecification = true;
 				return {
 					modelId: m.id ?? null,

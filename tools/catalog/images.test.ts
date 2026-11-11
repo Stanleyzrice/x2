@@ -1,5 +1,6 @@
 // 单件商品现读完整详情，规格扩展和层下标变化不沿用旧快照；读取失败明确回退且不写库。
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { productInfoOf } from "../../connectors/sites/shopee/products.ts";
 import type { Sql } from "../../platform/db/index.ts";
@@ -225,4 +226,28 @@ test("单件 product 的 DB 路径只允许 select，现读的多个 SKU 不写�
 	assert.equal(cacheOnly.product.models?.length, 1);
 	assert.equal(cacheOnly.product.imageError, null);
 	assert.equal(cacheOnly.product.detailReadAt, null);
+});
+
+test("Shopee 明确默认规格且只有空占位变体时，展示默认规格和商品主图", async () => {
+	const f = reader();
+	const info = productInfoOf(
+		JSON.parse(readFileSync(new URL("../../connectors/sites/shopee/fixtures/get-product-default-model.json", import.meta.url), "utf8")),
+	);
+	f.driver.detail = async () => info;
+	const result = await enrichProductImages(target, cached, f.driver);
+	assert.equal(result.models?.[0]?.name, "默认规格");
+	assert.equal(result.models?.[0]?.imageSource, "product");
+	assert.equal(result.models?.[0]?.image, "https://down-tw.img.susercontent.com/file/product-cover");
+	assert.equal(result.detailError, null);
+	assert.equal(result.imageError, null);
+	// 默认标记不能掩盖真实变体或多 SKU 的缺失。
+	info.std_tier_variation_list![0]!.value_list![0]!.custom_value = "黑色";
+	const variant = await enrichProductImages(target, cached, f.driver);
+	assert.equal(variant.models?.[0]?.name, "黑色");
+	assert.equal(variant.models?.[0]?.image, null);
+	info.std_tier_variation_list![0]!.value_list![0]!.custom_value = "";
+	info.model_list!.push({ ...info.model_list![0]!, id: "12" as NonNullable<typeof info.model_list>[number]["id"] });
+	const multiple = await enrichProductImages(target, cached, f.driver);
+	assert.equal(multiple.models?.[0]?.name, "规格名未知");
+	assert.equal(multiple.models?.[0]?.image, null);
 });

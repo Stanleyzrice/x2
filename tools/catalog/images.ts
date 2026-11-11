@@ -1,5 +1,5 @@
 // 打开单件商品时现读完整 Shopee 详情；只在响应中更新事实，不写回目录快照或外站。
-import { type ProductInfo, productImageUrl, productInfo } from "../../connectors/sites/shopee/products.ts";
+import { isDefaultProductModel, type ProductInfo, productImageUrl, productInfo } from "../../connectors/sites/shopee/products.ts";
 import { shop as identity } from "../../connectors/sites/shopee/seller.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import { productContent } from "./description.ts";
@@ -35,7 +35,7 @@ export async function enrichProductImages(
 		const status = rawStatus != null && String(rawStatus).trim() && Number.isInteger(Number(rawStatus)) ? Number(rawStatus) : null;
 		const cover = typeof info.images?.[0] === "string" ? productImageUrl(info.images[0]) : null;
 		const fresh = productFact({ productId: fact.productId, name: fact.name, status, cover: cover ?? fact.cover ?? "" }, info);
-		const single = info.model_list.length === 1 && info.std_tier_variation_list?.length === 0;
+		const single = isDefaultProductModel(info);
 		const models = fresh.models!.map((model) => ({
 			...model,
 			name: single && model.name === "规格名未知" ? "默认规格" : model.name,
