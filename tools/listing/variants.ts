@@ -38,6 +38,7 @@ export const variantPricingInput = z.object({
 	costRmb: z.number().nonnegative().finite(),
 	chargeableWeightKg: z.number().positive().finite(),
 	priceTwd: z.number().int().positive().finite(),
+	freightRmbPerUnit: z.number().nonnegative().finite().optional().describe("显式每销售单位的国内运费，人民币；不传沿用商品稿整单国内运费"),
 	sourceEvidence: z.string().trim().min(1).optional(),
 });
 const variant = z.object({

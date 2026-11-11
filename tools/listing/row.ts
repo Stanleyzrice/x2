@@ -12,6 +12,7 @@ export type PricingSnapshot = {
 	params?: Record<string, number>;
 	preOrder?: boolean;
 	freightRmb?: number | null;
+	minimumPurchase?: number;
 	at?: string;
 };
 
@@ -79,6 +80,7 @@ export type PriceInput = {
 	offer: OfferLike | null;
 	weight_kg?: string | null;
 	freight_rmb?: string | null;
+	min_purchase?: number | null;
 	pricing?: PricingSnapshot | null;
 };
 

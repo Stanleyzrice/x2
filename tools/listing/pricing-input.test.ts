@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Offer, OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
-import { estimateNeeds, pricingProblems, reprice, settingsOf } from "./pricing.ts";
+import { estimateNeeds, pricingProblems, reprice, settingsOf, variantTemplatePrice } from "./pricing.ts";
 import { applyPricingInputs, pricingInputsParams } from "./pricing-input.ts";
 import { templateParams, templatePrice } from "./template-pricing.ts";
 import { specsFrom, specsOf } from "./variants.ts";
@@ -174,4 +174,48 @@ test("没有显式输入时仍沿用原来的报重与自动最低尾9价", () =
 		],
 	);
 	assert.deepEqual(pricingProblems(next.specs, []), []);
+});
+
+test("真实两件起购按订单数量核价，每单位国内运费须显式提供，改单件立即重核", () => {
+	const source = offer();
+	source.freight = { costRmb: 3, to: "东莞" };
+	for (const sku of source.skus) sku.weightKg = 0.003;
+	const items = source.skus.map((sku) => ({ skuId: sku.skuId, costRmb: 6.26, chargeableWeightKg: 0.4, priceTwd: 105, freightRmbPerUnit: 3 }));
+	const parsed = pricingInputsParams.parse({ id: "1", items });
+	assert.equal(parsed.items[0]!.freightRmbPerUnit, 3);
+	const specs = applyPricingInputs(specsFrom(source).specs, parsed.items);
+	const draft = { offer: source, variants: specs, min_purchase: 2, pricing: { ...snapshot, freightRmb: 3, minimumPurchase: 2 } };
+	const two = reprice(draft, settings())!;
+	assert.deepEqual(pricingProblems(two.specs, []), []);
+	assert.equal(two.specs.variants[0]!.priceTwd, 105);
+	assert.equal(two.specs.variants[0]!.weightKg, 0.4, "不能被来源3g报重覆盖显式计费估重");
+	assert.equal(two.changed, true, "首次显式核价输入须写回实际成本、计费重和售价");
+	assert.equal(reprice({ ...draft, variants: two.specs }, settings())!.changed, false);
+	const calculation = variantTemplatePrice(two.specs.variants[0]!, two.freightRmb, params, two.minimumPurchase);
+	assert.equal(calculation.units, 2);
+	assert.equal(calculation.orderPaidTwd, 210);
+	assert.equal(calculation.orderFreightRmb, 6);
+	assert.equal(calculation.totalCostRmb, 28.02);
+	assert.ok(Math.abs(calculation.current!.margin - 0.23755102040816328) < 1e-12);
+	assert.ok(Math.abs(calculation.current!.profitRmb - 8.73) < 1e-12);
+	const one = reprice({ ...draft, min_purchase: 1 }, settings())!;
+	assert.match(pricingProblems(one.specs, []).join(), /19\.67%/);
+	assert.equal(one.changed, true, "不能复用最低两件订单的通过状态");
+	const remade = specsFrom(source, [], two.specs).specs;
+	assert.equal(remade.variants[0]!.pricingInput?.freightRmbPerUnit, 3);
+	delete source.freight;
+	assert.deepEqual(estimateNeeds({ offer: source, variants: specs }), [], "每SKU显式国内运费已知，不补造源整单运费");
+});
+
+test("未声明每单位国内运费时保留旧整单一次性口径，不默默改变运费假设", () => {
+	const source = offer();
+	source.freight = { costRmb: 3, to: "东莞" };
+	const specs = applyPricingInputs(
+		specsFrom(source).specs,
+		source.skus.map((sku) => ({ skuId: sku.skuId, costRmb: 6.26, chargeableWeightKg: 0.4, priceTwd: 105 })),
+	);
+	const two = reprice({ offer: source, variants: specs, min_purchase: 2 }, settings())!;
+	assert.match(pricingProblems(two.specs, []).join(), /31\.92%/);
+	for (const freightRmbPerUnit of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+		assert.equal(pricingInputsParams.safeParse({ id: "1", items: [{ ...input, skuId: "1", freightRmbPerUnit }] }).success, false);
 });

@@ -38,7 +38,7 @@ function source(): ListingRow {
 				stock: 50,
 				weightKg: 0.6,
 				priceTwd: 149,
-				pricingInput: { costRmb: 8.5, chargeableWeightKg: 0.6, priceTwd: 149, sourceEvidence: "单件渠道" },
+				pricingInput: { costRmb: 8.5, chargeableWeightKg: 0.6, priceTwd: 149, freightRmbPerUnit: 3, sourceEvidence: "单件渠道、每单位国内运费3元" },
 			},
 			{ sku: "LT991756966145-b", skuId: SkuId.parse("124"), specId: SpecId.parse("b"), options: [1], costRmb: 10, stock: 50, weightKg: 0.7, priceTwd: 169 },
 		],

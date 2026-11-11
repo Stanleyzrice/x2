@@ -4,12 +4,12 @@ import { test } from "node:test";
 import { type Offer, OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import { productInfoOf } from "../../connectors/sites/shopee/products.ts";
 import type { Sql } from "../../platform/db/index.ts";
-import { settingsOf } from "./pricing.ts";
+import { reprice, settingsOf } from "./pricing.ts";
 import { productInfo, readbackProblems } from "./product.ts";
 import { purchaseLimitParams, purchaseLimitPatch, setPurchaseLimit } from "./purchase-limit.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow } from "./row.ts";
-import type { Specs } from "./variants.ts";
+import { type Specs, specsOf } from "./variants.ts";
 
 function settings(minimum = 1) {
 	return settingsOf({
@@ -132,6 +132,31 @@ test("单稿起购量null或旧fixture未提供时沿用真实店铺默认", () 
 
 test("单稿明确一件起购优先于店铺三件默认", () => {
 	assert.equal(productOf(draft(1), settings(3)).info?.min_purchase_limit, 1);
+});
+
+test("发布重核采用实际起购数量，不能把两件订单通过状态沿用于一件", () => {
+	const row = draft(2),
+		shop = settings();
+	shop.template = { fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.2, maxMargin: 0.3 };
+	const specs = specsOf(row.variants)!;
+	specs.variants[0]!.pricingInput = { costRmb: 6.26, chargeableWeightKg: 0.4, priceTwd: 105, freightRmbPerUnit: 3 };
+	row.variants = specs;
+	const calculated = reprice(row, shop)!;
+	row.variants = calculated.specs;
+	row.pricing = { model: "template", params: shop.template, freightRmb: calculated.freightRmb, minimumPurchase: calculated.minimumPurchase };
+	const two = productOf(row, shop);
+	assert.deepEqual(two.problems, []);
+	assert.equal(two.info?.min_purchase_limit, 2);
+	assert.equal(two.product!.variants[0]!.priceTwd, 105);
+	const one = { ...row, min_purchase: 1 };
+	assert.equal(productOf(one, shop).info, undefined);
+	assert.match(productOf(one, shop).problems.join(), /重新核价/);
+	const rechecked = reprice(one, shop)!;
+	assert.match(rechecked.specs.variants[0]!.pricingProblem!, /19\.67%/);
+	assert.match(productOf({ ...one, variants: rechecked.specs, pricing: { ...row.pricing, minimumPurchase: 1 } }, shop).problems.join(), /19\.67%/);
+	const fallback = { ...row, min_purchase: null };
+	shop.minPurchase = 2;
+	assert.deepEqual(productOf(fallback, shop).problems, []);
 });
 
 function purchaseReadback(minimum: number) {

@@ -2,8 +2,9 @@
 import type { Offer } from "../../connectors/sites/1688/api.ts";
 import type { Mark } from "./pics.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
+import { purchaseLimitOf } from "./purchase-limit.ts";
 import type { OfferLike, PriceInput, ShopSettingsRow } from "./row.ts";
-import { templateConfigParams, templatePrice } from "./template-pricing.ts";
+import { templateConfigParams, templateUnitPrice } from "./template-pricing.ts";
 import { limitProblems, priceRange, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 
 export function settingsOf(row: ShopSettingsRow) {
@@ -49,11 +50,20 @@ export type Settings = ReturnType<typeof settingsOf>;
 export const pricingPolicy = (s: Settings) =>
 	s.template ? { model: "template" as const, params: s.template } : { model: "settlement" as const, params: s.params, preOrder: s.preOrder };
 
-function templateOf(v: Variant, freightRmb: number | null, p: NonNullable<Settings["template"]>) {
-	return templatePrice({ key: v.sku, costRmb: v.costRmb, weightKg: v.weightKg, freightRmb, currentTwd: v.priceTwd, units: 1 }, p);
+export function variantTemplatePrice(v: Variant, freightRmb: number | null, p: NonNullable<Settings["template"]>, units = 1) {
+	const orderFreightRmb = v.pricingInput?.freightRmbPerUnit === undefined ? freightRmb : v.pricingInput.freightRmbPerUnit * units;
+	return {
+		...templateUnitPrice({ key: v.sku, costRmb: v.costRmb, weightKg: v.weightKg, freightRmb: orderFreightRmb, currentTwd: v.priceTwd, units }, p),
+		orderFreightRmb,
+	};
 }
 
-export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg: number | null; freightRmb: number | null }): Variant[] {
+export function priceVariants(
+	variants: Variant[],
+	s: Settings,
+	opts: { weightKg: number | null; freightRmb: number | null; minimumPurchase?: number },
+): Variant[] {
+	const units = opts.minimumPurchase ?? s.minPurchase;
 	return variants.map((v): Variant => {
 		const cleared = { ...v };
 		delete cleared.pricingProblem;
@@ -67,7 +77,7 @@ export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg
 			};
 			if (!s.template) explicit.pricingProblem = `核价：${v.sku} 的显式售价缺少模板参数，保留输入待核`;
 			else {
-				const result = templateOf(explicit, opts.freightRmb, s.template);
+				const result = variantTemplatePrice(explicit, opts.freightRmb, s.template, units);
 				if (result.missing.length) explicit.pricingProblem = `核价：${v.sku} 缺${result.missing.join("、")}，保留输入待核`;
 				else if (!result.current || result.current.margin < s.template.minMargin - 1e-9 || result.current.margin > s.template.maxMargin + 1e-9)
 					explicit.pricingProblem = `核价：${v.sku} 指定售价 NT$${explicit.priceTwd} 的毛利率${result.current ? `${(result.current.margin * 100).toFixed(2)}%` : "未知"}不在输入区间${(s.template.minMargin * 100).toFixed(2)}%–${(s.template.maxMargin * 100).toFixed(2)}%，保留输入待核`;
@@ -78,8 +88,8 @@ export function priceVariants(variants: Variant[], s: Settings, opts: { weightKg
 		const stock = Math.min(v.stock, s.stockCap);
 		if (!weightKg || opts.freightRmb === null) return { ...cleared, weightKg, stock, priceTwd: null };
 		if (s.template) {
-			const r = templateOf({ ...v, weightKg }, opts.freightRmb, s.template);
-			return { ...cleared, weightKg, stock, priceTwd: r.tailNine?.min ?? r.range?.min ?? null };
+			const r = variantTemplatePrice({ ...v, weightKg }, opts.freightRmb, s.template, units);
+			return { ...cleared, weightKg, stock, priceTwd: r.unitTailNine?.min ?? r.unitRange?.min ?? null };
 		}
 		return { ...cleared, weightKg, stock, priceTwd: minPrice(v.costRmb, opts.freightRmb, weightKg, s.params, s.preOrder) };
 	});
@@ -106,7 +116,7 @@ export function estimateNeeds(l: PriceInput): Need[] {
 	const weights = weightsOf(l.offer);
 	const needs: Need[] = [];
 	if (num(l.weight_kg) === null && specs.variants.some((v) => !v.pricingInput && !weights.has(v.skuId))) needs.push("重量");
-	if (freightOf(l.offer, l.freight_rmb) === null) needs.push("国内运费");
+	if (freightOf(l.offer, l.freight_rmb) === null && specs.variants.some((v) => v.pricingInput?.freightRmbPerUnit === undefined)) needs.push("国内运费");
 	return needs;
 }
 
@@ -119,15 +129,16 @@ export function pricingProblems(specs: Specs, needs: Need[]): string[] {
 	];
 }
 
-export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb: number | null; changed: boolean } | null {
+export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb: number | null; minimumPurchase: number; changed: boolean } | null {
 	const specs = specsOf(l.variants);
 	if (!l.offer || !specs) return null;
 	const weights = weightsOf(l.offer);
 	const freightRmb = freightOf(l.offer, l.freight_rmb);
+	const minimumPurchase = purchaseLimitOf(l, s.minPurchase);
 	const variants = priceVariants(
 		specs.variants.map((v) => ({ ...v, weightKg: weights.get(v.skuId) ?? null })),
 		s,
-		{ weightKg: num(l.weight_kg), freightRmb },
+		{ weightKg: num(l.weight_kg), freightRmb, minimumPurchase },
 	);
 	const policy = pricingPolicy(s);
 	// jsonb 会重排 key，按 key 比较；老结算快照没存参数时靠重算后的售价判断。
@@ -139,6 +150,7 @@ export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb:
 		paramsChanged ||
 		(policy.model === "settlement" && l.pricing?.preOrder !== undefined && l.pricing.preOrder !== policy.preOrder) ||
 		(l.pricing?.freightRmb ?? null) !== freightRmb ||
+		(l.pricing?.minimumPurchase ?? 1) !== minimumPurchase ||
 		variants.some((v, i) => {
 			const before = specs.variants[i]!;
 			return (
@@ -149,16 +161,16 @@ export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb:
 				v.pricingProblem !== before.pricingProblem
 			);
 		});
-	return { specs: { tiers: specs.tiers, variants }, freightRmb, changed };
+	return { specs: { tiers: specs.tiers, variants }, freightRmb, minimumPurchase, changed };
 }
 
 export function specsAndPrices(
 	o: Offer,
 	s: Settings,
-	opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null },
+	opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null; minimumPurchase?: number },
 ): { specs: Specs; problems: string[] } {
 	const built = specsFrom(o, opts.removed ?? [], opts.prev ?? null);
-	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, { weightKg: opts.weightKg, freightRmb: opts.freightRmb }) };
+	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, opts) };
 	return { specs, problems: [...(o.minQty > 1 ? [`货源：起订量 ${o.minQty}，无法单件购买`] : []), ...built.problems, ...structureProblems(specs)] };
 }
 
@@ -169,12 +181,12 @@ export function quote(o: Offer, s: Settings, assume: { weightKg: number; freight
 	const given = new Map(o.skus.map((k) => [k.skuId, k]));
 	const list = specs.variants.map((v) => {
 		const k = given.get(v.skuId);
-		const template = s.template ? templateOf(v, freightRmb, s.template) : null;
+		const template = s.template ? variantTemplatePrice(v, freightRmb, s.template, s.minPurchase) : null;
 		return {
 			sku: v.sku,
 			spec: (k?.attrs ?? []).filter(Boolean).join(" / ") || k?.name || "（单规格）",
 			priceTwd: v.priceTwd,
-			rangeTwd: template?.range ?? null,
+			rangeTwd: template?.unitRange ?? null,
 			margin: template?.current?.margin ?? null,
 			weightKg: v.weightKg,
 			weightAssumed: !((k?.weightKg ?? 0) > 0),

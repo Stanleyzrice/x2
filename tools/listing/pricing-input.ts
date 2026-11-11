@@ -4,15 +4,16 @@ import { SkuId } from "../../connectors/sites/1688/api.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson } from "../../platform/tool.ts";
-import { estimateNeeds, pricingPolicy, pricingProblems, reprice, settingsOf } from "./pricing.ts";
+import { estimateNeeds, pricingPolicy, pricingProblems, reprice, settingsOf, variantTemplatePrice } from "./pricing.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
-import { templatePrice } from "./template-pricing.ts";
 import { type Specs, specsOf, variantPricingInput } from "./variants.ts";
 
 const item = variantPricingInput.extend({ skuId: SkuId });
 export const pricingInputsParams = z.object({
 	id: ListingId.describe("商品稿编号"),
-	items: z.preprocess(parseJson, z.array(item).min(1)).describe("显式逐规格输入 JSON：skuId、costRmb、chargeableWeightKg、priceTwd；可附 sourceEvidence"),
+	items: z
+		.preprocess(parseJson, z.array(item).min(1))
+		.describe("显式逐规格输入 JSON：skuId、costRmb、chargeableWeightKg、priceTwd；可附 freightRmbPerUnit（每单位国内运费）和 sourceEvidence"),
 });
 type Input = z.output<typeof pricingInputsParams>;
 
@@ -51,12 +52,18 @@ export async function setPricingInputs(sql: Sql, p: Input) {
 			.split("\n")
 			.filter((line) => line && !/^核价：|^缺(?:重量|国内运费)/.test(line));
 		const problems = [...retainedProblems, ...pricingProblems(final, estimateNeeds({ ...l, variants: final }))];
-		const pricing = { ...pricingPolicy(settings), freightRmb: calculated.freightRmb, at: new Date().toISOString() };
+		const pricing = {
+			...pricingPolicy(settings),
+			freightRmb: calculated.freightRmb,
+			minimumPurchase: calculated.minimumPurchase,
+			at: new Date().toISOString(),
+		};
 		await tx`update listings set variants = ${tx.json(final as Json)}, pricing = ${tx.json(pricing as Json)},
 			problems = ${retainedProblems.join("\n") || null}, updated_at = now() where id = ${p.id}`;
 		return {
 			id: p.id,
 			applied: p.items.length,
+			minimumPurchase: calculated.minimumPurchase,
 			problems,
 			rows: final.variants
 				.filter((v) => selected.has(v.skuId))
@@ -66,12 +73,7 @@ export async function setPricingInputs(sql: Sql, p: Input) {
 					costRmb: v.costRmb,
 					chargeableWeightKg: v.weightKg,
 					priceTwd: v.priceTwd,
-					calculation: settings.template
-						? templatePrice(
-								{ key: v.sku, costRmb: v.costRmb, weightKg: v.weightKg, currentTwd: v.priceTwd, freightRmb: calculated.freightRmb, units: 1 },
-								settings.template,
-							)
-						: null,
+					calculation: settings.template ? variantTemplatePrice(v, calculated.freightRmb, settings.template, calculated.minimumPurchase) : null,
 				})),
 		};
 	});

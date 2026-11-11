@@ -13,6 +13,7 @@ import { categoryAllowed, daysToShip, pickAttributes, recommendedPath } from "./
 import { makeImages } from "./images.ts";
 import { type ImageMode, imageModeOf, type Pics } from "./pics.ts";
 import { freightOf, num, pricingPolicy, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
+import { purchaseLimitOf } from "./purchase-limit.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import { sourceScope } from "./source-scope.ts";
@@ -22,7 +23,10 @@ import { specsOf } from "./variants.ts";
 export async function savePrices(sql: Sql, l: ListingRow, s: Settings): Promise<boolean> {
 	const r = reprice(l, s);
 	if (!r?.changed) return false;
-	const fields = { variants: r.specs, pricing: { ...pricingPolicy(s), freightRmb: r.freightRmb, at: new Date().toISOString() } };
+	const fields = {
+		variants: r.specs,
+		pricing: { ...pricingPolicy(s), freightRmb: r.freightRmb, minimumPurchase: r.minimumPurchase, at: new Date().toISOString() },
+	};
 	await sql`update listings set variants = ${sql.json(fields.variants as Json)}, pricing = ${sql.json(fields.pricing as Json)}, updated_at = now() where id = ${l.id}`;
 	Object.assign(l, fields);
 	return true;
@@ -90,6 +94,7 @@ export async function make(
 		prev: specsOf(l.variants),
 		weightKg: num(l.weight_kg),
 		freightRmb: freight,
+		minimumPurchase: purchaseLimitOf(l, s.minPurchase),
 	});
 
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
@@ -162,7 +167,7 @@ export async function make(
 			offer_read_at: new Date(),
 			variants: specs,
 			removed_variants: removed,
-			pricing: { ...pricingPolicy(s), freightRmb: freight, at: new Date().toISOString() },
+			pricing: { ...pricingPolicy(s), freightRmb: freight, minimumPurchase: purchaseLimitOf(l, s.minPurchase), at: new Date().toISOString() },
 		},
 		problems,
 	);

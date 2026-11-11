@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { listing } from "./index.ts";
-import { roundUpNine, templateItem, templateParams, templatePrice } from "./template-pricing.ts";
+import { roundUpNine, templateItem, templateParams, templatePrice, templateUnitPrice } from "./template-pricing.ts";
 
 const sample = { fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.15, maxMargin: 0.2 };
 const parameters = (changes = {}) => templateParams.parse({ ...sample, ...changes });
@@ -53,4 +53,24 @@ test("拒绝无效费率和毛利目标；窄区间没有整数或尾 9 时保�
 	const r = templatePrice(templateItem.parse({ key: "narrow", costRmb: 5.13, weightKg: 0.1, freightRmb: 0 }), parameters({}));
 	assert.deepEqual(r.range, { min: 52, max: 54 });
 	assert.equal(r.tailNine, null);
+});
+
+test("每单位售价按实际订单数量合计收入，整数区间仍给每单位，不变成固定套组", () => {
+	const p = parameters({ minMargin: 0.2, maxMargin: 0.3 });
+	const item = templateItem.parse({ key: "slippers", currentTwd: 105, costRmb: 6.26, weightKg: 0.4, freightRmb: 6, units: 2 });
+	const result = templateUnitPrice(item, p);
+	assert.equal(result.orderPaidTwd, 210);
+	assert.equal(result.totalCostRmb, 28.02);
+	assert.deepEqual(result.unitRange, { min: 101, max: 114 });
+	assert.deepEqual(result.unitTailNine, { min: 109, max: 109 });
+	for (const price of [result.unitRange!.min, result.unitRange!.max]) {
+		const margin = templateUnitPrice({ ...item, currentTwd: price }, p).current!.margin;
+		assert.ok(margin >= p.minMargin && margin <= p.maxMargin);
+	}
+	const one = { ...item, units: 1 };
+	const legacy = templatePrice(one, p),
+		unit = templateUnitPrice(one, p);
+	assert.deepEqual(unit.current, legacy.current);
+	assert.deepEqual(unit.unitRange, legacy.range);
+	assert.deepEqual(unit.unitTailNine, legacy.tailNine);
 });

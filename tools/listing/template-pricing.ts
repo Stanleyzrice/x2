@@ -71,3 +71,25 @@ export function templatePrice(item: TemplateItem, p: TemplateParams) {
 		budgetRmb,
 	};
 }
+
+/** 单位售价与真实订单数量分开：收入、货价和重量按数量合计，整单国内运费、贴单费只计一次。 */
+export function templateUnitPrice(item: TemplateItem, p: TemplateParams) {
+	const orderPaidTwd = item.currentTwd === null ? null : item.currentTwd * item.units;
+	const order = templatePrice({ ...item, currentTwd: orderPaidTwd }, p);
+	const unitTheoretical = order.theoretical ? { min: order.theoretical.min / item.units, max: order.theoretical.max / item.units } : null;
+	const low = unitTheoretical === null ? null : Math.max(1, Math.ceil(unitTheoretical.min - 1e-9));
+	const high = unitTheoretical === null ? null : Math.floor(unitTheoretical.max + 1e-9);
+	const unitRange = low !== null && high !== null && low <= high ? { min: low, max: high } : null;
+	const firstNine = unitRange === null ? null : roundUpNine(unitRange.min);
+	const lastNine = unitRange === null ? null : Math.floor((unitRange.max - 9) / 10 + 1e-10) * 10 + 9;
+	const unitTailNine = firstNine !== null && lastNine !== null && firstNine <= lastNine ? { min: firstNine, max: lastNine } : null;
+	return {
+		...order,
+		status: order.missing.length ? "待补数据" : unitRange ? "条件试算" : "区间无整数售价",
+		units: item.units,
+		orderPaidTwd,
+		unitTheoretical,
+		unitRange,
+		unitTailNine,
+	};
+}
