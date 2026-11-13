@@ -25,6 +25,22 @@ test("全状态列表保留删除、禁卖、审核及未知状态，长 id 始�
 	assert.throws(() => allProductsOf({ data: { page_info: { total: 1 }, products: [{ id: Number.MAX_SAFE_INTEGER + 2 }] } }));
 });
 
+test("全状态列表把平台 create_time 秒值透传为创建时间，缺省或无效时间保留 null", () => {
+	const raw: unknown = JSON.parse(readFileSync(new URL("./fixtures/get-all-products-created-at.json", import.meta.url), "utf8"));
+	const rows = allProductsOf(raw).rows;
+	assert.equal(rows[0]?.createdAt, "2026-11-13T05:52:38.000Z");
+	assert.equal(rows[1]?.createdAt, "2026-11-13T05:55:05.000Z");
+	assert.equal(
+		allProductsOf({ data: { page_info: { total: 1 }, products: [{ id: "10", create_time: "1794549158" }] } }).rows[0]?.createdAt,
+		"2026-11-13T05:52:38.000Z",
+	);
+	for (const create_time of [undefined, null, "", "invalid", "Infinity", 0, -1, 1e20]) {
+		const row = allProductsOf({ data: { page_info: { total: 1 }, products: [{ id: "10", create_time, model_list: [{ id: "11" }] }] } }).rows[0];
+		assert.equal(row?.createdAt, null);
+		assert.equal(row?.bulk?.models.length, 1);
+	}
+});
+
 test("缺 total、products 或空的 total 报错，明确空数组加零才是空目录", () => {
 	for (const data of [{}, { page_info: { total: 0 } }, { page_info: { total: "" }, products: [] }, { page_info: { total: -1 }, products: [] }])
 		assert.throws(() => allProductsOf({ data }));

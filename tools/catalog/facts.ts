@@ -31,6 +31,7 @@ export type CatalogModel = {
 export type ProductFact = {
 	productId: string;
 	name: string;
+	createdAt?: string | null;
 	parentSku: string | null;
 	cover: string | null;
 	status: number | null;
@@ -109,6 +110,7 @@ export function productFact(summary: ProductSummary, info: ProductInfo | null, d
 	return {
 		productId: summary.productId,
 		name: info?.name || summary.name,
+		createdAt: summary.createdAt ?? null,
 		parentSku: info?.parent_sku || null,
 		cover: summary.cover || null,
 		status,

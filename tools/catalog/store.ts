@@ -192,7 +192,12 @@ export async function readCatalog(sql: Sql, p: CatalogQuery, summary = false) {
 		from catalog_products where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id}`,
 		// 网页列表不展示 SKU 明细，在数据库端裁掉大字段，避免先经远程连接传输后再删。
 		sql<FactRow[]>`select ${summary ? sql`(facts - 'models') || jsonb_build_object('models', null, 'modelsDeferred', true)` : sql`facts`} as facts
-		from catalog_products where ${filter} order by name, product_id limit ${p.pageSize} offset ${(p.page - 1) * p.pageSize}`,
+		from catalog_products where ${filter}
+		order by coalesce(
+			(select max(l.listed_at) from listings l join shop_settings s on s.shop = l.shop
+				where l.shop = catalog_products.shop and s.shop_id = catalog_products.shop_id and l.product_id = catalog_products.product_id),
+			nullif(facts->>'createdAt', '')::timestamptz
+		) desc nulls last, name, product_id limit ${p.pageSize} offset ${(p.page - 1) * p.pageSize}`,
 		sql<{ status: number | null; label: string }[]>`select distinct status, status_label as label from catalog_products
 		where shop = ${p.shop} and shop_id = ${target.shop_id} and revision = ${good.id} order by status nulls last`,
 		sql<{ name: string; count: number }[]>`select ${categoryExpression} as name, count(*)::int as count from catalog_products

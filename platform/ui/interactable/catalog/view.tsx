@@ -23,7 +23,7 @@ const money = (n: number | null) =>
 	n === null ? "未知" : new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 2 }).format(n);
 const price = (p: Product) =>
 	p.priceMin === null || p.priceMax === null ? "未知" : p.priceMin === p.priceMax ? money(p.priceMin) : `${money(p.priceMin)} – ${money(p.priceMax)}`;
-const time = (value: string | null | undefined) => (value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "尚未采集");
+const time = (value: string | null | undefined) => (value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "尚未采集");
 const STOCK = { in_stock: "有库存", sold_out: "售罄", unknown: "库存未知" };
 const PENDING = new Set(["待执行", "已提交", "结果未知", "不一致"]);
 type StatusChange = NonNullable<Product["statusChange"]>;

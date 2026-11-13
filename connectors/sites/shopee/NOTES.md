@@ -112,6 +112,7 @@
 
 ## 回包样本
 
+- `fixtures/get-all-products-created-at.json` 是 2026-11-13 全状态列表（`list_type=all`）真回包的两条摘录，商品 id、名称已替换；`create_time` 是 Unix 秒级创建时间，转换为 `createdAt`，不能当成最近一次重新上架时间。缺失或无效时间保留 null。
 - `fixtures/shop-category-list.json`、`shop-category-detail.json` 为 2026-11-05 当前 Shop Categories 列表、详情真回包摘录，分类 id、名称和成员 id 已替换；保留有效商品数为零但仍有异常成员的字段关系。`shop-category-drafts.json` 是同次读取的空草稿池原生 `data: {}`。
 
 - `fixtures/get-product-attributes.json` 是 2026-11-04 商品详情真回包的类目、属性摘录，商品 id 和名称已替换；用于类目修改前后的属性解析，不代表该编辑请求已获站点验证。

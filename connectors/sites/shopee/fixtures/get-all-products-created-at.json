@@ -1,0 +1,11 @@
+{
+	"_fixture": "2026-11-13 live get_product_list(list_type=all), two-row excerpt; product ids/names replaced, unused fields omitted; total retained",
+	"code": 0,
+	"data": {
+		"page_info": { "total": 2446 },
+		"products": [
+			{ "id": 25000000001, "name": "商品甲", "status": 1, "create_time": 1794549158 },
+			{ "id": 25000000002, "name": "商品乙", "status": 1, "create_time": 1794549305 }
+		]
+	}
+}

@@ -106,6 +106,8 @@ export type ProductSummary = {
 	name: string;
 	status: number | null;
 	cover: string;
+	/** 平台创建时间，不代表最近一次重新上架时间；历史调用者可缺省。 */
+	createdAt?: string | null;
 	bulk?: { parentSku: string | null; models: (Model & { isDefault?: boolean })[] };
 };
 const allProductList = withData(
@@ -117,6 +119,7 @@ const allProductList = withData(
 				name: z.string().nullish(),
 				status: scalar,
 				cover_image: z.string().nullish(),
+				create_time: scalar,
 			}),
 		),
 	}),
@@ -130,7 +133,8 @@ function bulkModels(p: z.output<typeof allProductList>["data"]["products"][numbe
 			if (value == null || value === "" || !Number.isSafeInteger(Number(value)) || Number(value) !== p.model_list.length) return undefined;
 		} else if (/has_more|truncat|partial|incomplete/i.test(key) && ![false, 0, "false", "0"].includes(value as string | number | boolean)) return undefined;
 	}
-	const candidate = { data: { page_info: { total: 1 }, products: [p] } };
+	// bulk 只取规格；无效创建时间不能让已有的规格解析因 Date.toISOString 抛错。
+	const candidate = { data: { page_info: { total: 1 }, products: [{ ...p, create_time: undefined }] } };
 	const parsed = liveList.safeParse(candidate);
 	if (!parsed.success) return undefined;
 	const nativeModels = parsed.data.data?.products?.[0]?.model_list;
@@ -157,11 +161,13 @@ export function allProductsOf(raw: unknown): { total: number; rows: ProductSumma
 		total,
 		rows: b.data.products.map((p) => {
 			const bulk = bulkModels(p);
+			const createdAt = new Date(Number(p.create_time) * 1000);
 			return {
 				productId: p.id,
 				name: p.name ?? "",
 				status: p.status == null || (typeof p.status === "string" && p.status.trim() === "") || !Number.isInteger(Number(p.status)) ? null : Number(p.status),
 				cover: image(p.cover_image),
+				createdAt: createdAt.getTime() > 0 ? createdAt.toISOString() : null,
 				...(bulk ? { bulk } : {}),
 			};
 		}),

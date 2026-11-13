@@ -24,6 +24,7 @@ export type Model = {
 export type Product = {
 	productId: string;
 	name: string;
+	createdAt?: string | null;
 	parentSku: string | null;
 	cover: string | null;
 	status: number | null;
