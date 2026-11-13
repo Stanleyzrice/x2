@@ -19,8 +19,13 @@
 		"@wuwe1/booey": "github:wuwe1/booey#v2.0.0",
 		"exceljs": "4.4.0",
 		"opencc-js": "^1.4.2",
-		"postgres": "^3.4.9",
+		"postgres": "3.4.9",
 		"zod": "^4.1.0"
+	},
+	"pnpm": {
+		"patchedDependencies": {
+			"postgres@3.4.9": "patches/postgres@3.4.9.patch"
+		}
 	},
 	"devDependencies": {
 		"@base-ui/react": "^1.9.0",

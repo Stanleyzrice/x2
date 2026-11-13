@@ -52,6 +52,7 @@ const TOP = [
 	"components.json",
 	"connectors",
 	"package.json",
+	"patches",
 	"platform",
 	"pnpm-lock.yaml",
 	"skills",

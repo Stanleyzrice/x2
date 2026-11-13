@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  postgres@3.4.9:
+    hash: 925c15b44cbff4b4d060d81a8e78aeb6508bb5ae7983e23a417452b2449fbaf1
+    path: patches/postgres@3.4.9.patch
+
 importers:
 
   .:
@@ -18,8 +23,8 @@ importers:
         specifier: ^1.4.2
         version: 1.4.2
       postgres:
-        specifier: ^3.4.9
-        version: 3.4.9
+        specifier: 3.4.9
+        version: 3.4.9(patch_hash=925c15b44cbff4b4d060d81a8e78aeb6508bb5ae7983e23a417452b2449fbaf1)
       zod:
         specifier: ^4.1.0
         version: 4.6.5
@@ -5897,7 +5902,7 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
-  postgres@3.4.9: {}
+  postgres@3.4.9(patch_hash=925c15b44cbff4b4d060d81a8e78aeb6508bb5ae7983e23a417452b2449fbaf1): {}
 
   powershell-utils@0.2.1: {}
 

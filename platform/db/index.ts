@@ -4,14 +4,13 @@ import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";
 import { NeedsHuman } from "../errors.ts";
+import { databaseLifecycle } from "./lifecycle.ts";
 import { open, postgresSocket } from "./tunnel.ts";
 
 export type Sql = postgres.Sql;
 /** 写进 jsonb 的值：postgres 的类型只认 JSONValue。我们写进去的都是 JSON 能表示的（解析过的参数、回包、算出来的对象），写的地方 as Json */
 export type Json = postgres.JSONValue;
 
-let conn: Sql | null = null;
-let ready: Promise<void> | null = null;
 let target: string | null = null;
 
 export const host = hostname();
@@ -40,33 +39,40 @@ export function client(url: string, max: number): Sql {
 	return postgres(url, options);
 }
 
-export async function db(): Promise<Sql> {
-	if (!conn) {
+const lifecycle = databaseLifecycle<Sql>({
+	create: () => {
 		const url = target ?? process.env.X2_DATABASE_URL;
 		if (!url)
 			throw new NeedsHuman(
 				"没有设 X2_DATABASE_URL：库是共用的，在服务器上，不用在本机装 Postgres；连库的两行（X2_DATABASE_URL、X2_DATABASE_SSH）找管服务器的人要（ops/db-user.sh）",
 			);
-		conn = client(url, 4);
-		ready = migrate(conn).catch((e: Error) => {
-			if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|does not exist|password/.test(e.message)) throw new NeedsHuman(`连不上库（X2_DATABASE_URL）：${e.message}`);
+		return client(url, 4);
+	},
+	initialize: async (sql) => {
+		try {
+			await migrate(sql);
+		} catch (e) {
+			if (e instanceof Error && /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|does not exist|password/.test(e.message))
+				throw new NeedsHuman(`连不上库（X2_DATABASE_URL）：${e.message}`);
 			throw e;
-		});
-	}
-	await ready;
-	return conn;
+		}
+	},
+	dispose: async (sql) => {
+		await sql.end({ timeout: 5 });
+	},
+});
+
+export async function db(): Promise<Sql> {
+	return lifecycle.get();
 }
 
 /** 这个进程改用另一个库（x2 web --scratch 的临时库）：在第一次 db() 之前调 */
 export function setDatabase(url: string): void {
-	if (conn) throw new Error("已经连上 X2_DATABASE_URL 的库了，换不了");
+	if (lifecycle.active()) throw new Error("已经连上 X2_DATABASE_URL 的库了，换不了");
 	target = url;
 }
 
 /** 进程结束前关掉连接（不关进程不退出） */
 export async function close(): Promise<void> {
-	const c = conn;
-	conn = null;
-	ready = null;
-	await c?.end({ timeout: 5 });
+	await lifecycle.close();
 }
