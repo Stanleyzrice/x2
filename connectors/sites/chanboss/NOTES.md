@@ -29,7 +29,7 @@
 
 ## 同步订单（从 Shopee 重新拉单）
 
-订单列表按日期查（页面上的「查询」就是 `/order/list_order`；x2 按最近 60 天查）。查不到的订单，可以在订单页「同步订单」让 chanboss 从 Shopee 重新拉。读页面的 JS 找到的（组件 PullOrderModal，标题「同步订单」；接口模块 51083）：
+订单列表按日期查（页面上的「查询」就是 `/order/list_order`）。查不到的订单，可以在订单页「同步订单」让 chanboss 从 Shopee 重新拉。读页面的 JS 找到的（组件 PullOrderModal，标题「同步订单」；接口模块 51083）：
 
 - **批量同步**（按时间段）：`POST /api/v2/common/shopee/order/sync_order`（前缀是 `/api/v2/common`，后面直接 `/shopee/…`，没有 `/cangboss`）
   ```json
