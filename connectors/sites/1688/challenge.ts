@@ -30,4 +30,19 @@ export function look(): Look {
 	};
 }
 
-export const SLIDER: Challenger = { look, seen: challengeOf, url: (url) => challengeOf({ url, frames: [], slider: false, text: "" }) };
+export const SLIDER: Challenger = {
+	look,
+	seen: challengeOf,
+	url: (url) => {
+		try {
+			const u = new URL(url);
+			return (
+				["http:", "https:"].includes(u.protocol) &&
+				(u.hostname === "1688.com" || u.hostname.endsWith(".1688.com")) &&
+				challengeOf({ url, frames: [], slider: false, text: "" })
+			);
+		} catch {
+			return false;
+		}
+	},
+};

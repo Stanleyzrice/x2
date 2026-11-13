@@ -106,3 +106,15 @@ create table if not exists web_confirmations (
 	outcome jsonb,
 	created_at timestamptz not null default now()
 );
+
+-- 当前浏览器的显式授权只记身份与连接配置；历史记录不代表仍然登录。
+create table if not exists browser_authorizations (
+	site text not null,
+	account_id text not null,
+	account_name text not null,
+	browser_id text not null,
+	browser_label text not null,
+	authorized_at timestamptz not null default now(),
+	verified_at timestamptz not null default now(),
+	primary key (site, account_id)
+);

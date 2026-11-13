@@ -13,6 +13,7 @@ import { Sheet, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
+import { BrowserConnection } from "../../browser-connection.tsx";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import type { Props } from "./schema.ts";
 
@@ -81,6 +82,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const [offset, setOffset] = useState(0);
 	const [selected, setSelected] = useState<RecordRow | null>(null);
 	const [starting, setStarting] = useState(false);
+	const [connecting, setConnecting] = useState(false);
 	const [refreshError, setRefreshError] = useState<string | null>(null);
 	const [exporting, setExporting] = useState(false);
 	const [exportError, setExportError] = useState<string | null>(null);
@@ -157,17 +159,22 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			reload();
 		}
 	};
-	const refresh = () => {
+	const refresh = (targetAccount?: string) => {
 		setStarting(true);
 		setRefreshError(null);
-		api
-			.act(item.id, "refresh", account === "all" ? {} : { account })
+		const refreshAccount = targetAccount ?? (account === "all" ? undefined : account);
+		return api
+			.act(item.id, "refresh", refreshAccount ? { account: refreshAccount } : {})
 			.catch((e: Error) => setRefreshError(e.message))
 			.finally(() => {
 				api.invalidateReimbursementRecords(item.id);
 				reload();
 				setStarting(false);
 			});
+	};
+	const connected = async (actual: { id: string }) => {
+		if (props.accounts && !props.accounts.includes(actual.id)) throw new Error("当前登录账号不在本页允许的采购账号范围内，请切换账号后重新检测。");
+		await refresh(actual.id);
 	};
 	const download = async () => {
 		setExporting(true);
@@ -193,7 +200,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 		}
 	};
 	return (
-		<div className="flex h-full min-h-0 flex-col gap-5 p-4 sm:p-6">
+		<div className="flex min-h-full flex-col gap-5 p-4 sm:p-6">
 			<header className="flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h2 className="text-xl font-semibold tracking-tight">采购报账</h2>
@@ -214,12 +221,18 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						<DownloadIcon />
 						{exporting ? "正在导出…" : "导出未报账"}
 					</Button>
-					<Button variant="outline" onClick={refresh} disabled={starting || data?.accounts.some((a) => a.status === "running")}>
+					<Button variant="outline" onClick={() => void refresh()} disabled={starting || connecting || data?.accounts.some((a) => a.status === "running")}>
 						<RefreshCwIcon className={starting ? "animate-spin" : ""} />
 						{starting ? "正在刷新…" : "刷新采购记录"}
 					</Button>
 				</div>
 			</header>
+			<BrowserConnection
+				expectedAccount={account === "all" ? (props.accounts?.length === 1 ? props.accounts[0] : undefined) : account}
+				disabled={starting || connecting || data?.accounts.some((a) => a.status === "running")}
+				onCheckingChange={setConnecting}
+				onConnected={connected}
+			/>
 			{exportError && (
 				<p role="alert" className="text-sm text-destructive">
 					{exportError}
@@ -269,6 +282,14 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 								)}
 								{a.unknownCount !== null && a.unknownCount > 0 && <p>{a.unknownCount} 单缺少付款时间证据，未列为已付款</p>}
 								{a.error && <p className="text-destructive">{a.error}</p>}
+								{(a.status === "failed" || a.status === "interrupted" || a.error) && (
+									<BrowserConnection
+										expectedAccount={a.id}
+										disabled={starting || connecting || data.accounts.some((entry) => entry.status === "running")}
+										onCheckingChange={setConnecting}
+										onConnected={connected}
+									/>
+								)}
 							</CardContent>
 						</Card>
 					))}

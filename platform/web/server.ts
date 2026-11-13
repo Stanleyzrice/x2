@@ -13,10 +13,13 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
+import { stopCollections } from "../browser/collection.ts";
 import type { Json, Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
 import { startJobs } from "../jobs.ts";
 import { toolkits } from "../tool.ts";
+import { listBrowserAuthorizations, restoreBrowserAuthorizations, saveBrowserAuthorization } from "./browser-authorizations.ts";
+import { connectBrowserRequest, requestOriginUrl } from "./browser-connection.ts";
 import { confirmWrite, prepareConfirmation } from "./confirmations.ts";
 import { type Ref, refQuery } from "./grid.ts";
 import { act, answer, closeItem, deletePage, deletePages, ensureWorkspaces, listPages, parseProps, saveNote, showPage } from "./pages.ts";
@@ -98,6 +101,7 @@ export async function serve(
 	{ host, port, dist, background = true }: { host: string; port: number; dist: string; background?: boolean },
 ): Promise<{ port: number; stop: () => Promise<void> }> {
 	await ensureWorkspaces(sql);
+	await restoreBrowserAuthorizations(sql);
 	const colTypes = await types(sql);
 	const table = (name: unknown) => {
 		const t = tables().find((x) => x.name === name);
@@ -119,7 +123,14 @@ export async function serve(
 		return row ? shape(t, colTypes.get(t.name)!, row) : null;
 	};
 
-	const api: Record<string, (body: Record<string, unknown>, url: URL) => Promise<unknown>> = {
+	const api: Record<string, (body: Record<string, unknown>, url: URL, req: IncomingMessage) => Promise<unknown>> = {
+		"GET /api/browser/authorizations": async (_, url) => listBrowserAuthorizations(sql, url.searchParams.get("site")),
+		"POST /api/browser/connect": async (b, _, req) =>
+			connectBrowserRequest(b, {
+				port: (server.address() as { port: number }).port,
+				origin: req.headers.origin,
+				authorize: (site, account, browser) => saveBrowserAuthorization(sql, site, account, browser),
+			}),
 		"GET /api/meta": async () =>
 			Promise.all(
 				tables().map(async (t): Promise<Meta> => {
@@ -245,7 +256,7 @@ export async function serve(
 			try {
 				if (req.method !== "GET") {
 					if (req.headers["sec-fetch-site"] === "cross-site") throw new Usage("不接受跨站操作");
-					if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw new Usage("操作必须来自当前 X2 页面");
+					if (req.headers.origin && requestOriginUrl(req.headers.origin).host !== req.headers.host) throw new Usage("操作必须来自当前 X2 页面");
 				}
 				let raw = "";
 				for await (const c of req) {
@@ -254,7 +265,7 @@ export async function serve(
 				}
 				const b = body.safeParse(raw ? JSON.parse(raw) : {});
 				if (!b.success) throw new Usage("请求体要是一个 JSON 对象");
-				send(res, 200, "application/json", JSON.stringify(await route(b.data, url)));
+				send(res, 200, "application/json", JSON.stringify(await route(b.data, url, req)));
 			} catch (e) {
 				const told =
 					e instanceof Usage || e instanceof NeedsHuman || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
@@ -282,6 +293,7 @@ export async function serve(
 	return {
 		port: (server.address() as { port: number }).port,
 		stop: async () => {
+			await stopCollections();
 			await stopJobs();
 			await new Promise<void>((ok) => server.close(() => ok()));
 		},

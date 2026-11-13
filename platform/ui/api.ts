@@ -1,6 +1,8 @@
 // 网页和 x2 web 之间：页、表的说明、表的行、改一格、添一行。出错抛人看得懂的原话（x2 web 回的）
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { BrowserAuthorization } from "../web/browser-authorizations.ts";
+import type { BrowserConnectionInput, BrowserConnectionResult } from "../web/browser-connection.ts";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
 import type { CatalogResult } from "./interactable/catalog/types.ts";
@@ -8,7 +10,7 @@ import { preserveMonitor } from "./interactable/procurement/sync.ts";
 import type { Monitor } from "./interactable/procurement/types.ts";
 import { readCache } from "./read-cache.ts";
 
-export type { Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
+export type { BrowserAuthorization, BrowserConnectionInput, BrowserConnectionResult, Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
 export type Column = Meta["columns"][number];
 
 async function call<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
@@ -38,6 +40,8 @@ const reimbursementKey = (item: string, input: ReimbursementQuery) =>
 	`${item}:${JSON.stringify([input.accounts ?? null, input.account ?? null, input.search, input.paidFrom, input.paidTo, input.offset])}`;
 
 export const api = {
+	connectBrowser: (input: BrowserConnectionInput) => call<BrowserConnectionResult>("POST", "/api/browser/connect", input),
+	browserAuthorizations: (site: string) => call<BrowserAuthorization[]>("GET", `/api/browser/authorizations?site=${q(site)}`),
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),
 	page: (id: string, force = false) => pageCache.read(id, () => call<Page>("GET", `/api/page?id=${q(id)}`), force),
 	peekPage: (id: string) => pageCache.peek(id),

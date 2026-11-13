@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type Item as PageItem, type PageSummary, usePoll } from "../../api.ts";
+import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
 import { monitorSync, preserveMonitor } from "./sync.ts";
 import type { Monitor, OrderLine, PurchaseMatch, PurchaseResult } from "./types.ts";
@@ -29,6 +30,7 @@ const syncMonitor = monitorSync(
 	},
 	(item, shops, value) => api.setProcurementMonitor(item, shops, preserveMonitor(api.peekProcurementMonitor(item, shops), value)),
 	(item) => api.procurementMonitorEpoch(item),
+	(item, shops) => api.peekProcurementMonitor(item, shops),
 );
 const seen = new Set<string>();
 
@@ -128,13 +130,16 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		api.peekProcurementMonitor(item.id, props.shops),
 	);
 	const [syncing, setSyncing] = useState(false);
+	const [connecting, setConnecting] = useState(false);
+	const connectionBusy = useRef(false);
+	const lock = useRef(false);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const syncRead = useRef<(force?: boolean) => Promise<void>>(async () => {});
 	useEffect(() => {
 		let stopped = false;
 		let reading = false;
 		const read = async (force = false) => {
-			if (reading) return;
+			if (reading || connectionBusy.current || lock.current) return;
 			reading = true;
 			setSyncing(true);
 			try {
@@ -161,12 +166,18 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	}, [item.id, props.shops, reload]);
 	const [selected, setSelected] = useState<string[]>([]);
 	const [busy, setBusy] = useState(false);
-	const lock = useRef(false);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [preview, setPreview] = useState<Preview | null>(null);
 	const storageKey = `x2-procurement-pending:${item.id}:${props.shops.join(",")}`;
 	const [pending, setPending] = useState(() => saved(storageKey));
 	const [result, setResult] = useState<PurchaseResult | null>(null);
+	const connectionChanged = (checking: boolean) => {
+		connectionBusy.current = checking;
+		setConnecting(checking);
+	};
+	const connected = () => syncRead.current(true);
+	const errors = [...new Set([actionError, syncError, data?.error, data?.purchases?.error, error].filter((message): message is string => Boolean(message)))];
+	const automaticSyncPaused = [data?.error, data?.purchases?.error].some((message) => /滑块|安全验证/.test(message ?? ""));
 	// 勾选用于读取和核对；是否允许加购由预览及确认的服务端实时检查决定。
 	const selectable = data?.orders.filter((o) => !o.cartPending) ?? [];
 	const selectedOrders = selected.filter((sn) => selectable.some((o) => o.sn === sn));
@@ -198,7 +209,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		};
 	}, [item.id, pending, storageKey, reload]);
 	const start = async () => {
-		if (lock.current || pending || !selectedOrders.length) return;
+		if (lock.current || connectionBusy.current || pending || !selectedOrders.length) return;
 		lock.current = true;
 		setBusy(true);
 		setActionError(null);
@@ -214,7 +225,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		}
 	};
 	const confirm = async () => {
-		if (!preview || lock.current || pending) return;
+		if (!preview || lock.current || connectionBusy.current || pending) return;
 		lock.current = true;
 		setBusy(true);
 		setActionError(null);
@@ -233,7 +244,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		}
 	};
 	const resume = async () => {
-		if (!pending || lock.current || result?.state !== "prepared") return;
+		if (!pending || lock.current || connectionBusy.current || result?.state !== "prepared") return;
 		lock.current = true;
 		setBusy(true);
 		setActionError(null);
@@ -256,7 +267,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					<h2 className="text-2xl font-semibold">订单采购</h2>
 					<p className="text-sm text-muted-foreground">{props.shops.join("、")} · X2 打开时每分钟检查新订单，点击开始采购后加入 1688 购物车。</p>
 				</div>
-				<Button variant="outline" disabled={busy || syncing} onClick={() => void syncRead.current(true)}>
+				<Button variant="outline" disabled={busy || syncing || connecting} onClick={() => void syncRead.current(true)}>
 					<RefreshCwIcon />
 					{syncing ? "正在更新订单…" : "刷新订单"}
 				</Button>
@@ -272,17 +283,44 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 			</div>
 			<div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
 				<span>1688 采购账号：{data?.purchases?.loginId ?? data?.purchases?.account ?? "尚未核对"}</span>
-				<span>采购订单同步：{data?.purchases?.capturedAt ? time(data.purchases.capturedAt) : "尚未同步"}</span>
-				{data?.purchases?.error ? (
-					<span role="alert" className="text-destructive">
-						{data.purchases.error}
-					</span>
-				) : null}
+				<span>上次完整同步：{data?.purchases?.capturedAt ? time(data.purchases.capturedAt) : "尚未同步"}</span>
+				{data?.purchases?.error && !syncing ? <span>{data.purchases.capturedAt ? "本次同步未完成，保留上次完整记录。" : "采购订单同步尚未完成。"}</span> : null}
 			</div>
-			{(error || data?.error || syncError || actionError) && (
-				<p role="alert" className="rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
-					{actionError ?? syncError ?? data?.error ?? error}
-				</p>
+			<div className="grid gap-3 md:grid-cols-2">
+				<Card>
+					<CardContent className="space-y-3 p-4">
+						<h3 className="text-sm font-medium">1688 采购账号连接</h3>
+						<BrowserConnection
+							expectedAccount={data?.purchases?.account ?? data?.purchases?.loginId ?? undefined}
+							verificationRequired={errors.some((message) => /滑块|安全验证/.test(message))}
+							disabled={busy || syncing || connecting}
+							onCheckingChange={connectionChanged}
+							onConnected={connected}
+						/>
+						{automaticSyncPaused && <p className="text-xs text-muted-foreground">等待验证期间暂停自动同步；验证完成后重新检测恢复。</p>}
+					</CardContent>
+				</Card>
+				{props.shops.map((shop) => (
+					<Card key={shop}>
+						<CardContent className="space-y-3 p-4">
+							<h3 className="text-sm font-medium">Shopee（虾皮）店铺授权 · {shop}</h3>
+							<BrowserConnection
+								site="shopee"
+								expectedAccount={shop}
+								disabled={busy || syncing || connecting}
+								onCheckingChange={connectionChanged}
+								onConnected={connected}
+							/>
+						</CardContent>
+					</Card>
+				))}
+			</div>
+			{errors.length > 0 && (
+				<div role="alert" className="space-y-2 rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
+					{errors.map((message) => (
+						<p key={message}>{message}</p>
+					))}
+				</div>
 			)}
 			{pending && (
 				<p role="status" className="rounded-lg border bg-muted/30 p-4 text-sm">
@@ -290,7 +328,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 				</p>
 			)}
 			{pending && result?.state === "prepared" && (
-				<Button disabled={busy} onClick={() => void resume()}>
+				<Button disabled={busy || connecting} onClick={() => void resume()}>
 					继续原确认
 				</Button>
 			)}
@@ -333,7 +371,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 							<p className="text-xs">按下单时间倒序 · 最新订单在前</p>
 							{selectionNeedsReview ? <p className="text-xs">所选订单含需核对的采购状态，将先读取核对；勾选不会加购或付款。</p> : null}
 						</div>
-						<Button className="ml-auto" disabled={busy || Boolean(pending) || !selectedOrders.length} onClick={() => void start()}>
+						<Button className="ml-auto" disabled={busy || connecting || Boolean(pending) || !selectedOrders.length} onClick={() => void start()}>
 							<ShoppingCartIcon />
 							{busy ? "正在读取采购信息…" : "开始采购"}
 						</Button>
@@ -435,7 +473,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 						<Button variant="outline" disabled={busy} onClick={() => setPreview(null)}>
 							取消
 						</Button>
-						<Button disabled={busy || Boolean(pending)} onClick={() => void confirm()}>
+						<Button disabled={busy || connecting || Boolean(pending)} onClick={() => void confirm()}>
 							确认加购
 						</Button>
 					</DialogFooter>

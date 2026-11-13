@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, type Item as PageItem } from "../../api.ts";
+import { api, type Item as PageItem, usePoll } from "../../api.ts";
+import { BrowserConnection } from "../../browser-connection.tsx";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import { DetailsContent } from "./details-content.tsx";
 import type { Props } from "./schema.ts";
@@ -83,6 +84,9 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 	const [error, setError] = useState<string | null>(null);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
+	const [authorizing, setAuthorizing] = useState(false);
+	const [authorizations, authorizationError, reloadAuthorizations] = usePoll(() => api.browserAuthorizations("shopee"), 30_000, [props.shop]);
+	const authorization = authorizations?.find((a) => a.accountId === data?.shopId || a.accountName === props.shop);
 	const [loading, setLoading] = useState(true);
 	const [version, setVersion] = useState(0);
 	const [selected, setSelected] = useState<Product | null>(null);
@@ -288,11 +292,36 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 					<h2 className="text-2xl font-semibold tracking-tight">{props.title ?? props.shop}</h2>
 					<p className="mt-1 text-sm text-muted-foreground">店铺商品与 SKU · 从侧栏切换店铺</p>
 				</div>
-				<Button onClick={refresh} disabled={refreshing}>
+				<Button onClick={refresh} disabled={refreshing || authorizing}>
 					<RefreshCwIcon className={refreshing ? "animate-spin" : ""} />
 					{refreshing ? "正在读取 Shopee…" : "刷新目录"}
 				</Button>
 			</header>
+			<section className="space-y-3 rounded-xl border bg-background p-4" aria-label="当前浏览器店铺授权">
+				<div>
+					<h3 className="text-sm font-medium">Shopee（虾皮）店铺授权</h3>
+					<p className="mt-1 text-xs text-muted-foreground">授权当前打开本页的浏览器连接 {props.shop}，核对实际店铺身份后保存对应关系。</p>
+				</div>
+				<BrowserConnection
+					site="shopee"
+					expectedAccount={data?.shopId ?? props.shop}
+					disabled={refreshing || authorizing || Boolean(statusBusy)}
+					onCheckingChange={setAuthorizing}
+					onConnected={() => {
+						reloadAuthorizations();
+					}}
+				/>
+				{authorization && (
+					<p className="text-xs text-muted-foreground">
+						上次授权店铺：{authorization.accountName || authorization.accountId} · 最近核实：{time(authorization.verifiedAt)}
+					</p>
+				)}
+				{authorizationError && (
+					<p role="alert" className="text-xs text-destructive">
+						授权记录读取失败：{authorizationError}
+					</p>
+				)}
+			</section>
 			<div className="grid gap-3 sm:grid-cols-3">
 				<Metric label="在售商品" value={data?.snapshot ? String(data.listedCount) : "—"} note="当前已上架的商品，包含售罄商品" />
 				<Metric label="当前查询" value={data ? String(data.total) : "—"} note={`${status === "1" ? "在售" : "未上架（下架）"}范围 · 商品名 / SKU / 库存筛选`} />

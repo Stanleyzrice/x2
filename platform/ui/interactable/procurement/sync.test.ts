@@ -58,6 +58,49 @@ test("确认后的快照已失效重读时，较早开始的同步不能回填�
 	assert.equal(published, 1);
 });
 
+test("滑块或安全验证暂停自动同步；显式重试保留真实失败，成功后才发布恢复快照", async () => {
+	for (const blocked of [
+		{ ...monitor, error: "1688 要过滑块验证" },
+		{
+			...monitor,
+			purchases: { account: "buyer", loginId: "tb-buyer", capturedAt: monitor.checkedAt, complete: false, error: "采购订单需要安全验证" },
+		},
+	]) {
+		let current: Monitor | null = blocked;
+		let next: Monitor = blocked;
+		let reads = 0;
+		const published: Monitor[] = [];
+		const sync = monitorSync(
+			async () => {
+				reads++;
+				return next;
+			},
+			(_, __, value) => {
+				current = value;
+				published.push(value);
+			},
+			() => 0,
+			() => current,
+			0,
+		);
+		assert.equal(await sync("1", ["one"]), blocked);
+		assert.equal(reads, 0, "已保存的验证错误不能触发自动外站同步");
+		assert.equal(published.length, 0, "暂停期间不能重复发布或清掉原错误");
+		assert.equal(await sync("1", ["one"], true), blocked);
+		assert.equal(reads, 1, "用户显式重试必须真正读取，即使仍然验证失败");
+		assert.equal(published[0], blocked);
+		current = null;
+		await sync("1", ["one"]);
+		await sync("1", ["one"]);
+		assert.equal(reads, 1, "短时缓存过期后也须保留验证快照，不能自动重载验证页");
+		next = monitor;
+		assert.equal(await sync("1", ["one"], true), monitor);
+		assert.equal(reads, 2);
+		assert.deepEqual(published, [blocked, monitor]);
+		assert.equal(current, monitor, "只有真实成功的返回值才能替换验证错误");
+	}
+});
+
 test("同步失败保留已有订单和原采集时间，真实成功的空列表正常替换", () => {
 	const order: Order = { sn: "1", shop: "one", createdAt: null, shipBy: null, items: "", lines: [], step: "待核对", cartPending: true, cartDone: false };
 	const previous = { ...monitor, orders: [order] };

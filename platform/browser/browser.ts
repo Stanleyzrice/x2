@@ -6,8 +6,8 @@
 // 几个 x2 进程同时跑：同一个浏览器的同一个站点一次只让一个进程用（lock.ts 的锁，用完 2 秒没再用就放），要隔开的站点两次加载之间隔开。
 // 认登录时开的标签页，没认出就关掉（probe）；跳到别的网站的登录页的标签页 x2 以后找不回来，也关掉，不留下。
 // 注册了人机验证的站点跳了验证（例 整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
-// 按登录找浏览器：一家店一个浏览器（Chrome 的不同用户），别的站点登录在其中一个里。站点怎么认登录由连接器注册（SiteDef.login）。
-// 每个连着的浏览器登录着什么都是现读，不存库；一个进程里每个浏览器、每个站点只认一次（开标签页、读接口都要时间）。
+// 按登录找浏览器：两家店分别使用独立用户环境，别的站点登录在其中一个里。站点怎么认登录由连接器注册（SiteDef.login）。
+// 每个连着的浏览器登录着什么不存库；一个进程内缓存成功身份，失败不留缓存，显式连接时重新识别。
 // 认的时候开的标签页，没登录的关掉（probe）；站点给了 cookie 的先看 cookie，明说没登录的不开页面。
 // 没在 using() 里、也没设 X2_BROWSER 的读写，pick 按站点来问 browserFor：要人选的站点（each，例 Shopee 按店）连着几个时要给 --shop，
 // 别的用登录着的那个
@@ -15,12 +15,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { RelayClient } from "@wuwe1/booey";
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { acquire, type Lock, spaced } from "./lock.ts";
+import { createVerificationRegistry, type VerificationDriver } from "./verification.ts";
 
 const MARK = "x2";
 const GRACE_MS = 2000;
 
 export type Page = {
 	readonly browser: string;
+	readonly tabId: number;
 	/** 在页面里调用一个函数：fn 要自给自足（不引用外面的变量），参数经 JSON 传进去 */
 	run<A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>>;
 	goto(url: string): Promise<void>;
@@ -79,7 +81,7 @@ export const using = <T>(browser: string, fn: () => Promise<T>): Promise<T> => c
 
 export async function browsers(): Promise<Browser[]> {
 	const all = await new RelayClient({}).browsers().catch(() => {
-		throw new NeedsHuman("连不上 booey：Chrome 开着吗？扩展连上了吗？");
+		throw new NeedsHuman("连不上 CDP：浏览器开着吗？扩展连上了吗？");
 	});
 	return all.map((b) => ({ id: b.id, label: b.label, attached: b.attached ?? [] }));
 }
@@ -88,7 +90,7 @@ const short = (b: Browser) => b.label || b.id.slice(0, 8);
 
 export async function pick(origin: string): Promise<Browser> {
 	const all = await browsers();
-	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Chrome，确认 booey 扩展已连接");
+	if (all.length === 0) throw new NeedsHuman("没有连上的浏览器：打开 Ego，确认 CDP 扩展已连接");
 	const want = chosen.getStore() ?? process.env.X2_BROWSER;
 	if (want) {
 		const b = all.find((x) => x.id === want || x.label === want);
@@ -151,23 +153,35 @@ async function enter(b: Browser, site: string): Promise<() => void> {
 	};
 }
 
-class Hit extends Error {}
+const verification = createVerificationRegistry();
+const accountBrowsers = new Map<string, string>();
 
-export async function challenge(browser: string, site: string): Promise<Challenge> {
+class Hit extends Error {
+	readonly tabId: number;
+	constructor(tabId: number) {
+		super();
+		this.tabId = tabId;
+	}
+}
+
+export async function challenge(browser: string, site: string, tabId?: number): Promise<Challenge> {
+	if (tabId !== undefined) verification.challenge(site, browser, tabId);
 	const name = await browserName(browser).catch(() => browser.slice(0, 8));
 	return new Challenge(`${sites.get(site)?.title ?? site} 要过滑块验证：在 ${name} 的浏览器里拉一下再重试`);
 }
 
 async function within<T>(b: Browser, site: string, fn: () => Promise<T>): Promise<T> {
 	const exit = await enter(b, site);
+	let tabId: number;
 	try {
 		return await fn();
 	} catch (e) {
 		if (!(e instanceof Hit)) throw e;
+		tabId = e.tabId;
 	} finally {
 		exit();
 	}
-	throw await challenge(b.id, site);
+	throw await challenge(b.id, site, tabId);
 }
 
 export async function hold<T>(origin: string, fn: () => Promise<T>): Promise<T> {
@@ -185,7 +199,7 @@ async function settle(c: RelayClient, tabId: number, origin: string, site: strin
 	let last = "";
 	for (;;) {
 		const s = await c.eval<{ state: string; url: string }>(tabId, "({ state: document.readyState, url: location.href })").catch(() => null);
-		if (s && sites.get(site)?.challenge?.url(s.url)) throw new Hit();
+		if (s && sites.get(site)?.challenge?.url(s.url)) throw new Hit(tabId);
 		if (s?.state === "complete" && s.url === last) break;
 		last = s?.state === "complete" ? s.url : "";
 		if (Date.now() > until) throw new Error(`页面 ${timeoutMs / 1000} 秒还没加载完`);
@@ -220,10 +234,14 @@ const finding = new Map<string, Promise<number>>();
 async function tabFor(c: RelayClient, b: Browser, origin: string, site: string): Promise<number> {
 	for (const t of (await c.tabs()).filter((t) => t.url.startsWith(origin))) {
 		await c.attach(t.tabId);
-		if ((await c.eval<string>(t.tabId, "window.name")) === MARK) return t.tabId;
+		if ((await c.eval<string>(t.tabId, "window.name")) === MARK) {
+			verification.own(site, b.id, t.tabId);
+			return t.tabId;
+		}
 	}
 	await pace(b, site);
 	const tab = await c.openTab(origin);
+	verification.own(site, b.id, tab.tabId);
 	opened.getStore()?.push(tab.tabId);
 	await c.attach(tab.tabId);
 	await settle(c, tab.tabId, origin, site);
@@ -252,11 +270,12 @@ export async function page(origin: string): Promise<Page> {
 			const challenge = sites.get(site)?.challenge;
 			if (!challenge) return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
 			const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args, challenge), { awaitPromise: true });
-			if (r.x2 === "challenge") throw new Hit();
+			if (r.x2 === "challenge") throw new Hit(id);
 			return r.value;
 		});
 	return {
 		browser: b.id,
+		tabId: id,
 		run,
 		goto: (url) =>
 			within(b, site, async () => {
@@ -315,8 +334,61 @@ function loginIn(site: string, b: Browser): Promise<Login> {
 			(error: Error) => ({ value: null, error }),
 		);
 		memo.set(key, p);
+		const pending = p;
+		void pending.then((r) => {
+			if (!r.value && memo.get(key) === pending) memo.delete(key);
+		});
 	}
 	return p;
+}
+
+/** 人点击连接后重新识别实际身份，不沿用旧身份或 cookie 的登录提示。只操作站点自己的 x2 页。 */
+export async function refreshLogin(site: string, browser: string): Promise<Account | null> {
+	const d = siteDef(site);
+	const key = `${site} ${browser}`;
+	memo.delete(key);
+	routes.delete(site);
+	try {
+		const value = await probe(browser, d.login.identify);
+		if (value) memo.set(key, Promise.resolve({ value, error: null }));
+		return value;
+	} catch (e) {
+		memo.delete(key);
+		throw e;
+	}
+}
+
+export function canOpenVerification(site: string, browser: string): Promise<boolean> {
+	return verification.canOpen(site, browser, (url) => verificationUrl(site, url), { tabs: (id) => new RelayClient({ browser: id }).tabs() });
+}
+
+function verificationUrl(site: string, raw: string): boolean {
+	const url = new URL(raw);
+	const d = siteDef(site);
+	return ["https:", "http:"].includes(url.protocol) && (d.hosts(url.hostname) || d.challenge?.url(url.href) === true);
+}
+
+/** 用户明确点击后只聚焦已知验证页，不导航、不另开站点页面。 */
+export async function focusVerification(site: string, browser: string, driver?: VerificationDriver): Promise<void> {
+	siteDef(site);
+	await verification.focus(
+		site,
+		browser,
+		(url) => verificationUrl(site, url),
+		driver ?? {
+			tabs: (id) => new RelayClient({ browser: id }).tabs(),
+			focus: async (id, tabId) => {
+				await new RelayClient({ browser: id }).send(tabId, "Page.bringToFront");
+			},
+		},
+	);
+}
+
+/** 绑定只决定核对顺序，不把历史授权当成实际登录身份。 */
+export function setAccountBrowserPreference(site: string, account: Account, browserId: string): void {
+	siteDef(site);
+	if (!account.id || !browserId) throw new Usage("账号与浏览器标识不能为空");
+	for (const name of new Set([account.id, account.name].filter(Boolean))) accountBrowsers.set(JSON.stringify([site, name]), browserId);
 }
 
 export async function browserName(id: string): Promise<string> {
@@ -344,7 +416,7 @@ export function choose(site: string, found: Found[]): string {
 		throw new Usage(`连着 ${logged.length} 个登录着 ${d.title} 的浏览器，用 --${d.login.each!.flag} 选一个：${logged.map((f) => f.name).join("、")}`);
 	throw (
 		found.map((f) => f.error).find((e) => e instanceof Challenge) ??
-		new NeedsHuman(`没有登录着 ${d.title} 的浏览器：打开登录着它的 Chrome（或在浏览器里登录 ${d.title}），确认 booey 扩展已连接`)
+		new NeedsHuman(`没有登录着 ${d.title} 的浏览器：打开登录着它的浏览器（或在 Ego 里登录 ${d.title}），确认 CDP 扩展已连接`)
 	);
 }
 
@@ -415,15 +487,21 @@ export async function challengeIn(site: string): Promise<Challenge | undefined> 
 export async function inAccount<T>(site: string, account: string, fn: () => Promise<T>): Promise<T> {
 	const d = siteDef(site);
 	const errors: (Error | null)[] = [];
-	for (const b of await browsers()) {
+	const seen: Account[] = [];
+	const all = await browsers();
+	const preferred = accountBrowsers.get(JSON.stringify([site, account]));
+	const ordered = preferred ? [...all.filter((b) => b.id === preferred), ...all.filter((b) => b.id !== preferred)] : all;
+	for (const b of ordered) {
 		const r = await loginIn(site, b);
 		if (r.value && (r.value.id === account || r.value.name === account)) return using(b.id, fn);
+		if (r.value) seen.push(r.value);
 		errors.push(r.error);
 	}
 	const challenge = errors.find((e) => e instanceof Challenge);
 	if (challenge) throw challenge;
-	const now = (await logins(site)).map((l) => l.account.name || l.account.id);
+	// 失败不缓存后，不能为了拼提示再探测一遍所有浏览器。
+	const now = seen.map((a) => a.name || a.id);
 	throw new NeedsHuman(
-		`没有登录着 ${d.title} ${account} 的浏览器：打开那个 Chrome，登录 ${d.title}，确认 booey 扩展已连接（现在登录着的：${now.join("、") || "没有"}）`,
+		`没有登录着 ${d.title} ${account} 的浏览器：打开对应浏览器，登录 ${d.title}，确认 CDP 扩展已连接（现在登录着的：${now.join("、") || "没有"}）`,
 	);
 }

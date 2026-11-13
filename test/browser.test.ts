@@ -61,6 +61,13 @@ test("不算滑块验证：没登录时跳转经过的 login_jump、普通页面
 	assert.equal(challengeOf(page({ text: "请按住滑块，拖动到最右边。登录" })), false);
 });
 
+test("验证页聚焦只信任1688域名，外站同名punish路径不能冒充验证页", () => {
+	assert.equal(SLIDER.url("https://s.1688.com/_____tmd_____/punish?x5secdata=example"), true);
+	assert.equal(SLIDER.url("https://h5api.m.1688.com/h5/mtop.x/_____tmd_____/punish"), true);
+	assert.equal(SLIDER.url("https://evil.example/_____tmd_____/punish"), false);
+	assert.equal(SLIDER.url("https://1688.com.evil.example/_____tmd_____/punish"), false);
+});
+
 test("登录页：主机名是 login.、passport.、accounts. 开头的，或路径里有 login、signin", () => {
 	assert.equal(loginPage("https://login.taobao.com/?redirect_url=https%3A%2F%2Flogin.1688.com%2F&style=tao_custom&from=1688web"), true);
 	assert.equal(loginPage("https://login.1688.com/member/jump.htm?target=x"), true);
