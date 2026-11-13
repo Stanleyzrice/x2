@@ -142,6 +142,32 @@ test("货源齐了、待加购：agent 准备一行加购，同一个货源的�
 	assert.equal(r.reminders.length, 0);
 });
 
+test("尺寸与款式唯一对齐后加购使用精确SKU，已有付款仍阻止重复加购", () => {
+	const state = snap({
+		orders: [order("1", 1, { items: [{ ...item("M1", 1), spec: "62*11.8*188,加厚款" }] })],
+		sources: [
+			source({
+				chosen: true,
+				skus: [
+					sku("S1", "【钢制-加厚】6层-62x11.8x188cm / 多层储物 双层防掉"),
+					sku("S2", "【钢制-常规】6层-62x9x188cm / 多层储物 双层防掉"),
+					sku("S3", "【加厚款】72x11.8x188cm / 多层储物 双层防掉"),
+				],
+			}),
+		],
+	});
+	const result = checkOrders(state);
+	const cart = result.todo.find((todo) => todo.kind === "加购");
+	assert.ok(cart && cart.kind === "加购");
+	assert.equal(cart.params.items.length, 1);
+	assert.equal(cart.params.items[0]!.skuId, "S1");
+	assert.equal(cart.params.items[0]!.qty, 1);
+	assert.equal(
+		checkOrders({ ...state, purchases: [purchase(1)] }).todo.some((todo) => todo.kind === "加购"),
+		false,
+	);
+});
+
 test("加购了在购物车里：提醒「付款」，订单停在待 1688 付款", () => {
 	const r = checkOrders(snap({ writes: [cartWrite()], cart: [{ account: "A", offerId: "O1", skuId: "S1", qty: 3 }] }));
 	const pay = r.reminders.find((i) => i.key === "pay:A");

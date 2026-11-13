@@ -5,7 +5,7 @@ import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { ProcurementItem, ProcurementListingRow, ProcurementSourceRow } from "./procurement-items.ts";
 import type { Coverage, Match, MatchNeed, MatchRecord } from "./procurement-matches.ts";
-import { exceptionFor, sameName } from "./similar.ts";
+import { exceptionFor, matchSku } from "./similar.ts";
 
 export type EvidenceSource = ProcurementSourceRow & { skus: unknown; exceptions: string | null };
 export type EvidenceListing = ProcurementListingRow & { variants: unknown; offer: unknown };
@@ -90,7 +90,7 @@ export async function readPurchaseEvidence(sql: Sql): Promise<PurchaseEvidence> 
 const models = z.array(z.object({ modelId: z.string().nullable(), sku: z.string().nullable() }));
 const variants = z.object({ variants: z.array(z.object({ sku: z.string().min(1), skuId: z.string().min(1), specId: z.string() })) });
 const offer = z.object({ offerId: z.string().min(1), skus: z.array(z.object({ skuId: z.string().min(1), specId: z.string() })) });
-const sourceSkus = z.array(z.object({ skuId: z.string().min(1), specId: z.string(), name: z.string() }));
+const sourceSkus = z.array(z.object({ skuId: z.string().min(1), specId: z.string(), name: z.string(), attrs: z.array(z.string()).optional() }));
 const missing = (reason: string) => ({ target: null, reason });
 
 export function procurementTarget(
@@ -127,12 +127,10 @@ export function procurementTarget(
 	const source = chosen[0]!,
 		parsed = sourceSkus.safeParse(source.skus);
 	if (!parsed.success) return missing("已选货源缺少可核对的 SKU 编号和规格");
-	const named = exceptionFor(item.spec, source.exceptions);
-	const matches = parsed.data.filter((sku) =>
-		named !== undefined ? sameName(sku.name, named) : item.spec ? sameName(sku.name, item.spec) : parsed.data.length === 1 && sku.specId === "",
-	);
-	return matches.length === 1
-		? { target: { offerId: source.offerId, skuId: matches[0]!.skuId, specId: matches[0]!.specId } }
+	// 采购状态与实际加购共用唯一规格对齐；相似度只用于候选提示，不能决定买哪个 SKU。
+	const matched = matchSku(item.spec, parsed.data, source.exceptions);
+	return matched && (item.spec || exceptionFor(item.spec, source.exceptions) !== undefined || matched.specId === "")
+		? { target: { offerId: source.offerId, skuId: matched.skuId, specId: matched.specId } }
 		: missing("人工已选货源没有唯一且明确的规格对应");
 }
 

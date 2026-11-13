@@ -136,6 +136,54 @@ test("人工选货源只接受唯一明确规格或人工例外，不用相似�
 	assert.equal(procurementTarget(target, item, [selected, selected], [], []).target, null);
 	assert.equal(procurementTarget(target, item, [{ ...selected, broken: "失效" }], [], []).target, null);
 	assert.equal(procurementTarget(target, { ...item, spec: "页面规格" }, [{ ...selected, exceptions: "页面规格 = 大号" }], [], []).target?.skuId, "202");
+	assert.equal(procurementTarget(target, { ...item, spec: "" }, [{ ...selected, exceptions: "（单规格） = 大号" }], [], []).target?.skuId, "202");
+});
+
+test("采购状态对齐尺寸与款式明确的已选货源，规格顺序和供应商附加说明不阻断同一规格", () => {
+	const skus = [
+		{ skuId: "5484474014568", specId: "size-72", name: "【加厚款】72x11.8x188cm / 多层储物 双层防掉" },
+		{ skuId: "5696255372057", specId: "size-62", name: "【钢制-加厚】6层-62x11.8x188cm / 多层储物 双层防掉" },
+		{ skuId: "5696255372062", specId: "regular-62", name: "【钢制-常规】6层-62x9x188cm / 多层储物 双层防掉" },
+	];
+	const selected = { ...source, skus };
+	const sold = { ...item, spec: "62*11.8*188,加厚款" };
+	assert.deepEqual(procurementTarget(target, sold, [selected], [], []).target, {
+		offerId: source.offerId,
+		skuId: "5696255372057",
+		specId: "size-62",
+	});
+	for (const spec of ["62*11.8*188,常规款", "62*118*188,加厚款", "62*11.8*188mm,加厚款", "62*11.8*188,加绒款"])
+		assert.equal(procurementTarget(target, { ...sold, spec }, [selected], [], []).target, null);
+	assert.equal(procurementTarget(target, sold, [{ ...selected, skus: [...skus, { ...skus[1]!, skuId: "another-62" }] }], [], []).target, null);
+});
+
+test("采购状态保留字母尺码与数字边界，同名不同SKU及重复人工例外不取第一项", () => {
+	for (const [spec, name] of [
+		["XL", "L"],
+		["1.5m", "15m"],
+		["10×20cm", "1020cm"],
+		["36-37", "3637"],
+	])
+		assert.equal(procurementTarget(target, { ...item, spec: spec! }, [{ ...source, skus: [{ skuId: "202", specId: "s", name }] }], [], []).target, null);
+	assert.equal(
+		procurementTarget(
+			target,
+			item,
+			[
+				{
+					...source,
+					skus: [
+						{ skuId: "202", specId: "s-one", name: "大号" },
+						{ skuId: "203", specId: "s-two", name: "大号" },
+					],
+					exceptions: "大号 = 大号",
+				},
+			],
+			[],
+			[],
+		).target,
+		null,
+	);
 });
 
 const match = (state: Match["state"], canPurchase = false): Match => ({
