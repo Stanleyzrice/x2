@@ -542,12 +542,16 @@ export async function prepareUploadService(context?: UploadWindow): Promise<bool
 			} catch {}
 		}
 		const chunks = new Set(uploadChunks);
+		const nativeInitializers = new Set<string>();
 		// 页面现有 loader 如 Promise.all([r.e(63),r.e(36)])：63 提供 UploadService，36 只创建实例。
 		// 必须先完整加载依赖，再 require 模块，避免缺依赖时留下半初始化的 webpack 缓存。
 		for (const source of Object.values(req.m ?? {}).map(String)) {
-			for (const group of source.matchAll(/Promise\.all\(\[([^\]]+)\]\)/g)) {
+			for (const group of source.matchAll(/Promise\.all\(\[([^\]]+)\]\)\.then\(\s*[\w$]+\.bind\(\s*[\w$]+\s*,\s*(\d+)\s*\)\s*\)/g)) {
 				const ids = [...group[1]!.matchAll(/\.e\(\s*(\d+)\s*\)/g)].map((m) => Number(m[1]));
-				if (ids.some((id) => uploadChunks.has(id))) for (const id of ids) chunks.add(id);
+				if (ids.some((id) => uploadChunks.has(id))) {
+					for (const id of ids) chunks.add(id);
+					nativeInitializers.add(group[2]!);
+				}
 			}
 		}
 		try {
@@ -555,7 +559,9 @@ export async function prepareUploadService(context?: UploadWindow): Promise<bool
 		} catch {
 			continue;
 		}
-		for (const [id, factory] of Object.entries(req.m ?? {})) {
+		// 优先只 require 原生 loader 的服务初始化模块；匹配到 uploadImage 的UI模块并非服务，随意初始化可能污染webpack缓存。
+		const modules = nativeInitializers.size ? [...nativeInitializers].map((id) => [id, req.m?.[id]] as const) : Object.entries(req.m ?? {});
+		for (const [id, factory] of modules) {
 			if (!/UploadService|uploadImage|uploadapi\/api\/v1\/image/.test(String(factory))) continue;
 			let mod: Record<string, unknown> | null;
 			try {
@@ -588,7 +594,7 @@ export async function uploadImages(files: { base64: string; mime: string }[], bi
 		ready = await p.run(prepareUploadService);
 		if (!ready) await new Promise((r) => setTimeout(r, 2000));
 	}
-	if (!ready) throw new Error("没找到页面的 UploadService：先在浏览器里打开一次新增商品页");
+	if (!ready) throw new Error("页面的 UploadService 未就绪：原生上传模块缺失或早期初始化缓存失效；请检查X2自有新增商品页，不发送图片");
 	const ids: string[] = [];
 	for (const [i, f] of files.entries()) {
 		if (i > 0) await new Promise((r) => setTimeout(r, 500));

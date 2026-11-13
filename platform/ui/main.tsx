@@ -117,32 +117,34 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 		}
 	};
 	const entries = (list: PageSummary[]) =>
-		list.map((p) => {
-			const Icon = iconOf(p.workspace?.icon);
-			return (
-				<SidebarMenuItem key={p.id} className="flex items-center gap-2">
-					{managing && !p.workspace && (
-						<Checkbox
-							className="ml-2 shrink-0"
-							aria-label={`选择页面 ${p.title}`}
-							checked={selected.has(p.id)}
-							disabled={deleting}
-							onCheckedChange={(checked) => toggle(p.id, checked === true)}
-						/>
-					)}
-					<SidebarMenuButton
-						isActive={p.id === active}
-						render={<a href={`#${p.workspace?.key ?? p.id}`} />}
-						onClick={() => setOpenMobile(false)}
-						onMouseEnter={() => void preloadPage(p.id)}
-						onFocus={() => void preloadPage(p.id)}
-					>
-						<Icon />
-						<span className="truncate">{p.title}</span>
-					</SidebarMenuButton>
-				</SidebarMenuItem>
-			);
-		});
+		[...list]
+			.sort((a, b) => (a.workspace?.order ?? 0) - (b.workspace?.order ?? 0))
+			.map((p) => {
+				const Icon = iconOf(p.workspace?.icon);
+				return (
+					<SidebarMenuItem key={p.id} className="flex items-center gap-2">
+						{managing && !p.workspace && (
+							<Checkbox
+								className="ml-2 shrink-0"
+								aria-label={`选择页面 ${p.title}`}
+								checked={selected.has(p.id)}
+								disabled={deleting}
+								onCheckedChange={(checked) => toggle(p.id, checked === true)}
+							/>
+						)}
+						<SidebarMenuButton
+							isActive={p.id === active}
+							render={<a href={`#${p.workspace?.key ?? p.id}`} />}
+							onClick={() => setOpenMobile(false)}
+							onMouseEnter={() => void preloadPage(p.id)}
+							onFocus={() => void preloadPage(p.id)}
+						>
+							<Icon />
+							<span className="truncate">{p.title}</span>
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+				);
+			});
 	return (
 		<Sidebar>
 			<SidebarHeader className="border-b px-4 py-5">

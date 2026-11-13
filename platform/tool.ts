@@ -31,7 +31,7 @@ export type Todo = { kind: string; why: string; tool?: string; params?: Record<s
 export type Read = { what: string; who: string; ok: boolean; rows?: number; error?: string; blocked?: boolean };
 export type Checked = { read: Read[]; human: Reminder[]; todo: Todo[] };
 
-export type Workspace = { key: string; title: string; component: string; props: Record<string, unknown>; group?: string; icon?: string };
+export type Workspace = { key: string; title: string; component: string; props: Record<string, unknown>; group?: string; icon?: string; order?: number };
 export type Job = { name: string; hour: number; timeZone: string; run: (sql: Sql) => Promise<unknown> };
 
 export type Toolkit = {

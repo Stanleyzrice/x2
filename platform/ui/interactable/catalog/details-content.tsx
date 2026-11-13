@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useLightbox } from "@/components/lightbox";
 import type { Product } from "./types.ts";
 
-function DetailImage({ src, label, open, thumbnail = false }: { src: string; label: string; open: () => void; thumbnail?: boolean }) {
+export function DetailImage({ src, label, open, thumbnail = false }: { src: string; label: string; open: () => void; thumbnail?: boolean }) {
 	const [failedSrc, setFailedSrc] = useState<string | null>(null);
 	if (failedSrc === src)
 		return (
@@ -35,16 +35,24 @@ function DetailImage({ src, label, open, thumbnail = false }: { src: string; lab
 	);
 }
 
-export function DetailsContent({ product, reading }: { product: Product; reading: boolean }) {
+export function DetailsContent({
+	product,
+	reading,
+	sourceLabel = "Shopee",
+}: {
+	product: Pick<Product, "productImages" | "description" | "sizeChartImage" | "detailReadAt">;
+	reading: boolean;
+	sourceLabel?: string;
+}) {
 	const images = [...new Set(product.productImages ?? [])];
 	const description = product.description;
 	const blocks = description?.blocks ?? [];
 	const photos = [
-		...images.map((src, index) => ({ src, alt: `商品图 ${index + 1}`, label: `Shopee · 商品图 ${index + 1}` })),
+		...images.map((src, index) => ({ src, alt: `商品图 ${index + 1}`, label: `${sourceLabel} · 商品图 ${index + 1}` })),
 		...blocks
 			.filter((block) => block.type === "image")
-			.map((block, index) => ({ src: block.src, alt: `详情图 ${index + 1}`, label: `Shopee · 详情图 ${index + 1}` })),
-		...(product.sizeChartImage ? [{ src: product.sizeChartImage, alt: "尺码表", label: "Shopee · 尺码表" }] : []),
+			.map((block, index) => ({ src: block.src, alt: `详情图 ${index + 1}`, label: `${sourceLabel} · 详情图 ${index + 1}` })),
+		...(product.sizeChartImage ? [{ src: product.sizeChartImage, alt: "尺码表", label: `${sourceLabel} · 尺码表` }] : []),
 	];
 	const lightbox = useLightbox(photos);
 	const occurrences = new Map<string, number>();
@@ -84,7 +92,7 @@ export function DetailsContent({ product, reading }: { product: Product; reading
 				)}
 				{!blocks.length && !description?.error && (
 					<p className="text-sm text-muted-foreground">
-						{reading ? "正在读取商品描述与详情图…" : product.detailReadAt ? "Shopee 未返回商品描述或详情图。" : "尚未取得商品描述与详情图。"}
+						{reading ? "正在读取商品描述与详情图…" : product.detailReadAt ? `${sourceLabel} 未返回商品描述或详情图。` : "尚未取得商品描述与详情图。"}
 					</p>
 				)}
 			</section>

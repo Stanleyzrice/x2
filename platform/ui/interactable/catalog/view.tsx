@@ -17,6 +17,7 @@ import { BrowserConnection } from "../../browser-connection.tsx";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import { DetailsContent } from "./details-content.tsx";
 import type { Props } from "./schema.ts";
+import { SourcesView } from "./source-view.tsx";
 import type { CatalogResult, Model, Product } from "./types.ts";
 
 const money = (n: number | null) =>
@@ -66,6 +67,7 @@ function savedReceipts(key: string): Record<string, Receipt> {
 }
 
 export function View({ props, item }: { props: Props; item: PageItem }) {
+	if (props.mode === "collect" || props.mode === "candidates") return <SourcesView key={`${item.id}:${props.shop}:${props.mode}`} props={props} item={item} />;
 	return <Catalog key={`${item.id}:${props.shop}`} props={props} item={item} />;
 }
 

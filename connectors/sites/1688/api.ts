@@ -39,7 +39,47 @@ export type Offer = {
 
 export function offerIdOf(linkOrId: string): OfferId | null {
 	const m = /offer\/(\d+)\.html/.exec(linkOrId) ?? /^(\d+)$/.exec(linkOrId.trim());
-	return m ? OfferId.parse(m[1]) : null;
+	if (m) return OfferId.parse(m[1]);
+	try {
+		const url = new URL(linkOrId);
+		const values = url.searchParams.getAll("offerId");
+		return ["http:", "https:"].includes(url.protocol) &&
+			!url.username &&
+			!url.password &&
+			(url.hostname === "1688.com" || url.hostname.endsWith(".1688.com")) &&
+			url.pathname === "/offer" &&
+			values.length === 1 &&
+			/^\d+$/.test(values[0]!)
+			? OfferId.parse(values[0])
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+type CollectionNode = { getAttribute: (name: string) => string | null; parentElement: CollectionNode | null };
+
+/** 首页卡片没有链接时，仅读原生属性中的商品编号；独立函数供 CDP 注入，不能依赖模块上下文或 React 私有字段。 */
+export function collectionLink(node: CollectionNode): string | null | undefined {
+	const ids = new Set<string>();
+	for (let current: typeof node | null = node, depth = 0; current && depth < 8; current = current.parentElement, depth++) {
+		const values = [current.getAttribute("data-offer-id"), current.getAttribute("data-offerid")].filter((value) => value !== null);
+		const fields = (current.getAttribute("data-aplus-report") ?? "").split("^").map((part) => {
+			const at = part.indexOf("@");
+			return [part.slice(0, at), part.slice(at + 1)];
+		});
+		const types = new Set(fields.filter(([key]) => key === "object_type").map(([, value]) => value));
+		if (types.size > 1) return null;
+		// 广告的 object_id 可能是广告编号；明确的 offerId 仍是商品编号，只有 offer 类型可用 object_id。
+		for (const [key, value] of fields) if (key === "offerId" || (key === "object_id" && types.has("offer"))) values.push(value!);
+		for (const value of values) {
+			if (!/^\d+$/.test(value)) return null;
+			ids.add(value);
+		}
+		if (ids.size > 1) return null;
+	}
+	const id = ids.values().next().value;
+	return id ? `https://detail.1688.com/offer/${id}.html` : undefined;
 }
 
 export class Gone extends Error {}
@@ -204,8 +244,59 @@ export async function offer(offerId: OfferId): Promise<Offer> {
 	return offerOf(got.page, offerId);
 }
 
-/** 详情图：detailUrl 回的是 `var offer_details={"content":"<html>"};`（浏览器跨域拿不到，在这边取）。按出现的顺序取 <img src>，去重，最多 40 张 */
-export async function detailImages(detailUrl: string): Promise<string[]> {
+export type DescriptionBlock = { type: "text"; text: string } | { type: "image"; src: string };
+export type Description = { text: string; images: string[]; blocks: DescriptionBlock[] };
+
+/** 描述的字与图按原顺序保存；不执行 HTML，不识别或翻译图片内的文字。 */
+export function descriptionOf(raw: string): Description {
+	let html = raw;
+	try {
+		html = String(JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)).content ?? "");
+	} catch {}
+	const decode = (value: string) =>
+		value.replace(/&(?:nbsp|amp|lt|gt|quot|apos|#39|#\d+|#x[\da-f]+);/gi, (entity) => {
+			const known: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&#39;": "'" };
+			if (known[entity.toLowerCase()] !== undefined) return known[entity.toLowerCase()]!;
+			const code = /^&#x/i.test(entity) ? Number.parseInt(entity.slice(3, -1), 16) : Number.parseInt(entity.slice(2, -1), 10);
+			return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : entity;
+		});
+	const blocks: DescriptionBlock[] = [],
+		images: string[] = [];
+	let paragraph = "";
+	const flush = () => {
+		const text = decode(paragraph)
+			.replace(/[\t ]+/g, " ")
+			.trim();
+		if (text) blocks.push({ type: "text", text });
+		paragraph = "";
+	};
+	const clean = html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
+	for (const token of clean.matchAll(/<img\b[^>]*>|<br\b[^>]*>|<\/(?:p|div|li|tr|h[1-6]|section)\s*>|<[^>]*>|[^<]+/gi)) {
+		const value = token[0];
+		if (/^<img\b/i.test(value)) {
+			flush();
+			const src = /\bsrc=["']([^"']+)["']/i.exec(value)?.[1];
+			const url = src ? decode(src).replace(/^\/\//, "https://") : "";
+			if (/^https:\/\//.test(url) && !images.includes(url) && images.length < 40) {
+				images.push(url);
+				blocks.push({ type: "image", src: url });
+			}
+		} else if (/^<(?:br\b|\/)/i.test(value)) flush();
+		else if (!value.startsWith("<")) paragraph += value;
+	}
+	flush();
+	return {
+		text: blocks
+			.filter((b) => b.type === "text")
+			.map((b) => b.text)
+			.join("\n"),
+		images,
+		blocks,
+	};
+}
+
+/** detailUrl 回的是 `var offer_details={"content":"<html>"};`，沿用原详情请求，同时返回原文字与原图。 */
+export async function description(detailUrl: string): Promise<Description> {
 	const r = await fetch(detailUrl, {
 		headers: {
 			"user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -214,13 +305,12 @@ export async function detailImages(detailUrl: string): Promise<string[]> {
 		signal: AbortSignal.timeout(30_000),
 	});
 	if (!r.ok) throw new Error(`取 1688 详情 HTTP ${r.status}`);
-	const text = await r.text();
-	let html = text;
-	try {
-		html = String(JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)).content ?? "");
-	} catch {}
-	const urls = [...html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi)].map((m) => m[1]!.replace(/^\/\//, "https://")).filter((u) => /^https:\/\//.test(u));
-	return [...new Set(urls)].slice(0, 40);
+	return descriptionOf(await r.text());
+}
+
+/** 既有详情图调用保持原样，字图共享同一次解析。 */
+export async function detailImages(detailUrl: string): Promise<string[]> {
+	return (await description(detailUrl)).images;
 }
 
 // 购物车、加购、采购单、物流都在页面里用页面自己的 lib.mtop.request 发（签名由它算）。依据 lilto 的 packages/presets/src/1688.ts（2026-09-24 读的 mtop.js 源码）：
@@ -263,7 +353,7 @@ async function mtop(url: string, api: string, data: Record<string, string>): Pro
 		api,
 		data,
 	);
-	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser, "1688")).message, challenge: true } : r;
+	return r.kind === "challenge" ? { kind: "blocked", ret: (await challenge(p.browser, "1688", p.tabId)).message, challenge: true } : r;
 }
 
 /** 发一个读的 mtop 请求，回原样的 data（各接口的 …Of 解析） */
@@ -301,8 +391,51 @@ export async function account(): Promise<{ userId: string; loginId: string }> {
 
 export type SearchHit = { offerId: string; url: string; title: string; price: number; minQty: number; sold: string; shop: string; image: string };
 
+const searchCards = z.array(
+	z.object({
+		href: z.string(),
+		text: z.string(),
+		title: z.string(),
+		price: z.string(),
+		minQty: z.string(),
+		sold: z.string(),
+		shop: z.string(),
+		image: z.string(),
+	}),
+);
+
+/** 商品卡字段可能改类名，详情链接和可见文字仍在：不把拆行的小数、物流重量或回头率当成单价/起订量。 */
+export function searchHitsOf(raw: unknown): SearchHit[] {
+	const hits = new Map<string, SearchHit>();
+	for (const card of reply(searchCards, raw, "1688 搜索商品卡")) {
+		const offerId = /\/offer\/(\d+)\.html/.exec(card.href)?.[1] ?? /[?&]offerId=(\d+)/.exec(card.href)?.[1];
+		if (!offerId) continue;
+		const lines = card.text
+			.split("\n")
+			.map((s) => s.trim())
+			.filter(Boolean);
+		const price = card.price || /[¥￥]\s*([\d,]+(?:\s*\.\s*\d+)?)/.exec(card.text)?.[1] || "";
+		const min = card.minQty || lines.find((s) => /^[≥>]\s*\d/.test(s) || /\d+\s*件起批/.test(s)) || "";
+		const hit: SearchHit = {
+			offerId,
+			url: `https://detail.1688.com/offer/${offerId}.html`,
+			title: card.title || lines[0] || "",
+			price: Number.parseFloat(price.replace(/[^\d.]/g, "")) || 0,
+			minQty: Number.parseInt(min.replace(/[^\d]/g, ""), 10) || 0,
+			sold: card.sold || lines.find((s) => /^(?:全网)?\d[\d.+万]*件$/.test(s)) || "",
+			shop: card.shop || [...lines].reverse().find((s) => /^.{2,}(?:公司|厂|店|商行|经营部|工作室)$/.test(s)) || "",
+			image: card.image.replace(/^\/\//, "https://"),
+		};
+		const previous = hits.get(offerId);
+		if (!previous) hits.set(offerId, hit);
+		// 同一商品可能有整卡和标题两个链接，保留整卡字段，不重复返回。
+		else for (const key of ["title", "price", "minQty", "sold", "shop", "image"] as const) if (!previous[key]) Object.assign(previous, { [key]: hit[key] });
+	}
+	return [...hits.values()];
+}
+
 /** 2026-10-09 查过：一页 60 个，先只出 10 来个，往下滚才一批批加载；价格拆成几段（¥、0、.03），要读整个 .price-item；
- * 起订量（≥N 个）多数卡片上没有，没有时 minQty 是 0 */
+ * 2026-11-11 新版 offerCard 整卡用普通 http(s) 详情链接，没有 offerId 查询参数；起订量多数卡片上没有，没有时 minQty 是 0 */
 export async function search(keyword: string): Promise<SearchHit[]> {
 	const p = await page("https://s.1688.com");
 	// 搜索页没有带 name 的搜索框了：关键词直接放在地址里（charset=utf8 才认 UTF-8）
@@ -318,61 +451,60 @@ export async function search(keyword: string): Promise<SearchHit[]> {
 			if (document.readyState !== "complete") return null;
 			const cards = [
 				...document.querySelectorAll<HTMLAnchorElement>(
-					'a[class*="feedCard--"], a[data-tracker="offer"][href*="offerId="], a[class*="offerCard--"][href*="offerId="], a.search-offer-item, a.search-offer-wrapper',
+					'a[href*="detail.1688.com/offer/"], a[class*="feedCard--"], a[data-tracker="offer"][href*="offerId="], a[class*="offerCard--"][href*="offerId="], a.search-offer-item, a.search-offer-wrapper',
 				),
 			];
-			if (!cards.length) return /空空如也|没有找到/.test(document.body.innerText) ? { hits: [] } : null;
+			if (!cards.length) return /空空如也|没有找到/.test(document.body.innerText) ? { cards: [] } : null;
 			window.scrollTo(0, document.body.scrollHeight);
 			const text = (el: Element | null) => ((el as HTMLElement | null)?.innerText ?? "").trim();
 			return {
-				hits: cards
-					.map((card) => {
-						// 广告卡片的链接里没有商品 id（offer id）：跳过
-						const offerId = card.href.match(/\/offer\/(\d+)\.html/)?.[1] ?? card.href.match(/offerId=(\d+)/)?.[1] ?? "";
-						const descs = [...card.querySelectorAll('[class*="descText--"], .desc-text')].map(text);
-						const min = descs.find((v) => /^[≥>]\s*\d/.test(v) || /\d+\s*件起批/.test(v)) || text(card.querySelector('[class*="hoverPriceQty--"]'));
-						const sold = descs.find((v) => /^(?:全网)?\d[\d.+万]*件$/.test(v)) || "";
-						const titleEl =
-							card.querySelector('[class*="title--"], .title-text, [class*="titleText--"]') ??
-							[...card.querySelectorAll<HTMLElement>("div, span")].find((el) => {
-								const own = [...el.childNodes]
-									.filter((n) => n.nodeType === 3)
-									.map((n) => n.textContent ?? "")
-									.join("")
-									.trim();
-								return own.length >= 8 && !/desc|price|seller|channel/i.test(String(el.className));
-							}) ??
-							null;
-						const price =
-							text(card.querySelector('[class*="priceMain--"]')) + text(card.querySelector('[class*="priceSub--"]')) ||
-							text(card.querySelector('.offer-price-row .price-item, .price-item, [class*="priceItem--"], [class*="hoverPriceValue--"]'));
-						const img = card.querySelector<HTMLImageElement>('img:not([class*="Icon"]):not([class*="icon"])');
-						return {
-							offerId,
-							url: `https://detail.1688.com/offer/${offerId}.html`,
-							title: text(titleEl) || (card.innerText.split("\n")[0] ?? "").trim(),
-							price: Number.parseFloat(price.replace(/[^\d.]/g, "")) || 0,
-							minQty: Number.parseInt(min.replace(/[^\d]/g, ""), 10) || 0,
-							sold,
-							shop:
-								text(card.querySelector('[class*="sellerInformationText--"]')) ||
-								descs.filter((v) => v !== min && v !== sold && !/回头率|包运费|先采后付/.test(v)).pop() ||
-								"",
-							image: img?.src || img?.getAttribute("data-src") || "",
-						};
-					})
-					.filter((h) => h.offerId),
+				cards: cards.map((card) => {
+					const descs = [...card.querySelectorAll('[class*="descText--"], .desc-text')].map(text);
+					const min = descs.find((v) => /^[≥>]\s*\d/.test(v) || /\d+\s*件起批/.test(v)) || text(card.querySelector('[class*="hoverPriceQty--"]'));
+					const sold = descs.find((v) => /^(?:全网)?\d[\d.+万]*件$/.test(v)) || "";
+					const titleEl =
+						card.querySelector('[class*="title--"], .title-text, [class*="titleText--"]') ??
+						[...card.querySelectorAll<HTMLElement>("div, span")].find((el) => {
+							const own = [...el.childNodes]
+								.filter((n) => n.nodeType === 3)
+								.map((n) => n.textContent ?? "")
+								.join("")
+								.trim();
+							return own.length >= 8 && !/desc|price|seller|channel/i.test(String(el.className));
+						}) ??
+						null;
+					const price =
+						text(card.querySelector('[class*="priceMain--"]')) + text(card.querySelector('[class*="priceSub--"]')) ||
+						text(card.querySelector('.offer-price-row .price-item, .price-item, [class*="priceItem--"], [class*="hoverPriceValue--"]'));
+					const img = card.querySelector<HTMLImageElement>('img:not([class*="Icon"]):not([class*="icon"])');
+					return {
+						href: card.href,
+						text: card.innerText,
+						title: text(titleEl),
+						price,
+						minQty: min,
+						sold,
+						shop:
+							text(card.querySelector('[class*="sellerInformationText--"]')) ||
+							descs.filter((v) => v !== min && v !== sold && !/回头率|包运费|先采后付/.test(v)).pop() ||
+							"",
+						image: img?.src || img?.getAttribute("data-src") || "",
+					};
+				}),
 			};
 		});
 		if (got && "error" in got) throw new NeedsHuman(got.error);
 		if (!got) continue;
-		last = got.hits;
-		if (got.hits.length > seen) {
-			seen = got.hits.length;
+		const hits = searchHitsOf(got.cards);
+		// 有旧版广告卡却读不到商品编号，不等于已确认无搜索结果。
+		if (got.cards.length && !hits.length) continue;
+		last = hits;
+		if (hits.length > seen) {
+			seen = hits.length;
 			still = 0;
 			continue;
 		}
-		if (++still >= 2) return got.hits;
+		if (++still >= 2) return hits;
 	}
 	if (last) return last;
 	throw new Error("1688 搜索结果 30 秒没出来：页面可能改版了");

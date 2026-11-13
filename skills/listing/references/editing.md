@@ -1,5 +1,7 @@
 # 商品修改
 
+商品图片处理与图中文字转换统一遵循[项目图片流程](../../../.agents/skills/listing-images/SKILL.md)，先经X2准备图片资产，再调用本流程修改商品。
+
 准确类目不在店铺允许范围而用户已明确授权该单稿时，用 `listing category --id <编号> --category <叶子ID> --allow-outside-shop --reason <本稿授权及类目依据>` 记录仅限该叶子的单稿例外；不扩大店铺允许类目。修改类目后重新 `make` 补齐新类目属性和备货天数。
 
 已建商品改类目时，现读原标题、完整原类目路径和目标叶子的必填属性；用 `listing edit-preview` 显式提供 `beforeCategoryPath`、`categoryPath`、`attributes`，核对后以同一参数调用 `listing edit`。只改类目时 `title` 与 `beforeTitle` 同为现有标题、`prices=[]`；原类目变化就重新确认，提交后读回目标路径和属性。
@@ -14,7 +16,7 @@
 
 用户要求不展示产地时，保留同款适用的产品介绍、结构、折叠收纳与使用展示；优先仅移除产地、厂名地址或供货联系区块，后加说明转为台湾繁体，不因图中带介绍文字而整张排除。不得把该要求扩大为删除有用介绍，也不得将其他款式、尺寸或不适用部件混入。
 
-按已选1688链接补齐规格时，先取得完整货源SKU，逐SKU核对颜色、尺寸、件数、skuId/specId和规格图。依本批20%–30%利润目标及合理售价筛出可售子集，利润不足的不新增，不虚构缺货或未通过核价的组合；已上架SKU保留。超过平台100个模型或两层规格时，按完整款式/尺码分组拆品，不能截断SKU清单。
+按已选1688链接补齐规格时，先取得完整货源SKU，逐SKU核对颜色、尺寸、件数、skuId/specId和规格图。依[定价与组合流程](pricing.md)的现行利润目标及合理售价筛出可售子集，利润不足的不新增，不虚构缺货或未通过核价的组合；已上架SKU保留。超过平台100个模型或两层规格时，按完整款式/尺码分组拆品，不能截断SKU清单。
 
 从单默认SKU展开为一至两层，或扩充完整规格表，用 `listing expand-preview`。显式提供 `offerId`、最终 `tiers[{name,options:[{name,imageId}]}]` 和 `models[{skuId,specId,tierIndex,costRmb,weightKg,price,stock,imageId,existingModelId?}]`；第一层每个选项有审核通过的已上传图片id，每个保留旧模型须给 `existingModelId`。输入是通过核价的完整子集，可以缺少组合。工具按现有 `LT{offerId}-{specId或skuId}` 规则生成merchantSKU并检查截断后的碰撞；不改原模型id、货号、价格，不发送原库存。
 

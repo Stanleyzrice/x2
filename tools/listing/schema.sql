@@ -143,3 +143,35 @@ alter table listings add column if not exists channel_options jsonb;
 
 -- 单稿已审核尺码图与来源、证据、源规格指纹；独立保存，不被重做主图覆盖。
 alter table listings add column if not exists size_chart jsonb;
+
+-- 人工采集的原始快照独立于店铺稿；同一来源只收录一次，补充值存在稿件而不改原始内容。
+create table if not exists listing_sources (
+	id bigserial primary key,
+	platform text not null check (platform = '1688'),
+	source_id text not null,
+	url text not null,
+	snapshot jsonb not null,
+	captured_at timestamptz not null default now(),
+	unique(platform, source_id)
+);
+create table if not exists listing_source_links (
+	source_id bigint not null references listing_sources(id),
+	shop text not null references shop_settings(shop),
+	listing_id bigint not null references listings(id),
+	primary key(source_id, shop),
+	unique(listing_id)
+);
+alter table listings add column if not exists source_product_id bigint references listing_sources(id);
+alter table listings add column if not exists source_fields jsonb;
+alter table listings add column if not exists source_approval jsonb;
+create table if not exists listing_source_requests (
+	request_id uuid primary key,
+	shop text not null references shop_settings(shop),
+	source_ids jsonb not null,
+	products jsonb not null,
+	created_at timestamptz not null default now(),
+	executing_at timestamptz
+);
+
+-- 从备选区移除仅隐藏来源快照，商品稿与外站操作历史保持完整；再次明确采集可恢复。
+alter table listing_sources add column if not exists deleted_at timestamptz;

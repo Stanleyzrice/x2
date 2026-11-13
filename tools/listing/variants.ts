@@ -34,13 +34,16 @@ const tier = z.object({
 	options: z.array(tierOption),
 });
 // 渠道成交成本和计费估重独立于 offer 中的采购价、报重；显式售价不被自动最低价替换。
-export const variantPricingInput = z.object({
-	costRmb: z.number().nonnegative().finite(),
-	chargeableWeightKg: z.number().positive().finite(),
-	priceTwd: z.number().int().positive().finite(),
-	freightRmbPerUnit: z.number().nonnegative().finite().optional().describe("显式每销售单位的国内运费，人民币；不传沿用商品稿整单国内运费"),
-	sourceEvidence: z.string().trim().min(1).optional(),
-});
+export const variantPricingInput = z
+	.object({
+		costRmb: z.number().nonnegative().finite(),
+		chargeableWeightKg: z.number().positive().finite(),
+		priceTwd: z.number().int().positive().finite(),
+		freightRmbPerUnit: z.number().nonnegative().finite().optional().describe("显式每销售单位的国内运费，人民币；不传沿用商品稿整单国内运费"),
+		purchaseMode: z.literal("single-dropship").optional().describe("已核实的单件代发采购方式，须附本规格来源证据；不改来源批发起订量"),
+		sourceEvidence: z.string().trim().min(1).optional(),
+	})
+	.refine((input) => !input.purchaseMode || Boolean(input.sourceEvidence), { message: "单件代发采购方式须提供来源证据", path: ["sourceEvidence"] });
 const variant = z.object({
 	sku: z.string().min(1),
 	skuId: SkuId,
@@ -113,7 +116,13 @@ const compare = (x: number[], y: number[]) => {
 	return 0;
 };
 
-export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Specs | null = null): { specs: Specs; problems: string[] } {
+export function specsFrom(
+	offer: Offer,
+	removed: Iterable<string> = [],
+	prev: Specs | null = null,
+	opts: { originalText?: boolean } = {},
+): { specs: Specs; problems: string[] } {
+	const transform = opts.originalText ? (s: string) => s : toTw;
 	const gone = new Set(removed);
 	const live = offer.skus.filter((s) => s.stock > 0 && !gone.has(skuOf(offer.offerId, s)));
 	const pricingInputs = new Map((prev?.variants ?? []).filter((v) => v.pricingInput).map((v) => [v.skuId, v.pricingInput!]));
@@ -139,7 +148,10 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 
 	const value = (s: Sku, i: number) => (s.attrs[i] ?? "").trim();
 	const layers = offer.props.map((_, i) => i).filter((i) => new Set(live.map((s) => value(s, i))).size > 1);
-	const props = layers.map((i) => ({ source: offer.props[i]!.name.trim(), label: clean(toTw(offer.props[i]!.name)) }));
+	const props = layers.map((i) => ({
+		source: offer.props[i]!.name.trim(),
+		label: opts.originalText ? offer.props[i]!.name : clean(toTw(offer.props[i]!.name)),
+	}));
 	const values = layers.map((i) => {
 		const listed = (offer.props[i]!.values ?? []).map((v) => v.name.trim());
 		const seen = [...new Set(live.map((s) => value(s, i)))];
@@ -172,33 +184,39 @@ export function specsFrom(offer: Offer, removed: Iterable<string> = [], prev: Sp
 		);
 		const auto = sorted.map((s) =>
 			layers
-				.map((i, a) => optionName(props[a]!.label, toTw(value(s, i))))
+				.map((i, a) => (opts.originalText ? value(s, i) : optionName(props[a]!.label, transform(value(s, i)))))
 				.filter(Boolean)
 				.join(" "),
 		);
-		const names = uniqueNames(
-			auto,
-			sources.map((o) => keptName(source, o)),
-			MAX_OPTION,
-			(k) => `${MERGED} ${k + 1}`,
-		);
+		const names = opts.originalText
+			? sources.map((o) => keptName(source, o) ?? o)
+			: uniqueNames(
+					auto,
+					sources.map((o) => keptName(source, o)),
+					MAX_OPTION,
+					(k) => `${MERGED} ${k + 1}`,
+				);
 		const options = sorted.map((s, k): TierOption => ({ source: sources[k]!, name: names[k]!, image: s.image || null }));
 		return { specs: { tiers: [{ source, name: before.get(source)?.name || MERGED, options }], variants: sorted.map((s, k) => variant(s, [k])) }, problems };
 	}
 
-	const labels = uniqueNames(
-		props.map((p) => p.label),
-		props.map((p) => before.get(p.source)?.name),
-		MAX_TIER,
-		(a) => `規格${a + 1}`,
-	);
+	const labels = opts.originalText
+		? props.map((p) => before.get(p.source)?.name ?? p.label)
+		: uniqueNames(
+				props.map((p) => p.label),
+				props.map((p) => before.get(p.source)?.name),
+				MAX_TIER,
+				(a) => `規格${a + 1}`,
+			);
 	const tiers = props.map((p, a): Tier => {
-		const names = uniqueNames(
-			values[a]!.map((v) => optionName(p.label, toTw(v))),
-			values[a]!.map((v) => keptName(p.source, v)),
-			MAX_OPTION,
-			(k) => `${labels[a]} ${k + 1}`,
-		);
+		const names = opts.originalText
+			? values[a]!.map((v) => keptName(p.source, v) ?? v)
+			: uniqueNames(
+					values[a]!.map((v) => optionName(p.label, transform(v))),
+					values[a]!.map((v) => keptName(p.source, v)),
+					MAX_OPTION,
+					(k) => `${labels[a]} ${k + 1}`,
+				);
 		return {
 			source: p.source,
 			name: labels[a]!,

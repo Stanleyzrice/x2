@@ -2,9 +2,147 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { accountOf, buyerOrdersOf, cartOf, OfferId, offerOf, refundOf, tracesOf } from "./api.ts";
+import { accountOf, buyerOrdersOf, cartOf, collectionLink, descriptionOf, OfferId, offerIdOf, offerOf, refundOf, searchHitsOf, tracesOf } from "./api.ts";
 
 const sample = (name: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+type CardNode = Parameters<typeof collectionLink>[0];
+const cardNode = (attrs: Record<string, string>, parentElement: CardNode | null = null): CardNode => ({
+	getAttribute: (name) => attrs[name] ?? null,
+	parentElement,
+});
+
+test("真实首页无href的DIV卡片：普通卡与带明确offerId的广告卡共用原生商品编号", () => {
+	const { cards } = sample("home-cards") as { cards: { href: string | null; report: string }[] };
+	assert.deepEqual(
+		cards.map((card) => {
+			assert.equal(card.href, null);
+			return collectionLink(cardNode({}, cardNode({ "data-aplus-report": card.report })));
+		}),
+		["https://detail.1688.com/offer/996533339912.html", "https://detail.1688.com/offer/921948191968.html", "https://detail.1688.com/offer/1083520648876.html"],
+	);
+});
+
+test("节点编号冲突或损坏时明确拒绝，不借用其它卡片；保留长字符串编号", () => {
+	assert.equal(collectionLink(cardNode({ "data-offer-id": "90071992547409931234" })), "https://detail.1688.com/offer/90071992547409931234.html");
+	for (const node of [
+		cardNode({ "data-offer-id": "123", "data-aplus-report": "object_type@offer^object_id@456" }),
+		cardNode({ "data-aplus-report": "object_type@offer^offerId@123^offerId@456" }),
+		cardNode({ "data-offer-id": "123" }, cardNode({ "data-offer-id": "456" })),
+		cardNode({ "data-offer-id": "123bad" }),
+		cardNode({ "data-aplus-report": "object_type@offer^object_id@123^offerId@bad" }),
+	])
+		assert.equal(collectionLink(node), null);
+});
+
+test("非商品object_id不能冒作商品编号；明确offerId不拿广告编号做冲突判断", () => {
+	assert.equal(collectionLink(cardNode({ "data-aplus-report": "object_type@offerAd^object_id@999^offerId@123" })), "https://detail.1688.com/offer/123.html");
+	assert.equal(collectionLink(cardNode({ "data-aplus-report": "object_type@offer^object_id@123" })), "https://detail.1688.com/offer/123.html");
+	for (const report of ["object_type@offerAd^object_id@999", "object_type@topic^object_id@888", "object_id@777", "tab_name@推荐商品"])
+		assert.equal(collectionLink(cardNode({ "data-aplus-report": report })), undefined);
+});
+
+test("商品编号兼容合法1688旧query卡片，保留数字和详情路径原行为，拒绝伪域名及歧义query", () => {
+	assert.equal(offerIdOf(" 123 "), "123");
+	assert.equal(offerIdOf("https://detail.1688.com/offer/456.html?from=search"), "456");
+	assert.equal(offerIdOf("http://s.1688.com/offer?offerId=789"), "789");
+	assert.equal(offerIdOf("https://s.1688.com/offer?from=search&offerId=789&spm=tracking"), "789");
+	for (const url of [
+		"https://s.1688.com.evil.com/offer?offerId=789",
+		"https://user:password@s.1688.com/offer?offerId=789",
+		"https://s.1688.com/offer?offerId=invalid",
+		"https://s.1688.com/offer?offerId=1&offerId=2",
+		"https://s.1688.com/other?offerId=789",
+	])
+		assert.equal(offerIdOf(url), null);
+});
+
+test("详情字图按页面顺序保留，图片去重，脚本与图片内文字不混入原文", () => {
+	const parsed = descriptionOf(
+		"var offer_details=" +
+			JSON.stringify({
+				content:
+					'<p>鞋面：毛绒 &amp; EVA</p><img src="//cbu01.alicdn.com/a.jpg"><p>室内使用&#12290;</p><script>恶意脚本</script><img src="https://cbu01.alicdn.com/a.jpg">',
+			}) +
+			";",
+	);
+	assert.deepEqual(parsed, {
+		text: "鞋面：毛绒 & EVA\n室内使用。",
+		images: ["https://cbu01.alicdn.com/a.jpg"],
+		blocks: [
+			{ type: "text", text: "鞋面：毛绒 & EVA" },
+			{ type: "image", src: "https://cbu01.alicdn.com/a.jpg" },
+			{ type: "text", text: "室内使用。" },
+		],
+	});
+});
+
+test("真实商品详情回包：18张原图按顺序保存，纯图片页面的网页文字为空", () => {
+	const { raw } = sample("description-live") as { raw: string };
+	const result = descriptionOf(raw);
+	assert.equal(result.images.length, 18);
+	assert.equal(result.blocks.length, 18);
+	assert.equal(result.text, "");
+	assert.equal(result.images[0], "https://cbu01.alicdn.com/img/ibank/O1CN014L07x12NQMjAj9Zsz_!!2214608309957-0-cib.jpg");
+	assert.equal(result.images.at(-1), "https://cbu01.alicdn.com/img/ibank/O1CN01ERQKjm2NQMZHDGUVZ_!!2214608309957-0-cib.jpg");
+});
+
+test("搜索新版商品卡：普通 HTTP 详情链接、拆行小数、起订量和全网销量照原字段读取", () => {
+	const { cards } = sample("search-cards") as { cards: unknown };
+	const hits = searchHitsOf(cards);
+	assert.deepEqual(
+		hits.map((h) => [h.offerId, h.price, h.minQty, h.sold, h.shop]),
+		[
+			["1082528475978", 0.11, 50, "10万+件", "义乌市烯宇贸易有限公司"],
+			["820186435888", 1.8, 1, "全网10万+件", "南阳余生艾健康管理有限公司"],
+			["1090213560301", 0.06, 50, "10万+件", "义乌市烯宇贸易有限公司"],
+		],
+	);
+	assert.equal(hits[0]!.url, "https://detail.1688.com/offer/1082528475978.html");
+	assert.match(hits[0]!.title, /^跨境亚马逊 y2k/);
+	assert.match(hits[0]!.image, /^https:\/\/cbu01\.alicdn\.com\//);
+});
+
+test("搜索商品卡类名缺失时用可见文字，去重补全字段，不把运费或回头率当起订量", () => {
+	const { cards } = sample("search-cards") as { cards: Record<string, string>[] };
+	const raw = cards.map((c) => ({ ...c, title: "", price: "", minQty: "", sold: "", shop: "" }));
+	const hits = searchHitsOf([...raw, ...cards]);
+	assert.equal(hits.length, 3);
+	assert.deepEqual(
+		hits.map((h) => h.price),
+		[0.11, 1.8, 0.06],
+	);
+	assert.deepEqual(
+		hits.map((h) => h.minQty),
+		[50, 1, 50],
+	);
+	assert.equal(hits[1]!.shop, "南阳余生艾健康管理有限公司");
+	assert.equal(searchHitsOf(raw)[0]!.minQty, 0);
+});
+
+test("搜索旧版 offerId 链接仍可读；广告不充商品，损坏的字段报回包变了", () => {
+	const card = {
+		href: "https://s.1688.com/offer?offerId=123",
+		text: "旧版商品标题\n¥\n31\n.5\n全网30+件",
+		title: "",
+		price: "",
+		minQty: "≥2件",
+		sold: "",
+		shop: "",
+		image: "//cbu01.alicdn.com/example.jpg",
+	};
+	assert.deepEqual(searchHitsOf([card])[0], {
+		offerId: "123",
+		url: "https://detail.1688.com/offer/123.html",
+		title: "旧版商品标题",
+		price: 31.5,
+		minQty: 2,
+		sold: "全网30+件",
+		shop: "",
+		image: "https://cbu01.alicdn.com/example.jpg",
+	});
+	assert.deepEqual(searchHitsOf([{ ...card, href: "https://ad.1688.com/" }]), []);
+	assert.throws(() => searchHitsOf([{ ...card, text: null }]), /1688 搜索商品卡 的回包变了/);
+});
 
 test("商品页：规格的属性拆开、价格没有用折扣价、重量没有用整个商品的；图去重补 https；规格图取第一个属性的值", () => {
 	const o = offerOf(sample("offer"), OfferId.parse("1014247787336"));

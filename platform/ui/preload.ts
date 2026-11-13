@@ -10,7 +10,9 @@ export async function preloadPage(id: string): Promise<void> {
 				.filter((item) => !item.invalid && ["catalog", "procurement", "reimbursement"].includes(item.component))
 				.map((item) => {
 					if (item.component === "catalog") {
-						const props = item.props as { shop: string; defaultStatus?: string };
+						const props = item.props as { shop: string; defaultStatus?: string; mode?: string };
+						if (props.mode === "collect") return null;
+						if (props.mode === "candidates") return api.sources(item.id, { targetShop: props.shop, query: "", platform: "all", status: "all" });
 						return api.catalogProducts(item.id, { shop: props.shop, query: "", status: props.defaultStatus ?? "1", stock: "all", page: 1, pageSize: 50 });
 					}
 					if (item.component === "procurement") {

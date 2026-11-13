@@ -39,7 +39,7 @@
 | | `expandProduct`（写） | 同一更新接口，只显式交最终 `std_tier_variation_list`、`model_list` 及可选 `weight`；既有模型带原 `id`、新索引、原价、规格图，新模型带 `id: 0`、货号、显式库存、价格、规格图；不交标题、描述或旧库存 |
 | | `edit-product`（写，只经业务工具调用） | 同上；`name` 和可选的 `model_list`（规格 id、tier_index、price），不交库存、规格名或商品其他字段 |
 | | `deleteProducts`（写） | `POST /api/v3/product/delete_product_info` |
-| | `uploadImage`（写） | 页面的 `UploadService.$instance.uploadImage`（webpack 模块里找） |
+| | `uploadImage`（写） | 原生 upload lazy loader 返回的 default 实例，或旧版 `UploadService.$instance.uploadImage` |
 | `mass.ts` | `template` | `GET /api/tool/mass_product/download_template/`、`download_basic_template/` |
 | | `records`、`recordFile` | `GET /api/tool/mass_product/get_mass_record_list/`、`download_record_file/` |
 | | `drafts` | `GET /api/tool/mass_product/get_unpublished_product_list/` |
@@ -72,6 +72,8 @@
 | 广告：从自动选品里移出一个商品、单独开广告 | — | `POST /api/pas/v1/product/gms/item/edit`（`type: "delete"`）、`POST /api/pas/v1/product/publish`（`bidding_strategy: "roi_two"`，预算和 ROAS 乘 100000）；lilto 做过，没搬 |
 
 ## 踩过的坑
+
+- 商品图上传的原生入口是产品模块的 lazy loader：它先 `Promise.all` 加载伴随依赖和 upload 块，再 require 返回 `default` 上传实例的服务初始化模块。块号、模块号从当前页面运行时读取；准备服务只初始化这个 loader 指向的模块，不因UI模块源码提到 `uploadImage` 就 require 它，也不自行 `new UploadService`。过早 require 缺依赖的模块会留下空 exports 缓存，依赖补齐后仍可能保持空值；重新加载无未保存表单的X2自有新增商品页可清除这种旧缓存。服务准备失败发生在上传调用之前，不代表图片或商品已提交。
 
 - Shop Categories 是买家浏览用的店铺导览分类，独立于商品详情的 `category_path`。`get_collection_list` 的 `product_count` 仅表示有效成员；`get_collection?collection_ids=<id>` 的 `product_id_list` 可能保留异常或已不可售的成员，不能看到 count 为零就认定分类为空。
 - 空草稿池的 `get_collection_draft_list` 原生响应是 `data: {}`，页面为缺失的 `draft_list` 补 `[]`。只有这个已确认空池字段允许缺失，分类详情的成员字段仍必填。页面读取草稿行的 `id`、`name`；UI 内部把 id 转负数作标记，接口提交使用正 id。

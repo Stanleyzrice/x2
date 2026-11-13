@@ -51,6 +51,7 @@ chat.workspaces = ["cheeroutdoor"].map((shop) => ({
 orders.workspaces = [
 	{
 		key: "procurement",
+		order: 10,
 		title: "Procurement",
 		group: "采购",
 		component: "procurement",
@@ -58,11 +59,32 @@ orders.workspaces = [
 		icon: "package",
 	},
 ];
+listing.workspaces = [
+	{
+		key: "manual-collection",
+		title: "人工采集",
+		group: "采购",
+		component: "catalog",
+		props: { shop: "cheeroutdoor", mode: "collect" },
+		icon: "package",
+		order: 30,
+	},
+	{
+		key: "listing-candidates",
+		title: "上架备选区",
+		group: "采购",
+		component: "catalog",
+		props: { shop: "cheeroutdoor", mode: "candidates" },
+		icon: "package",
+		order: 40,
+	},
+];
 const reimbursementRefresh = { name: "reimbursement-refresh", hour: 20, timeZone: "Asia/Shanghai", run: refreshAll };
 reimbursement.jobs = [reimbursementRefresh];
 reimbursement.workspaces = [
 	{
 		key: "reimbursement",
+		order: 20,
 		title: "Reimbursement",
 		group: "采购",
 		component: "reimbursement",

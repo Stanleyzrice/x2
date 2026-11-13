@@ -9,32 +9,33 @@ import { NeedsHuman, Usage } from "../../platform/errors.ts";
 import { flag, get, parseJson, str, strs, type Toolkit, write } from "../../platform/tool.ts";
 import type { Ran } from "../../platform/writes.ts";
 import { ADD_SIZE_WRITES, addSizeParams, planAddSize, previewAddSize } from "./add-size.ts";
-import { AUDIT_DROP, type Audit, type AuditIssue, auditDropped, auditIssues, auditKey, dropAudited, issueLine, restoreAudited } from "./audit.ts";
+import { AUDIT_DROP, auditProviderName, issueLine, restoreAudited } from "./audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
 import { listingChannelsParams, setListingChannels } from "./channels.ts";
+import { chartRenderParams, renderListingChart } from "./chart-render.ts";
+import { collectionTools } from "./collection.ts";
 import { copyDraft, copyImages, copyImagesParams, copyParams } from "./copy.ts";
 import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { EXPAND_WRITES, expandParams, planExpand, previewExpand } from "./expand.ts";
-import { unmarked } from "./images.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
 import { orderPrice, orderPricingInput } from "./order-pricing.ts";
 import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
-import type { Pics } from "./pics.ts";
 import { estimateNeeds, pricingPolicy, pricingProblems, quote, settingsOf } from "./pricing.ts";
 import { pricingInputsParams, setPricingInputs } from "./pricing-input.ts";
-import { imageNames } from "./product.ts";
 import { purchaseLimitParams, setPurchaseLimit } from "./purchase-limit.ts";
 import { each } from "./queue.ts";
-import { productOf } from "./ready.ts";
+import { listingReviewParams, listingReviewPreviewParams, previewListingReview, setListingReview } from "./review.ts";
+import { importReviewedImages, reviewedImagesParams, reviewedImagesPreview, reviewedImagesPreviewParams } from "./reviewed-images.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { listingSizeChartParams, setListingSizeChart } from "./size-chart.ts";
 import { skuImagesSchema } from "./sku-images.ts";
+import { sourceTools } from "./source.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { templateConfigParams, templateItem, templateParams, templatePrice } from "./template-pricing.ts";
 import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
-import { textCheck } from "./textcheck.ts";
+import { type TextCheckResult, textChecks } from "./textcheck.ts";
 import { planUnlist, previewUnlist, UNLIST_WRITES, unlistParams } from "./unlist.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "./variants.ts";
 import { LISTING_WRITES } from "./writes.ts";
@@ -86,11 +87,26 @@ export const listing: Toolkit = {
 	title: "上品：贴货源、做商品稿、写文案、建商品、上架、零销量下架",
 	kind: "tool",
 	tools: {
+		...collectionTools,
+		...sourceTools(publishPlan),
+		"reviewed-images-preview": get("预览本稿源规格指纹、完整详情来源及规格图SKU映射，不上传不改稿", reviewedImagesPreviewParams, async (p) => {
+			const [row] = await (await db())<ListingRow[]>`select * from listings where id = ${p.id}`;
+			if (!row) throw new Usage(`没有商品稿 ${p.id}`);
+			return { id: p.id, shop: row.shop, ...reviewedImagesPreview(row) };
+		}),
+		"reviewed-images": get("导入已审本地图片：验源SKU/SHA/尺寸，经X2水印、上传及持久化；不改规格售价，不伪装Gemini审核", reviewedImagesParams, async (p) =>
+			importReviewedImages(await db(), p),
+		),
+		"review-preview": get("预览当前文案、最终图片及规格的审阅指纹，不调用Gemini", listingReviewPreviewParams, async (p) => previewListingReview(await db(), p)),
+		review: get("保存明确的人工/Codex逐图与文案审阅，绑定当前内容，不冒充Gemini检查", listingReviewParams, async (p) => setListingReview(await db(), p)),
 		copy: get("从已保存商品稿原子复制到另一店；已存在目标稿不覆盖，不沿用站点身份或图片上传记录", copyParams, async (p) => copyDraft(await db(), p)),
 		"copy-images": get("仅按目标稿保存的原图URL上传到目标店，核对SHA和规格图对应，不重读1688或重建规格", copyImagesParams, async (p) =>
 			copyImages(await db(), p),
 		),
 		"purchase-limit": get("保存单份未建商品稿的最低购买数量，不改全店设置或已建商品", purchaseLimitParams, async (p) => setPurchaseLimit(await db(), p)),
+		"chart-render": get("按已审核源SKU数值与明确单位生成台湾繁体尺码PNG预览，不上传、不写商品", chartRenderParams, async (p) =>
+			renderListingChart(await db(), p),
+		),
 		"size-chart": get("上传并保存未建商品稿已审核的尺码图，记录来源与证据；已保存图须显式替换", listingSizeChartParams, async (p) =>
 			setListingSizeChart(await db(), p),
 		),
@@ -264,9 +280,9 @@ export const listing: Toolkit = {
 						.optional()
 						.describe("本次按已选skuId指定审核后的规格图，JSON数组[{skuId,url}]；仅限单稿，不改原货源"),
 					imageMode: z
-						.enum(["processed", "original"])
+						.enum(["processed", "original", "reviewed"])
 						.optional()
-						.describe("本稿图片模式：original上传1688原图，不译图不加水印；不传沿用稿件模式，旧稿保持处理图"),
+						.describe("本稿图片模式：original原图；reviewed沿用已导入审图，只补类目属性备货；不传沿用稿件模式"),
 				})
 				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages || p.skuImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿"),
 			async (p) => {
@@ -385,6 +401,7 @@ export const listing: Toolkit = {
 					nickname: l.nickname ?? null,
 					offerTitle: l.offer?.title ?? null,
 					category: l.category_name,
+					categoryPath: l.category_path ?? [],
 					attributes: l.attributes_text,
 					variants: specs?.variants.length ?? 0,
 					minPurchase: l.min_purchase ?? null,
@@ -409,6 +426,8 @@ export const listing: Toolkit = {
 					description: z.string().optional().describe("描述（台湾繁体）"),
 					tiers: z.preprocess(parseJson, z.unknown()).optional().describe("规格名（JSON），个数、顺序照 x2 listing show"),
 					nickname: z.string().optional().describe("简称（简体中文，最多 12 字）"),
+					preserveImages: flag("仅保存文案并记录图片审核提示，不自动去图或修改已审核图片集合").default(false),
+					reviewMode: z.enum(["gemini", "deferred"]).default("gemini").describe("deferred只存文案，留待review明确审阅；不算已检查"),
 					items: z
 						.preprocess(
 							parseJson,
@@ -468,10 +487,14 @@ export const listing: Toolkit = {
 					sql,
 					results.map((r) => r.id),
 				);
-				const checks = await textChecks(
-					sql,
-					results.filter((r) => r.saved).map((r) => r.id),
-				);
+				const checks =
+					p.reviewMode === "deferred"
+						? []
+						: await textChecks(
+								sql,
+								results.filter((r) => r.saved).map((r) => r.id),
+								!p.preserveImages,
+							);
 				return { text: results.map((r) => ({ ...r, name: name(r.id) })), audit: checks };
 			},
 			{
@@ -698,60 +721,13 @@ export async function setCategory(
 	};
 }
 
-type CheckResult = { id: string; name: string; checked: boolean; cached?: boolean; problems?: string[]; issues: AuditIssue[] };
-const checkLine = (c: CheckResult) => {
-	if (!c.checked) return `${c.name} Gemini 文字检查：查不了：${(c.problems ?? []).join("；")}`;
+const checkLine = (c: TextCheckResult) => {
+	const source = auditProviderName(c.provider);
+	if (!c.checked) return `${c.name} ${source}：查不了：${(c.problems ?? []).join("；")}`;
 	const dropped = c.issues.filter((x) => x.status === "已去掉");
 	return [
-		`${c.name} Gemini 文字检查：${c.issues.length ? `挑出 ${c.issues.length} 条（只提示，写在说明里）` : "没挑出问题"}${c.cached ? "（查过）" : ""}`,
+		`${c.name} ${source}：${c.issues.length ? `挑出 ${c.issues.length} 条（只提示，写在说明里）` : "没挑出问题"}${c.cached ? "（查过）" : ""}`,
 		...c.issues.map((x) => `  ${issueLine(x)}`),
 		...(dropped.length ? [`  x2 去掉的图人说要用才放回来：x2 listing keep --id ${c.id} --images ${dropped.map((x) => x.name ?? x.image).join(",")}`] : []),
 	].join("\n");
 };
-
-async function productNow(sql: Sql, id: ListingId) {
-	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
-	if (!l) return null;
-	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
-	return { l, kept: l.kept_images ?? [], r: productOf(l, settingsOf(row!)) };
-}
-
-const MAX_RECHECK = 2;
-
-async function textChecks(sql: Sql, ids: ListingId[]): Promise<CheckResult[]> {
-	const out: CheckResult[] = [];
-	for (const id of ids) {
-		let c = await productNow(sql, id);
-		if (!c) {
-			out.push({ id, name: `商品稿 ${id}`, checked: false, problems: ["没有这份商品稿"], issues: [] });
-			continue;
-		}
-		const name = listingName(c.l);
-		if (!c.r.product) {
-			out.push({ id, name, checked: false, problems: c.r.problems, issues: [] });
-			continue;
-		}
-		let a = c.l.audit as Audit | null;
-		const cached = a?.key === auditKey(c.r.product);
-		if (!cached) {
-			for (let round = 0; c.r.product; round++) {
-				console.error(`Gemini 文字检查：${name}${round ? `（去掉挑出的图以后第 ${round} 次再查）` : ""}`);
-				const pics = (c.l.images ?? {}) as Pics;
-				a = await textCheck(c.r.product, { image: (x) => unmarked(sql, pics, x), kept: c.kept, canDrop: round < MAX_RECHECK });
-				const drops = a.images.filter((x) => x.dropped);
-				if (!drops.length) break;
-				await sql`update listings set images = ${sql.json(dropAudited(c.l.images, drops) as Json)}, updated_at = now() where id = ${id}`;
-				c = (await productNow(sql, id))!;
-			}
-			if (!c.r.product) {
-				out.push({ id, name, checked: false, problems: c.r.problems, issues: [] });
-				continue;
-			}
-			a = { ...a!, images: [...auditDropped(c.l.images), ...a!.images] };
-			await sql`update listings set audit = ${sql.json(a as Json)}, updated_at = now() where id = ${id}`;
-		}
-		const issues = auditIssues(a!, c.kept, imageNames(c.l.images ?? {}, specsOf(c.l.variants)));
-		out.push({ id, name, checked: true, ...(cached ? { cached } : {}), issues });
-	}
-	return out;
-}

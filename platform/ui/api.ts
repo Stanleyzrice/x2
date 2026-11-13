@@ -5,6 +5,7 @@ import type { BrowserAuthorization } from "../web/browser-authorizations.ts";
 import type { BrowserConnectionInput, BrowserConnectionResult } from "../web/browser-connection.ts";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
+import type { SourceDetail, SourceList } from "./interactable/catalog/source-types.ts";
 import type { CatalogResult } from "./interactable/catalog/types.ts";
 import { preserveMonitor } from "./interactable/procurement/sync.ts";
 import type { Monitor } from "./interactable/procurement/types.ts";
@@ -27,6 +28,8 @@ async function call<T>(method: string, path: string, body?: unknown, keepalive =
 const q = encodeURIComponent;
 const pageCache = readCache<Page>();
 const catalogCache = readCache<CatalogResult>();
+const sourceCache = readCache<SourceList>();
+const sourceDetailCache = readCache<SourceDetail>(30_000, 20);
 const procurementCache = readCache<Monitor>(15_000, 20);
 const procurementEpochs = new Map<string, number>();
 const procurementSyncs = new Map<string, number>();
@@ -34,6 +37,10 @@ const reimbursementCache = readCache<unknown>(15_000);
 type CatalogQuery = { shop: string; query: string; status: string; stock: string; category?: string; page: number; pageSize: number };
 const catalogKey = (item: string, input: CatalogQuery) =>
 	`${item}:${JSON.stringify([input.shop, input.query, input.status, input.stock, input.category ?? "all", input.page, input.pageSize])}`;
+export type SourceQuery = { targetShop: string; query: string; platform: string; status: string };
+type SourceDetailQuery = { targetShop: string; sourceId: string };
+const sourceKey = (item: string, input: SourceQuery) => `${item}:${JSON.stringify([input.targetShop, input.query, input.platform, input.status])}`;
+const sourceDetailKey = (item: string, input: SourceDetailQuery) => `${item}:${JSON.stringify([input.targetShop, input.sourceId])}`;
 const procurementKey = (item: string, shops: string[]) => `${item}:${JSON.stringify([...new Set(shops)].sort())}`;
 export type ReimbursementQuery = { accounts?: string[]; account?: string; search: string; paidFrom: string; paidTo: string; offset: number };
 const reimbursementKey = (item: string, input: ReimbursementQuery) =>
@@ -58,6 +65,17 @@ export const api = {
 		catalogCache.read(catalogKey(item, input), () => call<CatalogResult>("POST", "/api/page/act", { item, action: "products", input }), force),
 	peekCatalogProducts: (item: string, input: CatalogQuery) => catalogCache.peek(catalogKey(item, input)),
 	invalidateCatalog: (item: string) => catalogCache.invalidate(`${item}:`),
+	sources: (item: string, input: SourceQuery, force = false) =>
+		sourceCache.read(sourceKey(item, input), () => call<SourceList>("POST", "/api/page/act", { item, action: "sources", input }), force),
+	peekSources: (item: string, input: SourceQuery) => sourceCache.peek(sourceKey(item, input)),
+	sourceDetail: (item: string, input: SourceDetailQuery, force = false) =>
+		sourceDetailCache.read(sourceDetailKey(item, input), () => call<SourceDetail>("POST", "/api/page/act", { item, action: "sourceDetail", input }), force),
+	peekSourceDetail: (item: string, input: SourceDetailQuery) => sourceDetailCache.peek(sourceDetailKey(item, input)),
+	invalidateSources: (item?: string) => {
+		const prefix = item ? `${item}:` : "";
+		sourceCache.invalidate(prefix);
+		sourceDetailCache.invalidate(prefix);
+	},
 	procurementMonitor: (item: string, shops: string[], force = false) => {
 		const key = procurementKey(item, shops);
 		const cached = procurementCache.peek(key);

@@ -6,6 +6,7 @@ import type { CategoryException } from "./category.ts";
 import type { Pics } from "./pics.ts";
 import type { ChannelOption, Product } from "./product.ts";
 import type { SizeChart } from "./size-chart.ts";
+import type { SourceApproval, SourceFields } from "./source-data.ts";
 import type { TemplateParams } from "./template-pricing.ts";
 
 export type PricingSnapshot = {
@@ -25,6 +26,9 @@ export type ListingRow = {
 	id: ListingId;
 	shop: string;
 	offer_id: OfferId;
+	source_product_id?: string | null;
+	source_fields?: SourceFields | null;
+	source_approval?: SourceApproval | null;
 	strategy: string;
 	cancelled: boolean;
 	weight_kg: string | null;

@@ -1,6 +1,6 @@
 # 1688
 
-货源、搜索、购物车和加购、采购单、物流、退款。代码在 `1688.ts`。购物车、加购、采购单、物流、退款都在页面里用页面自己的 `lib.mtop.request` 发（签名由它算）。
+商品、搜索、购物车和加购、采购单、物流、退款。代码在 `api.ts` 和 `purchases.ts`。购物车、加购、采购单、物流、退款都在页面里用页面自己的 `lib.mtop.request` 发（签名由它算）。
 
 ## 采购单（`mtop.1688.trading.dataline.service`，serviceId `OrderListDataLineService.buyerOrderList`）
 
@@ -37,8 +37,6 @@
 
 回包里有卖家的电话、姓名、退货地址：x2 不取、不存。详情里的 `orderId`、行 `id` 是数字，19 位丢精度，不能拿来对；从采购单出发（本来就知道采购单号）不用它。
 
-**x2 的读法**：读采购单（最近 3 页 + `dispute`），收集行上的退款单号；粗状态是终态就记下，是进行中再读详情拿细状态和退货运单号。
-
 **别的接口**（没用）：`mtop.1688.dispute.dataline.service` 的 `RefundHallDataLineService.refundList`、`refundSummaryStat` 只回要关注的；`OrderCardDataLineService.batchQueryAftersaleSummary` 回给人看的 HTML 文字、不带状态码；旧页面 `dispute.1688.com/refund/buyerRefundList.htm` 有全部历史，是服务端渲染的 HTML。申请退款的写接口是 `mtop.shared.trade.service.refund.MtopRefundFlowNewService`：x2 不用。
 
 **没弄清的**：waitselleragree、waitbuyermodify、waitsellerreceive 的中文；售后（disputeType 2）的详情；部分退款时采购单和行怎么变。
@@ -53,7 +51,13 @@
 
 ## 回包样本
 
-`fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。都是照代码和上面记的字段写的（不是抓的真回包）：`offer.json` 的值取自一个真货源解析后的样子，反推成商品页上的几块。登录以后用 live.ts 读一遍，把真回包换进来（买家、卖家的名字、电话、地址换成假的）。
+`fixtures/search-cards.json` 是 2026-11-11 搜索商品卡的原始公开字段，包含商品链接、主图、标题、价格、起订量及公开店铺名称；链接跟踪参数已移除，不含账号或会话数据。
+
+`fixtures/home-cards.json` 是 2026-11-13 指定 Ego 浏览器中 1688 首页「精选货源」三个真实 DIV 商品卡的公开字段，保留必要的 `data-aplus-report` 原生编号，已去掉跟踪、实验和会话字段。卡片无 href；普通卡的 `object_type@offer` 可用 `object_id`，广告卡只有明确的 `offerId` 或 `data-offer-id` 才能从原生编号确定商品，不能把广告、专场的 `object_id` 当成商品编号。有合法商品链接时仍可走链接，冲突或损坏的明确商品编号拒绝解析。`collectionLink()` 仅提取链接，hover 与整页扫描共用它，商品详情继续由既有 `offer()` 读取；不读取 React 私有结构。
+
+`fixtures/description-live.json` 是 2026-11-13 经指定 Ego 浏览器的既有 CDP 商品读取获得 detailUrl 后，读取的公开详情原始响应（商品 777744281955）；仅含公开商品图片地址，没有账号、订单或买家信息。解析得到 18 张图片、没有独立网页文字。`description()` 与既有 `detailImages()` 共用请求和解析；新增 HTML 字图混排测试为合成输入，用于覆盖实体、文字顺序和脚本排除，不声称是真站回包。
+
+`fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。除上述真实样本外，早期样本是照代码和上面记的字段写的（不是抓的真回包）：`offer.json` 的值取自一个真货源解析后的样子，反推成商品页上的几块。登录以后用 live.ts 读一遍，把真回包换进来（买家、卖家的名字、电话、地址换成假的）。
 
 `purchases.ts` 使用同一采购列表接口，金额字段保留为整数分字符串，缺失为 null；只用 `gmtPayment` 作为付款时间证据，不从状态名推定已付款。分页汇总缺失、不安全数字 ID 或金额会报错。供应商只读取明确的 sellerCompanyName、sellerLoginId 或 sellerInfo 对应字段；既有采购回包样本未含这些字段，缺失时返回 null。`buyer-order-facts.json` 为在既有合成样本上扩充的解析用 fixture，覆盖缺项、长金额和供应商字段，不是 live 证据。
 

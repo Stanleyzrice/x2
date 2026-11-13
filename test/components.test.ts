@@ -59,6 +59,8 @@ test("固定入口唯一并引用已注册组件，所有保存的身份参数�
 	assert.deepEqual(
 		workspaces.filter((w) => w.component === "catalog" || w.component === "chat").map((w) => ({ key: w.key, shop: w.props.shop })),
 		[
+			{ key: "manual-collection", shop: "cheeroutdoor" },
+			{ key: "listing-candidates", shop: "cheeroutdoor" },
 			{ key: "catalog-cheeroutdoor", shop: "cheeroutdoor" },
 			{ key: "chat-cheeroutdoor", shop: "cheeroutdoor" },
 		],

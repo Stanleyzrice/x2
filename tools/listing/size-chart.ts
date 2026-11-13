@@ -38,6 +38,7 @@ export const listingSizeChartParams = z.object({
 	id: ListingId.describe("未建商品稿编号"),
 	source: source.describe("已审核真实尺码图的 HTTP(S) URL 或本地 PNG/JPEG/WebP 绝对路径"),
 	evidence: z.string().trim().min(1).describe("本稿真实源规格及尺码依据，包含原始来源；不补造内长或脚长"),
+	expectedScope: hash.optional().describe("已审核尺码图的源规格指纹；预览后规格变化时拒绝旧图"),
 	replace: flag("显式替换本稿已保存的尺码图；默认不覆盖").default(false),
 });
 type Input = z.output<typeof listingSizeChartParams>;
@@ -86,6 +87,7 @@ export async function setListingSizeChart(sql: Sql, p: Input) {
 	const [row] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
 	if (!row) throw new Usage(`没有商品稿 ${p.id}`);
 	sizeChartEditable(row, p.replace);
+	if (p.expectedScope && p.expectedScope !== sizeChartScope(row)) throw new Usage("预览后源规格已变，请重新生成尺码图");
 	const before = state(row);
 	const [shop] = await sql<Pick<ShopSettingsRow, "shop_id">[]>`select shop_id from shop_settings where shop = ${row.shop}`;
 	if (!shop) throw new Usage(`没有店铺设置 ${row.shop}`);

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { api } from "./api.ts";
+import { preloadPage } from "./preload.ts";
 
 test("采购缓存隔离店铺范围，同一范围合并读取，同步结果回填可立即回显", async (t) => {
 	let calls = 0;
@@ -105,5 +106,82 @@ test("采购同步失败后的只读轮询仍保留旧内容，成功确认无�
 		assert.deepEqual(fresh.orders, []);
 	} finally {
 		api.invalidateProcurementMonitor(item);
+	}
+});
+
+test("备选进入、预读与强制轮询合并在途请求，缓存按店铺及筛选隔离", async (t) => {
+	let calls = 0;
+	t.mock.method(globalThis, "fetch", async (_url: unknown, options?: RequestInit) => {
+		const input = JSON.parse(String(options?.body)).input;
+		return Response.json({ shop: input.targetShop, total: ++calls, items: [] });
+	});
+	const item = "sources-cache-test";
+	const query = { targetShop: "one", query: "", platform: "all", status: "all" };
+	try {
+		const [preload, active, poll] = await Promise.all([api.sources(item, query), api.sources(item, query, true), api.sources(item, query, true)]);
+		assert.equal(calls, 1);
+		assert.equal(preload, active);
+		assert.equal(active, poll);
+		assert.equal(api.peekSources(item, query), active);
+		for (const input of [
+			{ ...query, targetShop: "two" },
+			{ ...query, query: "拖鞋" },
+			{ ...query, platform: "1688" },
+			{ ...query, status: "ready" },
+		]) {
+			assert.equal(api.peekSources(item, input), null);
+			await api.sources(item, input);
+		}
+		assert.equal(calls, 5);
+		assert.equal((await api.sources(item, query, true)).total, 6);
+	} finally {
+		api.invalidateSources(item);
+	}
+});
+
+test("备选变更失效后重新取数，变更前的慢请求不能回填旧列表或详情", async (t) => {
+	const delayed = Promise.withResolvers<Response>();
+	let calls = 0;
+	t.mock.method(globalThis, "fetch", async () => (++calls === 1 ? delayed.promise : Response.json({ shop: "one", id: "1", total: 2, items: [] })));
+	const item = "sources-invalidation-test";
+	const query = { targetShop: "one", query: "", platform: "all", status: "all" };
+	try {
+		const old = api.sources(item, query, true);
+		await Promise.resolve();
+		api.invalidateSources(item);
+		const current = await api.sources(item, query, true);
+		assert.equal(calls, 2);
+		delayed.resolve(Response.json({ shop: "one", total: 1, items: [] }));
+		await old;
+		assert.equal(api.peekSources(item, query), current);
+		await api.sourceDetail(item, { targetShop: "one", sourceId: "1" });
+		assert.equal(api.peekSourceDetail(item, { targetShop: "two", sourceId: "1" }), null);
+		assert.equal(api.peekSourceDetail(item, { targetShop: "one", sourceId: "2" }), null);
+		api.invalidateSources();
+		assert.equal(api.peekSources(item, query), null);
+		assert.equal(api.peekSourceDetail(item, { targetShop: "one", sourceId: "1" }), null);
+	} finally {
+		api.invalidateSources(item);
+	}
+});
+
+test("Catalog不同模式预读对应对象，人工采集不误查店铺目录", async (t) => {
+	const modes = ["collect", "candidates", "catalog", undefined];
+	const actions: string[] = [];
+	t.mock.method(globalThis, "fetch", async (url: unknown, options?: RequestInit) => {
+		if (String(url).startsWith("/api/page?")) {
+			const index = Number(new URL(String(url), "http://x").searchParams.get("id")?.split("-").at(-1));
+			return Response.json({ items: [{ id: `mode-item-${index}`, component: "catalog", props: { shop: "one", mode: modes[index] } }] });
+		}
+		const input = JSON.parse(String(options?.body));
+		actions.push(input.action);
+		return Response.json({ shop: "one", items: [], rows: [] });
+	});
+	try {
+		for (let index = 0; index < modes.length; index++) await preloadPage(`mode-preload-test-${index}`);
+		assert.deepEqual(actions, ["sources", "products", "products"]);
+	} finally {
+		api.invalidateSources();
+		for (let index = 0; index < modes.length; index++) api.invalidateCatalog(`mode-item-${index}`);
 	}
 });

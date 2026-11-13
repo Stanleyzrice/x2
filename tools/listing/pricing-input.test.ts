@@ -2,16 +2,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Offer, OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
-import { estimateNeeds, pricingProblems, reprice, settingsOf, variantTemplatePrice } from "./pricing.ts";
-import { applyPricingInputs, pricingInputsParams } from "./pricing-input.ts";
+import type { Sql } from "../../platform/db/index.ts";
+import { estimateNeeds, pricingProblems, reprice, settingsOf, sourceMoqProblems, specsAndPrices, variantTemplatePrice } from "./pricing.ts";
+import { applyPricingInputs, pricingInputsParams, setPricingInputs } from "./pricing-input.ts";
+import type { ShopSettingsRow } from "./row.ts";
 import { templateParams, templatePrice } from "./template-pricing.ts";
 import { specsFrom, specsOf } from "./variants.ts";
 
 const params = templateParams.parse({ fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.2, maxMargin: 0.3 });
 const input = { costRmb: 16, chargeableWeightKg: 0.6, priceTwd: 219, sourceEvidence: "单件代发栏16元；计费重保守估计" };
 
-function settings() {
-	return settingsOf({
+function shopRow(): ShopSettingsRow {
+	return {
 		shop: "ni1206",
 		shop_id: "348425",
 		pricing_template: params,
@@ -39,8 +41,9 @@ function settings() {
 		watermark_opacity: "0.2",
 		watermark_position: "bottom-right",
 		paused: null,
-	});
+	};
 }
+const settings = () => settingsOf(shopRow());
 function offer(): Offer {
 	return {
 		offerId: OfferId.parse("1038501266685"),
@@ -218,4 +221,85 @@ test("未声明每单位国内运费时保留旧整单一次性口径，不默�
 	assert.match(pricingProblems(two.specs, []).join(), /31\.92%/);
 	for (const freightRmbPerUnit of [-1, Number.NaN, Number.POSITIVE_INFINITY])
 		assert.equal(pricingInputsParams.safeParse({ id: "1", items: [{ ...input, skuId: "1", freightRmbPerUnit }] }).success, false);
+});
+
+test("单件代发模式须保留结构且明确来源证据，旧输入无需模式", () => {
+	const item = { skuId: SkuId.parse("1"), ...input, purchaseMode: "single-dropship" as const };
+	const parsed = pricingInputsParams.parse({ id: "1", items: [item] });
+	assert.equal(parsed.items[0]!.purchaseMode, "single-dropship");
+	for (const sourceEvidence of [undefined, "", "   "]) {
+		assert.equal(pricingInputsParams.safeParse({ id: "1", items: [{ ...item, sourceEvidence }] }).success, false);
+		assert.throws(() => applyPricingInputs(specsFrom(offer()).specs, [{ ...item, sourceEvidence }]));
+	}
+	assert.equal(pricingInputsParams.safeParse({ id: "1", items: [{ ...item, purchaseMode: "wholesale" }] }).success, false);
+	assert.equal(pricingInputsParams.safeParse({ id: "1", items: [{ skuId: "1", ...input }] }).success, true);
+});
+
+test("批发MOQ只有全选规格明确单件代发模式与证据且当前货源支持代发才解除", () => {
+	const source: Offer = { ...offer(), minQty: 2, tags: { onePsale: true, freeShipping: false, ship48h: true, deliveryDays: 2 } },
+		before = structuredClone(source);
+	const base = specsFrom(source).specs;
+	const items = source.skus.map((s) => ({ skuId: s.skuId, ...input, purchaseMode: "single-dropship" as const }));
+	const explicit = applyPricingInputs(base, items);
+	const remake = (prev = explicit, current: Offer = source) => specsAndPrices(current, settings(), { prev, weightKg: null, freightRmb: 5 });
+	assert.ok(!remake().problems.some((p) => p.startsWith("货源：起订量")));
+	assert.deepEqual(source, before);
+	assert.equal(source.minQty, 2);
+	assert.match(sourceMoqProblems(source, { ...explicit, variants: [] }).join("\n"), /单件代发采购条件待核/);
+	for (const prev of [
+		base,
+		applyPricingInputs(
+			base,
+			source.skus.map((s) => ({ skuId: s.skuId, ...input })),
+		),
+		applyPricingInputs(base, items.slice(0, 1)),
+	])
+		assert.match(remake(prev).problems.join("\n"), /起订量 2，单件代发采购条件待核/);
+	for (const onePsale of [false, undefined])
+		assert.match(
+			remake(explicit, { ...source, tags: onePsale === undefined ? undefined : { ...source.tags!, onePsale } }).problems.join("\n"),
+			/单件代发采购条件待核/,
+		);
+	const next = { ...source, skus: [...source.skus, { ...source.skus[0]!, skuId: SkuId.parse("3"), specId: SpecId.parse("spec-3") }] };
+	assert.match(remake(explicit, next).problems.join("\n"), /单件代发采购条件待核/);
+	const removed = specsAndPrices(next, settings(), { prev: explicit, removed: ["LT1038501266685-spec-3"], weightKg: null, freightRmb: 5 });
+	assert.ok(!removed.problems.some((p) => p.startsWith("货源：起订量")));
+	assert.ok(removed.specs.variants.every((v) => v.pricingInput?.purchaseMode === "single-dropship"));
+});
+
+test("保存单件代发证据只解决MOQ告警，保留其他货源、尺码、图片及自定义问题", async () => {
+	const source: Offer = { ...offer(), minQty: 2, tags: { onePsale: true, freeShipping: false, ship48h: true, deliveryDays: 2 } };
+	const others = ["货源：已下架", "尺码：待人工确认", "图片：缺主图", "货源：起订量 2，无法单件购买；人工说明不可删除"];
+	const draft = {
+		id: "1",
+		shop: "ni1206",
+		product_id: null,
+		listed_at: null,
+		offer: source,
+		variants: specsFrom(source).specs,
+		problems: ["货源：起订量 2，无法单件购买", "货源：起订量 2，单件代发采购条件待核", ...others].join("\n"),
+	};
+	const writes: unknown[][] = [];
+	const tagged = Object.assign(
+		async (parts: TemplateStringsArray, ...values: unknown[]) => {
+			const text = parts.join("?");
+			if (text.includes("select * from listings")) return [draft];
+			if (text.includes("select * from shop_settings")) return [shopRow()];
+			if (text.includes("update listings")) {
+				writes.push(values);
+				return [];
+			}
+			throw new Error("unexpected query");
+		},
+		{ json: (v: unknown) => v },
+	);
+	const sql = Object.assign(tagged, { begin: (fn: (tx: Sql) => Promise<unknown>) => fn(tagged as unknown as Sql) }) as unknown as Sql;
+	const items = source.skus.map((s) => ({ skuId: s.skuId, ...input, purchaseMode: "single-dropship" as const }));
+	const result = await setPricingInputs(sql, pricingInputsParams.parse({ id: "1", items }));
+	assert.deepEqual(result.problems, others);
+	assert.equal(writes.length, 1);
+	assert.equal(writes[0]![2], others.join("\n"));
+	assert.equal(source.minQty, 2);
+	assert.equal(result.minimumPurchase, 1, "采购方式不能改平台最低购买数量");
+	assert.ok(result.rows.every((r) => r.pricingInput?.purchaseMode === "single-dropship"));
 });

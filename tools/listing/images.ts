@@ -15,7 +15,7 @@ import { markKey, watermark } from "./watermark.ts";
 import { saveTranslation, translate, translationState } from "./writes.ts";
 
 const fetched = new Map<string, Promise<Bytes>>();
-async function original(sql: Sql, url: string): Promise<Bytes> {
+export async function original(sql: Sql, url: string): Promise<Bytes> {
 	let got = fetched.get(url);
 	if (!got) {
 		got = download(() => fetchImage(url));
@@ -119,14 +119,14 @@ function translatedChecked(sql: Sql, original: Bytes, translated: string): Promi
 	});
 }
 
-async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes, browser: Runner): Promise<void> {
-	const key = markKey(mark);
+export async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes, browser: Runner, minWidth = 0): Promise<void> {
+	const key = markKey(mark, minWidth);
 	const done = await once(`成品:${shop}:${key}:${base.sha256}`, async () => {
 		const [hit] = await sql`select f.sha256, s.image_id, s.width, s.height from images f join shop_images s on s.sha256 = f.sha256 and s.shop = ${shop}
 			where f.kind = '成品' and f.from_sha = ${base.sha256} and f.source = ${key} order by s.uploaded_at desc limit 1`;
 		if (hit) return { final: hit.sha256 as string, imageId: hit.image_id as string, width: hit.width as number, height: hit.height as number };
 		const { out, id } = await browser(async () => {
-			const out = await watermark(base, mark);
+			const out = await watermark(base, mark, minWidth);
 			const [id] = await uploadImages([{ base64: Buffer.from(out.bytes).toString("base64"), mime: out.mime }]);
 			return { out, id: id! };
 		});
@@ -163,6 +163,13 @@ async function finishOriginal(sql: Sql, shop: string, p: Pic, base: Bytes, brows
 export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promise<Bytes> {
 	const p = [...(pics.main ?? []), ...(pics.detail ?? []), ...(pics.options ?? [])].find((x) => x.imageId === id);
 	if (!p) throw new Error(`图 ${id} 不在商品稿的图里：重做商品稿（x2 listing make）`);
+	if (p.review) {
+		const [row] = await sql`select bytes from images where sha256 = ${p.review.processedSha256}`;
+		if (!row?.bytes) throw new Error("已审图片的处理文件未保存，请重新导入");
+		const bytes = inspect(new Uint8Array(row.bytes), "已审处理图");
+		if (bytes.sha256 !== p.review.processedSha256) throw new Error("已审图片的处理文件 SHA 已变化");
+		return bytes;
+	}
 	if (!p.translated && p.sha) {
 		const [cached] = await sql`select source, bytes from images where sha256 = ${p.sha}`;
 		if (cached?.bytes) {
@@ -187,12 +194,24 @@ async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Pr
 const translating = new Map<string, Promise<void>>();
 const deciding = limiter(1);
 
+/** 处理图只把合规比例的窄详情等比放到700；原图照原尺寸校验，不救占位图或坏比例。 */
+export function detailImagePlan(width: number, height: number, imageMode: ImageMode) {
+	if (width <= 10 || height <= 10 || width / height < 0.5 || width / height > 32) return null;
+	const minWidth = imageMode === "processed" && width < 700 ? 700 : 0;
+	const finalWidth = Math.max(width, minWidth),
+		finalHeight = Math.round((height * finalWidth) / width);
+	if (!detailFits(finalWidth, finalHeight)) return null;
+	if (imageMode === "processed" && (width * height > 40_000_000 || finalWidth * finalHeight > 40_000_000)) return null;
+	return { minWidth, width: finalWidth, height: finalHeight };
+}
+
 export async function makeImages(
 	sql: Sql,
 	c: { shop: string; mark: Mark | null; main: string[]; detail: string[]; options: string[]; browser: Runner; imageMode?: ImageMode },
 	log: (s: string) => void = console.error,
 ): Promise<Pics> {
 	const imageMode = c.imageMode ?? "processed";
+	if (imageMode === "reviewed") throw new Error("已审图片须通过 listing reviewed-images 导入，不能按普通取图流程处理");
 	if (imageMode === "processed" && !c.mark) throw new Error("处理图片模式缺少水印设置");
 	const pics: Pics = {
 		imageMode,
@@ -218,7 +237,7 @@ export async function makeImages(
 				p.drop = `占位图（${p.width}×${p.height}）`;
 				return;
 			}
-			if (pics.detail.includes(p) && !detailFits(p.width!, p.height!)) {
+			if (pics.detail.includes(p) && !detailImagePlan(p.width!, p.height!, imageMode)) {
 				p.drop = `详情图尺寸不合 Shopee 的要求（${p.width}×${p.height}：宽 ≥ 700、高 ≥ 32、宽高比 0.5–32）`;
 				return;
 			}
@@ -308,7 +327,7 @@ export async function makeImages(
 				const [row] = await sql`select bytes from images where sha256 = ${p.translated}`;
 				base = inspect(new Uint8Array(row!.bytes), "译图");
 			}
-			await finish(sql, c.shop, c.mark!, p, base, c.browser);
+			await finish(sql, c.shop, c.mark!, p, base, c.browser, pics.detail.includes(p) && base.width < 700 ? 700 : 0);
 		}),
 	);
 	for (const p of [...pics.main, ...pics.detail]) if (!p.drop && !p.imageId && !keep.includes(p)) p.drop = "超过张数，不用";

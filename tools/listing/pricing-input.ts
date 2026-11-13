@@ -4,7 +4,7 @@ import { SkuId } from "../../connectors/sites/1688/api.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson } from "../../platform/tool.ts";
-import { estimateNeeds, pricingPolicy, pricingProblems, reprice, settingsOf, variantTemplatePrice } from "./pricing.ts";
+import { estimateNeeds, pricingPolicy, pricingProblems, reprice, settingsOf, sourceMoqProblems, variantTemplatePrice } from "./pricing.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { type Specs, specsOf, variantPricingInput } from "./variants.ts";
 
@@ -13,7 +13,9 @@ export const pricingInputsParams = z.object({
 	id: ListingId.describe("商品稿编号"),
 	items: z
 		.preprocess(parseJson, z.array(item).min(1))
-		.describe("显式逐规格输入 JSON：skuId、costRmb、chargeableWeightKg、priceTwd；可附 freightRmbPerUnit（每单位国内运费）和 sourceEvidence"),
+		.describe(
+			"显式逐规格输入 JSON：skuId、costRmb、chargeableWeightKg、priceTwd；可附 freightRmbPerUnit（每单位国内运费）、purchaseMode（single-dropship 须来源证据）和 sourceEvidence",
+		),
 });
 type Input = z.output<typeof pricingInputsParams>;
 
@@ -48,9 +50,13 @@ export async function setPricingInputs(sql: Sql, p: Input) {
 			...updated,
 			variants: updated.variants.map((v) => (selected.has(v.skuId) ? { ...bySku.get(v.skuId)!, stock: v.stock } : v)),
 		};
-		const retainedProblems = String(l.problems ?? "")
-			.split("\n")
-			.filter((line) => line && !/^核价：|^缺(?:重量|国内运费)/.test(line));
+		const retainedProblems = sourceMoqProblems(
+			l.offer,
+			final,
+			String(l.problems ?? "")
+				.split("\n")
+				.filter((line) => line && !/^核价：|^缺(?:重量|国内运费)/.test(line)),
+		);
 		const problems = [...retainedProblems, ...pricingProblems(final, estimateNeeds({ ...l, variants: final }))];
 		const pricing = {
 			...pricingPolicy(settings),

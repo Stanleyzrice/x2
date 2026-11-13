@@ -19,6 +19,9 @@ export function PageView({ id, onDeleted, pages = [] }: { id: string; onDeleted:
 	const mobile = useIsMobile();
 	if (error) return <p className="p-6 text-sm text-destructive">{error}</p>;
 	if (!page) return <Skeleton className="m-6 h-40" />;
+	const related = pages.filter(
+		(p) => p.workspace?.component === page.workspace?.component && (p.workspace?.props.mode ?? "catalog") === (page.workspace?.props.mode ?? "catalog"),
+	);
 	if (page.workspace)
 		return (
 			<div className="flex h-svh min-w-0 flex-col overflow-hidden">
@@ -27,7 +30,7 @@ export function PageView({ id, onDeleted, pages = [] }: { id: string; onDeleted:
 					<span className="text-sm text-muted-foreground">{page.workspace.group ?? "工作台"}</span>
 					<span className="text-muted-foreground">/</span>
 					<h1 className="text-sm font-medium">{page.title}</h1>
-					{pages.filter((p) => p.workspace?.component === page.workspace!.component).length > 1 && (
+					{related.length > 1 && (
 						<Select
 							value={page.id}
 							onValueChange={(value) => {
@@ -39,13 +42,11 @@ export function PageView({ id, onDeleted, pages = [] }: { id: string; onDeleted:
 								<SelectValue>{page.workspace.group}</SelectValue>
 							</SelectTrigger>
 							<SelectContent>
-								{pages
-									.filter((p) => p.workspace?.component === page.workspace!.component)
-									.map((p) => (
-										<SelectItem key={p.id} value={p.id}>
-											{p.workspace?.group}
-										</SelectItem>
-									))}
+								{related.map((p) => (
+									<SelectItem key={p.id} value={p.id}>
+										{p.workspace?.group}
+									</SelectItem>
+								))}
 							</SelectContent>
 						</Select>
 					)}

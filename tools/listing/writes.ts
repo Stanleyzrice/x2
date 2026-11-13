@@ -9,12 +9,14 @@ import { createListing, findByParentSku, listProduct } from "../../connectors/si
 import { inAccount } from "../../platform/browser/browser.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
+import { type Audit, auditCurrent } from "./audit.ts";
 import { channelOptionSchema } from "./channels.ts";
 import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
-import { readbackProblems, type SentInfo } from "./product.ts";
+import { type Product, readbackProblems, type SentInfo } from "./product.ts";
 import { productOf } from "./ready.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
+import { originalSourceApproved, type SourceApproval, sourcePublicationHash } from "./source-data.ts";
 import { catalogWriteBlock } from "./write-guard.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -53,6 +55,14 @@ async function listingNow(sql: Sql, id: ListingId) {
 	return { l, s, r: productOf(l, s) };
 }
 
+/** 写入意图已登记后再查来源；短暂的源行共享锁与备选区删除事务协调，不跨外站请求持锁。 */
+async function sourceWriteBlock(sql: Sql, listingId: ListingId): Promise<string | null> {
+	const [source] = await sql<
+		{ deleted_at: Date | null }[]
+	>`select s.deleted_at from listing_sources s join listings l on l.source_product_id = s.id where l.id = ${listingId} for share of s`;
+	return source?.deleted_at ? "商品已从备选区移除，本次未提交；重新采集后须重新确认上架" : null;
+}
+
 const createParams = z.object({
 	listingId: ListingId,
 	shop: z.string(),
@@ -66,6 +76,16 @@ const createParams = z.object({
 });
 type CreateP = z.infer<typeof createParams>;
 
+/** 只保护首次建商品；已有商品上架沿用原流程，不给其追加草稿审阅要求。 */
+export const creationReviewBlock = (
+	audit: Partial<Audit> | null,
+	product: Product,
+	source?: { approval: SourceApproval | null | undefined; id: string | null | undefined; imageMode: string | undefined; hash: string | undefined },
+): string | null =>
+	auditCurrent(audit, product) || (source && originalSourceApproved(source.approval, source.id, source.imageMode, source.hash))
+		? null
+		: "商品稿的文案、图片或规格尚未完成当前审核：重新审阅后再建商品";
+
 const createOp: WriteOp<CreateP> = {
 	describe: "在 Shopee 上建商品（先建成下架）",
 	params: createParams,
@@ -76,12 +96,21 @@ const createOp: WriteOp<CreateP> = {
 	async prepare(sql, p) {
 		const blocked = await catalogWriteBlock(sql, p);
 		if (blocked) return { skip: blocked };
+		const removed = await sourceWriteBlock(sql, p.listingId);
+		if (removed) return { skip: removed };
 		const now = await listingNow(sql, p.listingId);
 		if (!now || now.l.cancelled) return { skip: "商品稿已放弃" };
 		if (now.l.product_id) return { skip: `已经建好了（商品 ${now.l.product_id}）` };
 		if (now.s.paused) return { skip: `暂停上品：${now.s.paused}` };
 		if (!now.r.info) return { skip: `商品稿还缺：${now.r.problems.join("；")}` };
 		if (now.r.hash !== p.hash) return { skip: "商品稿刚改过：给人重新看过再 x2 listing publish --ids …" };
+		const reviewBlock = creationReviewBlock(now.l.audit, now.r.product!, {
+			approval: now.l.source_approval,
+			id: now.l.source_product_id,
+			imageMode: now.l.images.imageMode,
+			hash: now.r.hash,
+		});
+		if (reviewBlock) return { skip: reviewBlock };
 		// 模板的上下限、快照由 productOf 现核；只给旧结算模型再核最低金额，不能叠加到模板上。
 		if (!now.s.template) {
 			const freight = Number(now.l.pricing?.freightRmb ?? 0);
@@ -140,10 +169,19 @@ const liveOp: WriteOp<LiveP> = {
 	display: (p) => `上架 ${p.name ?? `${p.shop}「${String(p.title ?? p.parentSku).slice(0, 24)}」`}`,
 	where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 	async prepare(sql, p) {
-		const [l] = await sql`select product_id, listed_at, cancelled from listings where id = ${p.listingId}`;
+		const removed = await sourceWriteBlock(sql, p.listingId);
+		if (removed) return { skip: removed };
+		const [l] = await sql<ListingRow[]>`select * from listings where id = ${p.listingId}`;
 		if (!l || l.cancelled) return { skip: "商品稿已放弃" };
 		if (!l.product_id) return { skip: "还没建好（建商品没成功）" };
 		if (l.listed_at) return { skip: "已经上架了" };
+		if (l.source_product_id) {
+			const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
+			if (!row) return { skip: "店铺设置无法读取，请重新确认上架" };
+			const hash = sourcePublicationHash(l, productOf(l, settingsOf(row)).hash);
+			if (!originalSourceApproved(l.source_approval, l.source_product_id, l.images.imageMode, hash))
+				return { skip: "备选商品的上架批准已撤销或内容变化，请重新确认上架" };
+		}
 		const blocked = await catalogWriteBlock(sql, { ...p, productId: String(l.product_id) });
 		if (blocked) return { skip: blocked };
 		return { params: { ...p, productId: String(l.product_id) }, before: {} };

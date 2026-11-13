@@ -6,6 +6,7 @@ import type { Pics } from "./pics.ts";
 import { estimateNeeds, pricingProblems, reprice, type Settings } from "./pricing.ts";
 import { type Product, productInfo, usedPics } from "./product.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
+import { validateSavedReviewedImages } from "./reviewed-images.ts";
 import type { ListingRow } from "./row.ts";
 import { sizeChartOf } from "./size-chart.ts";
 import { OLD_SPECS, specsOf, structureProblems } from "./variants.ts";
@@ -25,6 +26,13 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 	else if (!categoryAllowed(String(l.category_path[l.category_path.length - 1]), s.categories, l.category_exception))
 		problems.push("类目：不在本店允许的类目里，且未记录本稿类目例外");
 	if (!l.days_to_ship) problems.push("未定备货天数");
+	if (l.images?.imageMode === "reviewed") {
+		try {
+			validateSavedReviewedImages(l);
+		} catch (e) {
+			problems.push((e as Error).message);
+		}
+	}
 	let sizeChart: string | null = null;
 	try {
 		sizeChart = sizeChartOf(l);

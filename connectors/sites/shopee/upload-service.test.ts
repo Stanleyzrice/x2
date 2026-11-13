@@ -5,7 +5,7 @@ import { prepareUploadService } from "./products.ts";
 
 type UploadContext = NonNullable<Parameters<typeof prepareUploadService>[0]>;
 
-function fixture(failDependency = false) {
+function fixture(failDependency = false, unrelatedModule = false, poisonedInitializer = false) {
 	const loaded = new Set<number>();
 	const required: string[] = [];
 	let uploads = 0;
@@ -19,10 +19,13 @@ function fixture(failDependency = false) {
 		(id: string): Record<string, unknown> => {
 			required.push(id);
 			if (!loaded.has(63) || !loaded.has(36)) throw new Error("原生依赖尚未加载，不能初始化模块");
+			if (id === "10") throw new Error("不能初始化仅引用uploadImage的UI模块");
+			if (poisonedInitializer) return {};
 			return { default: service };
 		},
 		{
 			m: {
+				...(unrelatedModule ? { 10: { toString: () => "component.setup(){ uploadImage() }" } } : {}),
 				51: { toString: () => "()=>Promise.all([i.e(63),i.e(36)]).then(i.bind(i,325)).then(e=>e.default)" },
 				325: { toString: () => "t.default=new a.UploadService({qualityDetection:true})" },
 			},
@@ -55,6 +58,21 @@ test("伴随块失败不提前 require，避免半初始化缓存，留给下一
 	const f = fixture(true);
 	assert.equal(await prepareUploadService(f.context), false);
 	assert.deepEqual(f.required, []);
+	assert.equal(f.context.__x2Upload, undefined);
+	assert.equal(f.uploads(), 0);
+});
+
+test("只初始化原生loader返回的服务模块，不require仅引用uploadImage的UI模块", async () => {
+	const f = fixture(false, true);
+	assert.equal(await prepareUploadService(f.context), true);
+	assert.deepEqual(f.required, ["325"]);
+	assert.equal(f.uploads(), 0);
+});
+
+test("早期初始化留下空exports时不伪装服务、不自行重构实例或上传", async () => {
+	const f = fixture(false, true, true);
+	assert.equal(await prepareUploadService(f.context), false);
+	assert.deepEqual(f.required, ["325"]);
 	assert.equal(f.context.__x2Upload, undefined);
 	assert.equal(f.uploads(), 0);
 });

@@ -1,11 +1,12 @@
 // 检查商品稿：每份的当前步骤、要提醒人的、agent 能做的进 todo、人同意了就能建商品、上架的（ready）。纯函数，读写库在 index.ts
 
 import type { Reminder } from "../../platform/tool.ts";
-import { auditIssues, auditKey, auditNotes } from "./audit.ts";
+import { auditCurrent, auditIssues, auditNotes } from "./audit.ts";
 import { estimateNeeds, type Settings } from "./pricing.ts";
 import { imageNames } from "./product.ts";
 import { productOf } from "./ready.ts";
 import type { ListingRow } from "./row.ts";
+import { originalSourceApproved } from "./source-data.ts";
 import { listingName, textProblems } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
@@ -95,7 +96,8 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 		const note = String(l.note ?? "").trim();
 		if (!l.cancelled && note && l.note !== l.noted) notes.push({ id, name: listingName(l), note: String(l.note) });
 		const set = (step: ListingStep, detail: string | null = null) => steps.set(id, { step, detail });
-		const auditLines = () => (l.audit ? auditNotes(auditIssues(l.audit, l.kept_images ?? [], imageNames(l.images ?? {}, specsOf(l.variants)))) : null);
+		const auditLines = () =>
+			l.audit ? auditNotes(auditIssues(l.audit, l.kept_images ?? [], imageNames(l.images ?? {}, specsOf(l.variants))), l.audit.provider) : null;
 		if (l.cancelled) {
 			set("已放弃");
 			continue;
@@ -182,7 +184,7 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 			});
 			continue;
 		}
-		if (!l.audit || l.audit.key !== auditKey(r.product)) {
+		if (!auditCurrent(l.audit, r.product) && !originalSourceApproved(l.source_approval, l.source_product_id, l.images.imageMode, r.hash)) {
 			set("待 Gemini 文字检查");
 			toCheck.push(id);
 			continue;

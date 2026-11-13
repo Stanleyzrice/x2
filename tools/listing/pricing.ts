@@ -129,6 +129,23 @@ export function pricingProblems(specs: Specs, needs: Need[]): string[] {
 	];
 }
 
+/** 批发起订量保留原值；只有当前货源支持代发、全部选中规格显式举证时才解决对应 MOQ 告警。 */
+export function sourceMoqProblems(offer: OfferLike, specs: Specs, previous: readonly string[] = []): string[] {
+	const isMoq = (line: string) => /^货源：起订量 \d+(?:\.\d+)?，(?:无法单件购买|单件代发采购条件待核)$/.test(line);
+	const other = previous.filter((line) => !isMoq(line));
+	const confirmed =
+		offer.tags?.onePsale === true &&
+		specs.variants.length > 0 &&
+		specs.variants.every((v) => v.pricingInput?.purchaseMode === "single-dropship" && Boolean(v.pricingInput.sourceEvidence?.trim()));
+	if (confirmed) return other;
+	return [
+		...other,
+		...((offer.minQty ?? 1) > 1
+			? [`货源：起订量 ${offer.minQty}，单件代发采购条件待核`]
+			: previous.filter(isMoq).map((line) => line.replace("无法单件购买", "单件代发采购条件待核"))),
+	];
+}
+
 export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb: number | null; minimumPurchase: number; changed: boolean } | null {
 	const specs = specsOf(l.variants);
 	if (!l.offer || !specs) return null;
@@ -167,11 +184,11 @@ export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb:
 export function specsAndPrices(
 	o: Offer,
 	s: Settings,
-	opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null; minimumPurchase?: number },
+	opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null; minimumPurchase?: number; originalText?: boolean },
 ): { specs: Specs; problems: string[] } {
-	const built = specsFrom(o, opts.removed ?? [], opts.prev ?? null);
+	const built = specsFrom(o, opts.removed ?? [], opts.prev ?? null, { originalText: opts.originalText });
 	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, opts) };
-	return { specs, problems: [...(o.minQty > 1 ? [`货源：起订量 ${o.minQty}，无法单件购买`] : []), ...built.problems, ...structureProblems(specs)] };
+	return { specs, problems: [...sourceMoqProblems(o, specs), ...built.problems, ...structureProblems(specs)] };
 }
 
 export function quote(o: Offer, s: Settings, assume: { weightKg: number; freightRmb: number }) {

@@ -43,7 +43,10 @@ export function recommendedPath(data: Recommended): { path: number[]; names: str
 	return { path, names };
 }
 
-export function pickAttributes(tree: Attribute[]): {
+export function pickAttributes(
+	tree: Attribute[],
+	given?: { attribute_id: number; attribute_values: { value_id: number }[] }[],
+): {
 	attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[];
 	text: string[];
 	missing: string[];
@@ -51,6 +54,23 @@ export function pickAttributes(tree: Attribute[]): {
 	const attributes: { attribute_id: number; attribute_values: { value_id: number }[] }[] = [],
 		text: string[] = [],
 		missing: string[] = [];
+	if (given) {
+		if (new Set(given.map((a) => a.attribute_id)).size !== given.length) missing.push("属性编号重复");
+		const known = new Map(tree.map((a) => [String(a.id), a]));
+		for (const selected of given) {
+			const actual = known.get(String(selected.attribute_id));
+			if (!actual) {
+				missing.push(`属性 ${selected.attribute_id} 不在当前类目中`);
+				continue;
+			}
+			if (!selected.attribute_values.length || selected.attribute_values.some((v) => !actual.values.some((allowed) => Number(allowed.valueId) === v.value_id)))
+				missing.push(`「${actual.name}」的值不在站点可选值中`);
+			attributes.push(selected);
+		}
+		for (const actual of tree.filter((a) => a.mandatory))
+			if (!given.some((v) => String(v.attribute_id) === String(actual.id) && v.attribute_values.length)) missing.push(`必填的「${actual.name}」待人工填写`);
+		return { attributes, text, missing };
+	}
 	for (const a of tree.filter((x) => x.mandatory)) {
 		if (!a.values.length) {
 			missing.push(a.name);

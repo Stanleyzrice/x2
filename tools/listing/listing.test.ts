@@ -1499,7 +1499,7 @@ test("报价：照做商品稿排规格、按店铺设置核价，不做图、�
 	assert.deepEqual(q.problems, []);
 	const read = { ...o, minQty: 3, freight: { costRmb: 8, to: "" }, skus: o.skus.map((k) => ({ ...k, weightKg: 0.5 })) };
 	const r = quote(read, s, { weightKg: 1, freightRmb: 10 });
-	assert.deepEqual([r.freightRmb, r.freightAssumed, r.weightAssumed, r.problems], [8, false, null, ["货源：起订量 3，无法单件购买"]]);
+	assert.deepEqual([r.freightRmb, r.freightAssumed, r.weightAssumed, r.problems], [8, false, null, ["货源：起订量 3，单件代发采购条件待核"]]);
 	assert.equal(quote({ ...o, tags: { ...o.tags!, freeShipping: true }, freight: { costRmb: 0, to: "" } }, s, { weightKg: 1, freightRmb: 10 }).freightRmb, 0);
 });
 
@@ -1583,4 +1583,24 @@ test("筛字的回答：整个是一个字母（可以重复、带标点反引�
 	assert.equal(parseVerdict("marketing"), null);
 	assert.equal(parseVerdict("m or p"), null);
 	assert.equal(parseVerdict(""), null);
+});
+
+test("人工补充的类目属性保留原值，未知属性和缺必填项不伪装为完成", () => {
+	const tree = [
+		{
+			id: "10",
+			name: "材质",
+			mandatory: true,
+			maxValues: 1,
+			values: [
+				{ valueId: "1", name: "棉" },
+				{ valueId: "2", name: "毛绒" },
+			],
+		},
+	];
+	const input = [{ attribute_id: 10, attribute_values: [{ value_id: 2 }] }];
+	assert.deepEqual(pickAttributes(tree, input).attributes, input);
+	assert.deepEqual(pickAttributes(tree, input).missing, []);
+	assert.match(pickAttributes(tree, []).missing.join("；"), /材质/);
+	assert.match(pickAttributes(tree, [{ attribute_id: 10, attribute_values: [{ value_id: 99 }] }]).missing.join("；"), /可选值/);
 });
