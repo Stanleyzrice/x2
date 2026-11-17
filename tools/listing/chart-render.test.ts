@@ -158,6 +158,17 @@ test("确有cm量测时只显示已给数值，局部缺项保持未提供且不
 	assert.ok(!plan.notes.join().includes("1–3"));
 });
 
+test("仅有身高建议的表不把建议范围误称为体重", () => {
+	const input = table();
+	input.columns = [{ title: "建议身高", unit: "cm" }];
+	input.rows[0]!.values = [[155, 160]];
+	input.rows[1]!.values = [[160, 165]];
+	const plan = chartPlan(source(), input);
+	assert.deepEqual(plan.headers, ["尺碼／款式", "建議身高\ncm"]);
+	assert.match(plan.notes.join(), /建議範圍僅供選碼參考/);
+	assert.doesNotMatch(plan.notes.join(), /體重/);
+});
+
 test("全部选中源SKU必须精确覆盖一次，不能混尺码、借其他源、漏掉颜色或偷换specId", () => {
 	const omitted = table();
 	omitted.rows[1]!.sourceSkuIds.pop();
@@ -244,9 +255,9 @@ test("size-label鞋码只显示真实SKU标示区间和號，不生成成衣、�
 		["36–37", "36–37"],
 		["38–39", "38–39"],
 	]);
-	assert.equal(plan.subtitle, "供貨商標示鞋碼，非腳長或鞋內長量測");
+	assert.equal(plan.subtitle, "供貨商尺碼標籤，非實際量測");
 	assert.doesNotMatch([plan.subtitle, ...plan.notes].join(), /成衣|體重|衣物/);
-	assert.match(plan.notes.join(), /未換算腳長、公分或其他尺碼系統/);
+	assert.match(plan.notes.join(), /未換算公分或其他尺碼系統/);
 	assert.equal(plan.bindings.length, 4);
 	assert.match(plan.scope, /^[a-f\d]{64}$/);
 	assert.deepEqual({ row, input }, before, "预览不改源SKU、售价或任何输入");
@@ -292,4 +303,85 @@ test("size-label保留单码、空格与鞋底前缀的源数字，不把cm字�
 	wrong.rows[0]!.sourceOption = "24cm";
 	wrong.rows[0]!.values = [24];
 	assert.throws(() => chartPlan(measured, wrong), /标示鞋码须与原始SKU/);
+});
+
+function apparelLabels() {
+	const row = source(),
+		sizes = ["M", "L", "XL", "2XL", "3XL"],
+		styles = ["5116", "5106", "5110", "5108", "随机单裤一条"];
+	row.offer!.props[0]!.values = styles.map((name) => ({ name, image: "" }));
+	row.offer!.props[1]!.values = sizes.map((name) => ({ name, image: "" }));
+	row.offer!.skus = styles.flatMap((style, ci) =>
+		sizes.map((size, si) => ({
+			...row.offer!.skus[0]!,
+			skuId: SkuId.parse(`${ci}-${si}`),
+			specId: SpecId.parse(`apparel${ci}-${si}`),
+			name: `${style} / ${size}`,
+			attrs: [style, size],
+		})),
+	);
+	row.variants = {
+		tiers: [
+			{ source: "颜色", name: "款式", options: styles.map((name) => ({ source: name, name })) },
+			{ source: "尺码", name: "尺碼", options: sizes.map((name) => ({ source: name, name })) },
+		],
+		variants: row.offer!.skus.map((sku, i) => ({
+			sku: `apparel-local-${i}`,
+			skuId: sku.skuId,
+			specId: sku.specId,
+			options: [Math.floor(i / sizes.length), i % sizes.length],
+			costRmb: 10,
+			stock: 5,
+			weightKg: null,
+			priceTwd: null,
+		})),
+	};
+	const input = {
+		offerId: "123",
+		sourceTier: "尺码",
+		kind: "size-label",
+		title: "原标示尺码说明",
+		columns: [{ title: "原标示尺码", unit: "標示" }],
+		rows: sizes.map((size) => ({
+			label: size,
+			sourceOption: size,
+			sourceSkuIds: row.offer!.skus.filter((sku) => sku.attrs[1] === size).map((sku) => sku.skuId),
+			values: [size],
+			evidence: `https://detail.1688.com/offer/123.html 原SKU尺码标签${size}；没有实际量测或体重数据。`,
+		})),
+		note: "未提供成衣公分量测或适穿体重资料。",
+		evidence: "原SKU的M/L/XL/2XL/3XL标签，完整绑定四套装及随机单裤共25SKU。",
+	};
+	return { row, input };
+}
+
+test("size-label原服装标签逐字展示并覆盖25SKU，不补量测或适穿数值", () => {
+	const { row, input } = apparelLabels(),
+		before = structuredClone({ row, input });
+	const plan = chartPlan(row, chartTableSchema.parse(input));
+	assert.deepEqual(
+		plan.rows,
+		["M", "L", "XL", "2XL", "3XL"].map((size) => [size, size]),
+	);
+	assert.deepEqual(plan.headers, ["尺碼／款式", "原標示尺碼\n標示"]);
+	assert.equal(plan.bindings.length, 25);
+	assert.equal(plan.subtitle, "供貨商尺碼標籤，非實際量測");
+	assert.doesNotMatch([plan.subtitle, ...plan.notes].join(), /鞋碼|腳長|鞋內長/);
+	assert.match(plan.notes.join(), /未提供成衣公分量測或適穿體重資料/);
+	assert.match(plan.notes.join(), /不代表實際尺寸或適穿保證/);
+	assert.deepEqual({ row, input }, before);
+});
+
+test("服装标签拒绝换码、数值冒充、模糊文字、错误单位和漏SKU", () => {
+	const { row, input } = apparelLabels();
+	for (const value of ["L", "XXXL", 1, [1, 2], null, "均码", "M【建议75-95斤】"])
+		assert.equal(chartTableSchema.safeParse({ ...input, rows: [{ ...input.rows[0]!, values: [value] }, ...input.rows.slice(1)] }).success, false);
+	for (const kind of ["measurement", "recommendation"]) assert.equal(chartTableSchema.safeParse({ ...input, kind }).success, false);
+	for (const unit of ["cm", "kg", "市斤", "號"]) assert.equal(chartTableSchema.safeParse({ ...input, columns: [{ title: "原尺码", unit }] }).success, false);
+	const omitted = chartTableSchema.parse(input);
+	omitted.rows[0]!.sourceSkuIds.pop();
+	assert.throws(() => chartPlan(row, omitted), /未覆盖/);
+	const mixed = chartTableSchema.parse(input);
+	mixed.rows[0]!.sourceSkuIds[0] = mixed.rows[1]!.sourceSkuIds[0]!;
+	assert.throws(() => chartPlan(row, mixed), /原始尺码不符/);
 });

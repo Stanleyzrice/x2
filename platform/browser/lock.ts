@@ -82,10 +82,11 @@ function hookExit(): void {
 	};
 	process.on("exit", all);
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-		process.once(signal, () => {
+		process.prependOnceListener(signal, () => {
+			const handled = process.listenerCount(signal) > 0;
 			all();
-			// 照原来的样子退出（没有别的监听时就是被这个信号杀掉）
-			process.kill(process.pid, signal);
+			// 先于应用的 once 处理器检查，避免它已移除时误杀仍在异步清理的进程。
+			if (!handled) process.kill(process.pid, signal);
 		});
 	}
 }

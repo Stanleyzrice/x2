@@ -4,6 +4,15 @@ import { test } from "node:test";
 import { api } from "./api.ts";
 import { preloadPage } from "./preload.ts";
 
+test("API 错误只显示文字消息，空回包或非文字 error 仍保留 HTTP 状态", async (t) => {
+	for (const body of [null, { error: { detail: "upstream" } }, { error: 503 }]) {
+		t.mock.method(globalThis, "fetch", async () => Response.json(body, { status: 503 }));
+		await assert.rejects(api.pages(), { name: "Error", message: "503" });
+	}
+	t.mock.method(globalThis, "fetch", async () => Response.json({ error: "需要重新登录" }, { status: 401 }));
+	await assert.rejects(api.pages(), { name: "Error", message: "需要重新登录" });
+});
+
 test("采购缓存隔离店铺范围，同一范围合并读取，同步结果回填可立即回显", async (t) => {
 	let calls = 0;
 	t.mock.method(globalThis, "fetch", async () => {

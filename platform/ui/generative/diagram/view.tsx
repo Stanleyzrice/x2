@@ -1,9 +1,11 @@
 // diagram：一张 Mermaid 图。用到才加载 Mermaid（大）；深浅色跟系统；宽的图在流里会缩小，点「放大」在对话框里看原大；写错了显示 Mermaid 的原话和原文，好让 agent 改
+
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Title } from "@/components/title.tsx";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { errorOf } from "@/lib/state";
 import type { Props } from "./schema.ts";
 
 export function View({ props }: { props: Props }) {
@@ -12,16 +14,18 @@ export function View({ props }: { props: Props }) {
 	const [error, setError] = useState<string | null>(null);
 	useEffect(() => {
 		let alive = true;
-		import("mermaid").then(async ({ default: mermaid }) => {
-			const dark = document.documentElement.classList.contains("dark");
-			mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "neutral", fontFamily: "inherit" });
-			try {
+		setSvg(null);
+		setError(null);
+		import("mermaid")
+			.then(async ({ default: mermaid }) => {
+				const dark = document.documentElement.classList.contains("dark");
+				mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "neutral", fontFamily: "inherit" });
 				const r = await mermaid.render(id, props.mermaid);
 				if (alive) setSvg(r.svg);
-			} catch (e) {
-				if (alive) setError((e as Error).message);
-			}
-		});
+			})
+			.catch((error: unknown) => {
+				if (alive) setError(errorOf(error));
+			});
 		return () => {
 			alive = false;
 		};

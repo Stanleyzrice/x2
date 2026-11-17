@@ -1,33 +1,45 @@
 // 人工备选区复用商品稿、核价和发布；快照与补充值分开保存，发布按钮只批准本次冻结的原文原图指纹。
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { z } from "zod";
+import { z } from "zod";
+import { attributes as attributeTree } from "../../connectors/sites/shopee/products.ts";
 import { db, type Json, type Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { get, type Planned, write } from "../../platform/tool.ts";
 import { auditCurrent } from "./audit.ts";
+import { updatedAttributes } from "./category.ts";
 import { make } from "./make.ts";
 import { addListings } from "./pick.ts";
 import { type Settings, settingsOf } from "./pricing.ts";
+import { inShopQueued } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import {
+	type CollectedSourceResult,
+	type CollectSourceInput,
+	mergeSourceFields,
+	mergeSourceResearch,
 	SourceId,
 	type SourceItem,
 	type SourceProduct,
 	type SourcePublishInput,
+	type SourceResearch,
 	type SourceShopInput,
 	sourceDeleteParams,
 	sourceDetailParams,
 	sourceFieldsSchema,
 	sourceListParams,
 	sourceProductSchema,
+	sourcePromptParams,
 	sourcePublicationHash,
 	sourcePublishParams,
 	sourcePublishResultParams,
+	sourceResearchPick,
+	sourceResearchSchema,
 	sourceSelectionParams,
 	sourceUpdateParams,
 } from "./source-data.ts";
+import { type SourcePromptSnapshot, sourcePrompt, sourcePromptSnapshotSchema } from "./source-prompt.ts";
 import { textProblems } from "./text.ts";
 
 export { type SourceItem, sourceDeleteParams } from "./source-data.ts";
@@ -41,6 +53,7 @@ type SourceRow = {
 	snapshot: SourceProduct;
 	captured_at: Date;
 	deleted_at: Date | null;
+	research?: SourceResearch[];
 };
 type SourceSummary = Omit<SourceRow, "snapshot"> & { source_title: string; source_image: string | null; sku_count: number; source_errors: string[] };
 type Context<TSource = SourceRow> = {
@@ -96,23 +109,72 @@ async function deleteSources(sql: Sql, input: z.output<typeof sourceDeleteParams
 }
 const effectiveShop = (p: SourceShopInput) => p.targetShop ?? p.shop;
 
+async function saveSourceTransaction(tx: QuerySql, source: SourceProduct): Promise<{ id: string; isNew: boolean; repaired: boolean }> {
+	const [added] = await tx<
+		{ id: string }[]
+	>`insert into listing_sources (platform, source_id, url, snapshot) values (${source.platform}, ${source.sourceId}, ${source.url}, ${tx.json(source as Json)}) on conflict (platform, source_id) do nothing returning id::text`;
+	if (added) return { id: added.id, isNew: true, repaired: false };
+	const [old] = await tx<SourceRow[]>`select * from listing_sources where platform = ${source.platform} and source_id = ${source.sourceId} for update`;
+	if (!old) throw new Usage("备选商品刚变化，请重试采集");
+	if (old.deleted_at) throw new Usage("采集期间已删除，请重新点击加入备选");
+	// 只修复已明确失败的采集，成功快照不被重复采集悄悄替换；人工补充值不在快照里。
+	let repaired = false;
+	if (old.snapshot.errors.length && !source.errors.length) {
+		const [blocked] =
+			await tx`select 1 from listing_source_links x join listings l on l.id = x.listing_id where x.source_id = ${old.id} and (l.product_id is not null or l.listed_at is not null or exists (select 1 from writes w where w.params->>'listingId' = l.id::text and w.status in ('待执行','已提交','结果未知','不一致'))) limit 1`;
+		if (!blocked) {
+			await tx`update listing_sources set snapshot = ${tx.json(source as Json)}, url = ${source.url}, captured_at = now() where id = ${old.id}`;
+			repaired = true;
+		}
+	}
+	return { id: String(old.id), isNew: false, repaired };
+}
+
 async function saveSource(sql: Sql, input: SourceProduct): Promise<{ id: string; isNew: boolean }> {
 	const source = sourceProductSchema.parse(input);
 	return sql.begin(async (tx) => {
-		const [added] = await tx<
-			{ id: string }[]
-		>`insert into listing_sources (platform, source_id, url, snapshot) values (${source.platform}, ${source.sourceId}, ${source.url}, ${tx.json(source as Json)}) on conflict (platform, source_id) do nothing returning id::text`;
-		if (added) return { id: added.id, isNew: true };
-		const [old] = await tx<SourceRow[]>`select * from listing_sources where platform = ${source.platform} and source_id = ${source.sourceId} for update`;
-		if (!old) throw new Usage("备选商品刚变化，请重试采集");
-		if (old.deleted_at) throw new Usage("采集期间已删除，请重新点击加入备选");
-		// 只修复已明确失败的采集，成功快照不被重复采集悄悄替换；人工补充值不在快照里。
-		if (old.snapshot.errors.length && !source.errors.length) {
-			const [blocked] =
-				await tx`select 1 from listing_source_links x join listings l on l.id = x.listing_id where x.source_id = ${old.id} and (l.product_id is not null or l.listed_at is not null or exists (select 1 from writes w where w.params->>'listingId' = l.id::text and w.status in ('待执行','已提交','结果未知','不一致'))) limit 1`;
-			if (!blocked) await tx`update listing_sources set snapshot = ${tx.json(source as Json)}, url = ${source.url}, captured_at = now() where id = ${old.id}`;
+		const saved = await saveSourceTransaction(tx, source);
+		return { id: saved.id, isNew: saved.isNew };
+	});
+}
+
+/** 运行锁与备选保存共用事务，取消发生后的迟到读取不得再写入来源或研究记录。 */
+export async function saveCollectedSource(sql: Sql, input: CollectSourceInput, product: SourceProduct): Promise<CollectedSourceResult> {
+	const source = sourceProductSchema.parse(product);
+	return sql.begin(async (tx) => {
+		const [shop] = await tx`select 1 from shop_settings where shop = ${input.shop}`;
+		if (!shop) throw new Usage(`没有「${input.shop}」这家店`);
+		if (input.provenance) {
+			const [run] = await tx<
+				{ status: string; cancel_requested: boolean; shop: string; strategy_id: string; strategy_name: string }[]
+			>`select status, cancel_requested, shop, strategy_id, strategy_name from selection_runs where id = ${input.provenance.runId} for update`;
+			if (run?.status !== "running" || run.cancel_requested) throw new Usage("选品运行已停止或不存在，未加入备选");
+			if (run.shop !== input.shop || run.strategy_id !== input.provenance.strategyId || run.strategy_name !== input.provenance.strategyName)
+				throw new Usage("选品运行的店铺或策略与来源依据不一致，未加入备选");
+			const [strategy] = await tx`select name from strategies where name = ${input.provenance.strategyName}`;
+			if (!strategy) throw new Usage(`没有策略「${input.provenance.strategyName}」，未加入备选`);
 		}
-		return { id: String(old.id), isNew: false };
+		const saved = await saveSourceTransaction(tx, source);
+		const [row] = await tx<SourceRow[]>`select * from listing_sources where id = ${saved.id} for update`;
+		if (!row || row.deleted_at) throw new Usage("商品已从备选区移除，未重新加入");
+		if (input.provenance) {
+			const research = mergeSourceResearch(row.research ?? [], {
+				...input.provenance,
+				kind: "strategy-run",
+				shop: input.shop,
+				recordedAt: new Date().toISOString(),
+			});
+			await tx`update listing_sources set research = ${tx.json(research as Json)} where id = ${row.id}`;
+		}
+		return {
+			sourceId: String(row.id),
+			offerId: row.source_id,
+			title: row.snapshot.title,
+			status: saved.isNew ? "added" : "existing",
+			problems: row.snapshot.errors,
+			sourceCapturedAt: row.captured_at.toISOString(),
+			reusedSnapshot: !saved.isNew && !saved.repaired,
+		};
 	});
 }
 
@@ -237,7 +299,8 @@ function itemOf(raw: SourceRow | SourceSummary, ctx: Omit<Context, "sources">): 
 async function ensureDraft(sql: Sql, source: SourceRow, shop: string): Promise<ListingRow> {
 	const [active] = await sql`select 1 from listing_sources where id = ${source.id} and deleted_at is null`;
 	if (!active) throw new Usage("商品已从备选区移除，请刷新列表");
-	const { added } = await addListings(sql, { shop, links: [source.url], why: "人工采集选用", evidence: source.url });
+	const pick = sourceResearchPick(source.research ?? [], shop);
+	const { added } = await addListings(sql, { shop, links: [source.url], ...pick, evidence: pick.evidence || source.url });
 	const addedRow = added[0]!;
 	await sql`insert into listing_source_links (source_id, shop, listing_id) values (${source.id}, ${shop}, ${addedRow.id}) on conflict (source_id, shop) do nothing`;
 	if (addedRow.isNew)
@@ -312,6 +375,7 @@ async function detail(sql: Sql, input: z.output<typeof sourceDetailParams>) {
 		props: source.snapshot.props,
 		skus: source.snapshot.skus.map((sku) => ({ ...sku, stock: fields.stocks?.[sku.id] ?? sku.stock, price: fields.prices?.[sku.id] ?? sku.price })),
 		fields,
+		research: z.array(sourceResearchSchema).parse(source.research ?? []),
 		minQty: fields.minQty ?? source.snapshot.minQty,
 		freightRmb: row?.freight_rmb === null || !row ? source.snapshot.freightRmb : Number(row.freight_rmb),
 	};
@@ -324,7 +388,7 @@ async function update(sql: Sql, input: z.output<typeof sourceUpdateParams>) {
 	if (row.product_id || row.listed_at || ctx.pending.has(String(row.id))) throw new Usage("商品已提交或已建好，不能用备选区覆盖；结果未知时先核对");
 	if (String(row.source_product_id ?? "") !== String(source.id)) throw new Usage("已有商品稿保留原流程，请在原商品稿工具中补充资料");
 	const fields = sourceFieldsSchema.parse(input);
-	const saved = sourceFieldsSchema.parse({ ...row.source_fields, ...fields });
+	const saved = mergeSourceFields(row.source_fields, fields);
 	const ids = new Set(source.snapshot.skus.map((s) => s.id));
 	if (Object.keys({ ...saved.stocks, ...saved.prices }).some((id) => !ids.has(id))) throw new Usage("补充的规格不在这件来源商品中");
 	for (const [selected, original] of [
@@ -332,6 +396,13 @@ async function update(sql: Sql, input: z.output<typeof sourceUpdateParams>) {
 		[saved.detailImages, source.snapshot.description.images],
 	] as const)
 		if (selected?.some((url) => !original.includes(url))) throw new Usage("只能从已保存原图中选择，不接受另一商品的图片");
+	const leaf = fields.categoryPath?.at(-1) ?? (row.category_id ? Number(row.category_id) : row.category_path?.at(-1));
+	const attributeChanges = updatedAttributes(
+		fields.attributes !== undefined && leaf ? await inShopQueued(ctx.settings.shopId, () => attributeTree(leaf)) : undefined,
+		fields.attributes,
+		fields.categoryPath !== undefined,
+	);
+	if (attributeChanges?.missing.length) throw new Usage(`属性：${attributeChanges.missing.join("；")}`);
 	const columns: Record<string, unknown> = { source_fields: sql.json(saved as Json), source_approval: null, problems: null, updated_at: new Date() };
 	if (fields.title !== undefined) columns.title = fields.title;
 	if (fields.description !== undefined) columns.description = fields.description;
@@ -341,16 +412,20 @@ async function update(sql: Sql, input: z.output<typeof sourceUpdateParams>) {
 		Object.assign(columns, {
 			category_path: sql.json(fields.categoryPath),
 			category_id: fields.categoryPath.at(-1),
-			attributes: fields.attributes === undefined ? null : sql.json(fields.attributes as Json),
 			days_to_ship: fields.daysToShip ?? null,
 		});
-	if (fields.attributes !== undefined) columns.attributes = sql.json(fields.attributes as Json);
+	if (attributeChanges) {
+		columns.attributes = attributeChanges.attributes === null ? null : sql.json(attributeChanges.attributes as Json);
+		columns.attributes_text = attributeChanges.text;
+	}
 	if (fields.daysToShip !== undefined) columns.days_to_ship = fields.daysToShip;
 	const changed = await sql.begin(async (tx) => {
 		const [active] = await tx`select 1 from listing_sources where id = ${source.id} and deleted_at is null for share`;
 		if (!active) throw new Usage("商品已从备选区移除，未保存旧页面的修改");
 		return tx`update listings set ${tx(columns)} where id = ${row.id} and product_id is null and listed_at is null
 			and source_fields is not distinct from ${row.source_fields == null ? null : tx.json(row.source_fields as Json)}
+			and category_id is not distinct from ${row.category_id}
+			and attributes is not distinct from ${row.attributes == null ? null : tx.json(row.attributes as Json)}
 			and not exists (select 1 from writes where params->>'listingId' = ${String(row.id)} and status in ('待执行','已提交','结果未知','不一致')) returning id`;
 	});
 	if (!changed.length) throw new Usage("商品资料或提交状态刚变化，未覆盖修改；请刷新后再保存");
@@ -458,6 +533,54 @@ async function publishResult(sql: Sql, input: z.output<typeof sourcePublishResul
 export function sourceTools(plan: (sql: Sql, ids: string[]) => Promise<Planned[][]>) {
 	return {
 		sources: get("人工采集备选区：按平台、关键词和上架状态查看已保存原文原图", sourceListParams, async (p) => sources(await db(), p)),
+		"source-prompt": get("导出明确选中商品的上架提示词；只读取已有资料，不准备稿件或执行上架", sourcePromptParams, async (p) => {
+			const sql = await db();
+			const shop = effectiveShop(p);
+			const [target] = await sql<{ shop: string }[]>`select shop from shop_settings where shop = ${shop}`;
+			if (!target) throw new Usage(`没有「${shop}」这家店`);
+			const rows = await sql<
+				{
+					id: SourceId;
+					platform: string;
+					sourceId: string;
+					capturedAt: Date;
+					research: SourceResearch[];
+					listingId: string | null;
+					productId: string | null;
+					listed: boolean;
+					cancelled: boolean;
+					imageMode: string | null;
+					hasSavedOffer: boolean;
+					listingUpdatedAt: Date | null;
+					pendingWrites: SourcePromptSnapshot["pendingWrites"];
+				}[]
+			>`select s.id::text, s.platform, s.source_id as "sourceId", s.captured_at as "capturedAt", s.research,
+				l.id::text as "listingId", l.product_id as "productId", l.listed_at is not null as listed,
+				coalesce(l.cancelled, false) as cancelled, l.images->>'imageMode' as "imageMode",
+				l.offer is not null as "hasSavedOffer", l.updated_at as "listingUpdatedAt",
+				coalesce((select jsonb_agg(jsonb_build_object('id', w.id::text, 'op', w.op, 'status', w.status) order by w.id)
+					from writes w where w.params->>'listingId' = l.id::text and w.op in ('建商品', '上架')
+					and w.status in ('待执行', '已提交', '结果未知', '不一致')), '[]'::jsonb) as "pendingWrites"
+				from listing_sources s
+				left join listing_source_links x on x.source_id = s.id and x.shop = ${shop}
+				left join listings l on l.id = x.listing_id and l.shop = ${shop}
+				where s.id in ${sql(p.sourceIds)} and s.deleted_at is null`;
+			return sourcePrompt(
+				target.shop,
+				p.sourceIds,
+				rows.map(({ id, platform, sourceId, capturedAt, listingUpdatedAt, research, ...progress }) => ({
+					id,
+					platform,
+					sourceId,
+					research,
+					snapshot: sourcePromptSnapshotSchema.parse({
+						...progress,
+						capturedAt: capturedAt.toISOString(),
+						listingUpdatedAt: listingUpdatedAt?.toISOString() ?? null,
+					}),
+				})),
+			);
+		}),
 		"source-delete": get("只从共享上架备选区移除明确选中的商品；保留商品稿与已上架历史，不操作外站", sourceDeleteParams, async (p) =>
 			deleteSources(await db(), p),
 		),

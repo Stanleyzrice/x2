@@ -20,14 +20,14 @@
 
 ## 改代码
 
-- 分四层：`platform` 换哪门生意都一样（工具的注册表和命令行、至多一次写入、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改）；`connectors` 一个外部系统一个（`sites` 经浏览器、用人的登录，`services` 用 API key；写只发一次请求）；`tools` 是业务对象的计算与原子操作，一类业务一个（订单、上品、选品），代码、表、测试放在一起；`skills` 只有 md（`SKILL.md` 和 `references/`），是业务规则、经营阈值和完整业务流程的唯一维护入口，教 agent 选择参数、组合工具和判断结果。根上的 `x2.ts` 是装配（把连接器、业务工具登记进平台，唯一同时认识各层的文件）；platform 不 import connectors、tools；连接器只 import platform 和自己，不碰库（`platform/db`）；业务工具之间不互相 import（要用别的业务的，读它的表）；网页的界面（`platform/ui`）只引自己和 `platform/web` 的类型。这些由 lint 管（`biome.json` 的 overrides，每条写着为什么）；lint 管不了的在 `test/architecture.test.ts`（顶层有哪些、环境变量都写在 `.env.example`……）。
+- 分四层：`platform` 是通用平台（工具注册、命令行、至多一次写入、浏览器、库、网页；`platform/ui/components/ui` 是 shadcn 拷来的不手改）；`connectors` 一个外部系统一个（`sites` 经浏览器，`services` 用 API key；写只发一次请求）；`tools` 一类业务一个，计算、原子操作、表和测试放在一起；`skills` 只有 md，是经营规则、阈值和流程的唯一维护入口。`x2.ts` 只装配各模块入口。平台不引连接器或业务；连接器只引平台和自己，不碰 `platform/db`；业务工具不互相引；界面只引自身与 `platform/web` 的类型。`test/architecture.test.ts` 用 TypeScript AST（语法树）解析并规范化实际依赖，统一执行这些边界，不按目录深度重复维护导入规则；Biome 禁止运行时循环依赖。
 - Connector 只负责特定网站的接入和读写。代码及 NOTES.md 说明网站可读、可写的能力、接口、字段、参数、认证方式和网站技术限制；返回网站数据，用网站自己的说法。经营限制、选品条件和完整业务流程只写在 skills 中，不能混入 Connector。
 - 外部的数据进来就解析：connector 拿到回包照 zod 的形状解析（`platform/reply.ts`，只写用到的格，对不上报「回包变了」），每个解析的接口在 `fixtures/` 配一份回包样本、有测试；库里读出的行给类型（`sql<行[]>`）。之后的代码信类型，不写 `any`（lint 管）。几种 id 都是字符串的，用各自的 brand（`OfferId`、`OrderSn`、`ListingId`、`WriteId`……），在边界上贴，函数签名只收对的那一种。
 - 定义工具用 `platform/tool.ts` 的 `get`、`list`、`byPage`、`all`（最后一个参数 `{ text, exit }` 是命令行怎么显示）、`write`、`submit`，参数、输出的类型照 zod 和函数推出来。
-- 规矩往结构里放：目录结构 > lint > 测试 > 文档。代码看不出的「为什么」写在文件开头；文档只放代码说不清的（skill、连接器的 `NOTES.md`），不写来历和进度。
+- 规矩往结构里放：目录结构、lint、类型系统和架构检查优先于文档。类型从 zod 声明、函数结果推导，不再平行手写；前后端继承 `tsconfig.base.json`。不强制文件头注释，只解释代码看不出的原因；文档只放代码说不清的（skill、连接器的 `NOTES.md`），不写来历和进度。
 - 项目目录索引维护在 `README.md`；模块代码、数据校验声明、类型、页面组件与状态各按职责归位，不为分类新建平行实现。Codex 的技能入口用 `.agents/skills/`，hooks 和插件配置只用本项目 `.codex/`；保留既有 `.claude/`、`CLAUDE.md` 及共享技能，不向全局安装或启用。
 - `patches` 是工具链配置，只存锁定依赖版本的持久补丁；在 `package.json` 与锁文件登记，补丁用途、上游依据和移除条件写根 `README.md`，不放业务代码或经营规则。
-- 先做通 happy path；边界多的判断（看图、文案、估重量、选品）先由 agent 填、人能改，攒够数据再写成程序。人确定的业务规则、经营参数和操作流程当场写进对应 skill；工具接受显式参数并返回事实、计算结果和技术校验，不自行定义经营政策。数据库只存运行配置、事实和历史，页面只放索引与结果。
+- 先做通 happy path（主要正常流程）；边界多的判断（看图、文案、估重量、选品）先由 agent 填、人能改，攒够数据再写成程序。人确定的业务规则、经营参数和操作流程当场写进对应 skill；工具接受显式参数并返回事实、计算结果和技术校验，不自行定义经营政策。数据库只存运行配置、事实和历史，页面只放索引与结果。
 - 写法照现有代码：中文注释，zod 声明参数，stdout 只放结果。
-- 做完一块照 `skills/verify/SKILL.md` 验（计算与技术校验写成纯函数、配测试，库的读写薄薄一层）。lint 破例写 `biome-ignore` 和理由。
+- 做完一块照 `skills/verify/SKILL.md` 验：`pnpm verify` 统一跑类型、lint、架构、测试和生产构建，提交钩子与 CI（持续集成）使用同一入口；独立临时库验证用 `pnpm test:integration`。计算与技术校验写成纯函数，库的读写薄薄一层。禁止 `any`、`@ts-ignore`、未处理的 Promise（异步结果）和运行时循环导入；lint 破例写 `biome-ignore` 和具体理由。
 - 只有人明确要求 commit 或提交时才提交，一块一个提交。采用 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)，格式为 `type(scope): description`：`feat` 新功能、`fix` 修复，也可用 `docs`、`refactor`、`test`、`chore` 等；`scope` 可选，description 和 body 用中文；breaking change 用 `!` 或 `BREAKING CHANGE:` 标记。不推送、不合进 main，除非人说。

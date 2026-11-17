@@ -1,21 +1,8 @@
 {
+	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
-		"target": "es2024",
 		"module": "nodenext",
-		"moduleResolution": "nodenext",
-		"strict": true,
-		"noEmit": true,
-		"allowImportingTsExtensions": true,
-		"erasableSyntaxOnly": true,
-		"verbatimModuleSyntax": true,
-		"skipLibCheck": true,
-		"lib": ["es2024", "dom", "dom.iterable"],
-		"noUncheckedIndexedAccess": true,
-		"noImplicitOverride": true,
-		"noFallthroughCasesInSwitch": true,
-		"noImplicitReturns": true,
-		"noUnusedLocals": true,
-		"noUnusedParameters": true
+		"moduleResolution": "nodenext"
 	},
 	"include": ["x2.ts", "platform", "connectors", "tools", "test"],
 	"exclude": ["platform/ui/**/*.tsx", "platform/ui/*.ts", "platform/ui/*/*.ts", "platform/ui/dist"]

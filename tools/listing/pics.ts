@@ -30,6 +30,7 @@ export type Pic = {
 export type Pics = { main: Pic[]; detail: Pic[]; options: Pic[]; imageMode?: ImageMode };
 
 /** 显式参数只作用于本次商品稿；没传时沿用该稿选择，旧稿保持原有处理方式。 */
-export const imageModeOf = (requested: ImageMode | undefined, pics: Partial<Pics> | null | undefined): ImageMode => requested ?? pics?.imageMode ?? "processed";
+export const imageModeOf = (requested: ImageMode | undefined, pics: Partial<Pics> | null | undefined, defaultMode: ImageMode = "processed"): ImageMode =>
+	requested ?? pics?.imageMode ?? defaultMode;
 
 export type Mark = { text: string; size: number; opacity: number; position: "top-left" | "top-right" | "center" | "bottom-left" | "bottom-right" };

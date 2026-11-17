@@ -1,4 +1,5 @@
 // Catalog 工作台：查询固定店铺快照；上下架先预览精确目标再确认，结果未知保留请求并只读核对。
+
 import { ArrowUpRightIcon, BoxesIcon, LayoutGridIcon, ListIcon, PackageSearchIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useLightbox } from "@/components/lightbox";
@@ -12,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { errorOf } from "@/lib/state";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
 import { BrowserConnection } from "../../browser-connection.tsx";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
@@ -136,7 +138,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 					const result = await api.act<StatusResult>(item.id, "statusResult", { productId: receipt.productId, requestId: receipt.requestId });
 					if (!stopped) applyResult(result);
 				} catch (e) {
-					if (!stopped) setActionError((e as Error).message);
+					if (!stopped) setActionError(errorOf(e));
 				}
 			}
 		};
@@ -196,7 +198,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 			setPage(1);
 			setVersion((v) => v + 1);
 		} catch (e) {
-			setSyncError((e as Error).message);
+			setSyncError(errorOf(e));
 		} finally {
 			setRefreshing(false);
 		}
@@ -225,7 +227,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 				requestId,
 			});
 		} catch (e) {
-			setActionError((e as Error).message);
+			setActionError(errorOf(e));
 		} finally {
 			setStatusBusy(null);
 		}
@@ -237,7 +239,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 		try {
 			applyResult(await api.act<StatusResult>(item.id, "reconcileStatus", { productId, requestId: change.requestId }));
 		} catch (e) {
-			setActionError((e as Error).message);
+			setActionError(errorOf(e));
 		} finally {
 			setStatusBusy(null);
 		}
@@ -258,7 +260,7 @@ function Catalog({ props, item }: { props: Props; item: PageItem }) {
 			await api.confirm(current.token, current.trialRequired && trial);
 			applyResult(await api.act<StatusResult>(item.id, "statusResult", { productId: current.productId, requestId: current.requestId }));
 		} catch (e) {
-			const message = (e as Error).message;
+			const message = errorOf(e);
 			try {
 				remember({ productId: current.productId, requestId: current.requestId, targetState: current.targetState, status: "结果未知", error: message });
 			} catch {
@@ -848,7 +850,7 @@ function Details({
 					setError(null);
 				}
 			} catch (e) {
-				if (!stopped) setError((e as Error).message);
+				if (!stopped) setError(errorOf(e));
 			} finally {
 				if (!stopped) setReading(false);
 			}

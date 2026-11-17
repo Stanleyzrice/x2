@@ -9,6 +9,8 @@ import type { SourceDetail, SourceList } from "./interactable/catalog/source-typ
 import type { CatalogResult } from "./interactable/catalog/types.ts";
 import { preserveMonitor } from "./interactable/procurement/sync.ts";
 import type { Monitor } from "./interactable/procurement/types.ts";
+import type { Data as ReimbursementData } from "./interactable/reimbursement/types.ts";
+import { errorOf } from "./lib/state.ts";
 import { readCache } from "./read-cache.ts";
 
 export type { BrowserAuthorization, BrowserConnectionInput, BrowserConnectionResult, Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
@@ -21,8 +23,11 @@ async function call<T>(method: string, path: string, body?: unknown, keepalive =
 		body: body === undefined ? undefined : JSON.stringify(body),
 		keepalive,
 	});
-	const data = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
-	if (!r.ok) throw new Error(data.error ?? `${r.status}`);
+	const data: unknown = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
+	if (!r.ok) {
+		const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string" ? data.error : `${r.status}`;
+		throw new Error(message);
+	}
 	return data as T;
 }
 const q = encodeURIComponent;
@@ -33,7 +38,7 @@ const sourceDetailCache = readCache<SourceDetail>(30_000, 20);
 const procurementCache = readCache<Monitor>(15_000, 20);
 const procurementEpochs = new Map<string, number>();
 const procurementSyncs = new Map<string, number>();
-const reimbursementCache = readCache<unknown>(15_000);
+const reimbursementCache = readCache<ReimbursementData>(15_000);
 type CatalogQuery = { shop: string; query: string; status: string; stock: string; category?: string; page: number; pageSize: number };
 const catalogKey = (item: string, input: CatalogQuery) =>
 	`${item}:${JSON.stringify([input.shop, input.query, input.status, input.stock, input.category ?? "all", input.page, input.pageSize])}`;
@@ -107,9 +112,9 @@ export const api = {
 		procurementEpochs.set(item, (procurementEpochs.get(item) ?? 0) + 1);
 		procurementCache.invalidate(`${item}:`);
 	},
-	reimbursementRecords: <T>(item: string, input: ReimbursementQuery, force = false) =>
-		reimbursementCache.read(reimbursementKey(item, input), () => call<T>("POST", "/api/page/act", { item, action: "list", input }), force) as Promise<T>,
-	peekReimbursementRecords: <T>(item: string, input: ReimbursementQuery) => reimbursementCache.peek(reimbursementKey(item, input)) as T | null,
+	reimbursementRecords: (item: string, input: ReimbursementQuery, force = false) =>
+		reimbursementCache.read(reimbursementKey(item, input), () => call<ReimbursementData>("POST", "/api/page/act", { item, action: "list", input }), force),
+	peekReimbursementRecords: (item: string, input: ReimbursementQuery) => reimbursementCache.peek(reimbursementKey(item, input)),
 	invalidateReimbursementRecords: (item: string) => reimbursementCache.invalidate(`${item}:`),
 	answer: (item: string, answer: unknown) => call<unknown>("POST", "/api/page/answer", { item, answer }),
 	note: (item: string, rowId: string, text: string) => call<{ updatedAt: string }>("POST", "/api/page/note", { item, note: { rowId, text } }, true),
@@ -134,7 +139,7 @@ export const meta = (table: string) => {
 };
 
 export const keyOf = (row: Row) => JSON.stringify(row._key);
-export const fail = (e: Error) => toast.error(e.message);
+export const fail = (error: unknown) => toast.error(errorOf(error));
 
 export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[], initial: T | null = null): [T | null, string | null, () => void] {
 	const [value, setValue] = useState<T | null>(initial);
@@ -154,8 +159,8 @@ export function usePoll<T>(read: () => Promise<T>, ms: number, deps: unknown[], 
 				setValue(v);
 				setError(null);
 			},
-			(e: Error) => {
-				if (generation === epoch.current && request === sequence.current) setError(e.message);
+			(error: unknown) => {
+				if (generation === epoch.current && request === sequence.current) setError(errorOf(error));
 			},
 		);
 	}).current;

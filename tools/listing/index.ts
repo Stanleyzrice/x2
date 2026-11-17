@@ -19,9 +19,11 @@ import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { EXPAND_WRITES, expandParams, planExpand, previewExpand } from "./expand.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
+import { marketPricingTools } from "./market-pricing.ts";
 import { orderPrice, orderPricingInput } from "./order-pricing.ts";
 import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
 import { estimateNeeds, pricingPolicy, pricingProblems, quote, settingsOf } from "./pricing.ts";
+import { pricingCalculatorTools } from "./pricing-calculator.ts";
 import { pricingInputsParams, setPricingInputs } from "./pricing-input.ts";
 import { purchaseLimitParams, setPurchaseLimit } from "./purchase-limit.ts";
 import { each } from "./queue.ts";
@@ -33,8 +35,8 @@ import { skuImagesSchema } from "./sku-images.ts";
 import { sourceTools } from "./source.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
-import { templateConfigParams, templateItem, templateParams, templatePrice } from "./template-pricing.ts";
-import { listingName, nicknameOpen, nicknameProblems, textProblems } from "./text.ts";
+import { templateItem, templateParams, templatePrice } from "./template-pricing.ts";
+import { listingName, nicknameOpen, nicknameProblems, problemsAfterTextSave, textProblems } from "./text.ts";
 import { type TextCheckResult, textChecks } from "./textcheck.ts";
 import { planUnlist, previewUnlist, UNLIST_WRITES, unlistParams } from "./unlist.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "./variants.ts";
@@ -87,6 +89,8 @@ export const listing: Toolkit = {
 	title: "上品：贴货源、做商品稿、写文案、建商品、上架、零销量下架",
 	kind: "tool",
 	tools: {
+		...pricingCalculatorTools,
+		...marketPricingTools,
 		...collectionTools,
 		...sourceTools(publishPlan),
 		"reviewed-images-preview": get("预览本稿源规格指纹、完整详情来源及规格图SKU映射，不上传不改稿", reviewedImagesPreviewParams, async (p) => {
@@ -126,7 +130,7 @@ export const listing: Toolkit = {
 			"保存店铺百分比费用模型的完整计算输入",
 			z.object({
 				shop: str("店（ni1206、cheeroutdoor）"),
-				template: z.preprocess(parseJson, templateConfigParams).describe("完整参数 JSON，六项数值均须提供"),
+				template: z.preprocess(parseJson, templateParams).describe("完整参数 JSON，六项数值均须提供"),
 			}),
 			async (p) => {
 				const sql = await db();
@@ -264,10 +268,11 @@ export const listing: Toolkit = {
 			},
 		),
 		make: get(
-			"做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；不给编号就做所有还没做好的。几份同时做：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（queue.ts）",
+			"做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；prepare-only仅保存单稿来源与核价，不处理或上传图片；不给编号就做所有还没做好的。几份同时做：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（queue.ts）",
 			z
 				.object({
 					ids: ids.optional(),
+					prepareOnly: flag("仅准备指定单稿的货源、完整详情来源、规格和核价；不下载、处理或上传图片，不调用模型或类目").optional(),
 					jobs: z.coerce.number().int().min(1).max(10).default(3).describe("几份同时做"),
 					sourceSkuIds: z
 						.preprocess(parseJson, z.array(z.string().min(1)).min(1))
@@ -284,7 +289,9 @@ export const listing: Toolkit = {
 						.optional()
 						.describe("本稿图片模式：original原图；reviewed沿用已导入审图，只补类目属性备货；不传沿用稿件模式"),
 				})
-				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages || p.skuImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿"),
+				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages || p.skuImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿")
+				.refine((p) => !p.prepareOnly || p.ids?.length === 1, "仅准备时必须明确指定一份商品稿")
+				.refine((p) => !p.prepareOnly || p.imageMode !== "reviewed", "已审图片续做不能与仅准备货源混用"),
 			async (p) => {
 				const sql = await db();
 				const want =
@@ -296,6 +303,7 @@ export const listing: Toolkit = {
 				const before = await namesOf(sql, want);
 				const settled = await each(want, p.jobs, async (id) => {
 					const r = await make(sql, id, (line) => console.error(`${before(id)}：${line}`), {
+						prepareOnly: p.prepareOnly,
 						imageMode: p.imageMode,
 						sourceSkuIds: p.sourceSkuIds,
 						mainImages: p.mainImages,
@@ -453,12 +461,13 @@ export const listing: Toolkit = {
 				const results: { id: ListingId; saved: boolean; problems: string[]; notes?: string[] }[] = [];
 				for (const it of items) {
 					const problems = [...textProblems(it.title.trim(), it.description.trim()), ...(it.nickname === undefined ? [] : nicknameProblems(it.nickname))];
-					const [l] = await sql`select variants, offer, removed_variants, nickname from listings where id = ${it.id}`;
+					const [l] = await sql`select variants, offer, removed_variants, nickname, problems from listings where id = ${it.id}`;
 					if (!l) {
 						results.push({ id: it.id, saved: false, problems: ["没有这份商品稿"] });
 						continue;
 					}
-					let specs = specsOf(l.variants);
+					const beforeSpecs = specsOf(l.variants);
+					let specs = beforeSpecs;
 					if (it.tiers !== undefined) {
 						const names = tierNames.safeParse(it.tiers);
 						if (!names.success) problems.push("规格名：tiers 要是 [{ name: 层名, options: [选项名…] }]，个数、顺序照 x2 listing show");
@@ -475,7 +484,14 @@ export const listing: Toolkit = {
 					}
 					const renamed = it.tiers !== undefined && specs ? { variants: sql.json(specs) } : {};
 					const nick = it.nickname === undefined ? {} : nicknameOpen(l) ? { nickname: it.nickname.trim() } : null;
-					await sql`update listings set ${sql({ title: it.title.trim(), description: it.description.trim(), ...renamed, ...nick, updated_at: new Date() })} where id = ${it.id}`;
+					const title = it.title.trim(),
+						description = it.description.trim();
+					const remaining = problemsAfterTextSave(
+						l.problems,
+						{ title, description },
+						it.tiers !== undefined && beforeSpecs && specs ? { before: beforeSpecs, after: specs } : undefined,
+					);
+					await sql`update listings set ${sql({ title, description, problems: remaining, ...renamed, ...nick, updated_at: new Date() })} where id = ${it.id}`;
 					results.push({
 						id: it.id,
 						saved: true,

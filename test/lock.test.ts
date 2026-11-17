@@ -1,6 +1,7 @@
 // 跨进程的锁：拿、放、等、过期、进程被杀以后别的进程拿得到。锁放在临时目录（X2_HOME），不碰 ~/x2
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,13 +27,13 @@ async function deadPid(): Promise<number> {
 	return c.pid!;
 }
 
-async function holder(name: string): Promise<ChildProcess> {
+async function holder(name: string, beforeLock = "", afterLock = ""): Promise<ChildProcess> {
 	const c = spawn(
 		process.execPath,
 		[
 			"--input-type=module",
 			"-e",
-			`const { acquire } = await import(${JSON.stringify(LOCK)}); await acquire(${JSON.stringify(name)}); console.log("held"); setInterval(() => {}, 1000);`,
+			`const { acquire } = await import(${JSON.stringify(LOCK)}); ${beforeLock} await acquire(${JSON.stringify(name)}); ${afterLock} console.log("held"); setInterval(() => {}, 1000);`,
 		],
 		{ env: process.env, stdio: ["ignore", "pipe", "inherit"] },
 	);
@@ -107,6 +108,45 @@ test("另一个进程拿着锁：等它；它被 kill（TERM）时自己删锁�
 		const lock = await got;
 		assert.ok(Date.now() - t0 < 3000);
 		lock.release();
+	}
+});
+
+test("释放锁不打断应用的异步信号清理，应用的once处理器在拿锁前后注册都有效", async () => {
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+		for (const order of ["before", "after"] as const) {
+			const name = `t-cleanup-${signal}-${order}`;
+			const marker = join(lockDir(), `${name}.cleaned`);
+			const handler = `process.once(${JSON.stringify(signal)}, async () => {
+await new Promise(resolve => setTimeout(resolve, 60));
+const { writeFile } = await import('node:fs/promises');
+await writeFile(${JSON.stringify(marker)}, 'cleaned');
+process.exit(0);
+});`;
+			const child = await holder(name, order === "before" ? handler : "", order === "after" ? handler : "");
+			try {
+				const closed = once(child, "close", { signal: AbortSignal.timeout(5000) });
+				child.kill(signal);
+				assert.deepEqual(await closed, [0, null]);
+				assert.equal(readFileSync(marker, "utf8"), "cleaned");
+				assert.equal(existsSync(path(name)), false);
+			} finally {
+				child.kill("SIGKILL");
+			}
+		}
+});
+
+test("没有应用信号处理器时释放锁后仍按原始信号退出", async () => {
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+		const name = `t-signal-${signal}`;
+		const child = await holder(name);
+		try {
+			const closed = once(child, "close", { signal: AbortSignal.timeout(5000) });
+			child.kill(signal);
+			assert.deepEqual(await closed, [null, signal]);
+			assert.equal(existsSync(path(name)), false);
+		} finally {
+			child.kill("SIGKILL");
+		}
 	}
 });
 

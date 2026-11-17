@@ -1,4 +1,5 @@
 // 新订单提醒在 X2 打开期间检查 Shopee；采购先预览、再确认，保存原请求，网络中断或结果未知都只查原结果。
+
 import { ArrowUpRightIcon, BellIcon, PackageIcon, RefreshCwIcon, ShoppingCartIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -10,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { errorOf, remember, saved as savedValue } from "@/lib/state";
 import { api, type Item as PageItem, type PageSummary, usePoll } from "../../api.ts";
 import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
@@ -53,22 +55,13 @@ export function OrderNotifications({ pages }: { pages: PageSummary[] }) {
 				const fresh = data.orders.filter((o) => {
 					const key = `x2-order-notified:${o.shop}:${o.sn}`;
 					if (o.purchase?.state === "paid" || o.purchase?.state === "unpaid" || o.cartDone || o.cartPending || seen.has(key)) return false;
-					try {
-						if (localStorage.getItem(key)) return false;
-					} catch {
-						/* 储存禁用时用本次会话去重。 */
-					}
-					return true;
+					return !savedValue(key);
 				});
 				if (!fresh.length) return;
 				for (const o of fresh) {
 					const key = `x2-order-notified:${o.shop}:${o.sn}`;
 					seen.add(key);
-					try {
-						localStorage.setItem(key, "1");
-					} catch {
-						/* 本次会话的 seen 仍可去重。 */
-					}
+					remember(key, "1");
 				}
 				toast(`Shopee 有 ${fresh.length} 张待采购订单`, {
 					description: fresh
@@ -103,7 +96,7 @@ type Pending = { requestId: string; token: string };
 type Preview = { token: string; display: string; expiresAt: string; trialRequired: boolean; requestId: string };
 function saved(key: string): Pending | null {
 	try {
-		const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+		const value: unknown = JSON.parse(savedValue(key) ?? "null");
 		if (
 			value &&
 			typeof value === "object" &&
@@ -150,7 +143,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					reload();
 				}
 			} catch (e) {
-				if (!stopped) setSyncError((e as Error).message);
+				if (!stopped) setSyncError(errorOf(e));
 			} finally {
 				reading = false;
 				if (!stopped) setSyncing(false);
@@ -198,7 +191,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					reload();
 				}
 			} catch (e) {
-				if (!stopped) setActionError((e as Error).message);
+				if (!stopped) setActionError(errorOf(e));
 			}
 		};
 		void read();
@@ -218,7 +211,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 			const prepared = await api.prepare(item.id, "cart", { orders: selectedOrders, requestId });
 			setPreview({ ...prepared, requestId });
 		} catch (e) {
-			setActionError((e as Error).message);
+			setActionError(errorOf(e));
 		} finally {
 			setBusy(false);
 			lock.current = false;
@@ -237,7 +230,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 			const response = await api.confirm<PurchaseResult>(request.token);
 			setResult(response);
 		} catch (e) {
-			setActionError(`采购请求待核对：${(e as Error).message}。页面只查询原结果，请勿重新加购。`);
+			setActionError(`采购请求待核对：${errorOf(e)}。页面只查询原结果，请勿重新加购。`);
 		} finally {
 			setBusy(false);
 			lock.current = false;
@@ -251,7 +244,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		try {
 			setResult(await api.confirm<PurchaseResult>(pending.token));
 		} catch (e) {
-			setActionError((e as Error).message);
+			setActionError(errorOf(e));
 		} finally {
 			setBusy(false);
 			lock.current = false;

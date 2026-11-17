@@ -1,7 +1,17 @@
 // 人工原始快照的回归：保留1688身份，缺失库存不伪装成零，原文规格不偷偷翻译。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { originalSourceApproved, sourceDeleteParams, sourceOffer, sourceProductSchema, sourcePublicationHash } from "./source-data.ts";
+import { updatedAttributes } from "./category.ts";
+import {
+	mergeSourceFields,
+	originalSourceApproved,
+	sourceDeleteParams,
+	sourceFieldsSchema,
+	sourceOffer,
+	sourceProductSchema,
+	sourcePublicationHash,
+	sourceUpdateParams,
+} from "./source-data.ts";
 import { specsFrom } from "./variants.ts";
 
 const source = () =>
@@ -81,6 +91,90 @@ test("删除必须明确给出非空备选编号，不能把缺少编号解释�
 		targetShop: "ni1206",
 		sourceIds: ["2", "1"],
 	});
+});
+
+test("备选补充的CLI JSON与网页结构化输入等价，存储结构仍拒绝JSON字符串", () => {
+	const base = { shop: "cheeroutdoor", sourceId: "38" };
+	const fields = {
+		weightKg: 2,
+		freightRmb: 3,
+		minQty: 1,
+		daysToShip: 15,
+		categoryPath: [100636, 101169, 101828],
+		attributes: [{ attribute_id: 100832, attribute_values: [{ value_id: 4364 }] }],
+		stocks: { "6007569749314": 50 },
+		prices: { "6007569749314": 15 },
+		mainImages: ["https://example.com/main.jpg"],
+		detailImages: ["https://example.com/detail.jpg"],
+	};
+	const jsonFields = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, JSON.stringify(value)]));
+	assert.deepEqual(sourceUpdateParams.parse({ ...base, ...jsonFields }), sourceUpdateParams.parse({ ...base, ...fields }));
+	assert.deepEqual(sourceUpdateParams.parse(base), base);
+	for (const [key, value] of Object.entries(jsonFields)) assert.equal(sourceFieldsSchema.safeParse({ [key]: value }).success, false, key);
+	for (const key of Object.keys(fields)) {
+		assert.equal(sourceUpdateParams.safeParse({ ...base, [key]: "[invalid-json" }).success, false, key);
+		assert.equal(sourceUpdateParams.safeParse({ ...base, [key]: "null" }).success, false, key);
+	}
+	for (const key of ["weightKg", "freightRmb", "minQty", "daysToShip"]) assert.equal(sourceUpdateParams.safeParse({ ...base, [key]: "" }).success, false, key);
+	assert.equal(sourceUpdateParams.parse({ ...base, freightRmb: "0" }).freightRmb, 0);
+});
+
+test("备选更新的属性名称来自当前类目所选值，换类目或未知类目清除旧标签", () => {
+	const tree = [
+		{
+			id: "100832",
+			name: "桌子種類",
+			mandatory: true,
+			maxValues: 1,
+			values: [
+				{ valueId: "4364", name: "邊桌" },
+				{ valueId: "1", name: "其他" },
+			],
+		},
+		{ id: "100831", name: "組裝", mandatory: false, maxValues: 1, values: [{ valueId: "3823", name: "需組裝" }] },
+	];
+	const given = [
+		{ attribute_id: 100832, attribute_values: [{ value_id: 4364 }] },
+		{ attribute_id: 100831, attribute_values: [{ value_id: 3823 }] },
+	];
+	assert.deepEqual(updatedAttributes(tree, given, false), { attributes: given, text: "桌子種類：邊桌\n組裝：需組裝", missing: [] });
+	assert.deepEqual(updatedAttributes(undefined, given, false), { attributes: given, text: null, missing: [] });
+	assert.deepEqual(updatedAttributes(undefined, undefined, true), { attributes: null, text: null, missing: [] });
+	assert.equal(updatedAttributes(undefined, undefined, false), null);
+	assert.match(updatedAttributes(tree, [{ attribute_id: 100832, attribute_values: [{ value_id: 999 }] }], false)!.missing.join("；"), /可选值/);
+	assert.match(updatedAttributes(tree, [given[1]!], false)!.missing.join("；"), /必填.*桌子種類/);
+	assert.match(updatedAttributes(tree, [{ attribute_id: 999, attribute_values: [{ value_id: 4364 }] }], false)!.missing.join("；"), /不在当前类目/);
+});
+
+test("重选类目不会从来源补充值复活旧属性和备货天数，其他人工值保留", () => {
+	const previous = sourceFieldsSchema.parse({
+		title: "人工标题",
+		weightKg: 2,
+		freightRmb: 3,
+		stocks: { "6007569749314": 50 },
+		categoryPath: [100636, 101169],
+		attributes: [{ attribute_id: 100832, attribute_values: [{ value_id: 4364 }] }],
+		daysToShip: 15,
+	});
+	const before = structuredClone(previous);
+	const next = { categoryPath: [100636, 101170] };
+	const saved = mergeSourceFields(previous, next);
+	assert.equal(saved.attributes, undefined, "make不能再取得旧类目的属性补充值");
+	assert.equal(saved.daysToShip, undefined, "make不能再取得旧类目的备货天数补充值");
+	assert.deepEqual(saved, {
+		title: "人工标题",
+		weightKg: 2,
+		freightRmb: 3,
+		stocks: { "6007569749314": 50 },
+		categoryPath: next.categoryPath,
+	});
+	assert.deepEqual(previous, before, "原补充值不被原地修改");
+	assert.deepEqual(mergeSourceFields(previous, { description: "人工说明" }), { ...previous, description: "人工说明" });
+	const explicit = { ...next, attributes: [], daysToShip: 7 };
+	assert.deepEqual(mergeSourceFields(previous, explicit), { ...previous, ...explicit });
+	assert.equal(mergeSourceFields(previous, { ...next, attributes: [] }).daysToShip, undefined);
+	assert.equal(mergeSourceFields(previous, { ...next, daysToShip: 7 }).attributes, undefined);
+	assert.equal(mergeSourceFields(previous, { categoryPath: previous.categoryPath }).daysToShip, undefined, "重选相同类目也与稿件清除行为一致");
 });
 
 test("已有商品删除后仅重采不能复用旧批准，重新确认必须绑定当前商品指纹", () => {

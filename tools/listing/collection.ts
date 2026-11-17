@@ -4,10 +4,17 @@ import { collectionLink, description, type Offer, type OfferId, offer, offerIdOf
 import { using } from "../../platform/browser/browser.ts";
 import { collectionSession, openCollection, stopCollection } from "../../platform/browser/collection.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
-import { Usage } from "../../platform/errors.ts";
+import { NeedsHuman, Usage } from "../../platform/errors.ts";
 import { get } from "../../platform/tool.ts";
-import { saveSource } from "./source.ts";
-import { type SourceProduct, sourcePlatform, sourceProductSchema } from "./source-data.ts";
+import { saveCollectedSource, saveSource } from "./source.ts";
+import {
+	type CollectedSourceResult,
+	type CollectSourceInput,
+	collectSourceParams,
+	type SourceProduct,
+	sourcePlatform,
+	sourceProductSchema,
+} from "./source-data.ts";
 
 const alibaba = {
 	site: "1688",
@@ -49,18 +56,41 @@ export function alibabaSource(o: Offer, detail: SourceProduct["description"], er
 	});
 }
 
-async function readSource(url: string): Promise<SourceProduct> {
+export async function readSource(url: string): Promise<SourceProduct> {
 	const id = offerIdOf(url);
 	if (!id) throw new Usage("不是有效的 1688 商品链接");
 	const o = await offer(id);
 	const errors: string[] = [];
 	const detail = o.detailUrl
 		? await description(o.detailUrl).catch((e: unknown) => {
+				if (e instanceof NeedsHuman) throw e;
 				errors.push(`详情读取未完成：${e instanceof Error ? e.message : String(e)}`);
 				return { text: "", images: [], blocks: [] };
 			})
 		: { text: "", images: [], blocks: [] };
 	return alibabaSource(o, detail, errors);
+}
+
+type ExistingSource = { snapshot: SourceProduct; deleted: boolean };
+export function collectedSourceDecision(existing: ExistingSource | null): "read" | "reuse" {
+	if (existing?.deleted) throw new Usage("商品已由用户从备选区移除，未自动恢复");
+	return existing && !existing.snapshot.errors.length ? "reuse" : "read";
+}
+
+type CollectSourceDependencies = {
+	existing: (id: OfferId) => Promise<ExistingSource | null>;
+	read: (url: string) => Promise<SourceProduct>;
+	save: (input: CollectSourceInput, product: SourceProduct) => Promise<CollectedSourceResult>;
+};
+
+/** 只采集一个真实来源；已成功的快照复用原时间，手动删除不因策略重跑而恢复。 */
+export async function collectSource(input: CollectSourceInput, dependencies: CollectSourceDependencies): Promise<CollectedSourceResult> {
+	const id = offerIdOf(input.link);
+	if (!id) throw new Usage("不是有效的 1688 商品链接");
+	const existing = await dependencies.existing(id);
+	const source = collectedSourceDecision(existing) === "reuse" ? existing!.snapshot : await dependencies.read(`https://detail.1688.com/offer/${id}.html`);
+	if (source.sourceId !== id) throw new Usage("读取的1688商品编号与本次来源不一致，未保存");
+	return dependencies.save(input, sourceProductSchema.parse(source));
 }
 
 /** 只有本次明确点击开始时恢复同一来源；外部读取完成后的保存不得覆盖期间发生的删除。 */
@@ -78,6 +108,19 @@ export async function claimCollectedSource(sql: Sql, sourceId: OfferId): Promise
 
 const sessionInput = z.object({ sessionId: z.string().uuid() });
 export const collectionTools = {
+	"collect-source": get("逐件读取真实1688来源并保存到现有备选区；保留策略研究依据，不建稿、不采购或上架", collectSourceParams, async (input) => {
+		const sql = await db();
+		return collectSource(input, {
+			existing: async (id) => {
+				const [row] = await sql<
+					{ snapshot: SourceProduct; deleted: boolean }[]
+				>`select snapshot, deleted_at is not null as deleted from listing_sources where platform = '1688' and source_id = ${id}`;
+				return row ? { snapshot: sourceProductSchema.parse(row.snapshot), deleted: row.deleted } : null;
+			},
+			read: readSource,
+			save: (request, source) => saveCollectedSource(sql, request, source),
+		});
+	}),
 	"collection-open": get(
 		"从当前 X2 页面经 CDP 打开人工采集标签；只保存原文原图，不提交采购或上架",
 		z.object({ platform: sourcePlatform, pageUrl: z.url(), marker: z.string().uuid() }),

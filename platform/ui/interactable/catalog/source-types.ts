@@ -21,6 +21,7 @@ export type SourceItem = {
 	deleteProblem: string | null;
 };
 export type SourceDeletion = { deleted: string[]; alreadyDeleted: string[] };
+export type SourcePrompt = { shop: string; count: number; prompt: string; filename: string };
 export type SourceFields = {
 	title?: string;
 	description?: string;
@@ -36,6 +37,16 @@ export type SourceFields = {
 	detailImages?: string[];
 };
 export type SourceDetail = SourceItem & {
+	research?: {
+		kind: "strategy-run";
+		runId: string;
+		strategyId: string;
+		strategyName: string;
+		shop: string;
+		reason: string;
+		evidence: string;
+		recordedAt: string;
+	}[];
 	minQty?: number | null;
 	images: string[];
 	description: { text: string; images: string[]; blocks: ({ type: "text"; text: string } | { type: "image"; src: string })[] };

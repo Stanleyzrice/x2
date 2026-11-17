@@ -1,4 +1,5 @@
 // Chat 只操作已注册actions；建议与人工输入分离，确认内容绑定服务端引用。
+
 import { ArrowLeftIcon, CheckIcon, RefreshCwIcon, SendIcon, SparklesIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import {
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { errorOf } from "@/lib/state";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
 import { type Conversation, type Inbox, inboxSnapshots, type Suggestion, snapshotKey, type ThreadData, threadSnapshots, type Window } from "./cache.ts";
 import type { Props } from "./schema.ts";
@@ -118,7 +120,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			setNext(page.next);
 			setLocalError(null);
 		} catch (e) {
-			if (generation === requestGeneration.current) setLocalError((e as Error).message);
+			if (generation === requestGeneration.current) setLocalError(errorOf(e));
 		} finally {
 			if (generation === requestGeneration.current) setMoreBusy(false);
 		}
@@ -131,7 +133,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			await api.act(item.id, "reconcile", { conversationId: row.conversationId, requestId: row.requestId });
 			if (scope === pendingScope.current) refreshPending();
 		} catch (e) {
-			if (scope === pendingScope.current) setPendingError((e as Error).message);
+			if (scope === pendingScope.current) setPendingError(errorOf(e));
 		} finally {
 			if (scope === pendingScope.current) setPendingBusy(null);
 		}
@@ -316,7 +318,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 			} catch (e) {
 				if (mounted.current) {
 					setLive(false);
-					setError((e as Error).message);
+					setError(errorOf(e));
 				}
 			} finally {
 				loading.current = false;
@@ -378,7 +380,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		try {
 			await fn();
 		} catch (e) {
-			setError((e as Error).message);
+			setError(errorOf(e));
 		} finally {
 			setBusy(false);
 		}

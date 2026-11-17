@@ -1,9 +1,6 @@
-// 上品的写：建商品、上架（Shopee，经至多一次写入）；译图（象寄，直接调）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
+// 上品的写：建商品、上架（Shopee，经至多一次写入）。写入引擎（platform/writes.ts）按 prepare → 记意图 → submit → check 调；
 // prepare 是业务上的保护：建商品前照商品稿现组一遍，和人同意时交给 x2 的一样才建
 import { z } from "zod";
-import { fetchImage } from "../../connectors/services/image/api.ts";
-import type { Outcome } from "../../connectors/services/xiangji/api.ts";
-import { translateImages } from "../../connectors/services/xiangji/index.ts";
 import { channels, type ProductInfo, productInfo, productPage } from "../../connectors/sites/shopee/products.ts";
 import { createListing, findByParentSku, listProduct } from "../../connectors/sites/shopee/publish.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
@@ -20,32 +17,6 @@ import { originalSourceApproved, type SourceApproval, sourcePublicationHash } fr
 import { catalogWriteBlock } from "./write-guard.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-export async function translationState(sql: Sql, shas: string[]): Promise<Map<string, { url?: string; failed?: string; saved: boolean }>> {
-	const rows =
-		await sql`select o.sha256, o.checks->'译图' as t, exists (select 1 from images t where t.kind = '译图' and t.from_sha = o.sha256) as saved from images o where o.sha256 in ${sql(shas)}`;
-	return new Map(rows.filter((r) => r.t || r.saved).map((r) => [r.sha256 as string, { url: r.t?.url, failed: r.t?.failed, saved: Boolean(r.saved) }]));
-}
-
-/** 象寄的地址大约 80 天失效：拿到就取回来存进库 */
-export async function saveTranslation(sql: Sql, origin: string, url: string): Promise<void> {
-	const b = await fetchImage(url);
-	await sql`insert into images ${sql({ sha256: b.sha256, kind: "译图", source: url, from_sha: origin, mime: b.mime, width: b.width, height: b.height, bytes: Buffer.from(b.bytes) })} on conflict (sha256) do nothing`;
-}
-
-export async function translate(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
-	const w = await translateImages.submit({ urls: items.map((i) => i.url) });
-	const at = new Date().toISOString();
-	const mark = async (sha: string, v: Record<string, string>) =>
-		sql`update images set checks = checks || ${sql.json({ 译图: { ...v, at } })} where sha256 = ${sha}`;
-	if (w.kind === "refused") throw new Error(`象寄没译：${w.why}`);
-	if (w.kind !== "done") throw new Error(`象寄没答复，这 ${items.length} 张下次重交：${w.why}`);
-	const r = w.data as Extract<Outcome, { kind: "done" }>;
-	const shaOf = new Map(items.map((i) => [i.url, i.sha]));
-	for (const t of r.results) await mark(shaOf.get(t.origin)!, { url: t.url });
-	for (const f of r.failed) await mark(shaOf.get(f.origin)!, { failed: f.why });
-	for (const t of r.results) await saveTranslation(sql, shaOf.get(t.origin)!, t.url).catch(() => {});
-}
 
 async function listingNow(sql: Sql, id: ListingId) {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
@@ -76,15 +47,20 @@ const createParams = z.object({
 });
 type CreateP = z.infer<typeof createParams>;
 
+type SourceReview = { approval: SourceApproval | null | undefined; id: string | null | undefined; imageMode: string | undefined; hash: string | undefined };
+
 /** 只保护首次建商品；已有商品上架沿用原流程，不给其追加草稿审阅要求。 */
-export const creationReviewBlock = (
-	audit: Partial<Audit> | null,
-	product: Product,
-	source?: { approval: SourceApproval | null | undefined; id: string | null | undefined; imageMode: string | undefined; hash: string | undefined },
-): string | null =>
+export const creationReviewBlock = (audit: Partial<Audit> | null, product: Product, source?: SourceReview): string | null =>
 	auditCurrent(audit, product) || (source && originalSourceApproved(source.approval, source.id, source.imageMode, source.hash))
 		? null
 		: "商品稿的文案、图片或规格尚未完成当前审核：重新审阅后再建商品";
+
+/** 人工备选商品上架前现验图片模式对应的审核依据。 */
+export function sourceLiveReviewBlock(audit: Partial<Audit> | null, product: Product | undefined, source: SourceReview): string | null {
+	if (source.imageMode === "processed" || source.imageMode === "reviewed")
+		return product && auditCurrent(audit, product) ? null : "备选商品的文案、图片或规格尚未完成当前审核：重新审阅后再上架";
+	return originalSourceApproved(source.approval, source.id, source.imageMode, source.hash) ? null : "备选商品的上架批准已撤销或内容变化，请重新确认上架";
+}
 
 const createOp: WriteOp<CreateP> = {
 	describe: "在 Shopee 上建商品（先建成下架）",
@@ -178,9 +154,14 @@ const liveOp: WriteOp<LiveP> = {
 		if (l.source_product_id) {
 			const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 			if (!row) return { skip: "店铺设置无法读取，请重新确认上架" };
-			const hash = sourcePublicationHash(l, productOf(l, settingsOf(row)).hash);
-			if (!originalSourceApproved(l.source_approval, l.source_product_id, l.images.imageMode, hash))
-				return { skip: "备选商品的上架批准已撤销或内容变化，请重新确认上架" };
+			const ready = productOf(l, settingsOf(row));
+			const reviewBlock = sourceLiveReviewBlock(l.audit, ready.product, {
+				approval: l.source_approval,
+				id: l.source_product_id,
+				imageMode: l.images.imageMode,
+				hash: sourcePublicationHash(l, ready.hash),
+			});
+			if (reviewBlock) return { skip: reviewBlock };
 		}
 		const blocked = await catalogWriteBlock(sql, { ...p, productId: String(l.product_id) });
 		if (blocked) return { skip: blocked };

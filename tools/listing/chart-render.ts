@@ -1,4 +1,4 @@
-// 尺码图的正式本地预览入口：显式数值与单位逐行绑定当前源 SKU，不推断、不换算、不上传；审核后交 size-chart 保存。
+// 尺码图的正式本地预览入口：显式数值/单位或原服装标签逐行绑定当前源 SKU，不推断、不换算、不上传；审核后交 size-chart 保存。
 import { createHash } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,8 +16,9 @@ import { specsOf, toTw } from "./variants.ts";
 
 const text = z.string().trim().min(1).max(240);
 const number = z.number().positive().finite();
-const value = z.union([number, z.tuple([number, number]).refine(([min, max]) => min <= max, "区间下限不能大于上限")]).nullable();
-const column = z.object({ title: text, unit: z.enum(["cm", "mm", "市斤", "kg", "號"]) });
+const apparelLabel = z.string().regex(/^(?:X{1,3}[SL]|[SML]|[2-9]XL)$/, "服装标签须为明确的原始字母尺码，不含适穿建议或量测");
+const value = z.union([number, z.tuple([number, number]).refine(([min, max]) => min <= max, "区间下限不能大于上限"), apparelLabel]).nullable();
+const column = z.object({ title: text, unit: z.enum(["cm", "mm", "市斤", "kg", "號", "標示"]) });
 const chartRow = z.object({
 	label: text.describe("本行供买家阅读的尺码/款式名"),
 	sourceOption: text.describe("对应 sourceTier 的1688原始选项文字，逐字保留"),
@@ -38,15 +39,20 @@ export const chartTableSchema = z
 		evidence: z.string().trim().min(1).max(8000).describe("全表审核依据和原始来源"),
 	})
 	.superRefine((table, ctx) => {
-		if (table.kind === "size-label" && (table.columns.length !== 1 || table.columns[0]!.unit !== "號"))
-			ctx.addIssue({ code: "custom", path: ["columns"], message: "size-label只列一栏供货商标示鞋码，单位须为號，不补量测或体重" });
+		if (table.kind === "size-label" && (table.columns.length !== 1 || !["號", "標示"].includes(table.columns[0]!.unit)))
+			ctx.addIssue({ code: "custom", path: ["columns"], message: "size-label只列一栏原尺码标签：鞋码数值单位为號，服装字母单位为標示；不补量测或体重" });
 		for (const [index, row] of table.rows.entries()) {
 			if (row.values.length !== table.columns.length) ctx.addIssue({ code: "custom", path: ["rows", index, "values"], message: "每行数值数须与列数一致" });
 			if (row.values.every((v) => v === null)) ctx.addIssue({ code: "custom", path: ["rows", index], message: "每行至少一项真实有单位数值，不能只放尺码占位" });
+			if (table.kind === "size-label" && table.columns[0]?.unit === "標示") {
+				if (typeof row.values[0] !== "string" || row.values[0] !== row.sourceOption)
+					ctx.addIssue({ code: "custom", path: ["rows", index, "values"], message: "服装标示须与sourceOption原始字母尺码逐字一致，不换码或补数值" });
+			} else if (row.values.some((v) => typeof v === "string"))
+				ctx.addIssue({ code: "custom", path: ["rows", index, "values"], message: "字母尺码只用于size-label的標示栏，不能冒充鞋码数值、量测或体重建议" });
 		}
 		for (const [index, col] of table.columns.entries()) {
-			if (table.kind !== "size-label" && col.unit === "號")
-				ctx.addIssue({ code: "custom", path: ["columns", index], message: "號仅用于size-label标示鞋码，不能冒充量测或建议数值" });
+			if (table.kind !== "size-label" && ["號", "標示"].includes(col.unit))
+				ctx.addIssue({ code: "custom", path: ["columns", index], message: "號及標示仅用于size-label原尺码标签，不能冒充量测或建议数值" });
 			if (table.rows.every((row) => row.values[index] == null))
 				ctx.addIssue({ code: "custom", path: ["columns", index], message: "整列缺少数值，不生成占位列" });
 			if (table.kind === "measurement" && (col.unit === "市斤" || col.unit === "kg"))
@@ -101,7 +107,7 @@ export function chartPlan(row: ScopeRow, input: ChartTable) {
 		const label = toTw(r.label);
 		if (labels.has(label)) throw new Usage(`尺码图行名重复：${label}；分款式数值须明确区分`);
 		labels.add(label);
-		if (table.kind === "size-label") {
+		if (table.kind === "size-label" && table.columns[0]!.unit === "號") {
 			const marked = markedShoeSize(r.sourceOption);
 			if (marked === null || JSON.stringify(r.values[0]) !== JSON.stringify(marked))
 				throw new Usage(`标示鞋码须与原始SKU开头数值完全一致，不换算脚长或取括号内建议：${r.sourceOption}`);
@@ -126,7 +132,7 @@ export function chartPlan(row: ScopeRow, input: ChartTable) {
 		title: toTw(table.title),
 		subtitle:
 			table.kind === "size-label"
-				? "供貨商標示鞋碼，非腳長或鞋內長量測"
+				? "供貨商尺碼標籤，非實際量測"
 				: table.kind === "recommendation"
 					? "供貨商建議，非成衣平量"
 					: "供貨商成衣量測資料，非本店實測",
@@ -136,9 +142,9 @@ export function chartPlan(row: ScopeRow, input: ChartTable) {
 			...(table.columns.some((c) => c.unit === "市斤") ? ["體重單位：中國市斤（1市斤＝0.5公斤，非台斤）。"] : []),
 			...(table.note ? [toTw(table.note)] : []),
 			table.kind === "size-label"
-				? "僅列供貨商原始標示鞋碼，未換算腳長、公分或其他尺碼系統；選碼時請參照商品頁說明。"
+				? "僅列供貨商原始尺碼標籤，未換算公分或其他尺碼系統；不代表實際尺寸或適穿保證。"
 				: table.kind === "recommendation"
-					? "體重僅供選碼參考，請綜合身形及穿著偏好選擇。"
+					? "建議範圍僅供選碼參考，請綜合身形及穿著偏好選擇。"
 					: "請與平常穿著合適的衣物尺寸比對。",
 		],
 	};

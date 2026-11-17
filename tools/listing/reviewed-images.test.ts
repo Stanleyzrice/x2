@@ -2,9 +2,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { inspect } from "../../connectors/services/image/api.ts";
 import { type Offer, OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
+import type { Sql } from "../../platform/db/index.ts";
+import { finish, makeImages } from "./images.ts";
 import type { Pic, Pics } from "./pics.ts";
 import {
+	problemsAfterReviewedImages,
 	REVIEWED_CACHE_CHUNK_BYTES,
 	reviewedImagesManifest,
 	reviewedImagesPreview,
@@ -74,6 +78,130 @@ function manifest(r: ReturnType<typeof row>) {
 		options: reviewedOptions(r).map((o) => ({ ...entry(o.sourceUrl), skuIds: o.skuIds })),
 	});
 }
+
+function savedReviewedRow() {
+	const r = row(),
+		m = manifest(r);
+	const pic = (input: (typeof m.main)[number] & { skuIds?: string[] }): Pic => ({
+		from: input.sourceUrl,
+		sha: input.sourceSha256,
+		final: finalSha,
+		imageId: `uploaded-${input.sourceUrl}`,
+		width: 800,
+		height: 800,
+		review: {
+			provider: input.provider,
+			evidence: input.evidence,
+			sourceSha256: input.sourceSha256,
+			processedSha256: input.sha256,
+			path: input.path,
+			scope: m.expectedScope,
+			skuIds: input.skuIds,
+			at: "2026-11-17T00:00:00.000Z",
+		},
+	});
+	return { ...r, images: { imageMode: "reviewed" as const, main: m.main.map(pic), detail: m.detail.map(pic), options: m.options.map(pic) } };
+}
+
+test("已审图片导入及续做清除已解决的原图超限和未上传告警，保留其他硬缺项及人工图片说明", () => {
+	const r = savedReviewedRow();
+	const stale = [
+		"图：缺可用的主图（仅准备货源，待图片处理和审阅）",
+		"图：主图 12 张，须明确选择最多 9 张",
+		"图：详情图 30 张，须明确选择最多 12 张",
+		`图：详情图 超过张数，不用（${url("detail2")}）`,
+		`图：规格图 尚未上传（${url("蓝")}）`,
+	];
+	const hard = ["货源：起订量 2，无法单件购买", "核价：缺国内运费", "类目：不在本店允许的类目里", "属性：必填材质待确认", "图：实物花色待人工核对"];
+	const problems = [...stale, ...hard].join("\n");
+	assert.equal(problemsAfterReviewedImages({ ...r, problems }), hard.join("\n"));
+	assert.equal(problemsAfterReviewedImages({ ...r, problems: stale.join("\n") }), null);
+	assert.equal(problemsAfterReviewedImages({ ...r, problems: hard.join("\n") }), hard.join("\n"), "恢复已有导入时可复用当前图，不重排或重传");
+});
+
+test("当前已审图片仍有drop、漏规格或不合规尺寸时，不清旧图片问题", () => {
+	for (const change of [
+		(r: ReturnType<typeof savedReviewedRow>) => {
+			r.images.main[0]!.drop = "当前图片不合格";
+		},
+		(r: ReturnType<typeof savedReviewedRow>) => {
+			r.images.options.pop();
+		},
+		(r: ReturnType<typeof savedReviewedRow>) => {
+			r.images.detail[0]!.width = 699;
+		},
+	]) {
+		const r = savedReviewedRow();
+		change(r);
+		assert.throws(() => problemsAfterReviewedImages({ ...r, problems: "图：详情图 30 张，须明确选择最多 12 张" }), /失效|规格图|不合要求/);
+	}
+});
+
+test("无水印已审图片复用原生上传，PNG字节、格式与审阅来源保持原样", async () => {
+	const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=", "base64");
+	const base = inspect(bytes);
+	for (const provider of ["clean-original", "openai-image"] as const) {
+		const saved: unknown[] = [],
+			calls: { base64: string; mime: string }[][] = [];
+		const sql = ((query: unknown, ...values: unknown[]) => {
+			if (!Array.isArray(query)) return query;
+			const statement = query.join("");
+			if (statement.includes("select image_id")) return Promise.resolve([]);
+			if (statement.includes("insert into shop_images")) {
+				saved.push(values[0]);
+				return Promise.resolve([]);
+			}
+			throw new Error(`unexpected SQL: ${statement}`);
+		}) as unknown as Sql;
+		const pic: Pic = {
+			from: url(provider),
+			sha: provider === "clean-original" ? base.sha256 : sourceSha,
+			review: {
+				provider,
+				evidence: "合成测试的已审记录",
+				sourceSha256: provider === "clean-original" ? base.sha256 : sourceSha,
+				processedSha256: base.sha256,
+				path: "/tmp/reviewed.png",
+				scope: finalSha,
+				skuIds: ["blue-small", "blue-large"],
+				at: "2026-11-17T00:00:00.000Z",
+			},
+		};
+		const before = structuredClone(pic);
+		let browserCalls = 0;
+		await finish(
+			sql,
+			"cheeroutdoor",
+			null,
+			pic,
+			base,
+			async (fn) => {
+				browserCalls++;
+				return fn();
+			},
+			0,
+			async (files) => {
+				calls.push(structuredClone(files));
+				return [`uploaded-${provider}`];
+			},
+		);
+		assert.equal(browserCalls, 1);
+		assert.deepEqual(calls, [[{ base64: bytes.toString("base64"), mime: "image/png" }]]);
+		assert.deepEqual(saved, [{ shop: "cheeroutdoor", sha256: base.sha256, image_id: `uploaded-${provider}`, width: base.width, height: base.height }]);
+		assert.deepEqual(pic, { ...before, final: base.sha256, imageId: `uploaded-${provider}`, width: base.width, height: base.height });
+		assert.deepEqual(base.bytes, bytes);
+	}
+});
+
+test("普通processed图片仍须配置水印，不因已审图片允许无水印而放行", async () => {
+	const sql = (() => {
+		throw new Error("不应读写数据库");
+	}) as unknown as Sql;
+	await assert.rejects(
+		makeImages(sql, { shop: "cheeroutdoor", mark: null, main: [], detail: [], options: [], browser: async (fn) => fn(), imageMode: "processed" }),
+		/处理图片模式缺少水印设置/,
+	);
+});
 
 test("预览保留完整主图、详情来源与全部规格映射；导入计划不修改成本、价格、库存和源SKU", () => {
 	const r = row(),

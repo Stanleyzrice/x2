@@ -339,6 +339,7 @@ test("规格的规矩：错在哪层哪个选项写清楚；上限在核价以�
 		/无有货的规格/,
 	);
 	assert.deepEqual(structureProblems(specsFrom(offerOf([], [[[]]])).specs), []);
+	assert.deepEqual(limitProblems(grid([["款式", [...Array(50).keys()].map(String)]])), []);
 	assert.deepEqual(limitProblems(grid([["款式", [...Array(51).keys()].map(String)]])), ["规格：有货的规格 51 个，最多 50 个"]);
 	assert.match(limitProblems(grid([["尺寸", ["小", "大"]]], (c) => (c[0] ? 600 : 100))).join(), /最高价超过最低价的 5 倍/);
 	assert.deepEqual(limitProblems(ok), []);

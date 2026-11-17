@@ -63,8 +63,9 @@ export function pickAttributes(
 				missing.push(`属性 ${selected.attribute_id} 不在当前类目中`);
 				continue;
 			}
-			if (!selected.attribute_values.length || selected.attribute_values.some((v) => !actual.values.some((allowed) => Number(allowed.valueId) === v.value_id)))
-				missing.push(`「${actual.name}」的值不在站点可选值中`);
+			const values = selected.attribute_values.map((v) => actual.values.find((allowed) => Number(allowed.valueId) === v.value_id));
+			if (!values.length || values.some((value) => !value)) missing.push(`「${actual.name}」的值不在站点可选值中`);
+			else text.push(`${actual.name}：${values.map((value) => value!.name).join("、")}`);
 			attributes.push(selected);
 		}
 		for (const actual of tree.filter((a) => a.mandatory))
@@ -84,6 +85,14 @@ export function pickAttributes(
 		text.push(`${a.name}：${pick}`);
 	}
 	return { attributes, text, missing };
+}
+
+/** 属性与显示文案一起替换；未知类目或重选类目不能继续展示旧属性名称。 */
+export function updatedAttributes(tree: Attribute[] | undefined, given: Parameters<typeof pickAttributes>[1], categoryChanged: boolean) {
+	if (given === undefined) return categoryChanged ? { attributes: null, text: null, missing: [] as string[] } : null;
+	if (!tree) return { attributes: given, text: null, missing: [] as string[] };
+	const selected = pickAttributes(tree, given);
+	return { attributes: selected.attributes, text: selected.text.join("\n") || null, missing: selected.missing };
 }
 
 export function daysToShip(categoryId: number, rules: { categoryIds: string[]; min: number; max: number }[]): number | null {

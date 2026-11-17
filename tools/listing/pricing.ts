@@ -4,7 +4,7 @@ import type { Mark } from "./pics.ts";
 import { minPrice, type PriceParams, priceParams } from "./price.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
 import type { OfferLike, PriceInput, ShopSettingsRow } from "./row.ts";
-import { templateConfigParams, templateUnitPrice } from "./template-pricing.ts";
+import { templateParams, templateUnitPrice } from "./template-pricing.ts";
 import { limitProblems, priceRange, type Specs, specsFrom, specsOf, specsText, structureProblems, type Variant } from "./variants.ts";
 
 export function settingsOf(row: ShopSettingsRow) {
@@ -32,7 +32,7 @@ export function settingsOf(row: ShopSettingsRow) {
 		shop: String(row.shop),
 		shopId: String(row.shop_id),
 		params,
-		template: row.pricing_template == null ? null : templateConfigParams.parse(row.pricing_template),
+		template: row.pricing_template == null ? null : templateParams.parse(row.pricing_template),
 		mark,
 		paused: row.paused ? String(row.paused) : null,
 		preOrder: Boolean(row.pre_order),

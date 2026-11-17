@@ -17,7 +17,7 @@ import { freightOf, num, pricingPolicy, reprice, type Settings, settingsOf, spec
 import { MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
 import { from1688, inShopQueued, on1688, type Runner } from "./queue.ts";
-import { verifyReviewedFiles } from "./reviewed-images.ts";
+import { problemsAfterReviewedImages, verifyReviewedFiles } from "./reviewed-images.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import { type SkuImage, withSkuImages } from "./sku-images.ts";
 import { sourceOffer, sourceProductSchema } from "./source-data.ts";
@@ -65,21 +65,32 @@ export async function make(
 	sql: Sql,
 	id: string,
 	log: (s: string) => void = console.error,
-	options: { imageMode?: ImageMode; sourceSkuIds?: string[]; mainImages?: string[]; detailImages?: string[]; skuImages?: SkuImage[] } = {},
+	options: {
+		prepareOnly?: boolean;
+		imageMode?: ImageMode;
+		sourceSkuIds?: string[];
+		mainImages?: string[];
+		detailImages?: string[];
+		skuImages?: SkuImage[];
+	} = {},
 ): Promise<{ id: string; problems: string[] }> {
 	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
+	if (options.prepareOnly) {
+		if (l.product_id || l.listed_at) throw new Error("已建商品不能仅准备货源和规格");
+		if (l.images.imageMode === "reviewed" || options.imageMode === "reviewed") throw new Error("已审图片续做不能与仅准备货源混用");
+	}
 	if (l.product_id && (options.sourceSkuIds || options.mainImages || options.detailImages || options.skuImages))
 		throw new Error("已建商品不能重新指定货源或图片范围");
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
-	const imageMode = l.source_product_id ? "original" : imageModeOf(options.imageMode, l.images);
+	const imageMode = imageModeOf(options.imageMode, l.images, l.source_product_id ? "original" : "processed");
 	if (imageMode === "reviewed") {
 		if (options.sourceSkuIds || options.mainImages || options.detailImages || options.skuImages)
 			throw new Error("已审图片续做不重排货源、规格或图片；修改范围须重新导入审阅清单");
 		return completeReviewed(sql, l, s, log);
 	}
-	if (imageMode === "processed" && !s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
+	if (!options.prepareOnly && imageMode === "processed" && !s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
 	let source: import("./source-data.ts").SourceProduct | null = null;
 	let o: Offer;
@@ -110,7 +121,9 @@ export async function make(
 	}
 	const removed = sourceScope(o, options.sourceSkuIds, l.removed_variants ?? []);
 	const detail = source
-		? (fields.detailImages ?? source.description.images)
+		? options.prepareOnly
+			? source.description.images
+			: (fields.detailImages ?? source.description.images)
 		: (options.detailImages ??
 			(o.detailUrl
 				? await from1688(() => detailImages(o.detailUrl!)).catch((e) => {
@@ -129,6 +142,36 @@ export async function make(
 		originalText: Boolean(source),
 	});
 	const specs = withSkuImages(sourceSpecs, options.skuImages);
+	// 先形成完整来源与核价字段；仅准备到此保存，不进入任何图片、模型或类目流程。
+	const done: Record<string, unknown> = {
+		nickname: nicknameFor(l.nickname, l.offer?.title, o.title),
+		offer: {
+			offerId: o.offerId,
+			url: o.url,
+			title: o.title,
+			images: o.images,
+			detail,
+			tags: o.tags,
+			freight: o.freight,
+			minQty: o.minQty,
+			props: o.props,
+			skus: o.skus,
+		},
+		offer_read_at: new Date(),
+		variants: specs,
+		removed_variants: removed,
+		pricing: { ...pricingPolicy(s), freightRmb: freight, minimumPurchase: purchaseLimitOf(l, s.minPurchase), at: new Date().toISOString() },
+	};
+	if (source) {
+		const title = fields.title ?? l.title ?? source.title;
+		const description = fields.description ?? l.description ?? source.description.text;
+		Object.assign(done, { title, description });
+		problems.push(...textProblems(title, description));
+	}
+	if (options.prepareOnly) {
+		log("仅保存货源、完整详情来源、规格和核价，待图片处理与审阅");
+		return save(sql, id, done, [...problems, "图：缺可用的主图（仅准备货源，待图片处理和审阅）"], source ? l : undefined);
+	}
 
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
 	const pics: Pics = await makeImages(
@@ -144,12 +187,8 @@ export async function make(
 		},
 		log,
 	);
-	const done: Record<string, unknown> = { images: pics };
+	done.images = pics;
 	if (source) {
-		const title = fields.title ?? l.title ?? source.title;
-		const description = fields.description ?? l.description ?? source.description.text;
-		Object.assign(done, { title, description });
-		problems.push(...textProblems(title, description));
 		if (pics.main.length > MAX_MAIN) problems.push(`图：主图 ${pics.main.length} 张，须明确选择最多 ${MAX_MAIN} 张`);
 		if (pics.detail.length > MAX_DETAIL) problems.push(`图：详情图 ${pics.detail.length} 张，须明确选择最多 ${MAX_DETAIL} 张`);
 		for (const [role, images] of [
@@ -201,32 +240,7 @@ export async function make(
 			}),
 		);
 
-	return save(
-		sql,
-		id,
-		{
-			...done,
-			nickname: nicknameFor(l.nickname, l.offer?.title, o.title),
-			offer: {
-				offerId: o.offerId,
-				url: o.url,
-				title: o.title,
-				images: o.images,
-				detail,
-				tags: o.tags,
-				freight: o.freight,
-				minQty: o.minQty,
-				props: o.props,
-				skus: o.skus,
-			},
-			offer_read_at: new Date(),
-			variants: specs,
-			removed_variants: removed,
-			pricing: { ...pricingPolicy(s), freightRmb: freight, minimumPurchase: purchaseLimitOf(l, s.minPurchase), at: new Date().toISOString() },
-		},
-		problems,
-		source ? l : undefined,
-	);
+	return save(sql, id, done, problems, source ? l : undefined);
 }
 
 /** 已审图片续做只补类目、空白属性和空白备货天数；源SKU、售价、人工字段及图片集合保持原值。 */
@@ -236,7 +250,7 @@ async function completeReviewed(sql: Sql, row: ListingRow, settings: Settings, l
 	await verifyReviewedFiles(sql, row);
 	const currentState = (l: ListingRow) => JSON.stringify([l.offer, l.variants, l.images, l.category_path, l.attributes, l.days_to_ship, l.problems]);
 	const before = currentState(row);
-	const problems = (row.problems ?? "").split("\n").filter((line) => line && !/^图：缺可用的主图|^类目：|^备货天数：/.test(line));
+	const problems = (problemsAfterReviewedImages(row) ?? "").split("\n").filter((line) => line && !/^类目：|^备货天数：/.test(line));
 	const cover = row.images.main!.find((p) => p.imageId && !p.drop)!;
 	log("沿用已审图片与原规格，补类目、属性和备货天数");
 	const done = await inShopQueued(settings.shopId, async () => {

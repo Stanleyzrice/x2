@@ -141,6 +141,23 @@ export function validateSavedReviewedImages(row: SourceRow): void {
 	validateReviewedManifest(row, reviewedImagesManifest.parse(manifest));
 }
 
+/** 当前已审图完整通过后，只清其已解决的自动图片告警；其他硬缺项和人工说明保留。 */
+export function problemsAfterReviewedImages(row: SourceRow & Pick<ListingRow, "problems">): string | null {
+	validateSavedReviewedImages(row);
+	const resolved = [
+		/^图：缺可用的主图(?:（仅准备货源，待图片处理和审阅）)?$/,
+		new RegExp(`^图：主图 \\d+ 张，须明确选择最多 ${MAX_MAIN} 张$`),
+		new RegExp(`^图：详情图 \\d+ 张，须明确选择最多 ${MAX_DETAIL} 张$`),
+		/^图：(主图|详情图|规格图) (超过张数，不用|尚未上传)（https?:\/\/[^）]+）$/,
+	];
+	return (
+		(row.problems ?? "")
+			.split("\n")
+			.filter((line) => line && !resolved.some((pattern) => pattern.test(line)))
+			.join("\n") || null
+	);
+}
+
 function editable(row: Pick<ListingRow, "product_id" | "listed_at">) {
 	if (row.product_id || row.listed_at) throw new Usage("仅未建商品稿可导入已审图片");
 }
@@ -155,7 +172,6 @@ export async function importReviewedImages(sql: Sql, p: z.output<typeof reviewed
 	const [shop] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${row.shop}`;
 	if (!shop) throw new Usage(`没有店铺设置 ${row.shop}`);
 	const settings = settingsOf(shop);
-	if (!settings.mark) throw new Usage("店铺缺水印设置");
 	const files = new Map<string, Bytes>();
 	// 整份清单先验证，再上传；文件变动、错SHA、错款不会留下部分商品稿。
 	for (const role of roles)
@@ -190,8 +206,8 @@ export async function importReviewedImages(sql: Sql, p: z.output<typeof reviewed
 		if (!fresh) throw new Usage(`没有商品稿 ${p.id}`);
 		editable(fresh);
 		if (state(fresh) !== before) throw new Usage("上传期间源规格或图片已变化，未覆盖，请重新审阅");
-		validateSavedReviewedImages({ ...fresh, images: pics });
-		await tx`update listings set images = ${tx.json(pics as Json)}, updated_at = now() where id = ${p.id}`;
+		const problems = problemsAfterReviewedImages({ ...fresh, images: pics });
+		await tx`update listings set images = ${tx.json(pics as Json)}, problems = ${problems}, updated_at = now() where id = ${p.id}`;
 		return {
 			id: p.id,
 			shop: row.shop,

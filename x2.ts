@@ -2,6 +2,7 @@
 // x2 的装配：把连接器、业务工具登记进平台的注册表，交给平台的命令行（platform/cli.ts）。唯一同时认识三层的文件：只 import platform、连接器和业务工具的入口（index.ts）。
 // node x2.ts <命令> 跑命令行；别的文件（测试）import 它拿全部 toolkit，不跑命令行
 import "./platform/env.ts";
+import { askCodex, codex, codexStatus } from "./connectors/services/codex/index.ts";
 import { gemini } from "./connectors/services/gemini/index.ts";
 import { image } from "./connectors/services/image/index.ts";
 import { market } from "./connectors/services/market/index.ts";
@@ -12,13 +13,16 @@ import { shopee } from "./connectors/sites/shopee/index.ts";
 import { zhixia } from "./connectors/sites/zhixia/index.ts";
 import { main } from "./platform/cli.ts";
 import { page, platform } from "./platform/commands.ts";
-import { register, type Toolkit } from "./platform/tool.ts";
+import { invoke, register, type Toolkit } from "./platform/tool.ts";
 import { catalog } from "./tools/catalog/index.ts";
 import { chat } from "./tools/chat/index.ts";
 import { listing } from "./tools/listing/index.ts";
 import { buyAccount, orders, setProcurementRefresh } from "./tools/orders/index.ts";
 import { refreshAccount, refreshAll, reimbursement } from "./tools/reimbursement/index.ts";
-import { selection } from "./tools/selection/index.ts";
+import { selection, setSelectionServices } from "./tools/selection/index.ts";
+
+// 网页点击后由服务进程继续研究；命令行保持前台直到该次运行结束，避免关闭数据库后留下假排队任务。
+setSelectionServices({ agentStatus: codexStatus, ask: askCodex, callTool: invoke, background: process.argv[2] === "web" });
 
 // 采购状态复用完整的账号采购事实；装配层协调业务工具，订单模块只读共享快照。
 setProcurementRefresh(async (sql) => {
@@ -48,6 +52,17 @@ chat.workspaces = ["cheeroutdoor"].map((shop) => ({
 	props: { shop, policyPath: ".agents/skills/chat/SKILL.md", historyDays: 7 },
 	icon: "message",
 }));
+selection.workspaces = [
+	{
+		key: "strategy-selection",
+		title: "策略选品",
+		group: "采购",
+		component: "selection",
+		props: { shop: "cheeroutdoor", title: "策略选品" },
+		icon: "search",
+		order: 25,
+	},
+];
 orders.workspaces = [
 	{
 		key: "procurement",
@@ -60,6 +75,15 @@ orders.workspaces = [
 	},
 ];
 listing.workspaces = [
+	{
+		key: "pricing-calculator",
+		title: "定价模板",
+		group: "采购",
+		component: "pricing-calculator",
+		props: { shop: "cheeroutdoor" },
+		icon: "calculator",
+		order: 50,
+	},
 	{
 		key: "manual-collection",
 		title: "人工采集",
@@ -107,6 +131,7 @@ export const TOOLKITS: Toolkit[] = [
 	chanboss,
 	zhixia,
 	market,
+	codex,
 	gemini,
 	xiangji,
 	image,

@@ -5,14 +5,15 @@
 import * as OpenCC from "opencc-js";
 import { type Image, model } from "../../connectors/services/gemini/api.ts";
 import { type Bytes, fetchImage, inspect } from "../../connectors/services/image/api.ts";
+import { BATCH } from "../../connectors/services/xiangji/api.ts";
 import { uploadImages } from "../../connectors/sites/shopee/products.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import type { ImageMode, Mark, Pic, Pics, Verdict } from "./pics.ts";
 import { detailFits, MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { download, geminiJson, limiter, once, type Runner } from "./queue.ts";
 import { SCREEN_VERSION, screen } from "./screen.ts";
+import { saveTranslation, translate, translationState } from "./translations.ts";
 import { markKey, watermark } from "./watermark.ts";
-import { saveTranslation, translate, translationState } from "./writes.ts";
 
 const fetched = new Map<string, Promise<Bytes>>();
 export async function original(sql: Sql, url: string): Promise<Bytes> {
@@ -119,7 +120,17 @@ function translatedChecked(sql: Sql, original: Bytes, translated: string): Promi
 	});
 }
 
-export async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: Bytes, browser: Runner, minWidth = 0): Promise<void> {
+export async function finish(
+	sql: Sql,
+	shop: string,
+	mark: Mark | null,
+	p: Pic,
+	base: Bytes,
+	browser: Runner,
+	minWidth = 0,
+	upload = uploadImages,
+): Promise<void> {
+	if (!mark) return finishOriginal(sql, shop, p, base, browser, upload);
 	const key = markKey(mark, minWidth);
 	const done = await once(`成品:${shop}:${key}:${base.sha256}`, async () => {
 		const [hit] = await sql`select f.sha256, s.image_id, s.width, s.height from images f join shop_images s on s.sha256 = f.sha256 and s.shop = ${shop}
@@ -127,7 +138,7 @@ export async function finish(sql: Sql, shop: string, mark: Mark, p: Pic, base: B
 		if (hit) return { final: hit.sha256 as string, imageId: hit.image_id as string, width: hit.width as number, height: hit.height as number };
 		const { out, id } = await browser(async () => {
 			const out = await watermark(base, mark, minWidth);
-			const [id] = await uploadImages([{ base64: Buffer.from(out.bytes).toString("base64"), mime: out.mime }]);
+			const [id] = await upload([{ base64: Buffer.from(out.bytes).toString("base64"), mime: out.mime }]);
 			return { out, id: id! };
 		});
 		await sql`insert into images ${sql({ sha256: out.sha256, kind: "成品", source: key, from_sha: base.sha256, mime: out.mime, width: out.width, height: out.height })} on conflict (sha256) do nothing`;
@@ -145,13 +156,13 @@ export const originalImageUpload = (base: Bytes) => ({
 	height: base.height,
 });
 
-async function finishOriginal(sql: Sql, shop: string, p: Pic, base: Bytes, browser: Runner): Promise<void> {
+async function finishOriginal(sql: Sql, shop: string, p: Pic, base: Bytes, browser: Runner, upload = uploadImages): Promise<void> {
 	const done = await once(`原图:${shop}:${base.sha256}`, async () => {
 		const [hit] = await sql<{ image_id: string; width: number; height: number }[]>`select image_id, width, height from shop_images
 			where shop = ${shop} and sha256 = ${base.sha256} order by uploaded_at desc limit 1`;
 		if (hit) return { final: base.sha256, imageId: hit.image_id, width: hit.width, height: hit.height };
 		const { file, ...identity } = originalImageUpload(base);
-		const [imageId] = await browser(() => uploadImages([file]));
+		const [imageId] = await browser(() => upload([file]));
 		if (!imageId) throw new Error("原图上传没有返回图片 id");
 		await sql`insert into shop_images ${sql({ shop, sha256: base.sha256, image_id: imageId, width: base.width, height: base.height })}
 			on conflict (shop, sha256) do update set image_id = excluded.image_id, uploaded_at = now()`;
@@ -188,7 +199,7 @@ export async function unmarked(sql: Sql, pics: Partial<Pics>, id: string): Promi
 }
 
 async function translateNow(sql: Sql, items: { sha: string; url: string }[]): Promise<void> {
-	for (let i = 0; i < items.length; i += 5) await translate(sql, items.slice(i, i + 5)).catch((e: Error) => console.error(`译图：${e.message}`));
+	for (let i = 0; i < items.length; i += BATCH) await translate(sql, items.slice(i, i + BATCH)).catch((e: Error) => console.error(`译图：${e.message}`));
 }
 
 const translating = new Map<string, Promise<void>>();
@@ -259,7 +270,7 @@ export async function makeImages(
 		const { fresh, others } = await deciding(async () => {
 			const state = await translationState(sql, shas);
 			const others = [...new Set(shas.flatMap((s) => (translating.has(s) ? [translating.get(s)!] : [])))];
-			const fresh = shas.filter((s) => !state.has(s) && !translating.has(s));
+			const fresh = shas.filter((s) => (!state.has(s) || state.get(s)?.retryable) && !translating.has(s));
 			if (fresh.length) {
 				job = translateNow(
 					sql,

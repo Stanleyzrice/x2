@@ -37,3 +37,38 @@ create table if not exists selection_rules (
 	ended_at timestamptz,
 	retire_why text
 );
+
+-- 点击策略发起的研究运行；请求幂等与单活跃约束由数据库保证，不冒充已上架结果。
+create table if not exists selection_runs (
+	id text primary key,
+	request_id text not null unique,
+	input_fingerprint text not null,
+	shop text not null,
+	strategy_id text not null,
+	strategy_name text not null,
+	limit_count int not null,
+	brief text not null default '',
+	status text not null check (status in ('queued','running','needs-human','completed','failed','cancelled','interrupted')),
+	step text not null,
+	found int not null default 0,
+	config jsonb not null,
+	events jsonb not null default '[]',
+	candidates jsonb not null default '[]',
+	cancel_requested boolean not null default false,
+	backend_pid int,
+	worker_host text,
+	worker_pid int,
+	error text,
+	created_at timestamptz not null default now(),
+	updated_at timestamptz not null default now()
+);
+create unique index if not exists selection_runs_one_active on selection_runs ((true)) where status in ('queued','running');
+
+-- 用户保存的研究步骤是运行配置；不覆盖项目技能中的经营条件和禁选规则。
+create table if not exists selection_workflows (
+	shop text not null,
+	strategy_id text not null,
+	steps jsonb not null check (jsonb_typeof(steps) = 'array'),
+	updated_at timestamptz not null default now(),
+	primary key (shop,strategy_id)
+);

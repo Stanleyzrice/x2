@@ -1,18 +1,7 @@
-// 碰 booey 的只有 platform/browser（这里管站点；shot.ts 截 x2 自己的网页）：在运营登录着的 Chrome 里，用 x2 自己开的标签页做事，不碰她正在用的标签页。
-// 一个站点（origin）一个标签页，标签页的 window.name 是记号，下次按记号找回来。页面自己带着登录态（cookie），所以请求在页面里发。
-// 站点由连接器注册（SiteDef：首页、主机名、怎么认登录、要不要隔开、怎么认人机验证），这里不认具体站点。
-// 在哪个浏览器里做（一家店一个浏览器）：using() 指定的（按账号找浏览器的 inAccount 用它）；没指定的用 X2_BROWSER
-// （浏览器在 booey 里的 id 或名字）；也没设的，只连着一个就用它，连着几个就按登录选（browserFor）。
-// 几个 x2 进程同时跑：同一个浏览器的同一个站点一次只让一个进程用（lock.ts 的锁，用完 2 秒没再用就放），要隔开的站点两次加载之间隔开。
-// 认登录时开的标签页，没认出就关掉（probe）；跳到别的网站的登录页的标签页 x2 以后找不回来，也关掉，不留下。
-// 注册了人机验证的站点跳了验证（例 整页跳到验证页，或页面上弹出验证框）：认出来就停，抛 Challenge，不等到超时
-// 按登录找浏览器：两家店分别使用独立用户环境，别的站点登录在其中一个里。站点怎么认登录由连接器注册（SiteDef.login）。
-// 每个连着的浏览器登录着什么不存库；一个进程内缓存成功身份，失败不留缓存，显式连接时重新识别。
-// 认的时候开的标签页，没登录的关掉（probe）；站点给了 cookie 的先看 cookie，明说没登录的不开页面。
-// 没在 using() 里、也没设 X2_BROWSER 的读写，pick 按站点来问 browserFor：要人选的站点（each，例 Shopee 按店）连着几个时要给 --shop，
-// 别的用登录着的那个
+// 站点会话复用运营登录态，只操作 X2 自有标签页；身份探测失败关闭临时页，验证挑战立即停止。
+// 同浏览器、同站点用进程间锁串行访问，账号身份只在当前进程缓存，显式连接时重新识别。
 import { AsyncLocalStorage } from "node:async_hooks";
-import { RelayClient } from "@wuwe1/booey";
+import { isRelayConnectionFailure, RelayClient, RelayError } from "@wuwe1/booey";
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
 import { acquire, type Lock, spaced } from "./lock.ts";
 import { createVerificationRegistry, type VerificationDriver } from "./verification.ts";
@@ -230,10 +219,52 @@ export function guarded(fn: (...args: never[]) => unknown, args: readonly unknow
 
 const opened = new AsyncLocalStorage<number[]>();
 const finding = new Map<string, Promise<number>>();
+const probeTabs = new Map<string, { owner: number[]; shared: boolean; closing: boolean }>();
+const probeTabKey = (browser: string, tabId: number) => `${browser}:${tabId}`;
+
+/** 附着失败时才查原编号是否还在；不选另一页，也不重放页面函数。 */
+async function attachTab(c: RelayClient, tabId: number): Promise<void> {
+	try {
+		await c.attach(tabId);
+	} catch (error) {
+		if (!(error instanceof RelayError)) throw error;
+		if (isRelayConnectionFailure(error))
+			throw new RelayError(`X2 标签页 ${tabId} 的浏览器连接已断开，请确认 CDP 连接后重新检测：${error.message}`, error.code, error.retriable, error.status);
+		const exists = await c
+			.tabs()
+			.then((tabs) => tabs.some((tab) => tab.tabId === tabId))
+			.catch(() => null);
+		throw new RelayError(
+			exists === false ? `X2 标签页 ${tabId} 已关闭或不存在，请重新读取；本次操作尚未执行` : `X2 标签页 ${tabId} 无法接入调试连接：${error.message}`,
+			exists === false ? "NOT_FOUND" : error.code,
+			false,
+			error.status,
+		);
+	}
+}
+
+async function attached<T>(c: RelayClient, tabId: number, run: () => Promise<T>): Promise<T> {
+	await attachTab(c, tabId);
+	try {
+		return await run();
+	} catch (error) {
+		if (error instanceof RelayError && (error.code === "TAB_NOT_ATTACHED" || isRelayConnectionFailure(error)))
+			throw new RelayError(`X2 标签页 ${tabId} 的调试连接已中断，原操作未自动重试；请先核对结果再继续：${error.message}`, error.code, false, error.status);
+		throw error;
+	}
+}
 
 async function tabFor(c: RelayClient, b: Browser, origin: string, site: string): Promise<number> {
 	for (const t of (await c.tabs()).filter((t) => t.url.startsWith(origin))) {
-		await c.attach(t.tabId);
+		const temporary = probeTabs.get(probeTabKey(b.id, t.tabId));
+		if (temporary?.closing) continue;
+		if (temporary && temporary.owner !== opened.getStore()) temporary.shared = true;
+		try {
+			await attachTab(c, t.tabId);
+		} catch (error) {
+			if (error instanceof RelayError && error.code === "NOT_FOUND") continue;
+			throw error;
+		}
 		if ((await c.eval<string>(t.tabId, "window.name")) === MARK) {
 			verification.own(site, b.id, t.tabId);
 			return t.tabId;
@@ -242,8 +273,12 @@ async function tabFor(c: RelayClient, b: Browser, origin: string, site: string):
 	await pace(b, site);
 	const tab = await c.openTab(origin);
 	verification.own(site, b.id, tab.tabId);
-	opened.getStore()?.push(tab.tabId);
-	await c.attach(tab.tabId);
+	const owner = opened.getStore();
+	if (owner) {
+		owner.push(tab.tabId);
+		probeTabs.set(probeTabKey(b.id, tab.tabId), { owner, shared: false, closing: false });
+	}
+	await attachTab(c, tab.tabId);
 	await settle(c, tab.tabId, origin, site);
 	await c.eval(tab.tabId, `window.name = ${JSON.stringify(MARK)}`);
 	return tab.tabId;
@@ -261,29 +296,37 @@ export async function page(origin: string): Promise<Page> {
 			finding.set(key, found);
 		}
 		const tabId = await found;
+		// finding 的等待者也可能来自另一异步上下文；临时页一旦被借用，创建者不再独占清理权。
+		const temporary = probeTabs.get(probeTabKey(b.id, tabId));
+		if (temporary?.closing) throw new RelayError(`X2 临时标签页 ${tabId} 正在释放，请重新读取`, "NOT_FOUND", false);
+		if (temporary && temporary.owner !== opened.getStore()) temporary.shared = true;
 		// 后台标签页当成有焦点：不然有的页面不启动（2026-09-30：聊聊在后台标签页里不登录、不发请求）
-		await c.send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
+		await attached(c, tabId, () => c.send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }));
 		return tabId;
 	});
 	const run = <A extends readonly unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>> =>
-		within(b, site, async (): Promise<Awaited<R>> => {
-			const challenge = sites.get(site)?.challenge;
-			if (!challenge) return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
-			const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args, challenge), { awaitPromise: true });
-			if (r.x2 === "challenge") throw new Hit(id);
-			return r.value;
-		});
+		within(b, site, () =>
+			attached(c, id, async (): Promise<Awaited<R>> => {
+				const challenge = sites.get(site)?.challenge;
+				if (!challenge) return (await c.evalFn(id, fn, ...args)) as Awaited<R>;
+				const r = await c.eval<{ x2: "challenge" } | { x2: "ok"; value: Awaited<R> }>(id, guarded(fn, args, challenge), { awaitPromise: true });
+				if (r.x2 === "challenge") throw new Hit(id);
+				return r.value;
+			}),
+		);
 	return {
 		browser: b.id,
 		tabId: id,
 		run,
 		goto: (url) =>
-			within(b, site, async () => {
-				await pace(b, site);
-				await c.navigate(id, url);
-				await settle(c, id, origin, site);
-				await c.eval(id, `window.name = ${JSON.stringify(MARK)}`);
-			}),
+			within(b, site, () =>
+				attached(c, id, async () => {
+					await pace(b, site);
+					await c.navigate(id, url);
+					await settle(c, id, origin, site);
+					await c.eval(id, `window.name = ${JSON.stringify(MARK)}`);
+				}),
+			),
 	};
 }
 
@@ -294,9 +337,16 @@ export async function probe<T>(browser: string, fn: () => Promise<T>): Promise<T
 	} catch (e) {
 		if (!(e instanceof Challenge)) {
 			const c = new RelayClient({ browser });
-			for (const t of tabs) await c.send(t, "Page.close").catch(() => {});
+			for (const tabId of tabs) {
+				const temporary = probeTabs.get(probeTabKey(browser, tabId));
+				if (!temporary || temporary.shared) continue;
+				temporary.closing = true;
+				await c.send(tabId, "Page.close").catch(() => {});
+			}
 		}
 		throw e;
+	} finally {
+		for (const tabId of tabs) probeTabs.delete(probeTabKey(browser, tabId));
 	}
 }
 
@@ -378,7 +428,8 @@ export async function focusVerification(site: string, browser: string, driver?: 
 		driver ?? {
 			tabs: (id) => new RelayClient({ browser: id }).tabs(),
 			focus: async (id, tabId) => {
-				await new RelayClient({ browser: id }).send(tabId, "Page.bringToFront");
+				const c = new RelayClient({ browser: id });
+				await attached(c, tabId, () => c.send(tabId, "Page.bringToFront"));
 			},
 		},
 	);

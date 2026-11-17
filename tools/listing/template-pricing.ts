@@ -17,8 +17,6 @@ export const templateParams = z
 	.refine(orderedMargins, marginOrderError);
 export type TemplateParams = z.output<typeof templateParams>;
 
-export const templateConfigParams = templateParams;
-
 export const templateItem = z.object({
 	key: z.string().min(1).describe("报告行标记，例 店铺:商品:规格"),
 	currentTwd: z.number().positive().nullable().default(null).describe("当前售价，台币；未知填 null"),

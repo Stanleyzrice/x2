@@ -1,39 +1,30 @@
-// 代码放哪（AGENTS.md「改代码」）：平台（platform）、连接器（connectors：sites 经浏览器、services 用 API key）、业务工具（tools：一类业务一个），skills 只有 md。
-// 谁能 import 谁由 lint 管（biome.json 的 overrides：noRestrictedImports）；这里只放 lint 管不了的：顶层有哪些、网页的界面引网页服务只 import type、
-// 环境变量都写在 .env.example、每个文件开头一段注释、文档放哪、提到的文件都在、skills 只有 md。破例不加白名单：放错了就搬，规则不对就改这里和 AGENTS.md
+// 层间依赖按 TypeScript 语法树与规范路径检查；文档只维护规则和必要说明。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { test } from "node:test";
+import {
+	isCallExpression,
+	isExportDeclaration,
+	isFunctionDeclaration,
+	isImportDeclaration,
+	isImportTypeNode,
+	isStringLiteralLikeNode,
+	type Node,
+	SyntaxKind,
+} from "typescript/unstable/ast";
+import { API } from "typescript/unstable/sync";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const isSource = (name: string) => /\.(?:[cm]?ts|tsx)$/.test(name);
 
 const files = (dir: string): string[] =>
 	readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-		e.isDirectory() ? (["node_modules", "dist"].includes(e.name) ? [] : files(join(dir, e.name))) : /\.tsx?$/.test(e.name) ? [join(dir, e.name)] : [],
+		e.isDirectory() ? (["node_modules", "dist"].includes(e.name) ? [] : files(join(dir, e.name))) : isSource(e.name) ? [join(dir, e.name)] : [],
 	);
 const rel = (f: string) => relative(ROOT, f).split(sep).join("/");
 
-function imports(file: string): { spec: string; typeOnly: boolean }[] {
-	const s = readFileSync(file, "utf8");
-	const out: { spec: string; typeOnly: boolean }[] = [];
-	for (const m of s.matchAll(/^(import|export)\s+(type\s+)?([^;]*?)\s*from\s+"([^"]+)";?/gms)) {
-		const names = m[3]!.trim();
-		const typeOnly =
-			Boolean(m[2]) ||
-			(/^\{[^}]*\}$/s.test(names) &&
-				names
-					.replace(/[{}\s]/g, "")
-					.split(",")
-					.filter(Boolean)
-					.every((n) => n.startsWith("type")));
-		out.push({ spec: m[4]!, typeOnly });
-	}
-	for (const m of s.matchAll(/^import\s+"([^"]+)";?/gm)) out.push({ spec: m[1]!, typeOnly: false });
-	for (const m of s.matchAll(/\bimport\(\s*"([^"]+)"\s*\)/g)) out.push({ spec: m[1]!, typeOnly: false });
-	return out;
-}
 const target = (file: string, spec: string) =>
 	spec.startsWith("@/") ? join(ROOT, "platform/ui", spec.slice(2)) : spec.startsWith(".") ? resolve(join(file, ".."), spec) : null;
 
@@ -58,6 +49,7 @@ const TOP = [
 	"skills",
 	"test",
 	"tools",
+	"tsconfig.base.json",
 	"tsconfig.json",
 	"x2.ts",
 ];
@@ -66,7 +58,86 @@ const SHADCN = "platform/ui/components/ui/";
 const CODE = [join(ROOT, "x2.ts"), ...["platform", "connectors", "tools", "test"].flatMap((d) => files(join(ROOT, d)))].filter(
 	(f) => !rel(f).startsWith(SHADCN),
 );
-const UI = CODE.filter((f) => rel(f).startsWith("platform/ui/"));
+const schemaLoaderPrefix = `async function collect(kind: Kind): Promise<Component[]> {
+	const dir = new URL(\`\${kind}/\`, UI);
+	const names = readdirSync(dir, { withFileTypes: true })
+		.filter((d) => d.isDirectory())
+		.map((d) => d.name)
+		.sort();
+	return Promise.all(
+		names.map(async (name) => {
+			const m = await `;
+
+function registeredSchemaImport(file: string, node: Node): boolean {
+	if (rel(file) !== "platform/web/pages.ts" || node.getText() !== `import(new URL(\`\${name}/schema.ts\`, dir).href)`) return false;
+	const source = node.getSourceFile();
+	const collect = source.statements.find((statement) => isFunctionDeclaration(statement) && statement.name?.text === "collect");
+	return Boolean(
+		collect &&
+			source.text.slice(collect.getStart(), node.getStart()) === schemaLoaderPrefix &&
+			[
+				'const UI = new URL("../ui/", import.meta.url);',
+				'export const KINDS = ["generative", "interactable"] as const;',
+				"export type Kind = (typeof KINDS)[number];",
+			].every((declaration) => source.statements.some((statement) => statement.getText() === declaration)),
+	);
+}
+
+function readImportProblems(paths = CODE, virtual = new Map<string, string>()): string[] {
+	const api = new API({ fs: { readFile: (file) => virtual.get(file), fileExists: (file) => (virtual.has(file) ? true : undefined) } });
+	try {
+		using snapshot = api.updateSnapshot({
+			openProjects: [join(ROOT, "tsconfig.json"), join(ROOT, "platform/ui/tsconfig.json")],
+			openFiles: [...virtual.keys()],
+		});
+		return paths.flatMap((file) => {
+			const config = rel(file).startsWith("platform/ui/") ? "platform/ui/tsconfig.json" : "tsconfig.json";
+			const source = (snapshot.getDefaultProjectForFile(file) ?? snapshot.getProject(join(ROOT, config)))?.program.getSourceFile(file);
+			assert.ok(source, `${rel(file)} 没有纳入类型检查`);
+			const problems = source.imports.flatMap((node) => {
+				assert.ok(isStringLiteralLikeNode(node));
+				const parent = node.parent;
+				const typeOnly =
+					(isImportDeclaration(parent) && parent.importClause?.phaseModifier === SyntaxKind.TypeKeyword) ||
+					(isExportDeclaration(parent) && parent.isTypeOnly) ||
+					(parent.parent !== undefined && isImportTypeNode(parent.parent));
+				if (isAbsolute(node.text) || win32.isAbsolute(node.text) || /^file:/i.test(node.text)) return [`${rel(file)}：禁止绝对路径导入 ${node.text}`];
+				const to = target(file, node.text);
+				return to && !allowedImport(rel(file), rel(to), typeOnly) ? [`${rel(file)} → ${rel(to)}`] : [];
+			});
+			function visit(node: Node): void {
+				const argument = isCallExpression(node) ? node.arguments[0] : undefined;
+				if (
+					isCallExpression(node) &&
+					node.expression.kind === SyntaxKind.ImportKeyword &&
+					(!argument || !isStringLiteralLikeNode(argument)) &&
+					!registeredSchemaImport(file, node)
+				)
+					problems.push(`${rel(file)}：禁止非字面量动态导入 ${node.getText()}`);
+				node.forEachChild(visit);
+			}
+			visit(source);
+			return problems;
+		});
+	} finally {
+		api.close();
+	}
+}
+
+function allowedImport(from: string, to: string, typeOnly: boolean): boolean {
+	if (from === "x2.ts")
+		return to.startsWith("platform/") || /^connectors\/(sites|services)\/[^/]+\/index\.ts$/.test(to) || /^tools\/[^/]+\/index\.ts$/.test(to);
+	if (from.startsWith("platform/ui/")) {
+		if (from.startsWith("platform/ui/generative/") && /^platform\/ui\/api(?:\.ts)?$/.test(to)) return false;
+		return to.startsWith("platform/ui/") || (to.startsWith("platform/web/") && typeOnly);
+	}
+	if (from.startsWith("platform/")) return to.startsWith("platform/");
+	if (from.startsWith("connectors/"))
+		return to.startsWith(`${from.split("/").slice(0, 3).join("/")}/`) || (to.startsWith("platform/") && !to.startsWith("platform/db/"));
+	if (from.startsWith("tools/"))
+		return to.startsWith(`${from.split("/").slice(0, 2).join("/")}/`) || to.startsWith("platform/") || to.startsWith("connectors/");
+	return from.startsWith("test/");
+}
 
 test("顶层只有这几样：代码分 platform、connectors、tools，skills 只有 md，test 是跨层的测试，ops 是连服务器的配置（不放秘密）；别的是工具链的配置", () => {
 	assert.deepEqual(
@@ -87,19 +158,69 @@ test("代码里读的每个环境变量都写在 .env.example（只有名字和�
 	assert.ok(!/^[A-Z0-9_]+=.+$/m.test(readFileSync(join(ROOT, ".env.example"), "utf8")), ".env.example 只写名字，不写值");
 });
 
-test("网页的界面（platform/ui）引网页服务（platform/web）只 import type：界面打包进浏览器，lint 管得了引哪里、管不了是不是 type", () => {
-	const bad = UI.flatMap((f) =>
-		imports(f).flatMap(({ spec, typeOnly }) => {
-			const to = target(f, spec);
-			return to && !typeOnly && !rel(to).startsWith("platform/ui/") ? [`${rel(f)} → ${rel(to)}`] : [];
-		}),
-	);
-	assert.deepEqual(bad, []);
+test("四层依赖按实际路径检查：嵌套目录、别名、转导出与动态导入不能绕过边界；界面只引服务端类型", () => {
+	assert.deepEqual(readImportProblems(), []);
 });
 
-test("每个文件开头一段注释说它做什么（#! 那行之后；shadcn 拷来的 components/ui 不算）", () => {
-	const bare = CODE.filter((f) => !/^(#![^\n]*\n)?\/\/ \S/.test(readFileSync(f, "utf8")));
-	assert.deepEqual(bare.map(rel), []);
+test("原生解析覆盖绝对导入、非字面量动态导入及 .mts/.cts；类型查询不会当成运行时导入", () => {
+	const absolute = join(ROOT, "tools/listing/index.ts");
+	const virtual = new Map([
+		[
+			join(ROOT, "platform/env.ts"),
+			`import ${JSON.stringify(absolute)}; import ${JSON.stringify(`file://${absolute}`)}; const path = "../tools/listing/index.ts"; await import(path);`,
+		],
+		[join(ROOT, "platform/architecture-probe.mts"), 'export * from "../tools/listing/index.ts";'],
+		[join(ROOT, "platform/architecture-probe.cts"), 'type Row = import("../tools/listing/row.ts").ListingRow;'],
+		[
+			join(ROOT, "platform/ui/preload.ts"),
+			`import type { Meta } from "../web/tables.ts";
+export type { Meta } from "../web/tables.ts";
+type Module = typeof import("../web/tables.ts");
+import { type Meta as Inline } from "../web/tables.ts";
+export { type Meta as InlineExport } from "../web/tables.ts";
+await import("../web/tables.ts");`,
+		],
+	]);
+	for (const file of virtual.keys()) assert.ok(isSource(file));
+	assert.deepEqual(readImportProblems([...virtual.keys()], virtual), [
+		`platform/env.ts：禁止绝对路径导入 ${absolute}`,
+		`platform/env.ts：禁止绝对路径导入 file://${absolute}`,
+		"platform/env.ts：禁止非字面量动态导入 import(path)",
+		"platform/architecture-probe.mts → tools/listing/index.ts",
+		"platform/architecture-probe.cts → tools/listing/row.ts",
+		...Array<string>(3).fill("platform/ui/preload.ts → platform/web/tables.ts"),
+	]);
+});
+
+test("schema 注册器只放行原有固定目录调用；改根目录、改数据来源或增加其它计算导入都会报错", () => {
+	const file = join(ROOT, "platform/web/pages.ts");
+	const original = readFileSync(file, "utf8");
+	for (const text of [
+		original.replace('new URL("../ui/", import.meta.url)', 'new URL("../../tools/", import.meta.url)'),
+		original.replace("readdirSync(dir, { withFileTypes: true })", "readdirSync(ROOT, { withFileTypes: true })"),
+		`${original}\nconst other = "../tools/listing/index.ts"; await import(other);`,
+	]) {
+		const problems = readImportProblems([file], new Map([[file, text]]));
+		assert.equal(problems.length, 1);
+		assert.match(problems[0]!, /禁止非字面量动态导入/);
+	}
+});
+
+test("依赖约束拒绝跨业务、跨连接器、连接器读库、界面加载服务端实现和装配深入模块", () => {
+	const cases: [string, string, boolean, boolean][] = [
+		["tools/orders/index.ts", "tools/listing/row.ts", true, false],
+		["connectors/sites/1688/index.ts", "connectors/sites/shopee/index.ts", true, false],
+		["connectors/sites/shopee/index.ts", "platform/db/index.ts", true, false],
+		["platform/ui/interactable/catalog/view.tsx", "platform/web/tables.ts", false, false],
+		["platform/ui/interactable/catalog/view.tsx", "platform/web/tables.ts", true, true],
+		["platform/ui/generative/table/view.tsx", "platform/ui/api.ts", false, false],
+		["platform/browser/collection.ts", "tools/listing/index.ts", false, false],
+		["x2.ts", "tools/listing/row.ts", true, false],
+		["x2.ts", "connectors/sites/shopee/index.ts", false, true],
+	];
+	for (const [from, to, typeOnly, allowed] of cases) assert.equal(allowedImport(from, to, typeOnly), allowed, `${from} → ${to}`);
+	assert.equal(rel(target(join(ROOT, "platform/ui/interactable/catalog/view.tsx"), "../../../../tools/listing/index.ts")!), "tools/listing/index.ts");
+	assert.equal(rel(target(join(ROOT, "platform/ui/interactable/catalog/view.tsx"), "@/../web/tables.ts")!), "platform/web/tables.ts");
 });
 
 const tracked = () =>
@@ -131,7 +252,7 @@ test("代码、文档里提到的仓库里的文件都在（改名、删了文�
 	for (const f of tracked().filter((x) => /\.(ts|tsx|md|sql|tla|cfg|mjs)$/.test(x))) {
 		const text = readFileSync(join(ROOT, f), "utf8");
 		for (const m of text.matchAll(
-			/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude|\.agents)\/[\w./-]+\.(?:md|ts|tsx|sql|json|tla|cfg|mjs|mmd))/g,
+			/(?<![\w./-])((?:platform|connectors|tools|skills|test|bin|src|web|docs|\.claude|\.agents)\/[\w./-]+\.(?:md|tsx?|sql|json|tla|cfg|mjs|mmd))(?![\w./-])/g,
 		))
 			if (!existsSync(join(ROOT, m[1]!))) bad.push(`${f} → ${m[1]}`);
 		if (f.endsWith(".md"))

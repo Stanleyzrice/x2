@@ -27,6 +27,7 @@ export const actions = {
 	sourceDetail: "listing.source-detail",
 	sourceUpdate: "listing.source-update",
 	sourceDelete: "listing.source-delete",
+	sourcePrompt: "listing.source-prompt",
 	sourcePrepare: "listing.source-prepare",
 	sourcePublishResult: "listing.source-publish-result",
 };

@@ -1,6 +1,20 @@
 // 固定工作区和临时页共用注册组件；导航与首页只显示服务端提供的引用，不读取业务数据。
+import { errorOf } from "@/lib/state";
 import "./app.css";
-import { ArrowRightIcon, FileTextIcon, HouseIcon, MessageSquareIcon, MoonIcon, PackageIcon, ReceiptIcon, StoreIcon, SunIcon, Trash2Icon } from "lucide-react";
+import {
+	ArrowRightIcon,
+	CalculatorIcon,
+	FileTextIcon,
+	HouseIcon,
+	MessageSquareIcon,
+	MoonIcon,
+	PackageIcon,
+	ReceiptIcon,
+	SearchCheckIcon,
+	StoreIcon,
+	SunIcon,
+	Trash2Icon,
+} from "lucide-react";
 import { ThemeProvider, useTheme } from "next-themes";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -37,7 +51,18 @@ const route = () => {
 		return "";
 	}
 };
-const iconOf = (icon?: string) => (icon === "package" ? PackageIcon : icon === "message" ? MessageSquareIcon : icon === "receipt" ? ReceiptIcon : FileTextIcon);
+const iconOf = (icon?: string) =>
+	icon === "search"
+		? SearchCheckIcon
+		: icon === "calculator"
+			? CalculatorIcon
+			: icon === "package"
+				? PackageIcon
+				: icon === "message"
+					? MessageSquareIcon
+					: icon === "receipt"
+						? ReceiptIcon
+						: FileTextIcon;
 const groupsOf = (pages: PageSummary[]) => [...new Set(pages.filter((p) => p.workspace).map((p) => p.workspace!.group ?? "工作台"))];
 
 function App() {
@@ -111,7 +136,7 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 			cancel();
 			onDeleted(result.deleted);
 		} catch (e) {
-			setDeleteError((e as Error).message);
+			setDeleteError(errorOf(e));
 		} finally {
 			setDeleting(false);
 		}

@@ -109,6 +109,28 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 					))}
 				</div>
 			</div>
+			{detail.research?.some((record) => record.shop === targetShop) && (
+				<section className="space-y-3 rounded-xl border bg-muted/20 p-4">
+					<div className="flex items-center justify-between gap-3">
+						<h4 className="text-sm font-semibold">选品依据</h4>
+						<a href="#strategy-selection" className="text-xs underline underline-offset-4">
+							查看研究记录
+						</a>
+					</div>
+					{detail.research
+						.filter((record) => record.shop === targetShop)
+						.map((record) => (
+							<div key={`${record.runId}:${record.strategyId}`} className="space-y-2 text-sm">
+								<Badge variant="outline">{record.strategyName}</Badge>
+								<p className="whitespace-pre-wrap break-words leading-relaxed">{record.reason}</p>
+								<details className="text-xs text-muted-foreground">
+									<summary className="cursor-pointer">查看需求、竞争与货源证据</summary>
+									<p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">{record.evidence}</p>
+								</details>
+							</div>
+						))}
+				</section>
+			)}
 			<Tabs defaultValue="specs">
 				<TabsList variant="line" className="border-b">
 					<TabsTrigger value="specs">规格</TabsTrigger>

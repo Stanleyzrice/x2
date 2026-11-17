@@ -1,11 +1,13 @@
 // 人工采集页面管理当前浏览器的采集会话与进度；外站控件独立注入，采集结果使备选缓存失效。
+
 import { ArrowUpRightIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { errorOf, remember, saved } from "@/lib/state";
 import { api, type Item, usePoll } from "../../api.ts";
 import { withCurrentBrowserMarker } from "../../browser-connection.tsx";
-import { collectionStatusLabels, errorOf, remember, saved } from "./source-state.ts";
+import { collectionStatusLabels } from "./source-state.ts";
 import type { CollectionSession, SourcePlatform } from "./source-types.ts";
 
 function ErrorMessage({ children }: { children: string | null | undefined }) {

@@ -10,9 +10,12 @@
 		"x2": "x2.ts"
 	},
 	"scripts": {
-		"check": "tsc && tsc -p platform/ui && biome check",
+		"check": "tsc && tsc -p platform/ui && biome check --error-on-warnings && node --test test/architecture.test.ts",
+		"build": "vite build --config platform/ui/vite.config.ts",
 		"fix": "biome check --write",
 		"test": "node --test --test-concurrency=1 'test/*.test.ts' 'platform/**/*.test.ts' 'tools/**/*.test.ts' 'connectors/**/*.test.ts'",
+		"test:integration": "node test/selection-listing.integration.ts",
+		"verify": "pnpm check && pnpm test && pnpm build",
 		"prepare": "git config core.hooksPath .githooks"
 	},
 	"dependencies": {

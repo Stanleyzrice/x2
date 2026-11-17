@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { type Offer, OfferId, offerIdOf, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
-import { strs } from "../../platform/tool.ts";
+import { parseJson, strs } from "../../platform/tool.ts";
 
 export const SourceId = z.string().regex(/^\d+$/).brand<"SourceId">();
 export type SourceId = z.output<typeof SourceId>;
@@ -47,6 +47,45 @@ export const sourceProductSchema = z
 		{ path: ["url"], message: "1688链接与商品编号不一致" },
 	);
 export type SourceProduct = z.output<typeof sourceProductSchema>;
+// 策略研究独立于1688原文快照；同一来源可被多次运行命中，不覆盖人工补充值。
+export const sourceProvenanceSchema = z.object({
+	runId: z.string().trim().min(1),
+	strategyId: z.string().trim().min(1),
+	strategyName: z.string().trim().min(1),
+	reason: z.string().trim().min(1),
+	evidence: z.string().trim().min(1),
+});
+export const sourceResearchSchema = sourceProvenanceSchema.extend({
+	kind: z.literal("strategy-run"),
+	shop: z.string().trim().min(1),
+	recordedAt: z.iso.datetime({ offset: true }),
+});
+export type SourceProvenance = z.output<typeof sourceProvenanceSchema>;
+export type SourceResearch = z.output<typeof sourceResearchSchema>;
+export function mergeSourceResearch(previous: readonly SourceResearch[], next: SourceResearch): SourceResearch[] {
+	const saved = z.array(sourceResearchSchema).parse(previous);
+	const record = sourceResearchSchema.parse(next);
+	if (saved.some((item) => item.shop === record.shop && item.runId === record.runId && item.strategyId === record.strategyId)) return saved;
+	return [...saved, record];
+}
+export function sourceResearchPick(research: readonly SourceResearch[], shop: string): { strategy?: string; why: string; evidence: string } {
+	const record = z
+		.array(sourceResearchSchema)
+		.parse(research)
+		.findLast((item) => item.shop === shop);
+	return record ? { strategy: record.strategyName, why: record.reason, evidence: record.evidence } : { why: "人工采集选用", evidence: "" };
+}
+export const collectSourceParams = z.object({ shop: z.string().trim().min(1), link: httpUrl, provenance: sourceProvenanceSchema.optional() });
+export type CollectSourceInput = z.output<typeof collectSourceParams>;
+export type CollectedSourceResult = {
+	sourceId: string;
+	offerId: string;
+	title: string;
+	status: "added" | "existing";
+	problems: string[];
+	sourceCapturedAt: string;
+	reusedSnapshot: boolean;
+};
 export const sourceFieldsSchema = z.object({
 	title: z.string().trim().min(1).optional(),
 	description: z.string().trim().min(1).optional(),
@@ -63,6 +102,16 @@ export const sourceFieldsSchema = z.object({
 });
 export type SourceFields = z.output<typeof sourceFieldsSchema>;
 
+/** 重选类目时仅保留本次明确给出的属性和备货天数，防止后续make重新应用旧类目补充值。 */
+export function mergeSourceFields(previous: SourceFields | null | undefined, fields: SourceFields): SourceFields {
+	const saved = sourceFieldsSchema.parse({ ...previous, ...fields });
+	if (fields.categoryPath !== undefined) {
+		if (fields.attributes === undefined) delete saved.attributes;
+		if (fields.daysToShip === undefined) delete saved.daysToShip;
+	}
+	return saved;
+}
+
 // 备选区的输入和列表契约集中在数据边界；工具实现只负责读取、保存和串接既有上架。
 export const sourceShopParams = z.object({ shop: z.string().min(1), targetShop: z.string().min(1).optional() });
 export type SourceShopInput = z.output<typeof sourceShopParams>;
@@ -71,18 +120,34 @@ export const sourceSelectionParams = sourceShopParams.extend({
 	requestId: z.string().uuid().optional(),
 });
 export const sourceDetailParams = sourceShopParams.extend({ sourceId: SourceId });
-export const sourceDeleteParams = sourceShopParams.extend({
-	sourceIds: strs("明确删除的备选商品编号，不能为空")
+const explicitSourceIds = (description: string) =>
+	strs(description)
 		.pipe(z.array(SourceId).min(1).max(1000))
-		.transform((ids) => [...new Set(ids)]),
+		.transform((ids) => [...new Set(ids)]);
+export const sourceDeleteParams = sourceShopParams.extend({
+	sourceIds: explicitSourceIds("明确删除的备选商品编号，不能为空"),
 });
+export const sourcePromptParams = sourceShopParams.extend({ sourceIds: explicitSourceIds("明确导出的备选商品编号，不能为空") });
 export const sourceStatus = z.enum(["collected", "needs-input", "ready", "listed", "unknown"]);
 export const sourceListParams = sourceShopParams.extend({
 	query: z.string().default(""),
 	platform: z.enum(["all", ...sourcePlatform.options]).default("all"),
 	status: z.enum(["all", ...sourceStatus.options]).default("all"),
 });
-export const sourceUpdateParams = sourceDetailParams.extend(sourceFieldsSchema.shape);
+// 只在工具边界解析CLI数值与JSON文本；网页输入及持久化字段沿用原始结构校验，空值不转成零。
+export const sourceUpdateParams = sourceDetailParams.extend({
+	...sourceFieldsSchema.shape,
+	weightKg: z.preprocess(parseJson, sourceFieldsSchema.shape.weightKg.unwrap()).optional(),
+	freightRmb: z.preprocess(parseJson, sourceFieldsSchema.shape.freightRmb.unwrap()).optional(),
+	minQty: z.preprocess(parseJson, sourceFieldsSchema.shape.minQty.unwrap()).optional(),
+	daysToShip: z.preprocess(parseJson, sourceFieldsSchema.shape.daysToShip.unwrap()).optional(),
+	categoryPath: z.preprocess(parseJson, sourceFieldsSchema.shape.categoryPath.unwrap()).optional(),
+	attributes: z.preprocess(parseJson, sourceFieldsSchema.shape.attributes.unwrap()).optional(),
+	stocks: z.preprocess(parseJson, sourceFieldsSchema.shape.stocks.unwrap()).optional(),
+	prices: z.preprocess(parseJson, sourceFieldsSchema.shape.prices.unwrap()).optional(),
+	mainImages: z.preprocess(parseJson, sourceFieldsSchema.shape.mainImages.unwrap()).optional(),
+	detailImages: z.preprocess(parseJson, sourceFieldsSchema.shape.detailImages.unwrap()).optional(),
+});
 export const sourcePublishParams = sourceSelectionParams.extend({
 	requestId: z.string().uuid(),
 	sourceIds: z.array(SourceId),

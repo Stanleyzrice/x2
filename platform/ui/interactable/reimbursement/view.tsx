@@ -1,4 +1,5 @@
 // 采购记录只展示服务端保存的事实与金额；同步走后台任务，轮询只读 DB，不在组件内重算成本或读取外站。
+
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, ExternalLinkIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLightbox } from "@/components/lightbox";
@@ -12,65 +13,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { errorOf } from "@/lib/state";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
 import { BrowserConnection } from "../../browser-connection.tsx";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import type { Props } from "./schema.ts";
 
-type Account = {
-	id: string;
-	name: string;
-	lastSuccessAt: string | null;
-	status: string | null;
-	page: number | null;
-	pages: number | null;
-	observed: number | null;
-	total: number | null;
-	error: string | null;
-	unknownCount: number | null;
-};
-type RecordRow = {
-	account: string;
-	accountName: string;
-	orderId: string;
-	reported: boolean;
-	reportRevision: number;
-	reportedAt: string | null;
-	supplier: string | null;
-	paidAt: string | null;
-	paidDisplay: string | null;
-	status: string | null;
-	statusLabel: string | null;
-	capturedAt: string;
-	absentFromLatest: boolean;
-	url: string;
-	goodsDisplay: string | null;
-	freightDisplay: string | null;
-	discountDisplay: string | null;
-	items: {
-		lineId: string | null;
-		offerId: string | null;
-		image?: string | null;
-		skuId: string | null;
-		name: string | null;
-		spec: string | null;
-		quantity: string | null;
-		unitPriceDisplay: string | null;
-	}[];
-};
-type Summary = { orderCount: number; knownCount: number; missingCount: number; amountMinor: string | null; amountDisplay: string | null; complete: boolean };
+import type { RecordRow } from "./types.ts";
+
 type MarkReceipt = { revision: number; reported: boolean };
-type Data = {
-	query: { account: string | null; accounts: string[] | null; search: string; paidFrom: string; paidTo: string; offset: number };
-	accounts: Account[];
-	rows: RecordRow[];
-	total: number;
-	summary: Summary;
-	pendingSummary: Summary;
-	offset: number;
-	limit: number;
-	global: { status: string; error: string | null } | null;
-};
+
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
 
 export function View({ props, item }: { props: Props; item: PageItem }) {
@@ -104,11 +56,11 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			// 首次打开当前筛选先使用短时快照，后续轮询与聚焦仍读取最新标记和进度。
 			const force = readScope.current === scopeKey;
 			readScope.current = scopeKey;
-			return api.reimbursementRecords<Data>(item.id, input, force);
+			return api.reimbursementRecords(item.id, input, force);
 		},
 		5000,
 		[item.id, props.accounts, account, search, paidFrom, paidTo, offset],
-		api.peekReimbursementRecords<Data>(item.id, input),
+		api.peekReimbursementRecords(item.id, input),
 	);
 	const expected = { account: account === "all" ? null : account, accounts: props.accounts ?? null, search, paidFrom, paidTo, offset };
 	const data = loaded && JSON.stringify(loaded.query) === JSON.stringify(expected) ? loaded : null;
@@ -148,7 +100,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			api.invalidateReimbursementRecords(item.id);
 			reload();
 		} catch (e) {
-			setMarkError((e as Error).message);
+			setMarkError(errorOf(e));
 			markingRef.current.delete(key);
 			setMarking((old) => {
 				const next = { ...old };
@@ -194,7 +146,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			link.click();
 			setTimeout(() => URL.revokeObjectURL(url), 1000);
 		} catch (e) {
-			setExportError((e as Error).message);
+			setExportError(errorOf(e));
 		} finally {
 			setExporting(false);
 		}

@@ -73,7 +73,12 @@
 
 ## 踩过的坑
 
-- 商品图上传的原生入口是产品模块的 lazy loader：它先 `Promise.all` 加载伴随依赖和 upload 块，再 require 返回 `default` 上传实例的服务初始化模块。块号、模块号从当前页面运行时读取；准备服务只初始化这个 loader 指向的模块，不因UI模块源码提到 `uploadImage` 就 require 它，也不自行 `new UploadService`。过早 require 缺依赖的模块会留下空 exports 缓存，依赖补齐后仍可能保持空值；重新加载无未保存表单的X2自有新增商品页可清除这种旧缓存。服务准备失败发生在上传调用之前，不代表图片或商品已提交。
+- 商品图上传的原生入口是产品模块的 lazy loader：先从该 loader 读取候选块号，以 runtime 的 `u()` 辨认 upload 路径，完整加载其伴随依赖，再初始化明确导出 `default = new …UploadService(...)` 的服务工厂。生产准备不枚举固定块号范围。UI 对话框可能复用同一 upload 块，不能仅凭共享块或源码提到 `uploadImage` 就 require 它；X2 不自行构造上传实例。准备失败发生在上传调用之前，不代表图片或商品已提交。
+- 商品页同时存在外层 `webpackChunk…` 和商品模块的 `rspackChunkProduct`；两者使用兼容的 JSONP runtime 回调。上传准备须识别 Webpack 与 Rspack 两种全局前缀，否则只检查外层页面会漏掉真实商品上传服务。当前产品模块源码的原生 loader 为 `Promise.all([i.e(26),i.e(93)]).then(i.bind(i,461))`，其中 upload 块由 runtime 的 `u()` 映射发现；这些编号仅作真实页面证据，不作为代码常量。
+- 原生准备先确认 X2 自有商品新增／数字编辑路由、`document.readyState=complete` 和可见 `.product-edit__main .product-name-editor input`，再等待完整服务 loader；表单未挂载或只有 UI loader 时不初始化模块。现代 Product runtime 不退回模块猜测；旧版仅兼容明确含 `UploadService` 与 `$instance` 的服务并采用现成实例。chunk 下载完成不能代替商品应用挂载。
+- 真实 runtime 在执行工厂前缓存 `exports={}`，工厂抛错不会清除此缓存；但观察到空 exports 本身不能证明最初发生过何种异常。首个 initializer 异常、空结果或无上传实例会保存时间、阶段、runtime、模块编号及脱敏错误／结果，并在该文档中停止再次初始化，后续调用不能覆盖首错；不手动删原生缓存。
+- 正式上传区分 `waiting`、`ready` 与 `failed`：仅页面／loader 未就绪时最多轮询20次、间隔1秒，等待超时不刷新。终止性初始化失败才允许一次正常重载，而且只对 `window.name=x2`、精确 `/portal/product/new`、无查询参数且完整识别为空表单的页面执行；非空标题、描述、真实图片、文件、已修改控件或未识别表单均禁止。重载后重新等待挂载，仍失败报告保留的首错，不循环重载。摘要不返回商品正文或账号信息。
+- 新增页真实初始态的标题是 `.product-edit__main .product-name-editor input`；未选类别时描述编辑器尚不渲染，只有原生类别行显示「請選擇商品分類」且描述区明确显示「點選確認分類後商品資訊將被更新」才承认此空白初始态。仅排除已核实的隐藏 `.example-right-section .example-search-card` 教学文本框，以及隐藏裁图弹窗中 `alt=loading` 的 `data:image/gif` 占位；其他隐藏输入、非空字段、可见加载图和真实选图仍保护。
 
 - Shop Categories 是买家浏览用的店铺导览分类，独立于商品详情的 `category_path`。`get_collection_list` 的 `product_count` 仅表示有效成员；`get_collection?collection_ids=<id>` 的 `product_id_list` 可能保留异常或已不可售的成员，不能看到 count 为零就认定分类为空。
 - 空草稿池的 `get_collection_draft_list` 原生响应是 `data: {}`，页面为缺失的 `draft_list` 补 `[]`。只有这个已确认空池字段允许缺失，分类详情的成员字段仍必填。页面读取草稿行的 `id`、`name`；UI 内部把 id 转负数作标记，接口提交使用正 id。

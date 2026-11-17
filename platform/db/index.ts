@@ -1,5 +1,4 @@
-// 库：Postgres，唯一的数据，大家共用香港服务器上的一个（经 SSH 隧道，见 tunnel.ts）。地址在 X2_DATABASE_URL，每人一个库账号；凭证留在环境变量里，不进库。
-// 表的结构：平台的在 schema.sql，每个业务工具（tools/<名字>）的在它自己的 schema.sql（toolkit 的 schema，注册时记下）。每个进程第一次用库时按先后跑一遍（只建没有的、加没有的列）
+// PostgreSQL 连接与迁移；数据库由 X2_DATABASE_URL 指定，按配置直连或经 SSH 隧道。
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";
@@ -42,10 +41,7 @@ export function client(url: string, max: number): Sql {
 const lifecycle = databaseLifecycle<Sql>({
 	create: () => {
 		const url = target ?? process.env.X2_DATABASE_URL;
-		if (!url)
-			throw new NeedsHuman(
-				"没有设 X2_DATABASE_URL：库是共用的，在服务器上，不用在本机装 Postgres；连库的两行（X2_DATABASE_URL、X2_DATABASE_SSH）找管服务器的人要（ops/db-user.sh）",
-			);
+		if (!url) throw new NeedsHuman("没有设 X2_DATABASE_URL：请按项目 .env.example 配置数据库地址；使用 SSH 隧道时再配置 X2_DATABASE_SSH");
 		return client(url, 4);
 	},
 	initialize: async (sql) => {

@@ -1,4 +1,5 @@
 // 人工选品的入口与备选列表：采集会话由独立页面管理，备选查看与发布复用 Catalog 的表格、详情面板和确认入口。
+
 import { ArrowUpRightIcon, BoxesIcon, LoaderCircleIcon, PackageSearchIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -9,11 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { errorOf, remember, saved } from "@/lib/state";
 import { api, type Item, usePoll } from "../../api.ts";
 import type { Props } from "./schema.ts";
 import { Collector } from "./source-collection.tsx";
 import { SourceSheet } from "./source-details.tsx";
-import { currentPublishResult, errorOf, publishReceiptOf, publishUnresolved, remember, saved, sourceCanPublish, sourceCanSelect } from "./source-state.ts";
+import { SourcePromptButton } from "./source-prompt.tsx";
+import { currentPublishResult, publishReceiptOf, publishUnresolved, sourceCanPublish, sourceCanSelect } from "./source-state.ts";
 import type { PublishReceipt, SourceDeletion, SourceItem, SourceList, SourcePlatform, SourcePreparation, SourceReceipt, SourceStatus } from "./source-types.ts";
 
 const platformName = (_platform: SourcePlatform) => "1688";
@@ -236,6 +239,7 @@ function Candidates({ item, defaultShop }: { item: Item; defaultShop: string }) 
 					{busy && <LoaderCircleIcon className="animate-spin" />}
 					{busy ? "正在处理…" : `上架选中（${publishable.length}）`}
 				</Button>
+				<SourcePromptButton item={item} shop={shop} sourceIds={picked.map((row) => row.id)} disabled={working} />
 			</div>
 			<ErrorMessage>{error ?? loadError}</ErrorMessage>
 			{receipt && (

@@ -34,6 +34,8 @@ import {
 	productInfo,
 	recommendedCategory,
 	shippingDays,
+	uploadDiagnostics,
+	uploadPrepare,
 } from "./products.ts";
 import { createListing, editProduct, listProduct, unlistProduct } from "./publish.ts";
 import { cases } from "./returns.ts";
@@ -98,6 +100,15 @@ const tools = {
 		channels(p.id, p.category),
 	),
 	"count-limit": get("商品额度：已发布、下架的、上限", undefined, () => countLimit()),
+	"upload-diagnostics": get("只读诊断X2自有新增商品页、空表单与原生上传loader；不上传、不重载、不初始化服务", undefined, () => uploadDiagnostics()),
+	"upload-prepare": get(
+		"仅在X2自有新增商品页执行一次原生上传准备并保留首次异常；显式空页重载受守卫保护，不上传图片",
+		z.object({
+			reloadIfEmpty: flag("仅确认空白自有新增页后正常重载一次，再捕获首次初始化结果").default(false),
+			attempts: z.coerce.number().int().min(1).max(5).default(1).describe("仅在模块尚未出现时有界等待；真正初始化一次后立即返回"),
+		}),
+		(p) => uploadPrepare(p.reloadIfEmpty, p.attempts),
+	),
 	"category-tree": all("Shopee 台湾站的类目树", undefined, () => categoryTree()),
 	attributes: all("叶子类目的属性：必填的、可选值", z.object({ category: num("叶子类目 id") }), (p) => attributes(p.category)),
 	"recommended-category": get(

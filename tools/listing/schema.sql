@@ -175,3 +175,6 @@ create table if not exists listing_source_requests (
 
 -- 从备选区移除仅隐藏来源快照，商品稿与外站操作历史保持完整；再次明确采集可恢复。
 alter table listing_sources add column if not exists deleted_at timestamptz;
+
+-- agent策略来源保存在独立研究记录中，原始1688快照不混入选品结论。
+alter table listing_sources add column if not exists research jsonb not null default '[]'::jsonb;

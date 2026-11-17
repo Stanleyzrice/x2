@@ -1,0 +1,60 @@
+export type Account = {
+	id: string;
+	name: string;
+	lastSuccessAt: string | null;
+	status: string | null;
+	page: number | null;
+	pages: number | null;
+	observed: number | null;
+	total: number | null;
+	error: string | null;
+	unknownCount: number | null;
+};
+export type RecordRow = {
+	account: string;
+	accountName: string;
+	orderId: string;
+	reported: boolean;
+	reportRevision: number;
+	reportedAt: string | null;
+	supplier: string | null;
+	paidAt: string | null;
+	paidDisplay: string | null;
+	status: string | null;
+	statusLabel: string | null;
+	capturedAt: string;
+	absentFromLatest: boolean;
+	url: string;
+	goodsDisplay: string | null;
+	freightDisplay: string | null;
+	discountDisplay: string | null;
+	items: {
+		lineId: string | null;
+		offerId: string | null;
+		image?: string | null;
+		skuId: string | null;
+		name: string | null;
+		spec: string | null;
+		quantity: string | null;
+		unitPriceDisplay: string | null;
+	}[];
+};
+export type Summary = {
+	orderCount: number;
+	knownCount: number;
+	missingCount: number;
+	amountMinor: string | null;
+	amountDisplay: string | null;
+	complete: boolean;
+};
+export type Data = {
+	query: { account: string | null; accounts: string[] | null; search: string; paidFrom: string; paidTo: string; offset: number };
+	accounts: Account[];
+	rows: RecordRow[];
+	total: number;
+	summary: Summary;
+	pendingSummary: Summary;
+	offset: number;
+	limit: number;
+	global: { status: string; error: string | null } | null;
+};

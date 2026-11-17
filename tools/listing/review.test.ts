@@ -6,7 +6,7 @@ import { auditCurrent, auditKey, reviewedAuditCurrent, reviewImages } from "./au
 import type { Product } from "./product.ts";
 import { listingReviewParams, makeReviewedAudit, reviewedAuditEditable } from "./review.ts";
 import { textCheck } from "./textcheck.ts";
-import { creationReviewBlock } from "./writes.ts";
+import { creationReviewBlock, sourceLiveReviewBlock } from "./writes.ts";
 
 function product(): Product {
 	return {
@@ -113,6 +113,37 @@ test("建商品前现验审阅：未审、过期或缺逐图结果均拦住，�
 	assert.match(creationReviewBlock({ ...a, images: [] }, p)!, /重新审阅/);
 	assert.equal(creationReviewBlock(a, p), null);
 	assert.equal(creationReviewBlock({ key: auditKey(p), provider: "gemini", textIssues: [], images: [], at: "2026-11-13T00:00:00.000Z" }, p), null);
+});
+
+test("人工备选的处理图和已审图须有当前真实审阅，原图批准不能替代", () => {
+	const p = product(),
+		a = makeReviewedAudit(p, input(p));
+	const approval = { kind: "original-source" as const, sourceProductId: "source-1", hash: "hash", at: "2026-11-16T00:00:00.000Z" };
+	for (const imageMode of ["processed", "reviewed"]) {
+		const source = { approval, id: "source-1", imageMode, hash: "hash" };
+		assert.ok(sourceLiveReviewBlock(null, p, source), "没有审核时，原图批准不能授权处理图");
+		assert.ok(creationReviewBlock(null, p, source), "建商品同样不能凭原图批准使用处理图");
+		assert.ok(sourceLiveReviewBlock(a, undefined, source), "商品不完整时不能上架");
+		assert.ok(sourceLiveReviewBlock(a, { ...p, images: ["main2", "cover"] }, source), "图片变化后旧审核失效");
+		assert.ok(sourceLiveReviewBlock({ ...a, images: [] }, p, source), "缺少逐图结果不能上架");
+		assert.equal(sourceLiveReviewBlock(a, p, { ...source, approval: null }), null);
+		assert.equal(creationReviewBlock(a, p, { ...source, approval: null }), null);
+	}
+});
+
+test("原图备选上架继续要求匹配来源与当前内容的原图批准", () => {
+	const p = product(),
+		a = makeReviewedAudit(p, input(p));
+	const source = {
+		approval: { kind: "original-source" as const, sourceProductId: "source-1", hash: "hash", at: "2026-11-16T00:00:00.000Z" },
+		id: "source-1",
+		imageMode: "original",
+		hash: "hash",
+	};
+	assert.equal(sourceLiveReviewBlock(null, undefined, source), null);
+	assert.ok(sourceLiveReviewBlock(a, p, { ...source, approval: null }), "真实审核不改变原图快捷上架批准要求");
+	assert.ok(sourceLiveReviewBlock(a, p, { ...source, id: "another-source" }));
+	assert.ok(sourceLiveReviewBlock(a, p, { ...source, hash: "changed" }));
 });
 
 test("textCheck复用当前已完成的显式审阅，不再取图或调用Gemini", async () => {

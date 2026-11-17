@@ -6,6 +6,12 @@
 
 怎么调：`api(路径, 参数)`（`zhixia.ts`），它带上 `siteId`、过限流、用页面的 axios 发。参数要看页面怎么传：在对应页面上找组件，读 `组件.$options.methods.getList` 的源码（`zhixia.ts` 里的具名函数就是这样查出来的）。回的外壳不统一：多数在 `data`，热搜词在 `hotWordList`，热词商品在 `itemListInfo`，长尾词在 `payload`。
 
+所有读工具接受可选的 `expectedSiteId`（期望站点编号，正整数）。不传则沿用页面当前站点；传入后，在同一浏览器锁内校验页面原生 `store.getters.siteId`，每次实际请求前再次检查。站点不符、编号缺失或无效均抛 `NeedsHuman`，不发该次数据请求、不自动切站；编号缺失不默认成1。`raw` 的显式 `params.siteId` 也不能覆盖已传的期望站点。类目树从 store 读取时使用相同校验。
+
+登录身份探测通过 `probeIdentity` 临时清除期望站点，只判断现有会话是否登录；成功或失败后正常读取都恢复原约束。站点不符在选定已登录会话后的实际读取中报告，不以市场编号筛选登录会话，不把站点不符当成未登录。
+
+`x2 zhixia context --json` 只读当前原生站点，返回 `{ siteId, siteName }`。名称只取原生 `store.getters.siteName` 的非空字符串，没有该值返回 `null`；连接器不维护国家映射。直接调用本模块可用 `withExpectedSite(expectedSiteId, async () => ...)` 约束整个读取链，嵌套和并发调用隔离。本站点编号对应哪个业务市场由调用方确认和配置。
+
 「x2」一列打勾的已经写成 `zhixia.ts` 里的函数。另外 `/category/list`（类目树，在账号模块里）也已经写成函数 `categories()`。
 
 参数里常见的：
@@ -181,4 +187,9 @@
 
 ## 回包样本
 
-`fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。`hot-word-list.json`、`hot-word-item-sales-detail.json` 是真回包（penna 留下的，只有公开的店名），`similar-1688.json` 照代码写的。别的接口（热销类目、类目每天的数据、需求变化、竞争、价格带、吐槽、偏好、长尾词）原样回，只认列表那一层，没配样本。
+`fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。`hot-word-list.json`、`hot-word-item-sales-detail.json` 是真回包（penna 留下的，只有公开的店名），`site-context.json` 是 `context` 从原生 getter 实读的脱敏快照，`similar-1688.json` 照代码写的。站点样本只验证原生字段解析，不作为运行时站点或国家名称的默认值。别的接口（热销类目、类目每天的数据、竞争、价格带、吐槽、偏好、长尾词）原样回，只认列表那一层，没配样本。
+
+
+### 需求变化样本与指标定义（2026-11-18）
+
+fixtures/demand-change.json 是台湾站点（原生 siteId=1）睡衣热词 hotWordId=13192 的实际只读回包，不含账户资料；30点为2026-10-18至2026-11-16，日期原格式YYYY-MM-DD，顺序倒序。demandSeries只将timest与sales提取并排序，缺值不补0。原生关键词选品页DemandSupply.setChart将sales直接绑定“销量”、timest绑定日期轴；可见需求指数tooltip明示分析样本为“该关键词搜索结果下前10页商品”。聚合窗口及固定样本未获证明，basis=observed仅指带日期样本指标观察值；不认定日销量、周成交或全市场需求，样本排名变化可能导致曲线变化。不把charts内的top10滚动类指标统一当日值、不汇总销量；没有已核实的搜索量序列。字段证据脱敏记录见artifacts/selection-new-workflows-20261118/native-demand-definition.json。

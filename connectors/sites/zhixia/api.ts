@@ -5,11 +5,12 @@
 // 次数记在 ~/x2/zhixia-usage.json，几个 x2 进程共用：api() 从等限流到发完请求一直拿着知虾的锁（browser.ts 的 hold），几个进程不会同时算、同时发。
 // 回 401、602（没登录、令牌作废）立刻抛错，调用方停下，不换参数重试
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { hold, page } from "../../../platform/browser/browser.ts";
+import { hold, type Page, page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { reply } from "../../../platform/reply.ts";
 
@@ -57,7 +58,44 @@ type ZhixiaWindow = {
 	webpackJsonp?: { push: (chunk: [string[], Record<string, (m: unknown, e: unknown, r: WebpackRequire) => void>, string[][]]) => void };
 	__x2Http?: (config: Record<string, unknown>) => Promise<unknown>;
 };
-type VueRoot = HTMLElement & { __vue__?: { $store?: { getters?: { siteId?: number }; state?: { user?: { catList?: unknown } } } } };
+type VueRoot = HTMLElement & { __vue__?: { $store?: { getters?: { siteId?: unknown; siteName?: unknown }; state?: { user?: { catList?: unknown } } } } };
+
+const expectedSite = new AsyncLocalStorage<number | undefined>();
+export const withExpectedSite = <T>(expectedSiteId: number | undefined, run: () => Promise<T>): Promise<T> =>
+	expectedSite.run(expectedSiteId ?? expectedSite.getStore(), run);
+
+/** 仅供登录身份探测：认当前会话是否登录，不让市场约束被误当成登录失败；结束后自动恢复。 */
+export const probeIdentity = <T>(identify: () => Promise<T>): Promise<T> => expectedSite.run(undefined, identify);
+
+export type SiteContext = { siteId: number; siteName: string | null };
+
+/** 只校验页面原生站点，不推断国家、不切站；缺少站点时不能默认成任何编号。 */
+export function siteContextOf(value: unknown, expectedSiteId = expectedSite.getStore()): SiteContext {
+	const parsed = z.looseObject({ siteId: z.unknown(), siteName: z.unknown().optional() }).safeParse(value);
+	const raw = parsed.success ? parsed.data : null;
+	const siteId = typeof raw?.siteId === "number" || (typeof raw?.siteId === "string" && /^\d+$/.test(raw.siteId)) ? Number(raw.siteId) : Number.NaN;
+	if (!Number.isSafeInteger(siteId) || siteId <= 0) throw new NeedsHuman("知虾当前站点编号无法确认：在浏览器工作台确认站点后再试，不会默认站点或自动切换");
+	if (expectedSiteId !== undefined && siteId !== expectedSiteId)
+		throw new NeedsHuman(`知虾当前站点编号${siteId}与期望站点编号${expectedSiteId}不符：请在浏览器确认站点，不会自动切换或读取其他站点数据`);
+	return { siteId, siteName: typeof raw?.siteName === "string" && raw.siteName.trim() ? raw.siteName : null };
+}
+
+async function readSiteContext(p: Page): Promise<SiteContext> {
+	return siteContextOf(
+		await p.run(() => {
+			const getters = document.querySelector<VueRoot>("#app")?.__vue__?.$store?.getters;
+			return { siteId: getters?.siteId ?? null, siteName: getters?.siteName ?? null };
+		}),
+	);
+}
+
+/** 返回页面原生编号与名称；没有名称 getter 时返回 null，不维护国家映射。 */
+export async function context(): Promise<SiteContext> {
+	return hold(ORIGIN, async () => {
+		await ready();
+		return readSiteContext(await page(ORIGIN));
+	});
+}
 
 /** x2 打开知虾标签页时要落在工作台页面上（有 webpackJsonp），不是随便一页 */
 export async function ready(): Promise<void> {
@@ -73,7 +111,7 @@ export async function ready(): Promise<void> {
 }
 
 /** 用页面的 axios 发一个请求，回整个响应体（各接口的外壳不一样：有的在 data，有的在 hotWordList、payload）。
- * path 是 /api/shopee-report-service/pro 之后的一段；siteId 不用给，取页面当前的站点 */
+ * path 是 /api/shopee-report-service/pro 之后的一段；默认取当前站点，withExpectedSite 可要求实际站点一致 */
 export async function api<S extends z.ZodType>(
 	path: string,
 	schema: S,
@@ -82,13 +120,28 @@ export async function api<S extends z.ZodType>(
 ): Promise<z.output<S>> {
 	const body = await hold(ORIGIN, async () => {
 		await ready();
-		await throttle();
 		const p = await page(ORIGIN);
-		return p.run(
-			async (url: string, params: Record<string, unknown>, method: string) => {
+		await readSiteContext(p);
+		if (expectedSite.getStore() !== undefined && params.siteId !== undefined) siteContextOf({ siteId: params.siteId });
+		await throttle();
+		const result = await p.run(
+			async (url: string, params: Record<string, unknown>, method: string, expectedSiteId: number | null) => {
 				if (location.pathname.startsWith("/workbench/login")) return { code: 401, msg: "没有登录" };
 				const w = window as unknown as ZhixiaWindow;
 				if (!w.webpackJsonp) return { code: -1, msg: "页面还没加载好：不是知虾的工作台页面" };
+				// 节流等待期间页面可能换站；在实际请求前同一次页面执行中重新检查。
+				const getters = document.querySelector<VueRoot>("#app")?.__vue__?.$store?.getters;
+				const current = { siteId: getters?.siteId ?? null, siteName: getters?.siteName ?? null };
+				const siteId =
+					typeof current.siteId === "number" || (typeof current.siteId === "string" && /^\d+$/.test(current.siteId)) ? Number(current.siteId) : Number.NaN;
+				if (!Number.isSafeInteger(siteId) || siteId <= 0 || (expectedSiteId !== null && siteId !== expectedSiteId)) return { x2SiteMismatch: current };
+				if (
+					expectedSiteId !== null &&
+					params.siteId !== undefined &&
+					(!(typeof params.siteId === "number" || (typeof params.siteId === "string" && /^\d+$/.test(params.siteId))) ||
+						Number(params.siteId) !== expectedSiteId)
+				)
+					return { x2RequestedSiteMismatch: true };
 				if (!w.__x2Http) {
 					const holder: { req: WebpackRequire | null } = { req: null };
 					const id = `x2-http-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -104,14 +157,18 @@ export async function api<S extends z.ZodType>(
 					w.__x2Http = holder.req?.("b775").a;
 				}
 				if (!w.__x2Http) return { code: -1, msg: "页面里没找到知虾的 axios（webpack 模块 b775）" };
-				const siteId = document.querySelector<VueRoot>("#app")?.__vue__?.$store?.getters?.siteId ?? 1;
 				const all = { siteId, ...params };
 				return w.__x2Http({ url, method, ...(method === "get" ? { params: all } : { data: all }), validateStatus: () => true });
 			},
 			`${PRO}${path}`,
 			params,
 			method,
+			expectedSite.getStore() ?? null,
 		);
+		if (typeof result === "object" && result !== null && "x2SiteMismatch" in result) siteContextOf(result.x2SiteMismatch);
+		if (typeof result === "object" && result !== null && "x2RequestedSiteMismatch" in result)
+			throw new NeedsHuman("知虾请求参数的站点与期望站点不符：请核对参数，不会读取其他站点数据");
+		return result;
 	});
 	const b = shell.safeParse(body).data ?? {};
 	if (b.code === 401 || b.code === 602) throw new NeedsHuman("知虾没有登录（或令牌失效）：在浏览器里登录知虾再试");
@@ -141,13 +198,20 @@ const catNode: z.ZodType<CatNode> = z.looseObject({
 
 /** 类目树（三级）。读页面 store 里登录时就载入的 state.user.catList，不发请求 */
 export async function categories(): Promise<Category[]> {
-	await ready();
-	const p = await page(ORIGIN);
-	const list = await p.run(() => document.querySelector<VueRoot>("#app")?.__vue__?.$store?.state?.user?.catList ?? null);
-	// 没有类目树就是没登录（或页面没载入工作台）：别当成空的
-	if (!Array.isArray(list) || !list.length) throw new NeedsHuman("知虾的工作台没有类目树：在浏览器里登录知虾、打开工作台再试");
-	const conv = (c: CatNode): Category => ({ id: String(c.value), name: String(c.label), children: (c.children ?? []).map(conv) });
-	return reply(z.array(catNode), list, "知虾的类目树（store 的 state.user.catList）").map(conv);
+	return hold(ORIGIN, async () => {
+		await ready();
+		const p = await page(ORIGIN);
+		const snapshot = await p.run(() => {
+			const store = document.querySelector<VueRoot>("#app")?.__vue__?.$store;
+			return { siteId: store?.getters?.siteId ?? null, siteName: store?.getters?.siteName ?? null, list: store?.state?.user?.catList ?? null };
+		});
+		siteContextOf(snapshot);
+		const list = snapshot.list;
+		// 没有类目树就是没登录（或页面没载入工作台）：别当成空的
+		if (!Array.isArray(list) || !list.length) throw new NeedsHuman("知虾的工作台没有类目树：在浏览器里登录知虾、打开工作台再试");
+		const conv = (c: CatNode): Category => ({ id: String(c.value), name: String(c.label), children: (c.children ?? []).map(conv) });
+		return reply(z.array(catNode), list, "知虾的类目树（store 的 state.user.catList）").map(conv);
+	});
 }
 
 /** 热销类目榜：path 下一级的各类目，按昨天（DAY）的销量排；path 为空是全站的二级类目（不是一级，2026-10-09 查过） */
@@ -215,11 +279,43 @@ export const bySales30Day = (rows: Item[]): Item[] => {
 };
 
 const word = (hotWordId: number) => ({ hotWordId, updateKey: 1 });
-/** 一个词最近 30 天每天的搜索量、销量（charts；顺序不保证，按 timest 排） */
+/** 一个词近期需求变化；不同字段可能混用统计窗口，不从字段名推断日值。 */
 const one = z.looseObject({ data: row.nullish() });
 const rows = z.looseObject({ data: z.array(row).nullish() });
-export const demandChange = async (hotWordId: number): Promise<Row | null | undefined> =>
-	(await api("/hotWordChopeeProduct/getDemandChange", one, word(hotWordId))).data;
+const demandPoint = z.looseObject({
+	timest: z
+		.union([z.string(), z.number()])
+		.transform(String)
+		.pipe(z.string().regex(/^(?:\d{8}|\d{4}-\d{2}-\d{2})$/)),
+	sales: z.union([z.number(), z.string()]).nullish(),
+});
+/** 原生DemandSupply将sales绑定销量、timest绑定日期；前10页动态样本、聚合窗口未知，仅作带日期观察值。 */
+export function demandSeries(value: unknown) {
+	const raw = z.looseObject({ charts: z.array(demandPoint) }).parse(value);
+	return {
+		metric: "sales" as const,
+		basis: "observed" as const,
+		source: {
+			field: "charts.sales",
+			dateField: "charts.timest",
+			scope: "该关键词搜索结果前10页样本",
+			aggregationWindow: "unknown",
+			definitionUrl: "https://shopee.mobduos.com/workbench/big-data-selection/keyword-selection",
+			limitations: ["样本成员与排名可能变化，变化可能来自样本替换", "聚合窗口未知，不代表日销量、周成交或全市场需求"],
+		},
+		points: raw.charts
+			.map((point) => ({
+				date: point.timest.includes("-") ? point.timest : `${point.timest.slice(0, 4)}-${point.timest.slice(4, 6)}-${point.timest.slice(6, 8)}`,
+				value: point.sales ?? null,
+			}))
+			.sort((a, b) => a.date.localeCompare(b.date)),
+	};
+}
+export const demandChange = async (hotWordId: number): Promise<Row | null | undefined> => {
+	const result = (await api("/hotWordChopeeProduct/getDemandChange", one, word(hotWordId))).data;
+	demandSeries(result);
+	return result;
+};
 export const competition = async (hotWordId: number): Promise<Row | null | undefined> =>
 	(await api("/hotWordChopeeProduct/getCompetitiveEnvironment", one, word(hotWordId))).data;
 export const priceLine = async (hotWordId: number): Promise<Row | null | undefined> =>

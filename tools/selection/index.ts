@@ -3,7 +3,12 @@ import { z } from "zod";
 import { db, type Json } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, str, type Toolkit } from "../../platform/tool.ts";
+import { loadRunConfig, loadSelectionPolicy, loadStrategyDefinitions, saveWorkflow, selectionStrategyId, workflowStepsSchema } from "./definitions.ts";
+import { cancelRun, getRun, listRuns, recoverInterruptedRuns, selectionAgentStatus, startRun } from "./runs.ts";
 import { SELECTION_TABLES } from "./tables.ts";
+import { summarizeTimeSeries, timeSeriesInputSchema } from "./time-series.ts";
+
+export { setSelectionServices } from "./runs.ts";
 
 const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
 const STATUS = ["试验中", "使用中", "已停用"] as const;
@@ -41,6 +46,85 @@ export const selection: Toolkit = {
 	title: "选品记录：策略实验、方法引用、规则历史",
 	kind: "tool",
 	tools: {
+		"time-series-summary": get("描述同口径时间序列的三窗口变化、缺失与尖峰敏感性；不产生选品准入或盈利结论", timeSeriesInputSchema, async (input) =>
+			summarizeTimeSeries(input),
+		),
+		workbench: get("当前商品发现与组合设计流程、证据边界及agent状态；不自动启动研究", z.object({ shop: str("目标店铺") }), async ({ shop }) => {
+			const sql = await db();
+			await recoverInterruptedRuns(sql);
+			const definitions = await loadStrategyDefinitions(sql, shop);
+			const saved = await sql<{ name: string; status: string }[]>`select name, status from strategies`;
+			const strategies = definitions.filter((definition) => !saved.some((row) => row.name === definition.name && row.status === "已停用"));
+			const { methodology } = await loadSelectionPolicy();
+			return { shop, strategies, methodology, agent: await selectionAgentStatus(), runs: await listRuns(sql, shop) };
+		}),
+		"workflow-save": get(
+			"保存当前店铺的自定义研究步骤，不更改经营规则或已启动的研究",
+			z.strictObject({ shop: str("目标店铺"), strategyId: selectionStrategyId, steps: workflowStepsSchema }),
+			async (input) => ({ strategy: await saveWorkflow(await db(), input) }),
+		),
+		"workflow-reset": get(
+			"恢复项目技能中的默认研究步骤，不更改已启动的研究",
+			z.strictObject({ shop: str("目标店铺"), strategyId: selectionStrategyId }),
+			async (input) => ({ strategy: await saveWorkflow(await db(), input) }),
+		),
+		"run-start": get(
+			"按详细策略启动一次选品研究；候选只进入上架备选区，不采购或发布",
+			z.strictObject({
+				shop: str("目标店铺"),
+				strategyId: selectionStrategyId,
+				limit: z.coerce.number().int().min(1).max(10).default(3),
+				brief: z.string().trim().max(2000).default(""),
+				requestId: z.string().uuid(),
+			}),
+			async ({ requestId, ...input }) => {
+				const sql = await db();
+				// 未收到启动回执时先查原请求；之后保存的流程不能改变该次运行快照。
+				const [previous] = await sql<
+					{ id: string; shop: string; strategy_id: string; limit_count: number; brief: string }[]
+				>`select id,shop,strategy_id,limit_count,brief from selection_runs where request_id=${requestId}`;
+				if (previous) {
+					if (
+						previous.shop !== input.shop ||
+						previous.strategy_id !== input.strategyId ||
+						previous.limit_count !== input.limit ||
+						previous.brief !== input.brief
+					)
+						throw new Usage("该requestId已用于另一组研究输入，请使用新的请求编号");
+					return getRun(sql, previous.id);
+				}
+				const config = await loadRunConfig(sql, input);
+				const agent = await selectionAgentStatus();
+				if (agent.model && agent.reasoningEffort) config.agent = { model: agent.model, reasoningEffort: agent.reasoningEffort };
+				const [saved] = await sql<{ status: string }[]>`select status from strategies where name = ${config.strategy.name}`;
+				if (saved?.status === "已停用") throw new Usage("该策略已停用，请选择当前研究方法");
+				await sql.begin(async (tx) => {
+					const [added] = await tx`insert into strategies (name, bet, how, status)
+						values (${config.strategy.name}, ${config.strategy.description}, ${config.strategy.policyPath}, '试验中')
+						on conflict (name) do nothing returning name`;
+					if (added)
+						await tx`insert into strategy_changes (strategy, version, after, why)
+						values (${config.strategy.name}, 1, ${tx.json({ status: "试验中", bet: config.strategy.description, how: config.strategy.policyPath })},
+						'用户从策略工作台启动研究，按当前项目技能执行')`;
+				});
+				return startRun(sql, config, requestId);
+			},
+		),
+		"run-detail": get("读取一项研究的步骤、证据及备选结果", z.strictObject({ shop: str("目标店铺"), runId: z.string().uuid() }), async ({ shop, runId }) => {
+			const run = await getRun(await db(), runId);
+			if (!run || run.shop !== shop) throw new Usage("没有这家店的研究任务");
+			return run;
+		}),
+		"run-cancel": get(
+			"停止研究；保留已经保存的备选，不再新增",
+			z.strictObject({ shop: str("目标店铺"), runId: z.string().uuid() }),
+			async ({ shop, runId }) => {
+				const sql = await db();
+				const run = await getRun(sql, runId);
+				if (!run || run.shop !== shop) throw new Usage("没有这家店的研究任务");
+				return cancelRun(sql, runId);
+			},
+		),
 		"strategy-add": get(
 			"记一个策略（试验中，第 1 版）",
 			z.object({

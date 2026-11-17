@@ -30,6 +30,15 @@ test("图片模式属于单稿：旧稿默认processed，重做沿用original，
 	assert.deepEqual(pics, before);
 });
 
+test("人工采集稿默认原图，显式处理与保存的已审模式优先于来源默认", () => {
+	assert.equal(imageModeOf(undefined, undefined, "original"), "original");
+	assert.equal(imageModeOf(undefined, {}, "original"), "original");
+	assert.equal(imageModeOf("processed", { imageMode: "original" }, "original"), "processed");
+	assert.equal(imageModeOf(undefined, { imageMode: "processed" }, "original"), "processed");
+	assert.equal(imageModeOf(undefined, { imageMode: "reviewed" }, "original"), "reviewed");
+	assert.equal(imageModeOf("reviewed", { imageMode: "original" }, "original"), "reviewed");
+});
+
 test("原图上传输入逐字节保留PNG，不经过JPEG重编码或改变尺寸与SHA", () => {
 	const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=", "base64");
 	const base = inspect(bytes);
