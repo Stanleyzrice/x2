@@ -1,5 +1,6 @@
 // 研究判断、外部查询与保存回执分开展示；历史记录缺结构化字段时仍显示原有文字。
 import { Badge } from "@/components/ui/badge";
+import type { SocialEvidence } from "./contract.ts";
 import { candidateQueryEvidence } from "./state.ts";
 import type { BatchAudit, Candidate, QueryFact, ResearchConclusion, RunEvent, Strategy } from "./types.ts";
 
@@ -65,6 +66,7 @@ export function QueryEvidence({ index, fact }: { index: number; fact: QueryFact 
 					<ConclusionItem label="货源查询词" value={fact.query.sourceKeyword} />
 				</dl>
 				{fact.trend && <TrendEvidence trend={fact.trend} />}
+				{fact.social && <SocialEvidenceView evidence={fact.social} />}
 				<FactSection title="数据更新时间" value={fact.updateTime} />
 				<FactSection title="热词事实" value={fact.words} />
 				<FactSection title="相关商品事实" value={fact.items} />
@@ -73,6 +75,40 @@ export function QueryEvidence({ index, fact }: { index: number; fact: QueryFact 
 				<FactSection title="读取缺项" value={fact.errors} />
 			</div>
 		</details>
+	);
+}
+
+export function SocialEvidenceView({ evidence: { note, purchases, comparedItemId } }: { evidence: SocialEvidence }) {
+	const { reference } = note;
+	return (
+		<section aria-label="原帖与台湾购买证据" className="space-y-2 rounded-lg border p-3 text-sm">
+			<div className="flex flex-wrap gap-2">
+				<a href={note.url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-4">
+					{note.title || "小红书原帖"}
+				</a>
+				<Badge variant="outline">{reference.relation === "direct" ? "原帖点名" : "按场景延伸一次"}</Badge>
+			</div>
+			<p className="text-muted-foreground">
+				{note.publishedAt} · {reference.part ? `图 ${reference.part}` : "正文"} · {reference.quote}
+			</p>
+			<ul className="space-y-1">
+				{purchases.map((purchase) => (
+					<li key={purchase.itemId}>
+						<a href={purchase.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">
+							{purchase.title}
+						</a>
+						<span className="ml-2 text-muted-foreground">
+							{purchase.dataDate} · 整链接近30天 {purchase.sales30Day} 件
+						</span>
+						{comparedItemId === purchase.itemId && (
+							<Badge className="ml-2" variant="secondary">
+								采用的比较样本
+							</Badge>
+						)}
+					</li>
+				))}
+			</ul>
+		</section>
 	);
 }
 

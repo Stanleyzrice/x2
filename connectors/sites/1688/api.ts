@@ -8,6 +8,7 @@ import { z } from "zod";
 import { challenge, page } from "../../../platform/browser/browser.ts";
 import { Challenge, NeedsHuman } from "../../../platform/errors.ts";
 import { idText, numeric, reply } from "../../../platform/reply.ts";
+import { claimSiteSubmission } from "../../../platform/site-write.ts";
 
 /** 1688 的几种 id 都是字符串，贴上标签别互相传错：商品 id（offer id）、规格的 skuId（只有一个规格的商品用商品 id）、
  * 加购要带的 specId（只有一个规格的是空字符串）。在这里解析回包时贴，业务工具的参数、读库时贴 */
@@ -250,9 +251,15 @@ export type Description = { text: string; images: string[]; blocks: DescriptionB
 /** 描述的字与图按原顺序保存；不执行 HTML，不识别或翻译图片内的文字。 */
 export function descriptionOf(raw: string): Description {
 	let html = raw;
-	try {
-		html = String(JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)).content ?? "");
-	} catch {}
+	const legacy = /^\s*var\s+desc\s*=\s*(['"])([\s\S]*)\1\s*;?\s*$/.exec(raw);
+	if (legacy) {
+		html = legacy[2]!.replace(/\r?\\\r?\n/g, "\n").replace(/\\(['"])/g, "$1");
+	} else {
+		try {
+			const value: unknown = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+			if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") html = value.content;
+		} catch {}
+	}
 	const decode = (value: string) =>
 		value.replace(/&(?:nbsp|amp|lt|gt|quot|apos|#39|#\d+|#x[\da-f]+);/gi, (entity) => {
 			const known: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&#39;": "'" };
@@ -270,7 +277,10 @@ export function descriptionOf(raw: string): Description {
 		if (text) blocks.push({ type: "text", text });
 		paragraph = "";
 	};
-	const clean = html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
+	const clean = html
+		.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+		.replace(/<div\b[^>]*\bclass=['"][^'"]*\bsdmap-dynamic-offer-list\b[^'"]*['"][^>]*>[\s\S]*?<\/div\s*>/gi, "")
+		.replace(/<img\b[^>]*\bclass=['"][^'"]*\bdynamic-backup-img\b[^'"]*['"][^>]*>/gi, "");
 	for (const token of clean.matchAll(/<img\b[^>]*>|<br\b[^>]*>|<\/(?:p|div|li|tr|h[1-6]|section)\s*>|<[^>]*>|[^<]+/gi)) {
 		const value = token[0];
 		if (/^<img\b/i.test(value)) {
@@ -295,7 +305,7 @@ export function descriptionOf(raw: string): Description {
 	};
 }
 
-/** detailUrl 回的是 `var offer_details={"content":"<html>"};`，沿用原详情请求，同时返回原文字与原图。 */
+/** 读取新旧版详情回包，返回原文字与原图。 */
 export async function description(detailUrl: string): Promise<Description> {
 	const r = await fetch(detailUrl, {
 		headers: {
@@ -548,6 +558,7 @@ export type AddResult = { kind: "sent" } | { kind: "refused"; why: string } | { 
 /** 把一个规格加进购物车（addCargo，在这个商品的详情页里发）。只有一个规格的商品 specId 是空字符串。
  * 同一个规格加两次，购物车里是两倍：结果未知时调用方不许重发。 */
 export async function addToCart(offerId: OfferId, specId: SpecId, quantity: number): Promise<AddResult> {
+	claimSiteSubmission();
 	const r = await mtop(`https://detail.1688.com/offer/${offerId}.html`, "com.alibaba.china.buy.service.purchase.MtopPurchaseService.addCargo", {
 		client: "pc",
 		purchaseType: "",

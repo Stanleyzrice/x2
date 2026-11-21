@@ -2,6 +2,7 @@
 import { errorOf } from "@/lib/state";
 import "./app.css";
 import {
+	ActivityIcon,
 	ArrowRightIcon,
 	CalculatorIcon,
 	FileTextIcon,
@@ -52,17 +53,16 @@ const route = () => {
 	}
 };
 const iconOf = (icon?: string) =>
-	icon === "search"
-		? SearchCheckIcon
-		: icon === "calculator"
-			? CalculatorIcon
-			: icon === "package"
-				? PackageIcon
-				: icon === "message"
-					? MessageSquareIcon
-					: icon === "receipt"
-						? ReceiptIcon
-						: FileTextIcon;
+	(
+		({
+			activity: ActivityIcon,
+			search: SearchCheckIcon,
+			calculator: CalculatorIcon,
+			package: PackageIcon,
+			message: MessageSquareIcon,
+			receipt: ReceiptIcon,
+		}) as Record<string, typeof FileTextIcon>
+	)[icon ?? ""] ?? FileTextIcon;
 const groupsOf = (pages: PageSummary[]) => [...new Set(pages.filter((p) => p.workspace).map((p) => p.workspace!.group ?? "工作台"))];
 
 function App() {

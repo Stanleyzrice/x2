@@ -2,6 +2,8 @@
 
 商品图片处理与图中文字转换统一遵循[项目图片流程](../../../.agents/skills/listing-images/SKILL.md)，先经X2准备图片资产，再调用本流程修改商品。
 
+有本地原稿的已建商品，可用 `listing upload-reviewed-assets --id <原稿号> --product-id <商品id> --offer-id <1688编号> --manifest -` 上传已实审的主图、详情和规格图。清单为 `{main, detail, options}`，图片字段沿用[已审图片清单](../../../.agents/skills/listing-images/references/reviewed-images.md)，每条 `options` 另带对应原 `skuId`。工具核对稿、商品、货源和图片指纹，经本店现行水印与上传记录返回图片编号。商品内容通过下述预览与写入流程更新。
+
 准确类目不在店铺允许范围而用户已明确授权该单稿时，用 `listing category --id <编号> --category <叶子ID> --allow-outside-shop --reason <本稿授权及类目依据>` 记录仅限该叶子的单稿例外；不扩大店铺允许类目。修改类目后重新 `make` 补齐新类目属性和备货天数。
 
 已建商品改类目时，现读原标题、完整原类目路径和目标叶子的必填属性；用 `listing edit-preview` 显式提供 `beforeCategoryPath`、`categoryPath`、`attributes`，核对后以同一参数调用 `listing edit`。只改类目时 `title` 与 `beforeTitle` 同为现有标题、`prices=[]`；原类目变化就重新确认，提交后读回目标路径和属性。
@@ -26,4 +28,10 @@
 
 核对预览的 `mapping`、旧模型保留、规格图、完整目标列表及 `currentHash`，再将该值作为 `beforeHash` 调用 `listing expand`。这是独立的新WriteOp，首次只做用户指定一款 `--try`，单默认转多规格的接口兼容性须以真实单件提交和原生读回确认。旧库存不发送，订单导致的原库存变化不阻止展开；新增库存、全部模型id/merchantSKU/索引/价格、规格图及未修改的商品字段须读回一致。已经完整展开时返回已完成，不重复建模型；结果未知先verify。
 
+已建商品同时补译详情图和规格图时，可在 `expand-preview` 与 `expand` 提供原完整 `beforeDescriptionInfo` 和目标 `descriptionInfo`，用 `review-preview --shop … --product-id … --proposal …` 取得同一份最终图清单，按图片流程保存语言结论后一次提交。只换图时保留原规格、名称、售价与库存，读回也要与目标描述一致。
+
 以上站点写入均须在用户已授权范围内，沿用既有 WriteOp 的首次单件 `--try` 和结果未知不重发规则。只改类目或图片不会自动回写旧商品稿的派生字段；最终导出应使用已核对的原生读回。
+
+### 在售换图的语言审阅
+
+用 `listing review-preview --shop <店铺> --product-id <商品编号> --proposal <修改参数JSON>` 查看改动后的商品最终图片。修改参数为 `{kind, input}`，`kind` 取 `edit`（改商品）、`expand`（展开规格）或 `add-size`（追加尺寸），`input` 使用对应工具原有参数，含店铺与商品编号。审阅后用同样的店铺、商品及 `proposal` 调用 `listing review`，提交预览指纹和实际逐图结论。核对完成后走原修改入口；写入前会重新按实际最终清单查语言结论。只审阅现有商品时省略 `proposal`。价格或库存单独操作沿用原入口。

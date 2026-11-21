@@ -9,15 +9,18 @@ import { NeedsHuman, Usage } from "../../platform/errors.ts";
 import { flag, get, parseJson, str, strs, type Toolkit, write } from "../../platform/tool.ts";
 import type { Ran } from "../../platform/writes.ts";
 import { ADD_SIZE_WRITES, addSizeParams, planAddSize, previewAddSize } from "./add-size.ts";
+import { listingAttributeParams, setListingAttribute } from "./attribute.ts";
 import { AUDIT_DROP, auditProviderName, issueLine, restoreAudited } from "./audit.ts";
 import { CATEGORY_PROBLEM, leafPath } from "./category.ts";
 import { listingChannelsParams, setListingChannels } from "./channels.ts";
 import { chartRenderParams, renderListingChart } from "./chart-render.ts";
 import { collectionTools } from "./collection.ts";
 import { copyDraft, copyImages, copyImagesParams, copyParams } from "./copy.ts";
+import { coverageParams, coveragePreviewParams, previewCoverage, reviewCoverage } from "./coverage.ts";
 import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { EXPAND_WRITES, expandParams, planExpand, previewExpand } from "./expand.ts";
+import { followUpBatchId, followUpEvents, followUpEventsParams, markFollowUpBatch } from "./follow-up.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
 import { marketPricingTools } from "./market-pricing.ts";
 import { orderPrice, orderPricingInput } from "./order-pricing.ts";
@@ -28,11 +31,19 @@ import { pricingInputsParams, setPricingInputs } from "./pricing-input.ts";
 import { purchaseLimitParams, setPurchaseLimit } from "./purchase-limit.ts";
 import { each } from "./queue.ts";
 import { listingReviewParams, listingReviewPreviewParams, previewListingReview, setListingReview } from "./review.ts";
-import { importReviewedImages, reviewedImagesParams, reviewedImagesPreview, reviewedImagesPreviewParams } from "./reviewed-images.ts";
+import {
+	importReviewedImages,
+	reviewedAssetsParams,
+	reviewedImagesParams,
+	reviewedImagesPreview,
+	reviewedImagesPreviewParams,
+	uploadReviewedAssets,
+} from "./reviewed-images.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { listingSizeChartParams, setListingSizeChart } from "./size-chart.ts";
 import { skuImagesSchema } from "./sku-images.ts";
 import { sourceTools } from "./source.ts";
+import { sourcePreflight, sourcePreflightParams } from "./source-preflight.ts";
 import { listingsCheck } from "./status.ts";
 import { LISTING_TABLES } from "./tables.ts";
 import { templateItem, templateParams, templatePrice } from "./template-pricing.ts";
@@ -66,16 +77,19 @@ const ids = z
 	.meta({ description: "商品稿编号，逗号分隔", placeholder: "1,2,…" });
 const text = z.string().trim().min(1);
 
-export async function publishPlan(sql: Sql, want: string[]) {
+export async function publishPlan(sql: Sql, want: string[], trackingBatch?: string) {
 	const name = await namesOf(sql, want);
 	const r = await listingsCheck(sql, want);
 	const bad = want.flatMap((id) => {
 		if (r.ready.some((x) => x.id === id)) return [];
 		const step = r.steps.get(id);
-		return [step ? `${name(id)}是「${step.step}」，不是待批准、待上架` : `没有商品稿 ${id}`];
+		return [step ? `${name(id)}是「${step.step}」${step.detail ? `，${step.detail}` : ""}` : `没有商品稿 ${id}`];
 	});
 	if (bad.length) throw new Usage(`${bad.join("\n")}\n一份都没做`);
-	return r.ready.filter((x) => want.includes(x.id)).map((l) => l.writes);
+	return markFollowUpBatch(
+		r.ready.filter((x) => want.includes(x.id)).map((l) => l.writes),
+		trackingBatch,
+	);
 }
 
 async function written(sql: Sql, ran: Ran[]): Promise<void> {
@@ -83,6 +97,12 @@ async function written(sql: Sql, ran: Ran[]): Promise<void> {
 	const rows = await sql`select params->>'listingId' as id from writes where id in ${sql(ids)} and op in ('建商品', '上架') and params ? 'listingId'`;
 	if (rows.length) await listingsCheck(sql, [...new Set(rows.map((x) => x.id as string))]);
 }
+
+export { imageLanguageBlock } from "./image-language.ts";
+
+export const collectSourceTool = collectionTools["collect-source"];
+export const pricingPreviewTool = pricingCalculatorTools["calculator-preview"];
+export { parsePolicyJson, sourcePolicySchema, sourceSkuLimitProblem, sourceSupplyProblems, WORKBENCH_POLICY } from "./source-policy.ts";
 
 export const listing: Toolkit = {
 	name: "listing",
@@ -93,6 +113,12 @@ export const listing: Toolkit = {
 		...marketPricingTools,
 		...collectionTools,
 		...sourceTools(publishPlan),
+		"follow-up-events": get("只读导出 cheeroutdoor 已确认上架的新品和跟踪批次", followUpEventsParams, async (p) => followUpEvents(await db(), p.after)),
+		"source-preflight": get("批量复用已保存的1688采集快照，在做图前查供货、规格和成本；只读", sourcePreflightParams, async (p) =>
+			sourcePreflight(await db(), p),
+		),
+		"coverage-preview": get("对照完整源规格、原详情和最终规格与图序，预览发布前覆盖审阅", coveragePreviewParams, async (p) => previewCoverage(await db(), p)),
+		"coverage-review": get("保存逐源SKU排除依据、详情采纳依据与最终版式审阅", coverageParams, async (p) => reviewCoverage(await db(), p)),
 		"reviewed-images-preview": get("预览本稿源规格指纹、完整详情来源及规格图SKU映射，不上传不改稿", reviewedImagesPreviewParams, async (p) => {
 			const [row] = await (await db())<ListingRow[]>`select * from listings where id = ${p.id}`;
 			if (!row) throw new Usage(`没有商品稿 ${p.id}`);
@@ -100,6 +126,11 @@ export const listing: Toolkit = {
 		}),
 		"reviewed-images": get("导入已审本地图片：验源SKU/SHA/尺寸，经X2水印、上传及持久化；不改规格售价，不伪装Gemini审核", reviewedImagesParams, async (p) =>
 			importReviewedImages(await db(), p),
+		),
+		"upload-reviewed-assets": get(
+			"已建商品的已审主图、详情及规格素材：按原稿验源、逐SKU核对、上传并返回图片id，不提交商品变更",
+			reviewedAssetsParams,
+			async (p) => uploadReviewedAssets(await db(), p),
 		),
 		"review-preview": get("预览当前文案、最终图片及规格的审阅指纹，不调用Gemini", listingReviewPreviewParams, async (p) => previewListingReview(await db(), p)),
 		review: get("保存明确的人工/Codex逐图与文案审阅，绑定当前内容，不冒充Gemini检查", listingReviewParams, async (p) => setListingReview(await db(), p)),
@@ -117,6 +148,7 @@ export const listing: Toolkit = {
 		channels: get("保存未建商品稿的显式物流渠道集合，不改全店或已建商品；空值旧稿沿用店铺配置", listingChannelsParams, async (p) =>
 			setListingChannels(await db(), p),
 		),
+		attribute: get("按当前类目的站点可选值修改一项未建商品稿属性，保留其他属性", listingAttributeParams, async (p) => setListingAttribute(await db(), p)),
 		"pricing-inputs": get("保存逐规格的显式进价、计费重量和售价，保留1688原始事实；核对当前毛利目标，不改已建商品", pricingInputsParams, async (p) =>
 			setPricingInputs(await db(), p),
 		),
@@ -268,7 +300,7 @@ export const listing: Toolkit = {
 			},
 		),
 		make: get(
-			"做商品稿：读货源、规格和核价、图（筛字、译图、译图检查、水印、传图）、类目属性；prepare-only仅保存单稿来源与核价，不处理或上传图片；不给编号就做所有还没做好的。几份同时做：问 Gemini、交象寄、取图几份重叠，碰浏览器的按浏览器排队（queue.ts）",
+			"做商品稿：登记来源、规格和核价；新稿默认待审图。指定或沿用图片模式时继续图片和类目流程；prepare-only只准备指定单稿。不给编号处理未完成稿件",
 			z
 				.object({
 					ids: ids.optional(),
@@ -287,7 +319,7 @@ export const listing: Toolkit = {
 					imageMode: z
 						.enum(["processed", "original", "reviewed"])
 						.optional()
-						.describe("本稿图片模式：original原图；reviewed沿用已导入审图，只补类目属性备货；不传沿用稿件模式"),
+						.describe("original原图、processed模型处理、reviewed沿用已审图片；省略时沿用稿件模式，新稿只准备来源"),
 				})
 				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages || p.skuImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿")
 				.refine((p) => !p.prepareOnly || p.ids?.length === 1, "仅准备时必须明确指定一份商品稿")
@@ -343,7 +375,7 @@ export const listing: Toolkit = {
 			},
 		),
 		estimate: get(
-			"估 1688 没给的重量、读不到的国内运费：只填空着的（人填过的不动），写完马上重新核价（不读 1688）。重量往重了估，轻的写 1；国内运费往高了估",
+			"按上架技能和已知证据保守填写缺失的重量或国内运费，依据不足时保留未知。保存后重新核价",
 			z.object({
 				id,
 				weight: z.coerce.number().positive().finite().optional().describe("重量（kg）"),
@@ -426,7 +458,7 @@ export const listing: Toolkit = {
 			},
 		),
 		text: get(
-			'agent 写的标题、描述、规格名和简称，写完马上 Gemini 文字检查。一份：--id --title --description [--tiers \'[{ "name": "款式", "options": ["…"] }]\'] [--nickname]；几份：--items - 从 stdin 读 [{ id, title, description, tiers, nickname }]。有一样不对那一份就什么都不存',
+			"校验并保存台湾繁体文案和规格名，交由终审；显式指定 review-mode gemini 才运行模型检查。支持单稿或 JSON 批次",
 			z
 				.object({
 					id: id.optional(),
@@ -434,8 +466,8 @@ export const listing: Toolkit = {
 					description: z.string().optional().describe("描述（台湾繁体）"),
 					tiers: z.preprocess(parseJson, z.unknown()).optional().describe("规格名（JSON），个数、顺序照 x2 listing show"),
 					nickname: z.string().optional().describe("简称（简体中文，最多 12 字）"),
-					preserveImages: flag("仅保存文案并记录图片审核提示，不自动去图或修改已审核图片集合").default(false),
-					reviewMode: z.enum(["gemini", "deferred"]).default("gemini").describe("deferred只存文案，留待review明确审阅；不算已检查"),
+					preserveImages: flag("Gemini 检查时保留图片；传 false 可对旧图片流程执行自动去图").default(true),
+					reviewMode: z.enum(["gemini", "deferred"]).default("deferred").describe("deferred 保存文案，留待 review 审阅"),
 					items: z
 						.preprocess(
 							parseJson,
@@ -547,12 +579,10 @@ export const listing: Toolkit = {
 				if ("error" in k) throw new Usage(k.error);
 				const { imageIds, restored } = k;
 				await sql`update listings set images = ${sql.json(restoreAudited(l.images, imageIds) as Json)}, kept_images = ${sql.json([...new Set([...(l.kept_images ?? []), ...imageIds])])}, updated_at = now() where id = ${p.id}`;
-				const checks = await textChecks(sql, [p.id]);
-				return { id: p.id, name: listingName(l), kept: asked, restored, audit: checks };
+				return { id: p.id, name: listingName(l), kept: asked, restored };
 			},
 			{
-				text: (r) =>
-					[`${r.name}：${r.kept.join("、")}记进保留的图${r.restored.length ? `，${r.restored.join("、")}放回来了` : ""}`, ...r.audit.map(checkLine)].join("\n"),
+				text: (r) => `${r.name}：${r.kept.join("、")}记进保留的图${r.restored.length ? `，${r.restored.join("、")}放回来了，需重新审阅` : ""}`,
 			},
 		),
 		drop: get(
@@ -572,7 +602,7 @@ export const listing: Toolkit = {
 			},
 			{
 				text: (r) =>
-					`${r.name}：去掉 ${r.dropped.length} 个规格，还剩 ${r.left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${r.recheck ? `x2 listing make --ids ${r.id}（规格的问题要重新算）` : `x2 listing audit --ids ${r.id}（规格变了，要再查）`}`,
+					`${r.name}：去掉 ${r.dropped.length} 个规格，还剩 ${r.left} 个${r.merged ? "，两层合成一层「款式」" : ""}\n下一步：${r.recheck ? `x2 listing make --ids ${r.id}（规格的问题要重新算）` : `x2 listing review-preview --id ${r.id}（规格变了，需重新审阅）`}`,
 			},
 		),
 		category: get(
@@ -600,8 +630,8 @@ export const listing: Toolkit = {
 		),
 		publish: write(
 			"人在终端里说「批准」：建商品（先建成下架，读回来逐项核对）、上架（读回来在售）。只收待批准、待上架的；有一份不行就都不做",
-			z.object({ ids }),
-			(sql, p) => publishPlan(sql, [...new Set(p.ids as string[])]),
+			z.object({ ids, trackingBatch: followUpBatchId.optional() }),
+			(sql, p) => publishPlan(sql, [...new Set(p.ids as string[])], p.trackingBatch),
 		),
 		"edit-preview": get("现读商品原值，预览标题、指定规格价格、显式类目属性、主图或描述修改；不提交", editParams, async (p) => previewEdit(await db(), p)),
 		edit: write("人同意的现有商品修改：核对原标题、原价及指定的原类目、原主图或原描述，提交一次并读回；首次约一个商品 --try", editParams, planEdit),

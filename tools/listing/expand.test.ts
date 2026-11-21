@@ -101,6 +101,23 @@ test("native属性数组返回顺序不改变指纹，属性值改变仍改变�
 	b.attributes![0]!.attribute_values[0]!.value_id = 12;
 	assert.notEqual(expandHash(a), expandHash(b));
 });
+
+test("同一次更新规格图和详情图须核对原描述、读回目标描述并保护其他商品字段", () => {
+	const { before, p, now } = readback();
+	const together = expandParams.parse({
+		...p,
+		beforeDescriptionInfo: before.description_info,
+		descriptionInfo: { description: '{"field_list":[{"type":1,"value":"translated"}]}', description_type: "json" },
+	});
+	const built = buildExpand(before, together);
+	assert.deepEqual(expandProductInfo(built.info).description_info, together.descriptionInfo);
+	assert.equal(expandState(now, built.baseline, together), null);
+	const confirmed = { ...now, description_info: together.descriptionInfo };
+	assert.equal(expandState(confirmed, built.baseline, together), true);
+	assert.equal(expandState({ ...confirmed, images: ["unrelated-cover"] }, built.baseline, together), null);
+	assert.throws(() => buildExpand({ ...before, description_info: { description: "別處已修改", description_type: "normal" } }, together), /原描述已变/);
+});
+
 test("单默认模型展开稀疏两层：保留原id和价格，不发送旧库存/货号；新SKU按specId生成并绑定图片", () => {
 	const p = input(),
 		built = buildExpand(fixture(), p),

@@ -72,8 +72,9 @@ export function moveWorkflowStep(steps: string[], index: number, direction: -1 |
 	return reordered;
 }
 
-export function runOutcome(run: Pick<RunSummary, "status" | "found" | "limit">): string {
+export function runOutcome(run: Pick<RunSummary, "status" | "found" | "limit" | "selected">): string {
 	if (run.status !== "completed") return statusLabels[run.status];
+	if (run.selected !== undefined) return run.selected < run.limit ? "研究结束 · 数量不足" : "已达选品目标";
 	if (run.found === 0) return "未新增备选";
 	if (run.found < run.limit) return "研究结束 · 数量不足";
 	return "已达新增目标";

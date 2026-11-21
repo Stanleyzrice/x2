@@ -342,7 +342,7 @@ export async function act(sql: Sql, item: string, action: string, input: unknown
 	if (!i) throw new Usage(`没有组件 ${item}`);
 	const tool = COMPONENTS.get(i.component)?.actions?.[action];
 	if (!tool) throw new Usage(`${i.component} 没有 ${action}`);
-	return invoke(tool, actParams(i.props, input, COMPONENTS.get(i.component)?.inputs ?? []));
+	return invoke(tool, actParams(i.props, input, COMPONENTS.get(i.component)?.inputs ?? []), "web");
 }
 
 /** 替组件调工具的参数：引用说了算（例 chat 的店），网页只能填组件声明过的 inputs（例 换一个会话）；别的网页发来的不要 */

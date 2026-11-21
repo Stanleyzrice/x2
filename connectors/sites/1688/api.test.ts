@@ -86,6 +86,18 @@ test("真实商品详情回包：18张原图按顺序保存，纯图片页面的
 	assert.equal(result.images.at(-1), "https://cbu01.alicdn.com/img/ibank/O1CN01ERQKjm2NQMZHDGUVZ_!!2214608309957-0-cib.jpg");
 });
 
+test("旧版详情回包：推荐商品区块内的JSON不吞掉正文，只保存本品图片", () => {
+	const { raw } = sample("description-legacy-live") as { raw: string };
+	const result = descriptionOf(raw);
+	assert.equal(result.text, "");
+	assert.equal(result.images.length, 5);
+	assert.equal(result.images[0], "https://cbu01.alicdn.com/img/ibank/O1CN01boKNnv1dhKySuDSMW_!!2159063767-0-cib.jpg");
+	assert.deepEqual(
+		result.blocks,
+		result.images.map((src) => ({ type: "image", src })),
+	);
+});
+
 test("搜索新版商品卡：普通 HTTP 详情链接、拆行小数、起订量和全网销量照原字段读取", () => {
 	const { cards } = sample("search-cards") as { cards: unknown };
 	const hits = searchHitsOf(cards);

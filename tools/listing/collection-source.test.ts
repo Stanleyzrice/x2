@@ -45,6 +45,14 @@ const input = (): CollectSourceInput =>
 		link: "https://detail.1688.com/offer/123.html?tracking=discarded",
 		provenance: { runId: "run-1", strategyId: "peer", strategyName: "竞品对标", reason: "同用途存在近期需求", evidence: "竞品记录" },
 	});
+
+test("显式补采只重新读取详情完全为空的成功快照", () => {
+	const empty = product({ description: { text: "", images: [], blocks: [] } });
+	assert.equal(collectedSourceDecision({ snapshot: empty, deleted: false }), "reuse");
+	assert.equal(collectedSourceDecision({ snapshot: empty, deleted: false }, true), "read");
+	assert.equal(collectedSourceDecision({ snapshot: product(), deleted: false }, true), "reuse");
+	assert.throws(() => collectedSourceDecision({ snapshot: empty, deleted: true }, true), /未自动恢复/);
+});
 const result = (overrides: Partial<CollectedSourceResult> = {}): CollectedSourceResult => ({
 	sourceId: "88",
 	offerId: "123",

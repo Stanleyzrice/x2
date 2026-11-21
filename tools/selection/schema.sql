@@ -72,3 +72,6 @@ create table if not exists selection_workflows (
 	updated_at timestamptz not null default now(),
 	primary key (shop,strategy_id)
 );
+
+-- 删除历史时保留启动请求的幂等记录，备选货源有独立的研究来源存档。
+alter table selection_runs add column if not exists deleted_at timestamptz;

@@ -1,8 +1,6 @@
 ---
 name: listing
-description: 当前X2项目的上架入口；按唯一主流程准备商品稿、恢复中断任务、审阅并在已授权范围发布与读回。
+description: 复用货源与已有稿件，核价、终审并按授权发布 Shopee 商品。
 ---
 
-用于「上品」「上架指定清单」「继续上架」及准备商品稿。先读 [AGENTS.md](../../../AGENTS.md)，再完整读取唯一的[上架主流程](../../../skills/listing/SKILL.md)；命令和中断恢复见[操作顺序](../../../skills/listing/references/workflow.md)，图片处理见[图片技能](../listing-images/SKILL.md)。本入口不复制经营参数或阶段规则。
-
-仅在当前项目及已有明确授权范围执行；本技能本身不授权新商品、跨店操作、修改全店配置或解除经营限制。
+执行[上架流程](../../../skills/listing/SKILL.md)。先核对店铺、商品范围与已有进度，续做缺项。图片按[图片技能](../listing-images/SKILL.md)实审；一起核对最终规格、价格、图文和履约。按[操作顺序](../../../skills/listing/references/workflow.md)提交覆盖审阅、终审结果和授权发布请求，依据读回报告结果。

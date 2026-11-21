@@ -6,7 +6,7 @@ description: 为 ni1206、cheeroutdoor 做选品研究、筛选候选并记录�
 命令在仓库根目录运行 `node x2.ts`。规则正文只在本 skill 与 listing skill 维护；数据库中的旧规则、策略变更和商品稿快照用于追溯。
 
 1. 确认店铺、研究方向和本次名额；只研究时不添加商品稿。
-2. 先读 [选品规则](references/rules.md)，再读 [策略工作台](references/workbench.md) 的4条商品发现策略与1条销售单位设计流程，按唯一默认步骤及购买理由、证据要求、淘汰条件执行；[证据基础](references/evidence.md)说明来源和能力边界，[历史方法](references/strategies.md)仅追溯。本店成交延伸因缺真实数据与归因能力暂不启用，`selection strategy-list`只核对实验状态和版本。
+2. 先读 [选品规则](references/rules.md) 和 [策略工作台](references/workbench.md) 的购买理由、证据及判断标准。工作台运行约束由执行器校验。[证据基础](references/evidence.md)说明来源和能力边界，[历史方法](references/strategies.md)仅追溯。
 3. 用 `zhixia` 的读取工具找关键词、竞品和需求证据；不把销量、搜索量、价格等未知值补成零。
 4. 找到候选后，优先用知虾以图搜同款，再读取 1688 商品。每次读取一个，记录匹配依据；鞋服依现行选品规则核对明确尺码及规格对应，不按旧品类禁选或旧批次边界排除。
 5. 按 [定价流程](../listing/references/pricing.md) 取得参数并报价；单品与组合都要核对实际可成交的搭配。

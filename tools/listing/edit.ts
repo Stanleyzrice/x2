@@ -9,6 +9,8 @@ import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson, str } from "../../platform/tool.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
+import { imageLanguageBlock } from "./image-language.ts";
+import { listingWriteTried } from "./write-guard.ts";
 
 const priceChange = z.object({ modelId: ModelId, from: z.number().positive().finite(), to: z.number().positive().finite() });
 const categoryPath = z.preprocess(parseJson, z.array(z.number().int().positive()).min(1));
@@ -141,6 +143,13 @@ export function sizeChartChange(now: ProductInfo, before: SizeChartInfo | undefi
 	return { size_chart_info: after };
 }
 
+export function editImageTarget(now: ProductInfo, p: Input): ProductInfo {
+	const main = imagesChange(now, p.beforeImages, p.images);
+	const detail = descriptionChange(now, p.beforeDescriptionInfo, p.descriptionInfo);
+	const chart = sizeChartChange(now, p.beforeSizeChartInfo, p.sizeChartInfo);
+	return { ...now, ...main, ...detail, ...chart };
+}
+
 /** 没有新增字段的调用保持既有key；图片顺序也是变更内容的一部分。 */
 export function editKey(p: Input & { shopId: string }): string {
 	return `edit:${p.shopId}:${p.id}:${createHash("sha256")
@@ -232,9 +241,7 @@ export async function previewEdit(sql: Sql, p: Input) {
 		if ("skip" in change && now.name !== p.title) throw new Usage(change.skip);
 		const models = priceModels(now, p.prices);
 		categoryChange(now, p.beforeCategoryPath, p.categoryPath, p.attributes);
-		imagesChange(now, p.beforeImages, p.images);
-		descriptionChange(now, p.beforeDescriptionInfo, p.descriptionInfo);
-		sizeChartChange(now, p.beforeSizeChartInfo, p.sizeChartInfo);
+		editImageTarget(now, p);
 		return {
 			...p,
 			shopId,
@@ -272,6 +279,7 @@ const editOp: WriteOp<Params, { title: string; categoryPath?: number[]; images?:
 		display: (p) =>
 			`${p.shop}（商品 ${p.id}）标题：${p.beforeTitle} → ${p.title}${p.prices.map((c) => `；规格 ${c.modelId}：NT$${c.from} → NT$${c.to}`).join("")}${p.categoryPath ? `；类目：${p.beforeCategoryPath?.join(" > ")} → ${p.categoryPath.join(" > ")}` : ""}${p.images ? `；主图：${p.beforeImages?.join(",")} → ${p.images.join(",")}` : ""}${p.descriptionInfo ? `；描述：${JSON.stringify(p.beforeDescriptionInfo)} → ${JSON.stringify(p.descriptionInfo)}` : ""}${p.sizeChartInfo ? `；Size Chart：${JSON.stringify(p.beforeSizeChartInfo)} → ${JSON.stringify(p.sizeChartInfo)}` : ""}`,
 		untried: "改商品是新写操作：先和人约一个商品一起跑 --try，回读后请人在站点核对",
+		tried: (sql, p) => listingWriteTried(sql, "改商品", p.shopId),
 		where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 		async prepare(sql, p) {
 			if ((await shopIdOf(sql, p.shop)) !== p.shopId) return { skip: "店铺设置刚改过：重新确认店铺" };
@@ -283,11 +291,14 @@ const editOp: WriteOp<Params, { title: string; categoryPath?: number[]; images?:
 			if (!sameModels(models, p.models)) return { skip: "规格或售价刚改过：重新确认，不覆盖" };
 			try {
 				categoryChange(now, p.beforeCategoryPath, p.categoryPath, p.attributes);
-				imagesChange(now, p.beforeImages, p.images);
-				descriptionChange(now, p.beforeDescriptionInfo, p.descriptionInfo);
-				sizeChartChange(now, p.beforeSizeChartInfo, p.sizeChartInfo);
+				const final = editImageTarget(now, p);
+				if (p.images || p.descriptionInfo || p.sizeChartInfo) {
+					const language = await imageLanguageBlock(sql, p.shop, `商品 ${p.id}`, final);
+					if (language) return { skip: language };
+				}
 			} catch (e) {
-				return { skip: (e as Error).message };
+				if (!(e instanceof Usage)) throw e;
+				return { skip: e.message };
 			}
 			if (
 				now.name === p.title &&

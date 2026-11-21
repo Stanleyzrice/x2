@@ -2,9 +2,16 @@
 import type postgres from "postgres";
 import { z } from "zod";
 import { Usage } from "../../platform/errors.ts";
+import { parseJson } from "../../platform/tool.ts";
 import { paymentRange } from "./facts.ts";
 
-export const scope = z.object({ accounts: z.array(z.string().min(1)).min(1).optional(), account: z.string().min(1).optional() });
+export const scope = z.object({
+	accounts: z
+		.preprocess(parseJson, z.array(z.string().min(1)).min(1))
+		.optional()
+		.describe("允许的采购账号数组，命令行用 JSON"),
+	account: z.string().min(1).optional(),
+});
 export type Scope = z.infer<typeof scope>;
 export const recordQuery = scope.extend({
 	search: z.string().default(""),

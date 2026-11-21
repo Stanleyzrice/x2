@@ -7,6 +7,7 @@ import type { Sql } from "../../platform/db/index.ts";
 import { auditKey } from "./audit.ts";
 import { channelsPatch, listingChannelsParams, setListingChannels } from "./channels.ts";
 import { checkListings } from "./check.ts";
+import { coverageScope, saveCoverage } from "./coverage.ts";
 import { listing } from "./index.ts";
 import type { Settings } from "./pricing.ts";
 import { type ChannelOption, productInfo, readbackProblems } from "./product.ts";
@@ -221,7 +222,13 @@ test("逐渠道档位与金额进入payload和发布核对参数，缺失或错�
 		assert.equal(channel.price, String(option.priceTwd));
 	}
 	assert.notEqual(result.hash, productOf(draft(row.channel_ids), settings).hash);
-	const ready = checkListings([{ ...row, audit: { key: auditKey(result.product!) } }], new Map([[row.shop, settings]]), []);
+	const coverage = saveCoverage(row, result.product!, {
+		expectedScope: coverageScope(row, result.product!).expectedScope,
+		excludedSkus: [],
+		detail: [],
+		layoutEvidence: "货源与在售规格对应，货源没有详情图。",
+	});
+	const ready = checkListings([{ ...row, coverage, audit: { key: auditKey(result.product!) } }], new Map([[row.shop, settings]]), []);
 	const params = ready.ready[0]!.writes[0]!.params;
 	assert.deepEqual(params.channelOptions, options);
 	assert.deepEqual((LISTING_WRITES.建商品!.params.parse(params) as { channelOptions?: ChannelOption[] }).channelOptions, options);

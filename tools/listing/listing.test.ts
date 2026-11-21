@@ -693,6 +693,7 @@ import {
 	uniqIssues,
 } from "./audit.ts";
 import { checkListings, type Write } from "./check.ts";
+import { coverageScope, saveCoverage } from "./coverage.ts";
 import { type TranslatedCheck, translatedDrop } from "./images.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, freightOf, pricingProblems, quote, reprice, settingsOf, usableWeights } from "./pricing.ts";
@@ -797,7 +798,15 @@ const colors = (): Specs => ({
 const asOffer = (o: OfferLike) => o as Offer;
 const ready = (o: Partial<ListingRow> = {}): ListingRow => {
 	const variants = o.variants ?? colors();
-	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({ skuId: v.skuId, attrs: [v.sku], weightKg: v.weightKg }));
+	const skus = (specsOf(variants)?.variants ?? []).map((v) => ({
+		skuId: v.skuId,
+		specId: v.specId,
+		name: v.sku,
+		stock: v.stock,
+		price: v.costRmb,
+		attrs: [v.sku],
+		weightKg: v.weightKg,
+	}));
 	return {
 		...BLANK,
 		id: ListingId.parse("7"),
@@ -823,6 +832,14 @@ const ready = (o: Partial<ListingRow> = {}): ListingRow => {
 	};
 };
 
+const reviewedCoverage = (row: ListingRow, product: Parameters<typeof coverageScope>[1]) =>
+	saveCoverage(row, product, {
+		expectedScope: coverageScope(row, product).expectedScope,
+		excludedSkus: [],
+		detail: [],
+		layoutEvidence: "已对照此货源与当前详情。",
+	});
+
 test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做的进 todo", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const run = (l: ListingRow, writes: Partial<Write>[] = []) =>
@@ -844,10 +861,14 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 	assert.match(fix.reminders[0]!.title, /待补充：类目/);
 	assert.equal(run(ready({ title: null })).todo[0]!.kind, "写文案");
 	assert.match(run(ready({ title: "廠家直銷 輕便雨衣 成人連身 防水" })).steps.get("7")!.detail!, /卖家话术：廠家/);
-	assert.deepEqual([run(ready()).steps.get("7")!.step, run(ready()).todo[0]!.kind], ["待 Gemini 文字检查", "Gemini 文字检查"]);
+	assert.deepEqual([run(ready()).steps.get("7")!.step, run(ready()).todo[0]!.kind], ["待终审", "终审"]);
 	const l = ready();
 	const p = productOf(l, s.get("cheeroutdoor")!);
 	const key = auditKey(p.product!);
+	const incomplete = run({ ...l, audit: { key } });
+	assert.deepEqual(incomplete.ready, []);
+	assert.match(incomplete.steps.get("7")!.detail!, /覆盖审阅未完成/);
+	l.coverage = reviewedCoverage(l, p.product!);
 	const ok = run({ ...l, audit: { key, textIssues: [], images: [] } });
 	assert.deepEqual(ok.steps.get("7"), { step: "待批准", detail: null });
 	assert.deepEqual(
@@ -869,7 +890,7 @@ test("商品稿的检查：当前步骤、待补充的提醒人、agent 能做�
 		]).steps.get("7")!.detail,
 		"上次建商品被拒：10004",
 	);
-	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待 Gemini 文字检查");
+	assert.equal(run({ ...l, title: "輕便雨衣 成人連身 防水透氣 騎車通勤 加厚", audit: { key } }).steps.get("7")!.step, "待终审");
 	const flying = run({ ...l, audit: { key } }, [{ op: "建商品", status: "结果未知", params: { listingId: "7" } }]);
 	assert.deepEqual(flying.ready, []);
 	assert.equal(run({ ...l, audit: { key } }, [{ op: "建商品", status: "结果未知", params: { listingId: "7" } }]).steps.get("7")!.step, "建商品中");
@@ -1093,7 +1114,9 @@ test("图的名字：传好的图排号，人删了的、x2 去掉的也占着�
 test("检查：Gemini 文字检查挑出的问题不挡，带编号写进说明（图写图的名字）；不单独提醒人，不给 agent 再派写文案", () => {
 	const s = new Map([["cheeroutdoor", settingsOf(shopRow)]]);
 	const l = ready({ images: { main: [pic("m1"), pic("m2")], detail: [pic("d1"), pic("d2")], options: [pic("o1", "k.jpg")] } });
-	const key = auditKey(productOf(l, s.get("cheeroutdoor")!).product!);
+	const product = productOf(l, s.get("cheeroutdoor")!).product!;
+	const key = auditKey(product);
+	l.coverage = reviewedCoverage(l, product);
 	const audit: Audit = {
 		key,
 		at: "t0",
@@ -1282,7 +1305,7 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 	assert.deepEqual(r.reminders, []);
 	const t = r.todo.find((x) => x.kind === "估重量、国内运费");
 	assert.ok(t && t.kind === "估重量、国内运费");
-	assert.match(t.why, /^可爱猫咪地垫（cheeroutdoor，#7）缺重量、国内运费：.*重量往重了估（轻的写 1 kg），国内运费往高了估/);
+	assert.match(t.why, /^可爱猫咪地垫（cheeroutdoor，#7）缺重量、国内运费。按上架技能保守估计，依据不足时保留未知/);
 	assert.deepEqual(t.items, [
 		{
 			id: "7",
@@ -1302,7 +1325,7 @@ test("检查：缺重量、国内运费的停在待做商品稿，给 agent 估�
 	const both = checkListings([{ ...l, problems: "类目：推荐的「地垫」不在本店允许的类目里" }], s, []);
 	assert.deepEqual([both.steps.get("7")!.step, both.todo.map((x) => x.kind)], ["待补充", ["估重量、国内运费"]]);
 	assert.doesNotMatch(both.reminders[0]!.detail, /重量|国内运费/);
-	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待 Gemini 文字检查");
+	assert.equal(checkListings([{ ...l, weight_kg: "1", freight_rmb: "10" }], s, []).steps.get("7")!.step, "待终审");
 });
 
 import { autoNickname, listingName, nicknameFor, nicknameOpen, nicknameProblems } from "./text.ts";
@@ -1339,7 +1362,7 @@ test("检查：提醒、todo、写入的显示都写「简称（店铺）」，a
 	);
 	assert.equal(checkListings([{ ...l, title: null }], s, []).todo[0]!.why, "轻便雨衣（cheeroutdoor，#7）：还没写");
 	const p = productOf(l, s.get("cheeroutdoor")!);
-	const audited = { ...l, audit: { key: auditKey(p.product!), textIssues: [], images: [] } };
+	const audited = { ...l, coverage: reviewedCoverage(l, p.product!), audit: { key: auditKey(p.product!), textIssues: [], images: [] } };
 	assert.equal(checkListings([audited], s, []).reminders[0]!.detail.split("\n")[0], "轻便雨衣（cheeroutdoor）");
 	const r = checkListings([audited], s, []);
 	assert.deepEqual(

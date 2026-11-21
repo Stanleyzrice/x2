@@ -5,12 +5,25 @@ import { test } from "node:test";
 import { z } from "zod";
 import { reply } from "../../../platform/reply.ts";
 import { conversation, message } from "./chat.ts";
+import { productTrafficOf } from "./marketing.ts";
 import { orderIndexOf, ordersOf } from "./orders.ts";
 import { attributesOf, liveProductsOf, performanceOf, productAttribute, productInfoOf, unlistRequest, unlistResult } from "./products.ts";
 import { editProductInfo } from "./publish.ts";
 import { ItemId, listingHeaders } from "./seller.ts";
 
 const sample = (name: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+
+test("逐日商品来源分开统计搜索和推荐，分项未配平时拒绝补零", () => {
+	const raw = sample("product-traffic-day") as {
+		result: { product_card: { total: { product_clicks: number }; breakdown: { source: string; product_clicks: number }[] } };
+	};
+	assert.deepEqual(productTrafficOf(raw), { total: 12, search: 1, recommendation: 10 });
+	const card = raw.result.product_card;
+	card.breakdown = card.breakdown.filter((row) => row.source !== "psd_label_search");
+	assert.throws(() => productTrafficOf(raw), /来源汇总不完整/);
+	card.total.product_clicks = 11;
+	assert.deepEqual(productTrafficOf(raw), { total: 11, search: 0, recommendation: 10 });
+});
 
 test("显式 Size Chart 只组装 size_chart_info，不连带主图、描述、规格或库存", () => {
 	const explicit = { title: "泳裝", sizeChartInfo: { size_chart: "tw-size-chart", size_chart_id: 0 } };

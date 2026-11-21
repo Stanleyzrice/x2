@@ -19,7 +19,13 @@ export type Show<O> = { text?: (out: O) => string; exit?: (out: O) => "error" | 
 // 注册表里放各种工具，参数、输出各不一样：存起来时函数的参数写成 never（什么都传不进），
 // 只有照这个工具自己的 zod 解析过的参数、它自己的输出才传回给它（cli.ts、invoke 在那几处写 as never）。定义工具用下面的 get、list、write、submit，参数和输出的类型照 zod、照函数推出来
 type Common = { description: string; params: z.ZodObject } & Show<never>;
-export type ReadTool = Common & { kind: "read" } & ({ run: (p: never) => Promise<unknown> } | { page: (p: never, cursor: string | null) => Promise<Page> });
+type ToolSource = "cli" | "web";
+export type ReadTool = Common & { kind: "read" } & (
+		| {
+				run: (p: never, source?: ToolSource) => Promise<unknown>;
+		  }
+		| { page: (p: never, cursor: string | null) => Promise<Page> }
+	);
 export type Planned = { op: string; params: unknown };
 export type WriteTool = Common & { kind: "write"; plan: (sql: Sql, p: never) => Promise<Planned[][]>; replay?: (sql: Sql, p: never) => Promise<Outcome> };
 export type Sent = { kind: "done"; data?: unknown } | { kind: "refused"; why: string } | { kind: "blocked"; why: string } | { kind: "unknown"; why: string };
@@ -34,11 +40,9 @@ export type Checked = { read: Read[]; human: Reminder[]; todo: Todo[] };
 export type Workspace = { key: string; title: string; component: string; props: Record<string, unknown>; group?: string; icon?: string; order?: number };
 export type Job = { name: string; hour: number; timeZone: string; run: (sql: Sql) => Promise<unknown> };
 
-export type Toolkit = {
+type ToolkitInfo = {
 	name: string;
 	title: string;
-	kind: "platform" | "site" | "service" | "tool";
-	tools: Record<string, Tool>;
 	workspaces?: Workspace[];
 	jobs?: Job[];
 	site?: SiteDef;
@@ -46,9 +50,18 @@ export type Toolkit = {
 	schema?: URL;
 	tables?: Table[];
 	check?: (sql: Sql) => Promise<Checked>;
-	writes?: Record<string, WriteOp>;
-	written?: (sql: Sql, ran: Ran[]) => Promise<void>;
 };
+
+export type Toolkit = ToolkitInfo &
+	(
+		| {
+				kind: "platform" | "tool";
+				tools: Record<string, ReadTool | WriteTool>;
+				writes?: Record<string, WriteOp>;
+				written?: (sql: Sql, ran: Ran[]) => Promise<void>;
+		  }
+		| { kind: "site" | "service"; tools: Record<string, ReadTool | SubmitTool>; writes?: never; written?: never }
+	);
 
 const kits: Toolkit[] = [];
 
@@ -65,17 +78,23 @@ export const toolkits = (): readonly Toolkit[] => kits;
 export function findTool(id: string): Tool | undefined {
 	const dot = id.indexOf(".");
 	const [kit, name] = dot < 0 ? ["", id] : [id.slice(0, dot), id.slice(dot + 1)];
-	return kits.find((k) => k.name === kit)?.tools[name];
+	const tools = kits.find((k) => k.name === kit)?.tools;
+	return tools && Object.hasOwn(tools, name) ? tools[name] : undefined;
 }
 
-/** 照注册表调一个读工具（不经命令行：网页服务替组件调）：参数照工具的 zod 校验，一页一页的只读第一页。写工具不从这里调 */
-export async function invoke(id: string, input: Record<string, unknown>): Promise<unknown> {
+/** 网页按组件登记的名称调用工具，业务代码可直接引用已知工具。 */
+export async function invoke(id: string, input: Record<string, unknown>, source?: ToolSource): Promise<unknown> {
 	const t = findTool(id);
 	if (!t) throw new Usage(`没有工具 ${id}`);
 	if (t.kind !== "read") throw new Usage(`${id} 是写工具，网页还不调写工具`);
+	return runReadTool(id, t, input, source);
+}
+
+/** 复用工具参数校验，分页工具只读第一页。 */
+export async function runReadTool(id: string, t: ReadTool, input: Record<string, unknown>, source?: ToolSource): Promise<unknown> {
 	const p = t.params.safeParse(input);
 	if (!p.success) throw new Usage(`${id} 的参数不对：${p.error.issues.map((x) => `${x.path.join(".")}：${x.message}`).join("；")}`);
-	return "run" in t ? t.run(p.data as never) : t.page(p.data as never, null);
+	return "run" in t ? t.run(p.data as never, source) : t.page(p.data as never, null);
 }
 
 export const writeOps = (): Record<string, WriteOp> => Object.assign({}, ...kits.map((k) => k.writes ?? {}));
@@ -85,10 +104,10 @@ const none = z.object({});
 export function get<P extends z.ZodObject = typeof none, O = unknown>(
 	description: string,
 	params: P | undefined,
-	run: (p: z.output<P>) => Promise<O>,
+	run: (p: z.output<P>, source: ToolSource) => Promise<O>,
 	show: Show<O> = {},
 ): ReadTool {
-	return { kind: "read", description, params: params ?? none, run, ...show };
+	return { kind: "read", description, params: params ?? none, run: (p, source = "cli") => run(p, source), ...show };
 }
 
 export function list<P extends z.ZodObject = typeof none, R = unknown>(

@@ -9,6 +9,7 @@ import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson, str } from "../../platform/tool.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
+import { imageLanguageBlock, variantImageTarget } from "./image-language.ts";
 import { catalogWriteBlock } from "./write-guard.ts";
 
 const positiveId = (id: string) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0;
@@ -238,6 +239,8 @@ const op: WriteOp<Params, Baseline> = {
 		if ((now.parent_sku ?? "") !== p.parentSku || addSizeHash(now) !== p.beforeHash) return { skip: "商品内容或原规格已变：重新预览，不覆盖" };
 		const built = buildAddSize(now, p);
 		if (canonical(built.info) !== canonical(p.info) || canonical(built.baseline) !== canonical(p.baseline)) return { skip: "预览与写入内容不同，不提交" };
+		const language = await imageLanguageBlock(sql, p.shop, `商品 ${p.id}`, variantImageTarget(now, built.info));
+		if (language) return { skip: language };
 		return { params: p, before: built.baseline };
 	},
 	submit: (_sql, p) => addSizeProduct.submit({ productId: p.id, info: p.info }),

@@ -4,6 +4,11 @@ import type { Sql } from "../../platform/db/index.ts";
 type ListingIdentity = { shopId: string; parentSku: string; productId?: string };
 type CatalogIdentity = { shopId: string | null; productId: string | null; parentSku: string | null };
 
+export async function listingWriteTried(sql: Sql, op: "改商品" | "展开规格", shopId: string): Promise<boolean> {
+	const [receipt] = await sql`select 1 from writes where op = ${op} and status = '已核对' and params->>'shopId' = ${shopId} limit 1`;
+	return Boolean(receipt);
+}
+
 export function sameCatalogProduct(saved: CatalogIdentity, p: ListingIdentity): boolean {
 	if (saved.shopId !== p.shopId) return false;
 	return p.productId ? saved.productId === p.productId : Boolean(p.parentSku) && saved.parentSku === p.parentSku;

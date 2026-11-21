@@ -330,7 +330,7 @@ export function performanceOf(raw: unknown): { total: number; rows: Performance[
 export async function performance(
 	start: number,
 	end: number,
-	period: "past7days" | "past30days",
+	period: "past7days" | "past30days" | "day",
 	pageNo = 1,
 	pageSize = 50,
 ): Promise<{ total: number; rows: Performance[] }> {

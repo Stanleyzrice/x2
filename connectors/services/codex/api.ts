@@ -27,6 +27,7 @@ export type CodexRequest = {
 	prompt: string;
 	schema: Record<string, unknown>;
 	cwd: string;
+	images?: readonly Uint8Array[];
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	onEvent?: (event: CodexProgress) => void;
@@ -54,7 +55,7 @@ export function safeCodexError(error: unknown): string {
 }
 
 /** 固定无 shell 参数；模型只判读传入事实，外站操作由调用方的白名单工具执行。 */
-export function codexArgs(cwd: string, schemaPath: string, outputPath: string): string[] {
+export function codexArgs(cwd: string, schemaPath: string, outputPath: string, images: readonly string[] = []): string[] {
 	return [
 		"exec",
 		"--ignore-user-config",
@@ -92,6 +93,7 @@ export function codexArgs(cwd: string, schemaPath: string, outputPath: string): 
 		'web_search="disabled"',
 		"-c",
 		"mcp_servers={}",
+		...images.flatMap((path) => ["--image", path]),
 		"--output-schema",
 		schemaPath,
 		"--output-last-message",
@@ -291,9 +293,17 @@ export async function askCodex(request: CodexRequest): Promise<unknown> {
 		const schemaPath = join(dir, "schema.json"),
 			outputPath = join(dir, "result.json");
 		await writeFile(schemaPath, JSON.stringify(request.schema), { mode: 0o600 });
+		const images = await Promise.all(
+			(request.images ?? []).map(async (bytes, index) => {
+				const extension = bytes[0] === 0xff && bytes[1] === 0xd8 ? "jpg" : bytes[0] === 0x89 && bytes[1] === 0x50 ? "png" : "webp";
+				const path = join(dir, `image-${index + 1}.${extension}`);
+				await writeFile(path, bytes, { mode: 0o600 });
+				return path;
+			}),
+		);
 		const result = await runCodexProcess({
 			executable: request.executable ?? DEFAULT_BINARY,
-			args: codexArgs(request.cwd, schemaPath, outputPath),
+			args: codexArgs(request.cwd, schemaPath, outputPath, images),
 			cwd: request.cwd,
 			prompt: request.prompt,
 			signal: request.signal,

@@ -2,16 +2,33 @@
 import "../platform/env.ts";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { setTimeout } from "node:timers/promises";
+import { OfferId, SkuId, SpecId } from "../connectors/sites/1688/api.ts";
+import { ModelId } from "../connectors/sites/shopee/seller.ts";
 import { client, type Sql } from "../platform/db/index.ts";
+import { coverageScope, saveCoverage } from "../tools/listing/coverage.ts";
+import { editImageTarget, editParams } from "../tools/listing/edit.ts";
+import {
+	IMAGE_LANGUAGE_RULE_VERSION,
+	imageLanguageBlock,
+	imageLanguageSnapshot,
+	saveImageLanguageReviews,
+	variantImageTarget,
+} from "../tools/listing/image-language.ts";
+import { settingsOf } from "../tools/listing/pricing.ts";
+import { productOf } from "../tools/listing/ready.ts";
+import { previewListingReview, setListingReview } from "../tools/listing/review.ts";
+import { ListingId, type ListingRow, type ShopSettingsRow } from "../tools/listing/row.ts";
+import { sizeChartScope } from "../tools/listing/size-chart.ts";
 import { saveCollectedSource } from "../tools/listing/source.ts";
 import { type CollectSourceInput, sourceProductSchema } from "../tools/listing/source-data.ts";
 import { translate, translationState } from "../tools/listing/translations.ts";
-import { postgresRunStore, type RunCreation, type RunLease, type RunStore } from "../tools/selection/run-store.ts";
+import { LISTING_WRITES } from "../tools/listing/writes.ts";
+import { deleteRun, postgresRunStore, type RunCreation, type RunLease, type RunStore } from "../tools/selection/run-store.ts";
 
 const product = (id: string, title = "测试原始货源") =>
 	sourceProductSchema.parse({
@@ -105,6 +122,7 @@ test("独立临时库：选品运行租约、幂等与货源导入事务", { tim
 			assert.equal(await second.recover(), 0, "持有真实会话锁的任务不得被恢复逻辑误判");
 			await owner.running(active.run.id);
 			assert.equal(await owner.shouldStop(active.run.id), false);
+			await assert.rejects(deleteRun(sql, request.shop, active.run.id), /研究仍在进行/);
 		});
 		assert.ok(active && owner);
 		const runId = active.run.id;
@@ -166,6 +184,21 @@ test("独立临时库：选品运行租约、幂等与货源导入事务", { tim
 			await owner!.finish(runId, "completed");
 			assert.equal((await owner!.get(runId))?.status, "cancelled");
 			await active!.release();
+		});
+
+		await t.test("历史研究删除按店铺限制，可重复提交且保留备选与原启动编号", async () => {
+			await assert.rejects(deleteRun(sql, "ni1206", runId), /找不到可删除的研究记录/);
+			assert.ok((await first.list(request.shop)).some((run) => run.id === runId));
+			assert.deepEqual(await Promise.all([deleteRun(sql, request.shop, runId), deleteRun(sql, request.shop, runId)]), [{ id: runId }, { id: runId }]);
+			assert.ok(!(await first.list(request.shop)).some((run) => run.id === runId));
+			const receipt = await first.open(request);
+			assert.equal(receipt.created, false);
+			assert.equal(receipt.run.id, runId);
+			assert.equal(receipt.run.deleted, true);
+			const [source] = await sql<{ deleted_at: Date | null; research: { runId: string }[] }[]>`
+				select deleted_at, research from listing_sources where id=${sourceId}`;
+			assert.equal(source?.deleted_at, null);
+			assert.equal(source?.research[0]?.runId, runId);
 		});
 
 		await t.test("已删除来源不恢复，既有人工稿的归属与人工字段也不改", async () => {
@@ -370,6 +403,7 @@ await translate(sql, ${JSON.stringify([item])}, { submit: async () => {
 			await readOnly`set default_transaction_read_only=on`;
 			await assert.rejects(translate(readOnly, [item], { submit: async () => assert.fail("意图未落库不能收费提交") }), /read-only/);
 		});
+		await t.test("重放 #203 尺码原图漏译：图已上传、逐图 issues 为空，普通与原图建品仍拦下", () => replayImageLanguage(sql));
 	} finally {
 		for (const lease of leases) await lease.release().catch(() => {});
 		for (const sql of clients) await sql.end({ timeout: 5 });
@@ -377,3 +411,163 @@ await translate(sql, ${JSON.stringify([item])}, { submit: async () => {
 		await admin.end({ timeout: 5 });
 	}
 });
+
+async function replayImageLanguage(sql: Sql) {
+	const shop = "cheeroutdoor";
+	const offerId = OfferId.parse("1079918323219");
+	const chartId = "fixture-simplified-chart";
+	const mainId = "fixture-main";
+	const stock = 50;
+	const pSku = `LT${offerId}-black-m`;
+	const rememberImage = async (id: string, bytes: Buffer) => {
+		const sha256 = createHash("sha256").update(bytes).digest("hex");
+		await sql`insert into images (sha256, kind, bytes) values (${sha256}, 'fixture', ${bytes})`;
+		await sql`insert into shop_images (shop, sha256, image_id) values (${shop}, ${sha256}, ${id})`;
+		return sha256;
+	};
+	const sha = await rememberImage(chartId, await readFile(new URL("../tools/listing/fixtures/size-chart-simplified.jpg", import.meta.url)));
+	assert.equal(sha, "96f07a70eb540b9b1abc18e6d90114a2cc420ff5c3593219f68a693e781157a9");
+	await rememberImage(mainId, Buffer.from("主圖測試標記"));
+	const correctedId = "fixture-traditional-chart";
+	const correctedSha = await rememberImage(correctedId, Buffer.from("繁體尺碼表測試標記"));
+	const skuId = SkuId.parse("black-m-sku");
+	const specId = SpecId.parse("black-m");
+	const offer = {
+		...product(offerId),
+		offerId,
+		detail: [],
+		skus: [{ skuId, specId, name: "黑色 M", attrs: ["黑色 M"], price: 1, stock, weightKg: 0.1 }],
+		tags: { freeShipping: true },
+	};
+	const variants = {
+		tiers: [{ source: "款式", name: "", options: [{ source: "黑色 M", name: "" }] }],
+		variants: [{ sku: pSku, skuId, specId, options: [0], weightKg: 0.1, costRmb: 1, stock, priceTwd: 149 }],
+	};
+	const chart = {
+		shop,
+		offerId,
+		imageId: chartId,
+		source: "https://example.com/source-203.jpg",
+		sha256: sha,
+		width: 800,
+		height: 800,
+		evidence: "供货尺码表原图，覆盖黑色 M 项。",
+		scope: sizeChartScope({ shop, offer_id: offerId, offer: offer as unknown as ListingRow["offer"], variants }),
+		at: new Date().toISOString(),
+	};
+	const [row] = await sql<
+		ListingRow[]
+	>`insert into listings (shop, offer_id, offer, title, description, days_to_ship, category_path, variants, images, size_chart)
+		values (${shop}, ${offerId}, ${sql.json(offer)}, '黑色網面包頭抽繩可摺疊旅行拖鞋', '黑色 M，尺碼請參考尺寸表。',
+			15, '[100637,101324]', ${sql.json(variants)}, ${sql.json({ main: [{ from: "fixture", imageId: mainId }], imageMode: "original" })}, ${sql.json(chart)})
+		returning *`;
+	const [settings] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop=${shop}`;
+	assert.ok(row && settings);
+	const id = ListingId.parse(String(row.id));
+	const s = settingsOf(settings);
+	const ready = productOf(row, s);
+	assert.ok(ready.info && ready.product, ready.problems.join("；"));
+	const coverage = saveCoverage(row, ready.product, {
+		expectedScope: coverageScope(row, ready.product).expectedScope,
+		excludedSkus: [],
+		detail: [],
+		layoutEvidence: "單一在售黑色 M，已核對採用的主圖。",
+	});
+	await sql`update listings set coverage=${sql.json(coverage)} where id=${id}`;
+	const preview = await previewListingReview(sql, { id });
+	assert.deepEqual(
+		preview.images.map((image) => [image.id, image.state]),
+		[
+			[mainId, "pending-check"],
+			[chartId, "pending-check"],
+		],
+	);
+	const review = {
+		id,
+		expectedKey: preview.expectedKey,
+		provider: "human" as const,
+		evidence: "重放只有完整圖片編號與空問題陣列的舊流程。",
+		textIssues: [],
+		images: preview.images.map((image) => ({ id: image.id, issues: [] })),
+	};
+	const incomplete = await setListingReview(sql, review);
+	assert.equal(incomplete.languagePassed, false);
+	const create = LISTING_WRITES.建商品!;
+	const createInput = create.params.parse({ listingId: id, shop, shopId: s.shopId, parentSku: pSku.split("-")[0], productInfo: ready.info, hash: ready.hash });
+	const blocked = await create.prepare(sql, createInput);
+	assert.ok("skip" in blocked);
+	assert.match(blocked.skip, new RegExp(`商品稿 #${id} .*尺码图 ${chartId}：待检查`));
+	const source = await saveCollectedSource(sql, { shop, link: `https://detail.1688.com/offer/${offerId}.html` }, product(offerId));
+	const sourceApproval = { kind: "original-source", sourceProductId: source.sourceId, hash: ready.hash!, at: chart.at };
+	await sql`update listings set source_product_id=${source.sourceId}, source_approval=${sql.json(sourceApproval)}, audit=null where id=${id}`;
+	assert.deepEqual(await create.prepare(sql, createInput), blocked, "原图批准也进入同一发布关卡");
+
+	const snapshot = await imageLanguageSnapshot(sql, shop, ready.info);
+	const main = snapshot.images.find((image) => image.id === mainId)!;
+	const failed = await setListingReview(sql, {
+		...review,
+		images: [
+			{ id: mainId, issues: [], language: { state: "no-chinese", sha256: main.sha256!, evidence: "主圖無文字。" } },
+			{ id: chartId, issues: ["产品参数、适合脚长"], language: { state: "needs-correction", sha256: sha, evidence: "實際原圖含「产品参数」、「适合脚长」。" } },
+		],
+	});
+	assert.equal(failed.languagePassed, false);
+	assert.match((await imageLanguageBlock(sql, shop, "商品 #203", ready.info))!, /尺码图 fixture-simplified-chart：待修正/);
+
+	await sql`update listings set size_chart=${sql.json({ ...chart, sha256: correctedSha, imageId: correctedId })} where id=${id}`;
+	const next = await previewListingReview(sql, { id });
+	await assert.rejects(setListingReview(sql, review), /已变化/);
+	assert.equal(next.images.find((image) => image.id === mainId)?.state, "no-chinese");
+	const passed = await setListingReview(sql, {
+		...review,
+		expectedKey: next.expectedKey,
+		images: [
+			{ id: mainId, issues: [] },
+			{ id: correctedId, issues: [], language: { state: "traditional", sha256: correctedSha, evidence: "已核對測試尺碼圖的繁體標註。" } },
+		],
+	});
+	assert.equal(passed.languagePassed, true);
+	const native = {
+		...ready.info,
+		model_list: ready.info.model_list.map((model) => ({ ...model, id: ModelId.parse("918") })),
+		size_chart_info: { size_chart: correctedId },
+	};
+	assert.equal(await imageLanguageBlock(sql, shop, "商品 #203", native), null, "实际商品读回复用建品前证据");
+	const edit = editParams.parse({
+		shop,
+		id: "203",
+		beforeTitle: ready.info.name,
+		title: ready.info.name,
+		beforeSizeChartInfo: native.size_chart_info,
+		sizeChartInfo: { size_chart: chartId },
+	});
+	assert.match((await imageLanguageBlock(sql, shop, "商品 #203", editImageTarget(native, edit)))!, /尺码图 fixture-simplified-chart：待修正/);
+	const model = native.model_list[0]!;
+	const variantImage = variantImageTarget(native, {
+		std_tier_variation_list: native.std_tier_variation_list,
+		model_list: [{ id: model.id, tier_index: model.tier_index, sku_image: chartId }],
+	});
+	assert.match((await imageLanguageBlock(sql, shop, "商品 #203", variantImage))!, /SKU.*fixture-simplified-chart/);
+	const changedScope = { ...native, model_list: [{ ...model, sku: "different-size" }] };
+	assert.match((await imageLanguageBlock(sql, shop, "商品 #203", changedScope))!, /尺码图 fixture-traditional-chart：待检查/);
+
+	const newId = "fixture-same-bytes-new-id";
+	await sql`update shop_images set image_id=${newId} where shop=${shop} and sha256=${correctedSha}`;
+	const sameFile = { ...native, size_chart_info: { size_chart: `https://down-tw.img.susercontent.com/file/${newId}` } };
+	assert.equal(await imageLanguageBlock(sql, shop, "商品 #203", sameFile), null, "同店同文件同规格可以复用");
+	const note = "實物標籤為原廠印字。";
+	const withNote = {
+		...sameFile,
+		description_info: { description_type: "normal", description: note },
+	};
+	const printed = { state: "printed-with-note" as const, sha256: correctedSha, note, evidence: "已確認文字直接印在實物標籤上。" };
+	await assert.rejects(
+		saveImageLanguageReviews(sql, shop, await imageLanguageSnapshot(sql, shop, sameFile), "human", [{ id: newId, language: printed }]),
+		/须出现在最终商品描述/,
+	);
+	await saveImageLanguageReviews(sql, shop, await imageLanguageSnapshot(sql, shop, withNote), "human", [{ id: newId, language: printed }]);
+	assert.equal(await imageLanguageBlock(sql, shop, "商品 #203", withNote), null);
+	assert.match((await imageLanguageBlock(sql, shop, "商品 #203", sameFile))!, /缺少对应的繁体印字说明/);
+	await sql`update listing_image_language_reviews set rule_version=${IMAGE_LANGUAGE_RULE_VERSION + 1} where shop=${shop} and sha256=${correctedSha}`;
+	assert.match((await imageLanguageBlock(sql, shop, "商品 #203", sameFile))!, /尺码图 fixture-same-bytes-new-id：待检查/);
+}

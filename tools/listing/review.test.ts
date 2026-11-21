@@ -119,7 +119,7 @@ test("人工备选的处理图和已审图须有当前真实审阅，原图批�
 	const p = product(),
 		a = makeReviewedAudit(p, input(p));
 	const approval = { kind: "original-source" as const, sourceProductId: "source-1", hash: "hash", at: "2026-11-16T00:00:00.000Z" };
-	for (const imageMode of ["processed", "reviewed"]) {
+	for (const imageMode of ["processed", "reviewed"] as const) {
 		const source = { approval, id: "source-1", imageMode, hash: "hash" };
 		assert.ok(sourceLiveReviewBlock(null, p, source), "没有审核时，原图批准不能授权处理图");
 		assert.ok(creationReviewBlock(null, p, source), "建商品同样不能凭原图批准使用处理图");
@@ -128,6 +128,9 @@ test("人工备选的处理图和已审图须有当前真实审阅，原图批�
 		assert.ok(sourceLiveReviewBlock({ ...a, images: [] }, p, source), "缺少逐图结果不能上架");
 		assert.equal(sourceLiveReviewBlock(a, p, { ...source, approval: null }), null);
 		assert.equal(creationReviewBlock(a, p, { ...source, approval: null }), null);
+		const gemini = { ...a, provider: "gemini" as const };
+		assert.equal(Boolean(creationReviewBlock(gemini, p, source)), imageMode === "reviewed");
+		assert.equal(Boolean(sourceLiveReviewBlock(gemini, p, source)), imageMode === "reviewed");
 	}
 });
 
@@ -137,7 +140,7 @@ test("原图备选上架继续要求匹配来源与当前内容的原图批准",
 	const source = {
 		approval: { kind: "original-source" as const, sourceProductId: "source-1", hash: "hash", at: "2026-11-16T00:00:00.000Z" },
 		id: "source-1",
-		imageMode: "original",
+		imageMode: "original" as const,
 		hash: "hash",
 	};
 	assert.equal(sourceLiveReviewBlock(null, undefined, source), null);

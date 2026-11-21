@@ -6,8 +6,12 @@ import { createListing, findByParentSku, listProduct } from "../../connectors/si
 import { inAccount } from "../../platform/browser/browser.ts";
 import { db, type Sql } from "../../platform/db/index.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
-import { type Audit, auditCurrent } from "./audit.ts";
+import { type Audit, listingAuditCurrent } from "./audit.ts";
 import { channelOptionSchema } from "./channels.ts";
+import { coverageBlock } from "./coverage.ts";
+import { followUpBatchId } from "./follow-up.ts";
+import { imageLanguageBlock } from "./image-language.ts";
+import type { ImageMode } from "./pics.ts";
 import { minPrice } from "./price.ts";
 import { settingsOf } from "./pricing.ts";
 import { type Product, readbackProblems, type SentInfo } from "./product.ts";
@@ -39,7 +43,7 @@ const createParams = z.object({
 	shop: z.string(),
 	shopId: z.string(),
 	parentSku: z.string(),
-	// 检查时照 productInfo() 组的（ready.ts），存进写入再读出来还是它
+	// 检查时照 productInfo() 组的（ready.ts）；prepare 用现组的原生字段替换提交参数
 	productInfo: z.record(z.string(), z.unknown()).pipe(z.custom<SentInfo>()),
 	hash: z.string(),
 	channelOptions: z.array(channelOptionSchema).optional(),
@@ -47,18 +51,18 @@ const createParams = z.object({
 });
 type CreateP = z.infer<typeof createParams>;
 
-type SourceReview = { approval: SourceApproval | null | undefined; id: string | null | undefined; imageMode: string | undefined; hash: string | undefined };
+type SourceReview = { approval: SourceApproval | null | undefined; id: string | null | undefined; imageMode: ImageMode | undefined; hash: string | undefined };
 
 /** 只保护首次建商品；已有商品上架沿用原流程，不给其追加草稿审阅要求。 */
 export const creationReviewBlock = (audit: Partial<Audit> | null, product: Product, source?: SourceReview): string | null =>
-	auditCurrent(audit, product) || (source && originalSourceApproved(source.approval, source.id, source.imageMode, source.hash))
+	listingAuditCurrent(audit, product, source?.imageMode) || (source && originalSourceApproved(source.approval, source.id, source.imageMode, source.hash))
 		? null
 		: "商品稿的文案、图片或规格尚未完成当前审核：重新审阅后再建商品";
 
 /** 人工备选商品上架前现验图片模式对应的审核依据。 */
 export function sourceLiveReviewBlock(audit: Partial<Audit> | null, product: Product | undefined, source: SourceReview): string | null {
 	if (source.imageMode === "processed" || source.imageMode === "reviewed")
-		return product && auditCurrent(audit, product) ? null : "备选商品的文案、图片或规格尚未完成当前审核：重新审阅后再上架";
+		return product && listingAuditCurrent(audit, product, source.imageMode) ? null : "备选商品的文案、图片或规格尚未完成当前审核：重新审阅后再上架";
 	return originalSourceApproved(source.approval, source.id, source.imageMode, source.hash) ? null : "备选商品的上架批准已撤销或内容变化，请重新确认上架";
 }
 
@@ -76,10 +80,14 @@ const createOp: WriteOp<CreateP> = {
 		if (removed) return { skip: removed };
 		const now = await listingNow(sql, p.listingId);
 		if (!now || now.l.cancelled) return { skip: "商品稿已放弃" };
+		if (now.l.shop !== p.shop || now.s.shopId !== p.shopId || (now.r.product?.parentSku && now.r.product.parentSku !== p.parentSku))
+			return { skip: "当前商品稿与计划店铺或商品身份不符" };
 		if (now.l.product_id) return { skip: `已经建好了（商品 ${now.l.product_id}）` };
 		if (now.s.paused) return { skip: `暂停上品：${now.s.paused}` };
 		if (!now.r.info) return { skip: `商品稿还缺：${now.r.problems.join("；")}` };
 		if (now.r.hash !== p.hash) return { skip: "商品稿刚改过：给人重新看过再 x2 listing publish --ids …" };
+		const coverage = coverageBlock(now.l, now.r.product!);
+		if (coverage) return { skip: coverage };
 		const reviewBlock = creationReviewBlock(now.l.audit, now.r.product!, {
 			approval: now.l.source_approval,
 			id: now.l.source_product_id,
@@ -87,6 +95,8 @@ const createOp: WriteOp<CreateP> = {
 			hash: now.r.hash,
 		});
 		if (reviewBlock) return { skip: reviewBlock };
+		const language = await imageLanguageBlock(sql, now.l.shop, `商品稿 #${p.listingId}`, now.r.info);
+		if (language) return { skip: language };
 		// 模板的上下限、快照由 productOf 现核；只给旧结算模型再核最低金额，不能叠加到模板上。
 		if (!now.s.template) {
 			const freight = Number(now.l.pricing?.freightRmb ?? 0);
@@ -96,7 +106,7 @@ const createOp: WriteOp<CreateP> = {
 			}
 		}
 		await productPage();
-		return { params: p, before: {} };
+		return { params: { ...p, productInfo: now.r.info }, before: {} };
 	},
 	async submit(sql, p) {
 		const w = await createListing.submit({ productInfo: p.productInfo });
@@ -134,6 +144,7 @@ const liveParams = z.object({
 	title: z.string().nullable().optional(),
 	name: z.string().optional(),
 	productId: z.string().optional(),
+	trackingBatch: followUpBatchId.optional(),
 });
 type LiveP = z.infer<typeof liveParams>;
 
@@ -150,22 +161,33 @@ const liveOp: WriteOp<LiveP> = {
 		const [l] = await sql<ListingRow[]>`select * from listings where id = ${p.listingId}`;
 		if (!l || l.cancelled) return { skip: "商品稿已放弃" };
 		if (!l.product_id) return { skip: "还没建好（建商品没成功）" };
+		const [settings] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
+		if (p.shop !== l.shop || settings?.shop_id !== p.shopId) return { skip: "当前商品稿与计划店铺不符" };
 		if (l.listed_at) return { skip: "已经上架了" };
-		if (l.source_product_id) {
-			const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
-			if (!row) return { skip: "店铺设置无法读取，请重新确认上架" };
-			const ready = productOf(l, settingsOf(row));
-			const reviewBlock = sourceLiveReviewBlock(l.audit, ready.product, {
-				approval: l.source_approval,
-				id: l.source_product_id,
-				imageMode: l.images.imageMode,
-				hash: sourcePublicationHash(l, ready.hash),
-			});
-			if (reviewBlock) return { skip: reviewBlock };
+		if (l.source_product_id || l.coverage) {
+			const ready = productOf(l, settingsOf(settings));
+			if (l.coverage) {
+				const coverage = ready.product ? coverageBlock(l, ready.product) : ready.problems.join("；");
+				if (coverage) return { skip: coverage };
+			}
+			if (l.source_product_id) {
+				const reviewBlock = sourceLiveReviewBlock(l.audit, ready.product, {
+					approval: l.source_approval,
+					id: l.source_product_id,
+					imageMode: l.images.imageMode,
+					hash: sourcePublicationHash(l, ready.hash),
+				});
+				if (reviewBlock) return { skip: reviewBlock };
+			}
 		}
 		const blocked = await catalogWriteBlock(sql, { ...p, productId: String(l.product_id) });
 		if (blocked) return { skip: blocked };
-		return { params: { ...p, productId: String(l.product_id) }, before: {} };
+		const productId = String(l.product_id);
+		const current = await productInfo(productId);
+		if (current.parent_sku !== p.parentSku || (current.id != null && String(current.id) !== productId)) return { skip: "Shopee 现读商品身份不匹配" };
+		const language = await imageLanguageBlock(sql, l.shop, `商品稿 #${p.listingId}（商品 ${productId}）`, current);
+		if (language) return { skip: language };
+		return { params: { ...p, productId }, before: {} };
 	},
 	submit: (_sql, p) => listProduct.submit({ productId: p.productId! }),
 	// 读回对账：在售是做了，禁卖是没做。翻在售以后要十几秒才读得到：隔 3 秒读一次，最多 6 次

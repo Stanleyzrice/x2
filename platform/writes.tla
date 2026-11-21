@@ -17,6 +17,7 @@
 \* 写入锁（exclusive）：交、核清、执行、resolve 都拿着库里的一把锁，同一时间只有一个进程碰写入；进程退出、连接断了（Drop）锁就放。
 \* 没放进模型的：读回来说错（Lag = TRUE 时读回来可能看不到已经做成的）、站点上被人改、业务工具 prepare 的判断（当成可能不做）。
 \* tried 的首次试跑门槛只决定进入 prepare 或跳过，抽象为 Prepare 的可选 skipped；本模型不证明业务的历史授权口径。
+\* 多目标试跑在进入模型前拒绝；单次连接器提交额度对应 Submit 的至多一次转移。
 \* replay 只读取已有状态，不新增 rows、不 submit，按 stuttering 处理；requestId 内容绑定由 Chat 工具的隔离测试验证。
 EXTENDS Naturals, Sequences, FiniteSets
 

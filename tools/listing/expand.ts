@@ -1,8 +1,9 @@
-// 按显式1688 SKU映射展开规格；旧模型只重定位索引和规格图，不提交旧库存、货号、标题或描述。
+// 按显式1688 SKU映射更新规格；旧模型保留库存和货号，可显式同时更新详情图。
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { OfferId, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import { type ProductInfo, productInfo } from "../../connectors/sites/shopee/products.ts";
+import { productDescriptionInfo } from "../../connectors/sites/shopee/publish.ts";
 import { ItemId, ModelId } from "../../connectors/sites/shopee/seller.ts";
 import { type ExpandInfo, expandInfo, expandProduct } from "../../connectors/sites/shopee/variants.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
@@ -10,7 +11,9 @@ import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson, str } from "../../platform/tool.ts";
 import { type WriteOp, writeOp } from "../../platform/writes.ts";
-import { catalogWriteBlock } from "./write-guard.ts";
+import { descriptionChange, descriptionState } from "./edit.ts";
+import { imageLanguageBlock, variantImageTarget } from "./image-language.ts";
+import { catalogWriteBlock, listingWriteTried } from "./write-guard.ts";
 
 const positiveId = (id: string) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0;
 const imageId = z.string().regex(/^[A-Za-z0-9_-]+$/, "规格图须是已上传的Shopee图片id");
@@ -43,6 +46,8 @@ export const expandParams = z.object({
 		.preprocess(parseJson, z.array(model).min(1).max(100))
 		.describe("通过核价的完整SKU子集，含skuId/specId/tierIndex/costRmb/weightKg/price/stock/imageId；原模型须existingModelId"),
 	targetWeightKg: z.coerce.number().positive().finite().optional().describe("显式商品级计费重量；默认现有重量，须覆盖全部保留SKU，全部SKU应已按此重量重新核价"),
+	beforeDescriptionInfo: z.preprocess(parseJson, productDescriptionInfo).optional().describe("同时更新详情图时，原完整description_info"),
+	descriptionInfo: z.preprocess(parseJson, productDescriptionInfo).optional().describe("同时更新详情图时，目标完整description_info；须同时提供原对象"),
 });
 type Input = z.output<typeof expandParams>;
 
@@ -229,6 +234,7 @@ export function buildExpand(
 	const info = expandInfo.parse({
 		std_tier_variation_list: tiers,
 		model_list: modelList,
+		...descriptionChange(now, p.beforeDescriptionInfo, p.descriptionInfo),
 		...(weight !== baseline.weightKg ? { weight: { value: String(weight), unit: 1 } } : {}),
 	});
 	return { baseline, info, currentHash: expandHash(now), mapping };
@@ -239,6 +245,7 @@ const normalizedTiers = (tiers: ProductInfo["std_tier_variation_list"]) =>
 function targetState(now: ProductInfo, p: Input, checkStock: boolean): true | null {
 	try {
 		validateRows(p);
+		if (!descriptionState(now, p.descriptionInfo)) return null;
 		if (now.parent_sku !== `LT${p.offerId}` || canonical(normalizedTiers(now.std_tier_variation_list)) !== canonical(normalizedTiers(targetTiers(p))))
 			return null;
 		const models = now.model_list ?? [];
@@ -267,7 +274,9 @@ function targetState(now: ProductInfo, p: Input, checkStock: boolean): true | nu
 /** 已完整展开后重复运行只返回已完成；库存可能已因订单改变，不再次写入。 */
 export const expandAlready = (now: ProductInfo, p: Input) => targetState(now, p, false);
 export function expandState(now: ProductInfo, baseline: ExpandBaseline, p: Input): true | null {
-	if (!targetState(now, p, true) || canonical(protectedOf(now)) !== canonical(baseline.protectedFields)) return null;
+	const expected = { ...baseline.protectedFields };
+	if (p.descriptionInfo) expected.description_info = now.description_info;
+	if (!targetState(now, p, true) || canonical(protectedOf(now)) !== canonical(expected)) return null;
 	if (Number(now.weight?.value) !== (p.targetWeightKg ?? baseline.weightKg)) return null;
 	const oldIds = new Set(baseline.models.map((m) => m.id));
 	for (const row of p.models) {
@@ -317,6 +326,7 @@ const op: WriteOp<Params, ExpandBaseline> = {
 			.digest("hex")}`,
 	display: (p) => `${p.shop}（商品${p.id}）展开为${p.models.length}个规格，保留${p.baseline.models.length}个原模型；货源${p.offerId}`,
 	untried: "展开规格是新写操作：先和人约一个商品一起跑--try，读回后请人在站点核对",
+	tried: (sql, p) => listingWriteTried(sql, "展开规格", p.shopId),
 	where: (_sql, p, fn) => inAccount("shopee", p.shopId, fn),
 	async prepare(sql, p) {
 		if ((await shopIdOf(sql, p.shop)) !== p.shopId) return { skip: "店铺设置刚改过，重新确认" };
@@ -327,6 +337,8 @@ const op: WriteOp<Params, ExpandBaseline> = {
 		if (now.parent_sku !== p.parentSku || expandHash(now) !== p.beforeHash) return { skip: "原商品或规格已变：重新预览，不覆盖" };
 		const built = buildExpand(now, p);
 		if (canonical(built.baseline) !== canonical(p.baseline) || canonical(built.info) !== canonical(p.info)) return { skip: "预览与写入内容不同，不提交" };
+		const language = await imageLanguageBlock(sql, p.shop, `商品 ${p.id}`, variantImageTarget(now, built.info));
+		if (language) return { skip: language };
 		return { params: p, before: built.baseline };
 	},
 	submit: (_sql, p) => expandProduct.submit({ productId: p.id, info: p.info }),
@@ -343,6 +355,7 @@ const op: WriteOp<Params, ExpandBaseline> = {
 						models: now.model_list,
 						tiers: now.std_tier_variation_list,
 						weight: now.weight,
+						...(p.descriptionInfo ? { descriptionInfo: now.description_info } : {}),
 						mapping: p.models.map((row) => ({
 							skuId: row.skuId,
 							specId: row.specId,

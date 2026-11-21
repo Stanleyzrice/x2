@@ -1,7 +1,8 @@
 // 运行请求与结果的边界：同请求不重做、失去租约即停止、旧备选不冒充新增。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendRunCandidate, type RunCandidate, runEventDataSchema, runShouldStop, runSnapshot, sameRunInput } from "./run-store.ts";
+import { runEventDataSchema } from "../../platform/ui/interactable/selection/contract.ts";
+import { appendRunCandidate, type RunCandidate, runShouldStop, runSnapshot, sameRunInput } from "./run-store.ts";
 
 const candidate = (overrides: Partial<RunCandidate> = {}): RunCandidate => ({
 	offerId: "123",

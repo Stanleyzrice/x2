@@ -75,7 +75,15 @@ export function sourceResearchPick(research: readonly SourceResearch[], shop: st
 		.findLast((item) => item.shop === shop);
 	return record ? { strategy: record.strategyName, why: record.reason, evidence: record.evidence } : { why: "人工采集选用", evidence: "" };
 }
-export const collectSourceParams = z.object({ shop: z.string().trim().min(1), link: httpUrl, provenance: sourceProvenanceSchema.optional() });
+export const collectSourceParams = z.object({
+	shop: z.string().trim().min(1),
+	link: httpUrl,
+	provenance: sourceProvenanceSchema.optional(),
+	refreshMissingDetail: z
+		.preprocess((value) => (value === "true" ? true : value), z.boolean())
+		.optional()
+		.describe("只补采已保存快照中完全为空的详情，保留其余来源数据及人工值"),
+});
 export type CollectSourceInput = z.output<typeof collectSourceParams>;
 export type CollectedSourceResult = {
 	sourceId: string;

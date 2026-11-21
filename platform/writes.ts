@@ -15,6 +15,7 @@ import type postgres from "postgres";
 import { z } from "zod";
 import { host, type Json, type Sql } from "./db/index.ts";
 import { NeedsHuman, Usage } from "./errors.ts";
+import { runSiteSubmission } from "./site-write.ts";
 import { type Planned, type Sent, toolkits, writeOps } from "./tool.ts";
 
 /** 写入的编号（writes 的 id）：命令行参数、读库时贴上，别和商品稿编号、订单号传混 */
@@ -193,21 +194,29 @@ async function addWrites(tx: postgres.TransactionSql, rows: NewRow[]): Promise<s
 }
 
 export async function perform(sql: Sql, batches: Planned[][], opts: { try?: boolean } = {}, ops: Record<string, WriteOp> = writeOps()): Promise<Outcome> {
+	if (opts.try) {
+		const targets = new Set(batches.flatMap((batch) => plannedRows(batch, ops).map((row) => row.target)));
+		if (targets.size > 1) throw new Usage("--try 只允许试一个对象，请缩小本次提交范围");
+	}
 	return exclusive(sql, (lock) => performLocked(sql, lock, batches, opts, ops));
+}
+
+function plannedRows(batch: Planned[], ops: Record<string, WriteOp>) {
+	return batch.map((w, i) => {
+		const op = ops[w.op];
+		if (!op) throw new Usage(`第 ${i + 1} 项：没有 ${w.op} 这个写操作（有：${Object.keys(ops).join("、")}）`);
+		const parsed = op.params.safeParse(w.params);
+		if (!parsed.success)
+			throw new Usage(`第 ${i + 1} 项（${w.op}）参数不对：${parsed.error.issues.map((x) => `${x.path.join(".")}：${x.message}`).join("；")}`);
+		const params = parsed.data;
+		return { op: w.op, params, target: op.target(params), key: op.key(params), display: op.display(params) };
+	});
 }
 
 async function performLocked(sql: Sql, lock: number, batches: Planned[][], opts: { try?: boolean }, ops: Record<string, WriteOp>): Promise<Outcome> {
 	const outcomes: Outcome[] = [];
 	for (const b of batches) {
-		const rows = b.map((w, i) => {
-			const op = ops[w.op];
-			if (!op) throw new Usage(`第 ${i + 1} 项：没有 ${w.op} 这个写操作（有：${Object.keys(ops).join("、")}）`);
-			const parsed = op.params.safeParse(w.params);
-			if (!parsed.success)
-				throw new Usage(`第 ${i + 1} 项（${w.op}）参数不对：${parsed.error.issues.map((x) => `${x.path.join(".")}：${x.message}`).join("；")}`);
-			const params = parsed.data;
-			return { op: w.op, params, target: op.target(params), key: op.key(params), display: op.display(params) };
-		});
+		const rows = plannedRows(b, ops);
 		if (!rows.length) continue;
 		const batch = await sql.begin((tx) => addWrites(tx, rows));
 		const o = await run(sql, lock, { batch, tryOps: opts.try ? rows.map((r) => r.op) : [] }, ops);
@@ -308,7 +317,7 @@ async function execute(sql: Sql, lock: number, opts: Opts, ops: Record<string, W
 					started_at: new Date(),
 					host,
 				});
-				const sent = await op.submit(sql, params);
+				const sent = await runSiteSubmission(() => op.submit(sql, params));
 				if (sent.kind === "blocked") return { blocked: sent.why, params };
 				if (sent.kind === "refused") return { status: "被拒", why: sent.why, response: sent, before: undefined, after: undefined, params };
 				let r: { done: boolean | null; readback: unknown };

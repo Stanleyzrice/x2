@@ -10,7 +10,9 @@ import {
 	isFunctionDeclaration,
 	isImportDeclaration,
 	isImportTypeNode,
+	isNamedImports,
 	isStringLiteralLikeNode,
+	isVariableDeclaration,
 	type Node,
 	SyntaxKind,
 } from "typescript/unstable/ast";
@@ -31,6 +33,7 @@ const target = (file: string, spec: string) =>
 const TOP = [
 	".agents",
 	".claude",
+	".codex",
 	".env.example",
 	".githooks",
 	".github",
@@ -103,7 +106,22 @@ function readImportProblems(paths = CODE, virtual = new Map<string, string>()): 
 					(parent.parent !== undefined && isImportTypeNode(parent.parent));
 				if (isAbsolute(node.text) || win32.isAbsolute(node.text) || /^file:/i.test(node.text)) return [`${rel(file)}：禁止绝对路径导入 ${node.text}`];
 				const to = target(file, node.text);
-				return to && !allowedImport(rel(file), rel(to), typeOnly) ? [`${rel(file)} → ${rel(to)}`] : [];
+				if (!to) return [];
+				const from = rel(file);
+				const dest = rel(to);
+				if (!allowedImport(from, dest, typeOnly)) return [`${from} → ${dest}`];
+				if (dest === "platform/site-write.ts" && from.startsWith("connectors/")) {
+					const clause = isImportDeclaration(parent) ? parent.importClause : undefined;
+					const bindings = clause?.namedBindings;
+					if (
+						clause?.name ||
+						!bindings ||
+						!isNamedImports(bindings) ||
+						bindings.elements.some((e) => (e.propertyName ?? e.name).text !== "claimSiteSubmission")
+					)
+						return [`${from}：连接器只能领取写入凭证`];
+				}
+				return [];
 			});
 			function visit(node: Node): void {
 				const argument = isCallExpression(node) ? node.arguments[0] : undefined;
@@ -125,6 +143,7 @@ function readImportProblems(paths = CODE, virtual = new Map<string, string>()): 
 }
 
 function allowedImport(from: string, to: string, typeOnly: boolean): boolean {
+	if (to === "platform/site-write.ts") return from === "platform/writes.ts" || from === "platform/writes.test.ts" || from.startsWith("connectors/sites/");
 	if (from === "x2.ts")
 		return to.startsWith("platform/") || /^connectors\/(sites|services)\/[^/]+\/index\.ts$/.test(to) || /^tools\/[^/]+\/index\.ts$/.test(to);
 	if (from.startsWith("platform/ui/")) {
@@ -132,10 +151,23 @@ function allowedImport(from: string, to: string, typeOnly: boolean): boolean {
 		return to.startsWith("platform/ui/") || (to.startsWith("platform/web/") && typeOnly);
 	}
 	if (from.startsWith("platform/")) return to.startsWith("platform/");
+	if (/^(?:connectors|tools)\//.test(from) && /^(?:platform\/cli|platform\/web\/(?:confirmations|server))\.ts$/.test(to)) return false;
 	if (from.startsWith("connectors/"))
-		return to.startsWith(`${from.split("/").slice(0, 3).join("/")}/`) || (to.startsWith("platform/") && !to.startsWith("platform/db/"));
+		return (
+			to.startsWith(`${from.split("/").slice(0, 3).join("/")}/`) ||
+			(to.startsWith("platform/") && !to.startsWith("platform/db/") && to !== "platform/writes.ts")
+		);
+	if (from.startsWith("tools/selection/")) {
+		if (to.startsWith("connectors/")) return /^connectors\/(sites|services)\/[^/]+\/index\.ts$/.test(to);
+		if (to.startsWith("platform/browser/") || to === "platform/writes.ts") return false;
+	}
 	if (from.startsWith("tools/"))
-		return to.startsWith(`${from.split("/").slice(0, 2).join("/")}/`) || to.startsWith("platform/") || to.startsWith("connectors/");
+		return (
+			to.startsWith(`${from.split("/").slice(0, 2).join("/")}/`) ||
+			to.startsWith("platform/") ||
+			to.startsWith("connectors/") ||
+			/^tools\/[^/]+\/index\.ts$/.test(to)
+		);
 	return from.startsWith("test/");
 }
 
@@ -206,11 +238,21 @@ test("schema 注册器只放行原有固定目录调用；改根目录、改数�
 	}
 });
 
-test("依赖约束拒绝跨业务、跨连接器、连接器读库、界面加载服务端实现和装配深入模块", () => {
+test("跨业务只经公开入口，连接器、界面和装配各守依赖边界", () => {
 	const cases: [string, string, boolean, boolean][] = [
 		["tools/orders/index.ts", "tools/listing/row.ts", true, false],
+		["tools/orders/procurement.ts", "tools/reimbursement/index.ts", false, true],
+		["tools/selection/runs.ts", "tools/listing/index.ts", false, true],
+		["tools/selection/runs.ts", "connectors/sites/zhixia/index.ts", false, true],
+		["tools/selection/runs.ts", "connectors/sites/zhixia/api.ts", false, false],
+		["tools/selection/runs.ts", "platform/browser/browser.ts", false, false],
+		["tools/selection/runs.ts", "platform/writes.ts", false, false],
 		["connectors/sites/1688/index.ts", "connectors/sites/shopee/index.ts", true, false],
 		["connectors/sites/shopee/index.ts", "platform/db/index.ts", true, false],
+		["connectors/sites/shopee/index.ts", "platform/writes.ts", false, false],
+		["tools/catalog/index.ts", "platform/cli.ts", false, false],
+		["tools/catalog/index.ts", "platform/site-write.ts", false, false],
+		["tools/orders/index.ts", "platform/web/confirmations.ts", false, false],
 		["platform/ui/interactable/catalog/view.tsx", "platform/web/tables.ts", false, false],
 		["platform/ui/interactable/catalog/view.tsx", "platform/web/tables.ts", true, true],
 		["platform/ui/generative/table/view.tsx", "platform/ui/api.ts", false, false],
@@ -221,6 +263,76 @@ test("依赖约束拒绝跨业务、跨连接器、连接器读库、界面加�
 	for (const [from, to, typeOnly, allowed] of cases) assert.equal(allowedImport(from, to, typeOnly), allowed, `${from} → ${to}`);
 	assert.equal(rel(target(join(ROOT, "platform/ui/interactable/catalog/view.tsx"), "../../../../tools/listing/index.ts")!), "tools/listing/index.ts");
 	assert.equal(rel(target(join(ROOT, "platform/ui/interactable/catalog/view.tsx"), "@/../web/tables.ts")!), "platform/web/tables.ts");
+});
+
+test("只有写入引擎可以开放站点提交，连接器只领取凭证", () => {
+	const file = join(ROOT, "connectors/sites/shopee/seller.ts");
+	const deps = "../../../platform/site-write.ts";
+	const inspect = (source: string) => readImportProblems([file], new Map([[file, source]]));
+	assert.deepEqual(inspect(`import { claimSiteSubmission as claim } from "${deps}"; claim();`), []);
+	for (const source of [
+		`import { runSiteSubmission as run } from "${deps}";`,
+		`import * as scope from "${deps}";`,
+		`export { claimSiteSubmission } from "${deps}";`,
+		`await import("${deps}");`,
+	])
+		assert.deepEqual(inspect(source), ["connectors/sites/shopee/seller.ts：连接器只能领取写入凭证"]);
+});
+
+test("Shopee 建品、首次上架及图片写入必须经过统一图片语言关卡", () => {
+	const guarded = [
+		["tools/listing/writes.ts", "createOp", "createListing", "now.r.info"],
+		["tools/listing/writes.ts", "liveOp", "listProduct", "current"],
+		["tools/listing/edit.ts", "editOp", "editProduct", "final"],
+		["tools/listing/expand.ts", "op", "expandProduct", "variantImageTarget(now, built.info)"],
+		["tools/listing/add-size.ts", "op", "addSizeProduct", "variantImageTarget(now, built.info)"],
+		["tools/catalog/status.ts", "statusWrite", "listProduct", "info"],
+	] as const;
+	const owners = new Map(["createProduct", "updateProduct", "setUnlisted"].map((name) => [name, new Set<string>()]));
+	for (const [file, , submit] of guarded) {
+		if (!owners.has(submit)) owners.set(submit, new Set());
+		owners.get(submit)!.add(file);
+	}
+	const api = new API();
+	try {
+		using snapshot = api.updateSnapshot({ openProjects: [join(ROOT, "tsconfig.json")] });
+		const program = snapshot.getProject(join(ROOT, "tsconfig.json"))!.program;
+		for (const [file, operation, submit, final] of guarded) {
+			const source = program.getSourceFile(join(ROOT, file))!;
+			const declarations = new Map<string, Node>();
+			function visit(node: Node): void {
+				if (isVariableDeclaration(node) || isFunctionDeclaration(node)) declarations.set(node.name?.getText() ?? "", node);
+				node.forEachChild(visit);
+			}
+			visit(source);
+			const op = declarations.get(operation)?.getText() ?? "";
+			const prepareStart = op.indexOf("async prepare");
+			const submitStart = op.slice(prepareStart).search(/\n\s*(?:async )?submit(?:\(|:)/);
+			assert.ok(prepareStart >= 0 && submitStart >= 0, `${file} ${operation} 必须登记 prepare 与 submit`);
+			const prepare = op.slice(prepareStart, prepareStart + submitStart);
+			assert.ok(prepare.includes("await imageLanguageBlock(") && prepare.includes(final), `${file} ${operation} 必须校验实际采用的图片`);
+			assert.match(prepare, /if \(language\) (?:return \{ skip: language \}|throw new Usage\(language\))/);
+			if (operation !== "statusWrite") assert.ok(op.includes(`${submit}.submit(`));
+		}
+		for (const file of CODE.filter((file) => rel(file).startsWith("tools/") && !file.endsWith(".test.ts"))) {
+			const source = program.getSourceFile(file)!;
+			for (const entry of source.imports) {
+				assert.ok(isStringLiteralLikeNode(entry));
+				const imported = target(file, entry.text);
+				if (!imported || !/^connectors\/sites\/shopee\/(publish|products|variants)\.ts$/.test(rel(imported))) continue;
+				assert.ok(isImportDeclaration(entry.parent), `${rel(file)}：站点商品操作只从有名导入使用`);
+				const bindings = entry.parent.importClause?.namedBindings;
+				assert.ok(bindings && isNamedImports(bindings), `${rel(file)}：站点商品操作只从有名导入使用`);
+				for (const element of bindings.elements) {
+					const name = (element.propertyName ?? element.name).text;
+					const allowed = owners.get(name);
+					assert.ok(!allowed || allowed.has(rel(file)), `${rel(file)}：${name} 只能从已登记的图片校验入口调用`);
+				}
+			}
+		}
+	} finally {
+		api.close();
+	}
 });
 
 const tracked = () =>

@@ -49,6 +49,7 @@
 | | `incomeComponents` | `POST /api/v4/accounting/pc/seller_income/income_detail/get_order_income_components` |
 | `returns.ts` | `cases` | `POST /api/v4/seller_center/return/return_list/get_exceptional_case_list` |
 | `marketing.ts` | `shopMetrics` | `GET /api/mydata/v3/dashboard/key-metrics/` |
+| | `productTraffic` | `GET /api/mydata/v1/product/traffic/details/`（单日商品卡来源） |
 | | `reviews` | `GET /api/v3/settings/search_shop_rating_comments_new/` |
 | | `adsAccount`、`adsSetup`、`campaigns`、`campaign`、`campaignGraph`、`gmsItems` | `POST /api/pas/v1/…`（见函数注释） |
 | | `vouchers`、`voucher` | `GET /api/marketing/v3/voucher/list/`、`/api/marketing/v3/voucher/` |
@@ -129,6 +130,8 @@
 `fixtures/unlist-product.json` 是 2026-10-30 列表批量入口成功下架的 `data` 摘录，商品 id 已替换。提交前后详情的 `is_unlisted` 从 false 变 true；详情的 `status` 可以暂时还是 1，因此对账不能只看 status。
 
 `fixtures/product-performance.json` 是 2026-10-30 从商品表现接口真回包抽取的有销量、零销量两条（其余字段省略，total 保留原值）；用于 id、确认件数和付款件数的解析。商品表现已逐项解析这些字段，缺少件数保留未知，不补零。`unlist-product` 的请求接口为 `update_product_info`，响应与商品状态字段见上述样本。
+
+`fixtures/product-traffic-day.json` 是 2026-11-20 从单品流量来源真回包抽出的商品卡点击汇总与来源行。卖家中心「按日」的商品表现和商品来源实测使用 `period=day`，`start_time` 取台湾当日零点，`end_time` 取次日零点。`psd_label_search` 和 `psd_label_recommendation` 分别对应搜索和推荐点击。来源行先和点击总量核对。
 
 `fixtures/*.json` 是解析过的回包（商品列表、订单卡片、商品资料、属性树、聊聊的会话和消息），api.test.ts 拿它们跑解析。都是照代码和上面记的写的（不是抓的真回包）。别的接口（经营数据、广告、优惠券、折扣、收入、售后、批量上架的记录）原样回，只解析外壳和列表那一层，没配样本。登录以后用 live.ts 读一遍，把真回包换进来（买家的名字、电话、地址、聊天内容换成假的）。
 

@@ -3,22 +3,14 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
+import { socialDiscoveryStrategy, strategyIds } from "../../platform/ui/interactable/selection/types.ts";
+import { parsePolicyJson, sourcePolicySchema, WORKBENCH_POLICY } from "../listing/index.ts";
+import { strategyExecution, trendPolicySchema } from "./strategy-execution.ts";
 
-export const WORKBENCH_POLICY = "skills/selection/references/workbench.md";
-export const selectionStrategyIds = ["peer-benchmark", "bestseller-accessories", "unmet-needs", "bundle-sales", "rising-demand"] as const;
-export const selectionStrategyId = z.enum(selectionStrategyIds);
+export { parsePolicyJson, WORKBENCH_POLICY } from "../listing/index.ts";
+export const selectionStrategyId = z.enum(strategyIds);
 export const workflowStepsSchema = z.array(z.string().trim().min(1).max(1000)).min(1).max(12);
-const trendPolicySchema = z
-	.strictObject({
-		windowDays: z.number().int().min(2).max(3660),
-		minPoints: z.number().int().positive(),
-		maxLagDays: z.number().int().nonnegative(),
-		minGrowthRate: z.number().nonnegative(),
-		minPreviousGrowthRate: z.number().nonnegative(),
-		minRobustGrowthRate: z.number().nonnegative(),
-		minBaselineMean: z.number().positive(),
-	})
-	.refine((v) => v.minPoints <= v.windowDays, "最少点数不得大于窗口天数");
+const documentedStrategies = strategyIds.filter((id) => id !== socialDiscoveryStrategy);
 const strategySchema = z
 	.strictObject({
 		id: selectionStrategyId,
@@ -30,9 +22,20 @@ const strategySchema = z
 		rejectWhen: z.array(z.string().trim().min(1)).min(1),
 		researchVersion: z.literal(1),
 		steps: workflowStepsSchema,
-		trend: trendPolicySchema.optional(),
 	})
-	.refine((v) => (v.id === "rising-demand" ? v.trend !== undefined : v.trend === undefined), "近期趋势流程必须配置时间窗口，其它流程不接收趋势参数");
+	.refine((strategy) => strategy.kind === strategyExecution[strategy.id].kind, { path: ["kind"], message: "策略分类与执行契约不符" });
+
+const socialDefinition = {
+	id: socialDiscoveryStrategy,
+	name: "小红书选品发现",
+	description: "从近期讨论台湾虾皮具体商品的笔记寻找选题，逐品核实台湾近期购买后再查货源。",
+	kind: strategyExecution[socialDiscoveryStrategy].kind,
+	purchaseReason: "从原帖里的具体商品或使用场景发现可面向台湾买家的商品。",
+	evidenceNeeded: ["可定位到原帖正文或图片的台湾站与商品场景依据。", "候选本身在台湾站有带日期的近期购买样本。"],
+	rejectWhen: ["找不到近期原帖、无法绑定使用场景，或者没有匹配该商品的近期购买证据。"],
+	researchVersion: 1,
+	steps: ["搜索近 30 天的台湾虾皮笔记。", "绑定原帖，提取直接商品或从明确场景延伸一次。", "逐品验证台湾近期购买、货源与成本，保存合格备选。"],
+} satisfies z.output<typeof strategySchema>;
 export const workbenchPolicySchema = z.strictObject({
 	targetShop: z.string().trim().min(1),
 	marketSiteId: z.number().int().positive(),
@@ -42,14 +45,8 @@ export const workbenchPolicySchema = z.strictObject({
 		evidenceRules: z.array(z.string().trim().min(1)).min(1),
 		deferred: z.array(z.strictObject({ name: z.string().trim().min(1), reason: z.string().trim().min(1) })),
 	}),
-	constraints: z.strictObject({
-		requireOnePieceSale: z.boolean(),
-		requireShip48h: z.boolean(),
-		maxMinQty: z.number().int().positive(),
-		maxSkuCount: z.number().int().positive(),
-		minSinglePriceTwd: z.number().positive(),
-	}),
-	strategies: z.array(strategySchema).length(selectionStrategyIds.length),
+	constraints: sourcePolicySchema,
+	strategies: z.array(strategySchema).length(documentedStrategies.length),
 });
 const templateSchema = z.strictObject({
 	fx: z.number().positive(),
@@ -59,7 +56,7 @@ const templateSchema = z.strictObject({
 	minMargin: z.number().min(0).max(1),
 	maxMargin: z.number().min(0).max(1),
 });
-export type StrategyDefinition = z.output<typeof strategySchema> & { policyPath: string; instructions: string; isCustomized: boolean };
+export type StrategyDefinition = z.output<typeof strategySchema> & { policyPath: string; instructions: string; isCustomized: boolean; trend?: TrendParameters };
 export type TrendParameters = z.output<typeof trendPolicySchema>;
 export type SelectionRunConfig = {
 	shop: string;
@@ -68,6 +65,7 @@ export type SelectionRunConfig = {
 	limit: number;
 	brief: string;
 	policyText: string;
+	assessmentPolicy?: string;
 	pricingTemplate: z.output<typeof templateSchema>;
 	constraints: z.output<typeof workbenchPolicySchema>["constraints"];
 	allowedCategories: string[] | null;
@@ -81,19 +79,11 @@ export function withWorkflow(definition: StrategyDefinition, steps: unknown): St
 	return steps === undefined ? definition : { ...definition, steps: workflowStepsSchema.parse(steps), isCustomized: true };
 }
 
-export function parsePolicyJson(markdown: string): unknown {
-	const block = markdown.match(/```json\s*\n([\s\S]*?)\n```/);
-	if (!block) throw new Usage("策略或定价说明缺少运行参数，请检查当前项目技能");
-	try {
-		return JSON.parse(block[1]!);
-	} catch {
-		throw new Usage("项目技能中的运行参数不是有效JSON，请检查策略或定价说明");
-	}
-}
-
 export function parseWorkbenchPolicy(markdown: string) {
 	const policy = workbenchPolicySchema.parse(parsePolicyJson(markdown));
-	if (new Set(policy.strategies.map((s) => s.id)).size !== selectionStrategyIds.length) throw new Usage("每个研究流程必须各有一个定义，不能重复");
+	const ids = new Set(policy.strategies.map((s) => s.id));
+	if (ids.size !== documentedStrategies.length || documentedStrategies.some((id) => !ids.has(id)))
+		throw new Usage("每个已登记的文档策略必须各有一个定义，不能重复");
 	return policy;
 }
 
@@ -114,7 +104,7 @@ async function readProjectFile(path: string) {
 export function researchPolicyText(markdown: string, rules: string, template: z.output<typeof templateSchema>): string {
 	const { methodology } = parseWorkbenchPolicy(markdown);
 	return [
-		rules,
+		rules.split("\n## 研究判断\n")[0]?.trim() ?? rules,
 		methodology.summary,
 		`共用检查：\n${methodology.commonChecks.map((check) => `- ${check}`).join("\n")}`,
 		`证据口径：\n${methodology.evidenceRules.map((rule) => `- ${rule}`).join("\n")}`,
@@ -134,13 +124,15 @@ export async function loadStrategyDefinitions(sql?: Sql, shop?: string): Promise
 	const policy = await loadSelectionPolicy();
 	const saved =
 		sql && shop ? await sql<{ strategy_id: string; steps: unknown }[]>`select strategy_id, steps from selection_workflows where shop = ${shop}` : [];
-	return policy.strategies.map((s) =>
-		withWorkflow(
+	return [...policy.strategies, socialDefinition].map((s) => {
+		const execution = strategyExecution[s.id];
+		return withWorkflow(
 			{
 				...s,
+				...(execution.market === "trend" ? { trend: trendPolicySchema.parse(execution.trend) } : {}),
 				policyPath: WORKBENCH_POLICY,
 				instructions: [
-					strategyInstructions(policy.markdown, s.name),
+					s.id === socialDiscoveryStrategy ? s.description : strategyInstructions(policy.markdown, s.name),
 					`购买理由：${s.purchaseReason}`,
 					`所需证据：\n${s.evidenceNeeded.map((requirement) => `- ${requirement}`).join("\n")}`,
 					`排除或停止条件：\n${s.rejectWhen.map((condition) => `- ${condition}`).join("\n")}`,
@@ -148,8 +140,8 @@ export async function loadStrategyDefinitions(sql?: Sql, shop?: string): Promise
 				isCustomized: false,
 			},
 			saved.find((row) => row.strategy_id === s.id)?.steps,
-		),
-	);
+		);
+	});
 }
 
 export async function saveWorkflow(sql: Sql, input: { shop: string; strategyId: string; steps?: string[] }): Promise<StrategyDefinition> {
@@ -187,9 +179,10 @@ export async function loadRunConfig(sql: Sql, input: { shop: string; strategyId:
 	const sources = await sql<{ offer_id: string }[]>`select distinct offer_id from listings where not cancelled`;
 	return {
 		...input,
-		marketSiteId: policy.marketSiteId,
+		marketSiteId: definition.id === socialDiscoveryStrategy ? 1 : policy.marketSiteId,
 		strategy: definition,
 		policyText: researchPolicyText(policy.markdown, rules, template),
+		assessmentPolicy: strategyInstructions(rules, "研究判断"),
 		pricingTemplate: template,
 		constraints: policy.constraints,
 		allowedCategories: Array.isArray(settings.categories) && settings.categories.length ? settings.categories.map(String) : null,

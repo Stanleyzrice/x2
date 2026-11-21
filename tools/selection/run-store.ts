@@ -5,128 +5,21 @@ import type postgres from "postgres";
 import { z } from "zod";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
+import {
+	candidateSchema,
+	eventSchema,
+	type RunCandidate,
+	type RunDetail,
+	type RunEventData,
+	type RunSnapshot,
+	type RunStatus,
+	type RunSummary,
+	runStatus,
+} from "../../platform/ui/interactable/selection/contract.ts";
+import { socialDiscoveryStrategy } from "../../platform/ui/interactable/selection/types.ts";
 
-export const runStatus = z.enum(["queued", "running", "needs-human", "completed", "failed", "cancelled", "interrupted"]);
-export type RunStatus = z.output<typeof runStatus>;
-export type RunSummary = {
-	id: string;
-	shop: string;
-	strategyId: string;
-	strategyName: string;
-	limit: number;
-	brief: string;
-	status: RunStatus;
-	step: string;
-	found: number;
-	createdAt: string;
-	updatedAt: string;
-	error: string | null;
-};
-const factIndexes = z.array(z.number().int().nonnegative()).max(12);
-const briefText = z.string().trim().min(1).max(500);
-export const researchConclusionSchema = z.object({
-	purchaseTask: briefText,
-	demandLevel: z.enum(["unknown", "search", "purchase"]),
-	queryFactIndexes: factIndexes,
-	comparableGroup: briefText,
-	deliverableDifference: briefText,
-	differenceStatus: z.enum(["supported", "hypothesis", "unknown"]),
-	failureConditions: z.array(briefText).min(1).max(6),
-	missing: z.array(briefText).max(12),
-});
-export type ResearchConclusion = z.output<typeof researchConclusionSchema>;
-export const researchAuditSchema = z.object({
-	steps: z
-		.array(
-			z.object({
-				stepIndex: z.number().int().positive(),
-				status: z.enum(["supported", "partial", "not-applicable"]),
-				conclusion: z.string().trim().min(1).max(200),
-				queryFactIndexes: factIndexes,
-				offerIds: z.array(z.string().regex(/^\d+$/)).max(15),
-				missing: z.array(briefText).max(12),
-			}),
-		)
-		.min(1)
-		.max(12),
-	stopReason: z.string().trim().min(1).max(500).nullable(),
-});
-export type ResearchAudit = z.output<typeof researchAuditSchema>;
-export const researchQuerySchema = z.object({
-	keyword: z.string().trim().min(1).max(80),
-	sourceKeyword: z.string().trim().min(1).max(80),
-	categoryPath: z.array(z.number().int().positive()).max(3),
-	role: z.enum(["product", "main", "accessory"]).default("product"),
-});
-const trendFactSchema = z.object({
-	wordId: z.number().int().positive(),
-	word: z.string(),
-	metric: z.string(),
-	basis: z.enum(["daily", "observed", "rolling", "unknown"]),
-	source: z.unknown().optional(),
-	qualified: z.boolean(),
-	reasons: z.array(z.string()),
-	summary: z.unknown(),
-});
-export type TrendFact = z.output<typeof trendFactSchema>;
-export const runEventDataSchema = z.discriminatedUnion("kind", [
-	z.object({
-		kind: z.literal("tool"),
-		tool: z.string(),
-		input: z.record(z.string(), z.unknown()),
-		result: z.unknown().optional(),
-		error: z.string().optional(),
-	}),
-	z.object({
-		kind: z.literal("plan"),
-		round: z.number().int().positive(),
-		plan: z.object({ focus: z.string(), decision: z.string(), explanation: z.string(), queries: z.array(researchQuerySchema) }),
-	}),
-	z.object({
-		kind: z.literal("query"),
-		round: z.number().int().positive(),
-		queryFactIndex: z.number().int().nonnegative(),
-		fact: z.object({
-			query: researchQuerySchema,
-			observedAt: z.string(),
-			updateTime: z.string().nullable(),
-			words: z.array(z.unknown()),
-			items: z.array(z.unknown()),
-			competition: z.unknown(),
-			needs: z.unknown(),
-			errors: z.array(z.string()),
-			searchSignal: z.boolean().nullable(),
-			purchaseSignal: z.boolean().nullable(),
-			demandScope: z.literal("keyword-category-or-whole-listing"),
-			trend: trendFactSchema.optional(),
-		}),
-	}),
-	z.object({
-		kind: z.literal("analysis"),
-		round: z.number().int().positive(),
-		batch: z.number().int().positive(),
-		summary: z.string(),
-		audit: researchAuditSchema.optional(),
-		research: z.array(researchConclusionSchema.extend({ offerId: z.string(), skuId: z.string() })),
-	}),
-	z.object({ kind: z.literal("stop"), reason: z.string(), added: z.number().int().nonnegative(), existing: z.number().int().nonnegative() }),
-]);
-export type RunEventData = z.output<typeof runEventDataSchema>;
-export type RunEvent = z.output<typeof eventSchema>;
-const receiptSchema = z.object({
-	sourceId: z.string(),
-	offerId: z.string(),
-	status: z.enum(["added", "existing"]),
-	sourceCapturedAt: z.string().optional(),
-	reusedSnapshot: z.boolean().optional(),
-});
-export type RunCandidate = z.output<typeof candidateSchema>;
-export type RunDetail = RunSummary &
-	ReturnType<typeof runSnapshot> & {
-		events: RunEvent[];
-		candidates: RunCandidate[];
-		cancelRequested: boolean;
-	};
+export type { RunCandidate, RunDetail, RunEvent, RunEventData, RunStatus, RunSummary } from "../../platform/ui/interactable/selection/contract.ts";
+
 export type RunCreation = {
 	requestId: string;
 	fingerprint: string;
@@ -152,22 +45,6 @@ export type RunStore = {
 };
 
 const LEASE_KEY = "x2 selection active research";
-const eventSchema = z.object({ id: z.string(), step: z.string(), message: z.string(), at: z.string(), data: runEventDataSchema.optional() });
-const candidateSchema = z.object({
-	offerId: z.string(),
-	url: z.string(),
-	title: z.string(),
-	sourceId: z.string().nullable(),
-	status: z.enum(["added", "existing", "rejected"]),
-	reason: z.string(),
-	evidence: z.string(),
-	problems: z.array(z.string()),
-	hardProblems: z.array(z.string()).optional(),
-	warnings: z.array(z.string()).optional(),
-	pricing: z.unknown().optional(),
-	research: researchConclusionSchema.optional(),
-	receipt: receiptSchema.optional(),
-});
 type Row = {
 	id: string;
 	request_id: string;
@@ -182,41 +59,54 @@ type Row = {
 	found: number;
 	created_at: Date;
 	updated_at: Date;
+	deleted_at: Date | null;
 	error: string | null;
 	events: unknown;
 	candidates: unknown;
 	cancel_requested: boolean;
 	config: unknown;
 };
-export function runSnapshot(config: unknown): { workflow?: string[]; agent?: { model: string; reasoningEffort: string } } {
+export function runSnapshot(config: unknown): RunSnapshot {
 	const parsed = z
 		.object({ strategy: z.object({ steps: z.array(z.string()) }).optional(), agent: z.object({ model: z.string(), reasoningEffort: z.string() }).optional() })
 		.safeParse(config);
 	if (!parsed.success) return {};
 	return { ...(parsed.data.strategy ? { workflow: parsed.data.strategy.steps } : {}), ...(parsed.data.agent ? { agent: parsed.data.agent } : {}) };
 }
-const detail = (r: Row): RunDetail => ({
-	id: r.id,
-	shop: r.shop,
-	strategyId: r.strategy_id,
-	strategyName: r.strategy_name,
-	limit: r.limit_count,
-	brief: r.brief,
-	status: runStatus.parse(r.status),
-	step: r.step,
-	found: r.found,
-	createdAt: r.created_at.toISOString(),
-	updatedAt: r.updated_at.toISOString(),
-	error: r.error,
-	events: z.array(eventSchema).parse(r.events),
-	candidates: z.array(candidateSchema).parse(r.candidates),
-	cancelRequested: r.cancel_requested,
-	...runSnapshot(r.config),
-});
+const detail = (r: Row): RunDetail => {
+	const candidates = z.array(candidateSchema).parse(r.candidates);
+	return {
+		id: r.id,
+		shop: r.shop,
+		strategyId: r.strategy_id,
+		strategyName: r.strategy_name,
+		limit: r.limit_count,
+		brief: r.brief,
+		status: runStatus.parse(r.status),
+		step: r.step,
+		found: r.found,
+		...(r.strategy_id === socialDiscoveryStrategy ? { selected: r.found + candidates.filter((candidate) => candidate.status === "existing").length } : {}),
+		createdAt: r.created_at.toISOString(),
+		updatedAt: r.updated_at.toISOString(),
+		error: r.error,
+		events: z.array(eventSchema).parse(r.events),
+		candidates,
+		cancelRequested: r.cancel_requested,
+		...(r.deleted_at ? { deleted: true } : {}),
+		...runSnapshot(r.config),
+	};
+};
 const summary = (r: Row): RunSummary => {
-	const { events: _events, candidates: _candidates, cancelRequested: _cancel, workflow: _workflow, agent: _agent, ...value } = detail(r);
+	const { events: _events, candidates: _candidates, cancelRequested: _cancel, workflow: _workflow, agent: _agent, deleted: _deleted, ...value } = detail(r);
 	return value;
 };
+
+export async function deleteRun(sql: Sql, shop: string, id: string): Promise<{ id: string }> {
+	const [deleted] = await sql<{ id: string }[]>`update selection_runs set deleted_at=coalesce(deleted_at, now())
+		where id=${id} and shop=${shop} and status not in ('queued','running') returning id`;
+	if (!deleted) throw new Usage("找不到可删除的研究记录，或研究仍在进行");
+	return deleted;
+}
 
 export function sameRunInput(savedFingerprint: string, fingerprint: string): void {
 	if (savedFingerprint !== fingerprint) throw new Usage("该requestId已用于另一组研究输入，请使用新的请求编号");
@@ -275,7 +165,9 @@ export function postgresRunStore(sql: Sql): RunStore {
 		recover,
 		list: async (shop) =>
 			(
-				await connection()<Row[]>`select * from selection_runs where (${shop ?? null}::text is null or shop=${shop ?? null}) order by created_at desc limit 40`
+				await connection()<
+					Row[]
+				>`select * from selection_runs where deleted_at is null and (${shop ?? null}::text is null or shop=${shop ?? null}) order by created_at desc limit 40`
 			).map(summary),
 		open: (input) =>
 			serializeOpen(async () => {

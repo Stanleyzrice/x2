@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Freight, Offer, OfferId, Tags } from "../../connectors/sites/1688/api.ts";
 import type { Audit } from "./audit.ts";
 import type { CategoryException } from "./category.ts";
+import type { ListingCoverage } from "./coverage.ts";
 import type { Pics } from "./pics.ts";
 import type { ChannelOption, Product } from "./product.ts";
 import type { SizeChart } from "./size-chart.ts";
@@ -46,7 +47,7 @@ export type ListingRow = {
 	note: string | null;
 	noted: string | null;
 	nickname: string | null;
-	offer: Offer | null;
+	offer: (Offer & { detail?: string[] }) | null;
 	offer_read_at: Date | null;
 	category_id: string | null;
 	category_path: number[] | null;
@@ -64,6 +65,7 @@ export type ListingRow = {
 	/** 上次核价：用的参数、国内运费、时间（make.ts 的 savePrices 写的） */
 	pricing: PricingSnapshot | null;
 	audit: Partial<Audit> | null;
+	coverage?: ListingCoverage | null;
 	problems: string | null;
 	step: string | null;
 	step_detail: string | null;

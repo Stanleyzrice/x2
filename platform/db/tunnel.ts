@@ -5,11 +5,9 @@ import { once } from "node:events";
 import { lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { connect, Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { acquire, type Lock, lockDir } from "../browser/lock.ts";
 import { NeedsHuman } from "../errors.ts";
 
-const CONFIG = fileURLToPath(new URL("../../ops/ssh_config", import.meta.url));
 const CONNECT_MS = 2000,
 	PROBE_MS = 2000,
 	CONTROL_MS = 3000,
@@ -87,7 +85,7 @@ export function tunnelTarget(url: string, alias: string): TunnelTarget {
 	if (!user || !database || user.includes("\0") || database.includes("\0"))
 		throw failure(`数据库隧道 ${endpoint(host, port)} 缺少有效的 URL 用户名或数据库名`, "INVALID_DATABASE_URL");
 	const key = createHash("sha256")
-		.update(JSON.stringify([CONFIG, lockDir(), alias, host, port]))
+		.update(JSON.stringify([lockDir(), alias, host, port]))
 		.digest("hex")
 		.slice(0, 20);
 	// macOS 系统临时目录太长，Unix 控制套接字使用短的、仅当前用户可访问的专属目录。
@@ -155,7 +153,7 @@ export async function probePostgres(target: TunnelTarget, dial: TunnelOps["conne
 }
 
 export function tunnelSshArgs(action: SshAction, target: TunnelTarget): string[] {
-	const base = ["-F", CONFIG, "-S", target.controlPath, "-o", "BatchMode=yes"];
+	const base = ["-S", target.controlPath, "-o", "BatchMode=yes"];
 	return action === "start"
 		? [
 				...base,
@@ -230,7 +228,7 @@ export async function open(url: string, alias: string, overrides: Partial<Tunnel
 			await waitClosed(target, ops.connect);
 		}
 		if (!(await ops.ssh("start", target)))
-			throw failure(`开不了 X2 托管数据库隧道 ${endpoint(target.host, target.port)}（${alias}）：检查 SSH 钥匙与仓库 ops/ssh_config`, "TUNNEL_START_FAILED");
+			throw failure(`开不了 X2 托管数据库隧道 ${endpoint(target.host, target.port)}（${alias}）：检查 SSH 钥匙与本机 ~/.ssh/config`, "TUNNEL_START_FAILED");
 		if ((await ops.probe(target)) !== "healthy")
 			throw failure(`X2 托管数据库隧道 ${endpoint(target.host, target.port)} 启动后仍无有效 PostgreSQL 响应`, "TUNNEL_PROBE_FAILED");
 		return await ops.connect(target.host, target.port);

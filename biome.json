@@ -24,6 +24,39 @@
 			}
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["platform/cli.ts", "connectors/sites/*/live.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": {
+							"level": "error",
+							"options": { "allow": ["error", "log"] }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["tools/**/*.ts"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"paths": {
+									"node:child_process": "业务工具通过已装配的连接器使用外部进程。",
+									"node:module": "业务工具使用可由类型和架构检查识别的导入。"
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	],
 	"linter": {
 		"rules": {
 			"preset": "recommended",
@@ -51,7 +84,7 @@
 				"noConsole": {
 					"level": "error",
 					"options": {
-						"allow": ["error", "log"]
+						"allow": ["error"]
 					}
 				}
 			},

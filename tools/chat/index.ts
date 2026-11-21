@@ -16,7 +16,15 @@ import { CHAT_WRITES, planSend, preview, type ReplyParams, replaySend, replyWrit
 
 const shop = str("店铺账号名或店铺id");
 const conversation = z.object({ shop, conversationId: str("选中的买家会话id") });
-const contextInput = conversation.extend({ historyDays, contextId: z.string().uuid().optional(), cursor: z.string().min(1).optional() });
+const projectPolicy = ".agents/skills/chat/SKILL.md";
+const suggestionInput = conversation.extend({
+	historyDays,
+	contextId: z.string().uuid().describe("messages 返回的会话上下文编号"),
+	policyPath: z.literal(projectPolicy).default(projectPolicy).describe("本项目的客服规则"),
+});
+const contextInput = conversation
+	.extend({ historyDays, contextId: z.string().uuid().optional(), cursor: z.string().min(1).optional() })
+	.refine((p) => !p.cursor || p.contextId !== undefined, { path: ["contextId"], message: "读取下一页须带上上一页的 context.id" });
 async function readContext(p: z.infer<typeof contextInput>) {
 	const sql = await db();
 	const previous = p.contextId ? await contextById(sql, p.shop, p.conversationId, p.contextId) : undefined;
@@ -34,34 +42,30 @@ export const chat: Toolkit = {
 			listConversations(p.shop, p.cursor, rollingWindow(p.historyDays)),
 		),
 		messages: get("现读所选会话的上下文，返回范围、指纹、建议、人工稿和发送状态；cursor仅连续向前加载", contextInput, readContext),
-		draft: get(
-			"经Penna gateway DeepSeek生成绑定上下文的建议；不覆盖人工草稿、不发送",
-			contextInput.extend({ policyPath: str("明确选择的客服规则Markdown路径") }),
-			async (p) => {
-				const { context } = await readContext(p),
-					sql = await db();
-				assertSuggestionContext(context);
-				const instructions = (await readFile(p.policyPath, "utf8")).trim();
-				if (!instructions) throw new Error("客服规则是空的");
-				const result = await suggest(instructions, draftPrompt(p.shop, context.messages));
-				const text = z.string().trim().min(1).max(2000).parse(result.text),
-					id = randomUUID();
-				await sql`insert into chat_suggestions (id, shop, shop_id, conversation_id, context_id, context_hash, latest_buyer_id, text, model) values (${id}, ${p.shop}, ${context.shopId}, ${p.conversationId}, ${context.id}, ${context.contextHash}, ${context.latestBuyerId}, ${text}, ${result.model})`;
-				return {
-					id,
-					text,
-					model: result.model,
-					contextId: context.id,
-					contextHash: context.contextHash,
-					shop: p.shop,
-					shopId: context.shopId,
-					conversationId: p.conversationId,
-					latestBuyerId: context.latestBuyerId,
-					range: context.range,
-					window: context.window,
-				};
-			},
-		),
+		draft: get("经Penna gateway DeepSeek生成绑定上下文的建议；不覆盖人工草稿、不发送", suggestionInput, async (p) => {
+			const { context } = await readContext(p),
+				sql = await db();
+			assertSuggestionContext(context);
+			const instructions = (await readFile(new URL(`../../${p.policyPath}`, import.meta.url), "utf8")).trim();
+			if (!instructions) throw new Error("客服规则是空的");
+			const result = await suggest(instructions, draftPrompt(p.shop, context.messages));
+			const text = z.string().trim().min(1).max(2000).parse(result.text),
+				id = randomUUID();
+			await sql`insert into chat_suggestions (id, shop, shop_id, conversation_id, context_id, context_hash, latest_buyer_id, text, model) values (${id}, ${p.shop}, ${context.shopId}, ${p.conversationId}, ${context.id}, ${context.contextHash}, ${context.latestBuyerId}, ${text}, ${result.model})`;
+			return {
+				id,
+				text,
+				model: result.model,
+				contextId: context.id,
+				contextHash: context.contextHash,
+				shop: p.shop,
+				shopId: context.shopId,
+				conversationId: p.conversationId,
+				latestBuyerId: context.latestBuyerId,
+				range: context.range,
+				window: context.window,
+			};
+		}),
 		"save-draft": get(
 			"按明确revision保存人工草稿；冲突不覆盖已有编辑",
 			conversation.extend({ contextId: z.string().uuid(), text: z.string().max(2000), revision: z.coerce.number().int().nonnegative() }),

@@ -60,6 +60,7 @@ export const addSizeProduct = submit(
 const retainedModel = existingModel.extend({ sku_image: z.string() });
 export const expandInfo = z.object({
 	std_tier_variation_list: addSizeInfo.shape.std_tier_variation_list.min(1).max(2),
+	description_info: addSizeInfo.shape.description_info.optional(),
 	model_list: z
 		.array(z.union([retainedModel, newModel]))
 		.min(1)

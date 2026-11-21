@@ -70,7 +70,7 @@ export function toolHelp(kit: Toolkit, name: string, t: Tool): string {
 	const tail = paged(t)
 		? "输出 { rows, next }：默认翻到底；--pages N 只翻 N 页；--cursor <next> 从上次停下的地方接着翻"
 		: isWrite(t)
-			? "写：人在终端里同意了才调。每一项先现读还该不该做、记意图、提交一次、读回来；结果未知退出码 4，不重发（x2 verify）"
+			? "在已获授权的范围内写。每一项先现读、记意图、提交一次并读回；结果未知退出码 4，不重发（x2 verify）"
 			: t.kind === "write"
 				? "连接器的写工具：只经业务工具的写工具调"
 				: "输出一个值";
@@ -126,15 +126,17 @@ export function schema(): Record<string, unknown> {
 export async function runTool(kit: Toolkit, args: string[]): Promise<{ help: string } | { value: unknown; tool: Tool }> {
 	const [name, ...rest] = args;
 	if (!name || name === "--help" || name === "-h") return { help: kitHelp(kit) };
-	const t = kit.tools[name];
+	const t = Object.hasOwn(kit.tools, name) ? kit.tools[name] : undefined;
 	if (!t) throw new Usage(`${kit.name} 没有 ${name} 这个工具\n${kitHelp(kit)}`);
 	const usage = () => toolHelp(kit, name, t);
 	if (rest.includes("--help") || rest.includes("-h")) return { help: usage() };
 	if (t.kind === "write" && !isWrite(t)) throw new Usage(`${call(kit, name)} 是连接器的写工具，只经业务工具的写工具调（x2 schema 看有哪些）`);
 
 	const { flags, bare } = await parseFlags(rest);
-	const { pages, cursor, try: tryFlag, ...given } = flags;
-	if (!paged(t) && (pages !== undefined || cursor !== undefined)) throw new Usage(`${name} 不是列表，没有 --pages、--cursor\n${usage()}`);
+	const { pages, try: tryFlag, ...given } = flags;
+	const cursor = paged(t) ? given.cursor : undefined;
+	if (paged(t)) delete given.cursor;
+	if (!paged(t) && pages !== undefined) throw new Usage(`${name} 不是列表，没有 --pages\n${usage()}`);
 	if (!isWrite(t) && tryFlag !== undefined) throw new Usage(`${name} 不是写工具，没有 --try\n${usage()}`);
 	const scoped = kit.scope ? given[kit.scope.flag] : undefined;
 	if (kit.scope) delete given[kit.scope.flag];

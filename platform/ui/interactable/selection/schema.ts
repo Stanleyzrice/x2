@@ -10,6 +10,7 @@ export const actions = {
 	start: "selection.run-start",
 	detail: "selection.run-detail",
 	cancel: "selection.run-cancel",
+	delete: "selection.run-delete",
 	"save-workflow": "selection.workflow-save",
 	"reset-workflow": "selection.workflow-reset",
 };

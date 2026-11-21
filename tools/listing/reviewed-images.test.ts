@@ -10,10 +10,12 @@ import type { Pic, Pics } from "./pics.ts";
 import {
 	problemsAfterReviewedImages,
 	REVIEWED_CACHE_CHUNK_BYTES,
+	reviewedAssetsParams,
 	reviewedImagesManifest,
 	reviewedImagesPreview,
 	reviewedImagesScope,
 	reviewedOptions,
+	validatePublishedAssetSources,
 	validateReviewedBytes,
 	validateReviewedFileDigests,
 	validateReviewedManifest,
@@ -79,6 +81,23 @@ function manifest(r: ReturnType<typeof row>) {
 	});
 }
 
+test("已建商品的详情和规格素材分别绑定原详情与逐SKU原图", () => {
+	const r = row();
+	const input = { detail: [entry(url("detail"))], options: [{ ...entry(url("蓝")), skuId: "0-0" }] };
+	const parse = (manifest: typeof input) => reviewedAssetsParams.parse({ id: "26", productId: "900", offerId: "123", manifest }).manifest;
+	assert.doesNotThrow(() => validatePublishedAssetSources(r, parse(input)));
+	assert.throws(() => validatePublishedAssetSources(r, parse({ ...input, detail: [entry(url("main"))] })), /原详情/);
+	assert.throws(() => validatePublishedAssetSources(r, parse({ ...input, options: [{ ...entry(url("红")), skuId: "0-0" }] })), /与原货源SKU不匹配/);
+	assert.throws(() => validatePublishedAssetSources(r, parse({ ...input, options: [...input.options, ...input.options] })), /重复SKU/);
+});
+
+test("已建商品可单独上传主图，须来自该稿的原主图", () => {
+	const parse = (sourceUrl: string) =>
+		reviewedAssetsParams.parse({ id: "26", productId: "900", offerId: "123", manifest: { main: [entry(sourceUrl)] } }).manifest;
+	assert.doesNotThrow(() => validatePublishedAssetSources(row(), parse(url("main"))));
+	assert.throws(() => validatePublishedAssetSources(row(), parse(url("detail"))), /原主图/);
+});
+
 function savedReviewedRow() {
 	const r = row(),
 		m = manifest(r);
@@ -107,6 +126,7 @@ test("已审图片导入及续做清除已解决的原图超限和未上传告�
 	const r = savedReviewedRow();
 	const stale = [
 		"图：缺可用的主图（仅准备货源，待图片处理和审阅）",
+		"图：缺可用的主图，待图片处理与审阅（x2 listing reviewed-images-preview）",
 		"图：主图 12 张，须明确选择最多 9 张",
 		"图：详情图 30 张，须明确选择最多 12 张",
 		`图：详情图 超过张数，不用（${url("detail2")}）`,
@@ -268,6 +288,7 @@ test("来源须属于本稿、clean-original必须同SHA，拆分详情允许同
 	assert.throws(() => validateReviewedManifest(r, split), /重复图片/);
 	assert.equal(reviewedImagesManifest.safeParse({ ...m, main: [{ ...m.main[0], path: "relative.png" }] }).success, false);
 	assert.equal(reviewedImagesManifest.safeParse({ ...m, main: [{ ...m.main[0], evidence: " " }] }).success, false);
+	assert.equal(reviewedImagesManifest.safeParse({ ...m, main: [{ ...m.main[0], unexpectedField: true }] }).success, false);
 });
 
 test("实际文件SHA、来源SHA、占位和详情长宽比校验，不因provider而豁免", () => {

@@ -12,7 +12,7 @@ import type { Json, Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { categoryAllowed, daysToShip, pickAttributes, recommendedPath } from "./category.ts";
 import { makeImages } from "./images.ts";
-import { type ImageMode, imageModeOf, type Pics } from "./pics.ts";
+import type { ImageMode, Pics } from "./pics.ts";
 import { freightOf, num, pricingPolicy, reprice, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
 import { MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
@@ -74,7 +74,7 @@ export async function make(
 		skuImages?: SkuImage[];
 	} = {},
 ): Promise<{ id: string; problems: string[] }> {
-	const [l] = await sql<ListingRow[]>`select * from listings where id = ${id}`;
+	const [l] = await sql<(ListingRow & { revision: string })[]>`select *, xmin::text as revision from listings where id = ${id}`;
 	if (!l) throw new Error(`没有商品稿 ${id}`);
 	if (options.prepareOnly) {
 		if (l.product_id || l.listed_at) throw new Error("已建商品不能仅准备货源和规格");
@@ -84,13 +84,16 @@ export async function make(
 		throw new Error("已建商品不能重新指定货源或图片范围");
 	const [row] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${l.shop}`;
 	const s = settingsOf(row!);
-	const imageMode = imageModeOf(options.imageMode, l.images, l.source_product_id ? "original" : "processed");
+	const savedMode = l.images.imageMode ?? (l.images.main?.length ? (l.source_product_id ? "original" : "processed") : undefined);
+	const imageMode = options.prepareOnly ? undefined : (options.imageMode ?? savedMode);
+	if (!imageMode && (l.product_id || l.listed_at)) throw new Error("已建商品不能重新准备货源和规格");
+	if (!imageMode && (options.mainImages || options.detailImages)) throw new Error("只准备货源时须用 listing reviewed-images 导入选定主图与详情图");
 	if (imageMode === "reviewed") {
 		if (options.sourceSkuIds || options.mainImages || options.detailImages || options.skuImages)
 			throw new Error("已审图片续做不重排货源、规格或图片；修改范围须重新导入审阅清单");
 		return completeReviewed(sql, l, s, log);
 	}
-	if (!options.prepareOnly && imageMode === "processed" && !s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
+	if (imageMode === "processed" && !s.mark) return save(sql, id, {}, ["水印：店铺设置里缺这家店的水印（两家店的封面要不一样）"]);
 
 	let source: import("./source-data.ts").SourceProduct | null = null;
 	let o: Offer;
@@ -120,17 +123,8 @@ export async function make(
 		}
 	}
 	const removed = sourceScope(o, options.sourceSkuIds, l.removed_variants ?? []);
-	const detail = source
-		? options.prepareOnly
-			? source.description.images
-			: (fields.detailImages ?? source.description.images)
-		: (options.detailImages ??
-			(o.detailUrl
-				? await from1688(() => detailImages(o.detailUrl!)).catch((e) => {
-						log(`详情图取不到：${(e as Error).message}`);
-						return [] as string[];
-					})
-				: []));
+	const sourceDetail = source ? source.description.images : o.detailUrl ? await from1688(() => detailImages(o.detailUrl!)) : [];
+	const detail = (source ? fields.detailImages : options.detailImages) ?? sourceDetail;
 
 	const freight = freightOf(o, l.freight_rmb);
 	const { specs: sourceSpecs, problems } = specsAndPrices(o, s, {
@@ -150,7 +144,7 @@ export async function make(
 			url: o.url,
 			title: o.title,
 			images: o.images,
-			detail,
+			detail: sourceDetail,
 			tags: o.tags,
 			freight: o.freight,
 			minQty: o.minQty,
@@ -168,9 +162,9 @@ export async function make(
 		Object.assign(done, { title, description });
 		problems.push(...textProblems(title, description));
 	}
-	if (options.prepareOnly) {
+	if (!imageMode) {
 		log("仅保存货源、完整详情来源、规格和核价，待图片处理与审阅");
-		return save(sql, id, done, [...problems, "图：缺可用的主图（仅准备货源，待图片处理和审阅）"], source ? l : undefined);
+		return save(sql, id, done, [...problems, "图：缺可用的主图，待图片处理与审阅（x2 listing reviewed-images-preview）"], l);
 	}
 
 	const browser: Runner = (fn) => inShopQueued(s.shopId, fn);
@@ -296,14 +290,16 @@ async function save(
 	id: string,
 	fields: Record<string, unknown>,
 	problems: string[],
-	source?: Pick<ListingRow, "source_product_id" | "source_fields">,
+	snapshot?: { source_product_id?: string | null; revision: string },
 ): Promise<{ id: string; problems: string[] }> {
 	const json = new Set(["images", "offer", "variants", "pricing", "attributes", "category_path", "removed_variants"]);
 	const set = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, json.has(k) && v !== null && v !== undefined ? sql.json(v as Json) : v]));
 	const patch = sql({ ...set, problems: problems.join("\n") || null, updated_at: new Date() });
-	if (source) {
+	if (snapshot) {
+		const sourceId = snapshot.source_product_id ?? null;
 		const changed = await sql`update listings set ${patch} where id = ${id} and product_id is null and listed_at is null
-			and source_product_id = ${source.source_product_id!} and exists (select 1 from listing_sources where id = ${source.source_product_id!} and deleted_at is null) and source_fields is not distinct from ${source.source_fields == null ? null : sql.json(source.source_fields as Json)}
+			and xmin::text = ${snapshot.revision}
+			and (${sourceId}::bigint is null or exists (select 1 from listing_sources where id = ${sourceId} and deleted_at is null))
 			and not exists (select 1 from writes where params->>'listingId' = ${id} and status in ('待执行','已提交','结果未知','不一致')) returning id`;
 		if (!changed.length) throw new Error("准备期间商品资料或提交状态已变化，未覆盖人工修改，请重新准备");
 	} else await sql`update listings set ${patch} where id = ${id}`;

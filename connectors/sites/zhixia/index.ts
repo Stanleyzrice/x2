@@ -57,6 +57,8 @@ const tools = {
 };
 
 /** 期望站点是显式技术约束；整个分页读取链继承约束，未传时继续使用当前站点。 */
+export { demandSeries } from "./api.ts";
+
 export function withSiteInput(tool: ReadTool): ReadTool {
 	const params = tool.params.extend({ expectedSiteId: z.coerce.number().int().positive().optional().describe("期望的原生站点编号；不符时停止，不自动切站") });
 	const scoped = <T>(input: never, read: (input: never) => Promise<T>) => {
@@ -68,11 +70,11 @@ export function withSiteInput(tool: ReadTool): ReadTool {
 		: { ...tool, params, page: (input, cursor) => scoped(input, (original) => tool.page(original, cursor)) };
 }
 
-export const zhixia: Toolkit = {
+export const zhixia = {
 	name: "zhixia",
 	title: "知虾（Shopee 的数据平台；限流：每次隔 6～10 秒、每小时 200 次）",
 	kind: "site",
-	tools: Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, withSiteInput(tool)])),
+	tools: Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, withSiteInput(tool)])) as Record<keyof typeof tools, ReadTool>,
 	site: {
 		key: "zhixia",
 		title: "知虾",
@@ -87,4 +89,4 @@ export const zhixia: Toolkit = {
 				}),
 		},
 	},
-};
+} satisfies Toolkit;

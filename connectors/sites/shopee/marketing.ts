@@ -4,7 +4,8 @@ const DAY = 86400;
 export const twMidnight = (daysAgo = 0) => Math.floor((Date.now() / 1000 + 8 * 3600) / DAY) * DAY - 8 * 3600 - daysAgo * DAY;
 
 import { z } from "zod";
-import { row, seller, type Write, withData, write } from "./seller.ts";
+import { reply } from "../../../platform/reply.ts";
+import { type ItemId, row, seller, type Write, withData, write } from "./seller.ts";
 
 const n = z.union([z.number(), z.string()]).nullish();
 /** 原样回的 data（不认识里面的格） */
@@ -18,6 +19,33 @@ export async function shopMetrics(start: number, end: number, period: "past7days
 			query: { start_time: start, end_time: end, period },
 		})
 	).result;
+}
+
+const trafficDetailsPath = "/api/mydata/v1/product/traffic/details/";
+const trafficClicks = z.number().int().nonnegative();
+const trafficDetails = z.object({
+	result: z.object({
+		product_card: z.object({
+			total: z.object({ product_clicks: trafficClicks }),
+			breakdown: z.array(z.object({ source: z.string(), product_clicks: trafficClicks })),
+		}),
+	}),
+});
+
+export function productTrafficOf(raw: unknown) {
+	const { total, breakdown } = reply(trafficDetails, raw, `Shopee ${trafficDetailsPath}`).result.product_card;
+	const sources = new Map(breakdown.map(({ source, product_clicks }) => [source, product_clicks]));
+	if (sources.size !== breakdown.length || breakdown.reduce((sum, row) => sum + row.product_clicks, 0) !== total.product_clicks)
+		throw new Error("Shopee 商品卡点击来源汇总不完整");
+	return { total: total.product_clicks, search: sources.get("psd_label_search") ?? 0, recommendation: sources.get("psd_label_recommendation") ?? 0 };
+}
+
+/** 单日来源明细沿用卖家详情页的台湾时间区间，结束时间为次日零点。 */
+export async function productTraffic(itemId: ItemId, start: number, end: number): Promise<ReturnType<typeof productTrafficOf>> {
+	const raw = await seller(trafficDetailsPath, z.unknown(), {
+		query: { item_id: itemId, start_time: start, end_time: end, period: "day", order_type: "confirmed" },
+	});
+	return productTrafficOf(raw);
 }
 
 /** 评价的一页（20 条）。cursor 是上一页最后一条的 comment_id，第一页是 "0"；给了订单号只找它的评价。

@@ -13,17 +13,18 @@ import {
 	SquareIcon,
 	Trash2Icon,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { errorOf, remember, saved } from "@/lib/state";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
-import { EventEvidence, ResearchConclusionView, SavedReceipt, TrendParameters } from "./research.tsx";
+import { EventEvidence, ResearchConclusionView, SavedReceipt, SocialEvidenceView, TrendParameters } from "./research.tsx";
 import type { Props } from "./schema.ts";
 import {
 	canCancelRun,
@@ -49,8 +50,8 @@ import {
 	workflowChanged,
 	workflowInput,
 } from "./state.ts";
-import type { Candidate, Methodology, RunDetail, RunStatus, RunSummary, Strategy, Workbench } from "./types.ts";
-import { strategyIds } from "./types.ts";
+import type { Candidate, Methodology, RunDetail, RunReceipt, RunStatus, RunSummary, Strategy, Workbench } from "./types.ts";
+import { defaultSelectionLimit, socialDiscoveryStrategy, strategyIds } from "./types.ts";
 
 const dateTime = (value: string) => {
 	const date = new Date(value);
@@ -67,7 +68,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const storageKey = `x2-selection:${item.id}:${props.shop}`;
 	const [restored] = useState(() => readWorkspace(storageKey));
 	const [strategyId, setStrategyId] = useState<string>(() => restored.pendingStart?.strategyId ?? initialStrategy(window.location.search, restored.strategyId));
-	const [limit, setLimit] = useState(restored.limit);
+	const [limit, setLimit] = useState(() => (strategyId === restored.strategyId ? restored.limit : String(defaultSelectionLimit(strategyId))));
 	const [brief, setBrief] = useState(restored.brief);
 	const [selectedRunId, setSelectedRunId] = useState<string | null>(restored.selectedRunId);
 	const [receivedDetail, setReceivedDetail] = useState<RunDetail | null>(null);
@@ -76,6 +77,10 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const unresolvedStart = pendingStart !== null;
 	const [stopping, setStopping] = useState(false);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [runToDelete, setRunToDelete] = useState<RunSummary | null>(null);
+	const [deleting, setDeleting] = useState(false);
+	const [deleteError, setDeleteError] = useState<string | null>(null);
+	const [deletedRunIds, setDeletedRunIds] = useState(() => new Set<string>());
 	const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, string[]>>({});
 	const [editingWorkflows, setEditingWorkflows] = useState<Record<string, boolean>>({});
 	const [workflowReceipt, setWorkflowReceipt] = useState<WorkflowReceipt>({ basis: null, values: {} });
@@ -95,14 +100,15 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const unsavedWorkflow = Boolean(selectedStrategy && workflowChanged(selectedStrategy.steps, workflowSteps));
 	const editingWorkflow = editingWorkflows[strategyId] === true || unsavedWorkflow;
 	const preparedWorkflow = workflowInput(workflowSteps);
-	const recordedRuns = mergeRuns(workbench?.runs ?? [], receivedDetail, props.shop);
-	const runId = selectedRunId ?? recordedRuns[0]?.id ?? null;
+	const recordedRuns = mergeRuns(workbench?.runs ?? [], receivedDetail, props.shop).filter((run) => !deletedRunIds.has(run.id));
+	const runId = selectedRunId && !deletedRunIds.has(selectedRunId) ? selectedRunId : (recordedRuns[0]?.id ?? null);
 	const summary = recordedRuns.find((run) => run.id === runId);
-	const [polledDetail, detailError, refreshDetail] = usePoll(
-		() => (runId ? api.act<RunDetail>(item.id, "detail", { runId }) : Promise.resolve(null)),
+	const [polledRun, detailError, refreshDetail] = usePoll(
+		() => (runId ? api.act<RunReceipt>(item.id, "detail", { runId }) : Promise.resolve(null)),
 		summary && isTerminalRun(summary.status) ? 30_000 : 2000,
 		[item.id, props.shop, runId],
 	);
+	const polledDetail = polledRun && !("deleted" in polledRun) ? polledRun : null;
 	const detail = latestDetail(runId, receivedDetail?.shop === props.shop ? receivedDetail : null, polledDetail?.shop === props.shop ? polledDetail : null);
 	const runs = mergeRuns(recordedRuns, detail, props.shop);
 	const activeRun = runs.find((run) => canCancelRun(run.status));
@@ -119,6 +125,18 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	useEffect(() => {
 		saveWorkspace(storageKey, { strategyId, limit, brief, selectedRunId, pendingStart });
 	}, [storageKey, strategyId, limit, brief, selectedRunId, pendingStart]);
+	const forgetRun = useCallback(
+		(id: string) => {
+			setDeletedRunIds((ids) => (ids.has(id) ? ids : new Set([...ids, id])));
+			setReceivedDetail((current) => (current?.id === id ? null : current));
+			setSelectedRunId((current) => (current === id ? null : current));
+			refreshWorkbench();
+		},
+		[refreshWorkbench],
+	);
+	useEffect(() => {
+		if (polledRun?.shop === props.shop && "deleted" in polledRun) forgetRun(polledRun.id);
+	}, [polledRun, props.shop, forgetRun]);
 
 	const start = async () => {
 		if (!canStart || !prepared.input) return;
@@ -130,13 +148,18 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 		setSubmitting(true);
 		setActionError(null);
 		try {
-			const result = await api.act<RunDetail>(item.id, "start", input);
+			const result = await api.act<RunReceipt>(item.id, "start", input);
 			startGate.current.settle(true);
-			setReceivedDetail(result);
-			setSelectedRunId(result.id);
+			if ("deleted" in result) {
+				forgetRun(result.id);
+				saveWorkspace(storageKey, { strategyId, limit, brief, selectedRunId: selectedRunId === result.id ? null : selectedRunId, pendingStart: null });
+			} else {
+				setReceivedDetail(result);
+				setSelectedRunId(result.id);
+				saveWorkspace(storageKey, { strategyId, limit, brief, selectedRunId: result.id, pendingStart: null });
+				refreshWorkbench();
+			}
 			setPendingStart(null);
-			saveWorkspace(storageKey, { strategyId, limit, brief, selectedRunId: result.id, pendingStart: null });
-			refreshWorkbench();
 		} catch (error) {
 			startGate.current.settle(false);
 			setActionError(errorOf(error));
@@ -159,6 +182,20 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 		} finally {
 			stopPending.current = false;
 			setStopping(false);
+		}
+	};
+	const removeHistory = async () => {
+		if (!runToDelete || deleting) return;
+		setDeleting(true);
+		setDeleteError(null);
+		try {
+			await api.act(item.id, "delete", { runId: runToDelete.id });
+			forgetRun(runToDelete.id);
+			setRunToDelete(null);
+		} catch (error) {
+			setDeleteError(errorOf(error));
+		} finally {
+			setDeleting(false);
 		}
 	};
 	const refresh = () => {
@@ -273,7 +310,12 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 										name={`${formId}-strategy`}
 										value={strategy.id}
 										checked={strategyId === strategy.id}
-										onChange={() => setStrategyId(strategy.id)}
+										onChange={() => {
+											if (strategy.id === socialDiscoveryStrategy || strategyId === socialDiscoveryStrategy) {
+												setLimit(String(defaultSelectionLimit(strategy.id)));
+											}
+											setStrategyId(strategy.id);
+										}}
 										disabled={formLocked}
 									/>
 									<span className="flex items-center justify-between gap-3">
@@ -296,7 +338,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						<Card>
 							<CardHeader>
 								<CardTitle>{selectedStrategy ? `${selectedStrategy.name} · 研究依据与步骤` : "研究步骤"}</CardTitle>
-								<CardDescription>先看购买理由与证据要求，再按保存的步骤执行研究。调整步骤后先保存。</CardDescription>
+								<CardDescription>系统校验策略流程与证据。自定义步骤用于调整研究重点。</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
 								{selectedStrategy && <StrategyBasis strategy={selectedStrategy} />}
@@ -426,7 +468,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 								</div>
 								<div className="flex items-end justify-between gap-4">
 									<div className="max-w-36 space-y-2">
-										<Label htmlFor={`${formId}-limit`}>目标新增货源数</Label>
+										<Label htmlFor={`${formId}-limit`}>{strategyId === socialDiscoveryStrategy ? "目标选品数" : "目标新增货源数"}</Label>
 										<Input
 											id={`${formId}-limit`}
 											type="number"
@@ -440,7 +482,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 										/>
 									</div>
 									<p id={`${formId}-limit-hint`} className="text-right text-xs leading-relaxed text-muted-foreground">
-										1—10个来源
+										{strategyId === socialDiscoveryStrategy ? "1—10 个商品" : "1—10个来源"}
 										<br />
 										不足时保留原因
 									</p>
@@ -495,12 +537,43 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						研究记录
 					</h3>
 					{runs.length ? (
-						runs.map((run) => <RunHistory key={run.id} run={run} selected={run.id === runId} select={() => setSelectedRunId(run.id)} />)
+						runs.map((run) => (
+							<RunHistory
+								key={run.id}
+								run={run}
+								selected={run.id === runId}
+								select={() => setSelectedRunId(run.id)}
+								remove={() => {
+									setDeleteError(null);
+									setRunToDelete(run);
+								}}
+							/>
+						))
 					) : (
 						<p className="rounded-xl border p-5 text-sm text-muted-foreground">还没有研究记录。</p>
 					)}
 				</aside>
 			</div>
+			<Dialog open={runToDelete !== null} onOpenChange={(open) => !open && !deleting && setRunToDelete(null)}>
+				<DialogContent showCloseButton={false}>
+					<DialogHeader>
+						<DialogTitle>删除研究记录？</DialogTitle>
+						<DialogDescription>
+							将删除 {runToDelete && dateTime(runToDelete.createdAt)} 的「{runToDelete?.strategyName}」研究记录。已保存的备选商品会继续保留。
+						</DialogDescription>
+					</DialogHeader>
+					<ErrorMessage message={deleteError} />
+					<DialogFooter>
+						<Button variant="outline" onClick={() => setRunToDelete(null)} disabled={deleting}>
+							取消
+						</Button>
+						<Button variant="destructive" onClick={() => void removeHistory()} disabled={deleting}>
+							{deleting && <LoaderCircleIcon className="animate-spin" />}
+							{deleting ? "删除中…" : "删除"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</main>
 	);
 }
@@ -575,26 +648,40 @@ function ErrorMessage({ message }: { message: string | null | undefined }) {
 	) : null;
 }
 
-function RunHistory({ run, selected, select }: { run: RunSummary; selected: boolean; select: () => void }) {
+function RunHistory({ run, selected, select, remove }: { run: RunSummary; selected: boolean; select: () => void; remove: () => void }) {
+	const canDelete = isTerminalRun(run.status);
+	const date = dateTime(run.createdAt);
 	return (
-		<button
-			type="button"
-			onClick={select}
-			aria-pressed={selected}
-			className={`w-full space-y-3 rounded-xl border p-4 text-left transition-colors ${selected ? "border-primary bg-primary/5" : "bg-card hover:bg-muted/40"}`}
-		>
-			<span className="flex items-center justify-between gap-2">
-				<span className="text-sm font-medium">{run.strategyName}</span>
-				<Badge variant={badgeVariant(run.status)}>{runOutcome(run)}</Badge>
-			</span>
-			{run.brief && <span className="line-clamp-2 block text-xs leading-relaxed text-muted-foreground">{run.brief}</span>}
-			<span className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-				<span>{dateTime(run.createdAt)}</span>
-				<span>
-					新增 {run.found}／{run.limit} 个来源
+		<div className="relative">
+			<button
+				type="button"
+				onClick={select}
+				aria-pressed={selected}
+				className={`w-full space-y-3 rounded-xl border p-4 text-left transition-colors ${selected ? "border-primary bg-primary/5" : "bg-card hover:bg-muted/40"}`}
+			>
+				<span className="flex items-center justify-between gap-2">
+					<span className="text-sm font-medium">{run.strategyName}</span>
+					<Badge variant={badgeVariant(run.status)}>{runOutcome(run)}</Badge>
 				</span>
-			</span>
-		</button>
+				{run.brief && <span className="line-clamp-2 block text-xs leading-relaxed text-muted-foreground">{run.brief}</span>}
+				<span className={`flex items-center justify-between gap-2 text-xs text-muted-foreground ${canDelete ? "pr-8" : ""}`}>
+					<span>{date}</span>
+					<span>{run.selected === undefined ? `新增 ${run.found}／${run.limit} 个来源` : `选出 ${run.selected}／${run.limit} 个商品`}</span>
+				</span>
+			</button>
+			{canDelete && (
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					className="absolute right-2 bottom-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+					aria-label={`删除 ${date} 的${run.strategyName}研究记录`}
+					title="删除研究记录"
+					onClick={remove}
+				>
+					<Trash2Icon />
+				</Button>
+			)}
+		</div>
 	);
 }
 
@@ -637,7 +724,7 @@ function RunResult({
 						)}
 					</div>
 					<div className="grid grid-cols-3 gap-3 rounded-lg bg-muted/50 p-4 text-center">
-						<Metric label="新增进度" value={`${run.found}／${run.limit}`} />
+						<Metric label={run.selected === undefined ? "新增进度" : "选品进度"} value={`${run.selected ?? run.found}／${run.limit}`} />
 						<Metric label="新增备选" value={String(added)} />
 						<Metric label="备选已有" value={String(existing)} />
 					</div>
@@ -657,9 +744,13 @@ function RunResult({
 							<p className="text-xs text-muted-foreground">载入后可调整方向，再点击开始研究。已有备选会保留，同源不重复新增。</p>
 						</div>
 					)}
-					{run.status === "completed" && run.found < run.limit && (
+					{run.status === "completed" && (run.selected ?? run.found) < run.limit && (
 						<p role="status" className="rounded-lg border p-3 text-sm leading-relaxed">
-							{run.found === 0 ? "本次没有新增备选，未达到目标。" : `本次新增${run.found}个货源，少于目标${run.limit}个。`}
+							{run.selected !== undefined
+								? `本次选出${run.selected}个商品，少于目标${run.limit}个。`
+								: run.found === 0
+									? "本次没有新增备选，未达到目标。"
+									: `本次新增${run.found}个货源，少于目标${run.limit}个。`}
 							请查看排除原因、已有来源和待补资料；研究结束不代表已完成上架审核。
 						</p>
 					)}
@@ -745,6 +836,10 @@ function CandidateCard({ candidate, events }: { candidate: Candidate; events: Ru
 					</a>
 				)}
 				{candidate.reason && <p className="whitespace-pre-wrap leading-relaxed">{candidate.reason}</p>}
+				{candidate.qualification && (
+					<Badge variant="outline">{{ rejected: "筛选拒绝", pending: "核价资料待补", priced: "已完成成本试算" }[candidate.qualification]}</Badge>
+				)}
+				{candidate.social && <SocialEvidenceView evidence={candidate.social} />}
 				{candidate.research && <ResearchConclusionView research={candidate.research} events={events} />}
 				{candidate.receipt && <SavedReceipt receipt={candidate.receipt} />}
 				{facts.length > 0 && (

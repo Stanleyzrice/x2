@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { type Bytes, inspect } from "../../connectors/services/image/api.ts";
+import { OfferId, SkuId } from "../../connectors/sites/1688/api.ts";
+import { ItemId } from "../../connectors/sites/shopee/seller.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson } from "../../platform/tool.ts";
@@ -18,7 +20,7 @@ import { specsOf } from "./variants.ts";
 
 const hash = z.string().regex(/^[a-f\d]{64}$/);
 const evidence = z.string().trim().min(1);
-const image = z.object({
+const image = z.strictObject({
 	sourceUrl: z.url({ protocol: /^https?$/ }),
 	sourceSha256: hash,
 	path: z.string().trim().refine(isAbsolute, "图片须为本地绝对路径"),
@@ -26,7 +28,7 @@ const image = z.object({
 	provider: z.enum(["openai-image", "clean-original"]),
 	evidence,
 });
-export const reviewedImagesManifest = z.object({
+export const reviewedImagesManifest = z.strictObject({
 	expectedScope: hash,
 	main: z.array(image).min(1).max(MAX_MAIN),
 	detail: z.array(image).max(MAX_DETAIL),
@@ -36,6 +38,22 @@ export const reviewedImagesPreviewParams = z.object({ id: ListingId });
 export const reviewedImagesParams = z.object({
 	id: ListingId,
 	manifest: z.preprocess(parseJson, reviewedImagesManifest).describe("已审图片清单JSON，含expectedScope、main/detail/options；写 - 从stdin读"),
+});
+const publishedAssets = z
+	.strictObject({
+		main: z.array(image).max(MAX_MAIN).default([]),
+		detail: z.array(image).max(MAX_DETAIL).default([]),
+		options: z
+			.array(image.extend({ skuId: z.string().min(1).pipe(SkuId) }))
+			.max(100)
+			.default([]),
+	})
+	.refine((p) => p.main.length + p.detail.length + p.options.length > 0, "须提供已审主图、详情或规格图片");
+export const reviewedAssetsParams = z.object({
+	id: ListingId.describe("已建商品对应的本地稿号"),
+	productId: z.string().regex(/^\d+$/).pipe(ItemId).describe("预期现有Shopee商品id"),
+	offerId: z.string().regex(/^\d+$/).pipe(OfferId).describe("预期原1688货源编号"),
+	manifest: z.preprocess(parseJson, publishedAssets).describe("已审详情和规格图片清单，规格项逐SKU绑定来源；写 - 从stdin读"),
 });
 type Manifest = z.output<typeof reviewedImagesManifest>;
 type ImageInput = z.output<typeof image> & { skuIds?: string[] };
@@ -114,6 +132,7 @@ export function validateReviewedManifest(row: SourceRow, manifest: Manifest): vo
 export function validateReviewedBytes(input: ImageInput, processed: Bytes, sourceSha: string, role: (typeof roles)[number]): void {
 	if (sourceSha !== input.sourceSha256) throw new Usage("来源原图SHA与审阅清单不一致，请重新核图");
 	if (processed.sha256 !== input.sha256) throw new Usage("本地处理文件SHA已变化，请重新审阅");
+	if (input.provider === "clean-original" && processed.sha256 !== sourceSha) throw new Usage("clean-original的文件须与原图SHA相同");
 	if (processed.width <= 10 || processed.height <= 10 || processed.width * processed.height > 40_000_000) throw new Usage("已审图片尺寸无效或超过4000万像素");
 	if (role === "detail" && !detailFits(processed.width, processed.height)) throw new Usage("已审详情图须宽≥700、高≥32、宽高比0.5–32；请先处理合规尺寸");
 }
@@ -146,6 +165,7 @@ export function problemsAfterReviewedImages(row: SourceRow & Pick<ListingRow, "p
 	validateSavedReviewedImages(row);
 	const resolved = [
 		/^图：缺可用的主图(?:（仅准备货源，待图片处理和审阅）)?$/,
+		/^图：缺可用的主图，待图片处理与审阅（x2 listing reviewed-images-preview）$/,
 		new RegExp(`^图：主图 \\d+ 张，须明确选择最多 ${MAX_MAIN} 张$`),
 		new RegExp(`^图：详情图 \\d+ 张，须明确选择最多 ${MAX_DETAIL} 张$`),
 		/^图：(主图|详情图|规格图) (超过张数，不用|尚未上传)（https?:\/\/[^）]+）$/,
@@ -217,6 +237,49 @@ export async function importReviewedImages(sql: Sql, p: z.output<typeof reviewed
 			images: pics,
 		};
 	});
+}
+
+/** 已建商品的素材与商品内容分开提交；图片须绑定原角色或源SKU。 */
+export function validatePublishedAssetSources(row: SourceRow, assets: z.output<typeof publishedAssets>) {
+	const sources = sourceLists(row);
+	const main = new Set(sources.main);
+	if (assets.main.some((entry) => !main.has(entry.sourceUrl))) throw new Usage("主图素材URL须来自此商品的原主图");
+	const detail = new Set(sources.detail);
+	if (assets.detail.some((entry) => !detail.has(entry.sourceUrl))) throw new Usage("详情素材URL须来自此商品的原详情");
+	const skus = new Map(row.offer!.skus.map((sku) => [sku.skuId, sku.image]));
+	if (new Set(assets.options.map((entry) => entry.skuId)).size !== assets.options.length) throw new Usage("规格素材有重复SKU");
+	if (assets.options.some((entry) => skus.get(entry.skuId) !== entry.sourceUrl)) throw new Usage("规格素材URL与原货源SKU不匹配");
+}
+
+export async function uploadReviewedAssets(sql: Sql, p: z.output<typeof reviewedAssetsParams>) {
+	const [row] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
+	if (!row || row.product_id !== p.productId || row.offer_id !== p.offerId || row.offer?.offerId !== p.offerId)
+		throw new Usage("已建商品、稿号或货源编号不匹配");
+	validatePublishedAssetSources(row, p.manifest);
+	const [shop] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${row.shop}`;
+	if (!shop) throw new Usage("没有店铺设置");
+	const settings = settingsOf(shop);
+	const assets = [
+		...p.manifest.main.map((input) => ({ role: "main" as const, input, skuId: null })),
+		...p.manifest.detail.map((input) => ({ role: "detail" as const, input, skuId: null })),
+		...p.manifest.options.map((input) => ({ role: "options" as const, input, skuId: input.skuId })),
+	];
+	const verified = await Promise.all(
+		assets.map(async (asset) => {
+			const processed = inspect(new Uint8Array(await readFile(asset.input.path)), asset.input.path);
+			const source = await original(sql, asset.input.sourceUrl);
+			validateReviewedBytes(asset.input, processed, source.sha256, asset.role);
+			return { ...asset, processed };
+		}),
+	);
+	const images = [];
+	for (const { role, input, skuId, processed } of verified) {
+		await persistReviewedImage(sql, input, processed);
+		const pic: Pic = { from: input.sourceUrl, sha: input.sourceSha256 };
+		await finish(sql, row.shop, settings.mark, pic, processed, (fn) => inShopQueued(settings.shopId, fn));
+		images.push({ role, skuId, ...input, imageId: pic.imageId, width: pic.width, height: pic.height, finalSha256: pic.final });
+	}
+	return { id: row.id, shop: row.shop, productId: p.productId, offerId: p.offerId, images };
 }
 
 type ReviewedFileDigest = { sha256: string; digest: string | null; bytes_length: number | null; width: number | null; height: number | null };

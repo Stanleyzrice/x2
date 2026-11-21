@@ -72,8 +72,9 @@ export async function readSource(url: string): Promise<SourceProduct> {
 }
 
 type ExistingSource = { snapshot: SourceProduct; deleted: boolean };
-export function collectedSourceDecision(existing: ExistingSource | null): "read" | "reuse" {
+export function collectedSourceDecision(existing: ExistingSource | null, refreshMissingDetail = false): "read" | "reuse" {
 	if (existing?.deleted) throw new Usage("商品已由用户从备选区移除，未自动恢复");
+	if (refreshMissingDetail && existing && !existing.snapshot.description.blocks.length) return "read";
 	return existing && !existing.snapshot.errors.length ? "reuse" : "read";
 }
 
@@ -88,7 +89,10 @@ export async function collectSource(input: CollectSourceInput, dependencies: Col
 	const id = offerIdOf(input.link);
 	if (!id) throw new Usage("不是有效的 1688 商品链接");
 	const existing = await dependencies.existing(id);
-	const source = collectedSourceDecision(existing) === "reuse" ? existing!.snapshot : await dependencies.read(`https://detail.1688.com/offer/${id}.html`);
+	const source =
+		collectedSourceDecision(existing, input.refreshMissingDetail) === "reuse"
+			? existing!.snapshot
+			: await dependencies.read(`https://detail.1688.com/offer/${id}.html`);
 	if (source.sourceId !== id) throw new Usage("读取的1688商品编号与本次来源不一致，未保存");
 	return dependencies.save(input, sourceProductSchema.parse(source));
 }
@@ -108,6 +112,13 @@ export async function claimCollectedSource(sql: Sql, sourceId: OfferId): Promise
 
 const sessionInput = z.object({ sessionId: z.string().uuid() });
 export const collectionTools = {
+	"source-restore": get("按明确指定的1688链接恢复已保存备选，复用来源快照和原商品稿", collectSourceParams.pick({ link: true }), async ({ link }) => {
+		const offerId = offerIdOf(link);
+		if (!offerId) throw new Usage("不是有效的 1688 商品链接");
+		const existing = await claimCollectedSource(await db(), offerId);
+		if (!existing) throw new Usage("没有已保存的来源，请先采集");
+		return { sourceId: existing.id, offerId, restored: existing.restored, complete: existing.complete };
+	}),
 	"collect-source": get("逐件读取真实1688来源并保存到现有备选区；保留策略研究依据，不建稿、不采购或上架", collectSourceParams, async (input) => {
 		const sql = await db();
 		return collectSource(input, {

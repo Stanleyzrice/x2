@@ -3,7 +3,9 @@ import { z } from "zod";
 import { OrderSn } from "../../connectors/sites/shopee/seller.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
+import { parseJson } from "../../platform/tool.ts";
 import type { Outcome, Ran } from "../../platform/writes.ts";
+import { refreshAccount } from "../reimbursement/index.ts";
 import { checkOrders } from "./check.ts";
 import {
 	assertProcurementAvailable,
@@ -17,13 +19,23 @@ import {
 import { type ProcurementItem, procurementLines } from "./procurement-items.ts";
 import { type MatchNeed, matchProcurement } from "./procurement-matches.ts";
 import { purchaseState, samePurchase, selectPurchase } from "./purchase.ts";
-import { readAll, reuse, writeOrders } from "./read.ts";
+import { buyAccount, readAll, reuse, writeOrders } from "./read.ts";
 import { snapshot } from "./status.ts";
 import { cartParams } from "./writes.ts";
 
-export const monitorParams = z.object({ shops: z.array(z.string().min(1)).min(1).max(100).default(["cheeroutdoor"]) });
-export const selectionParams = monitorParams.extend({ orders: z.array(OrderSn).min(1).max(200), requestId: z.string().uuid() });
-export const purchaseParams = selectionParams.extend({ items: z.array(cartParams).min(1) });
+export const monitorParams = z.object({
+	shops: z
+		.preprocess(parseJson, z.array(z.string().min(1)).min(1).max(100))
+		.default(["cheeroutdoor"])
+		.describe("店铺数组，命令行用 JSON"),
+});
+export const selectionParams = monitorParams.extend({
+	orders: z.preprocess(parseJson, z.array(OrderSn).min(1).max(200)).describe("所选 Shopee 订单号数组，命令行用 JSON"),
+	requestId: z.string().uuid(),
+});
+export const purchaseParams = selectionParams.extend({
+	items: z.preprocess(parseJson, z.array(cartParams).min(1)).describe("采购预览返回的规格和数量，命令行用 JSON"),
+});
 
 type MonitorRow = {
 	sn: string;
@@ -39,15 +51,11 @@ type MonitorRow = {
 };
 const syncs = new WeakMap<Sql, Map<string, { at: string | null; error: string | null }>>();
 const scopeKey = (shops: string[]) => JSON.stringify([...new Set(shops)].sort());
-type ProcurementRefresh = (sql: Sql) => Promise<{ account: string; loginId: string; capturedAt: string | null }>;
-let refreshProcurement: ProcurementRefresh | null = null;
-export function setProcurementRefresh(refresh: ProcurementRefresh) {
-	refreshProcurement = refresh;
-}
-
-async function refreshPurchases(sql: Sql) {
-	if (!refreshProcurement) throw new Usage("尚未装配当前采购账号的 1688 订单同步，不能确认采购状态");
-	return refreshProcurement(sql);
+async function refreshPurchases(sql: Sql): Promise<void> {
+	const account = await buyAccount(sql);
+	if (!account) throw new Error("请先配置 1688 采购账号");
+	const result = await refreshAccount(sql, { id: account.userId, name: account.loginId });
+	if (result.status !== "succeeded") throw new Error(result.error ?? "1688 采购订单仍在同步，保留上次成功快照");
 }
 
 export async function monitor(sql: Sql, shops: string[]) {

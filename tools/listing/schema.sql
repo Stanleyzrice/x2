@@ -143,6 +143,7 @@ alter table listings add column if not exists channel_options jsonb;
 
 -- 单稿已审核尺码图与来源、证据、源规格指纹；独立保存，不被重做主图覆盖。
 alter table listings add column if not exists size_chart jsonb;
+alter table listings add column if not exists coverage jsonb;
 
 -- 人工采集的原始快照独立于店铺稿；同一来源只收录一次，补充值存在稿件而不改原始内容。
 create table if not exists listing_sources (
@@ -178,3 +179,23 @@ alter table listing_sources add column if not exists deleted_at timestamptz;
 
 -- agent策略来源保存在独立研究记录中，原始1688快照不混入选品结论。
 alter table listing_sources add column if not exists research jsonb not null default '[]'::jsonb;
+
+create index if not exists shop_images_id_idx on shop_images (shop, image_id);
+
+create table if not exists listing_image_language_reviews (
+	shop text not null,
+	sha256 text not null references images(sha256),
+	scope text not null,
+	rule_version integer not null,
+	verdict jsonb not null,
+	reviewed_at timestamptz not null default now(),
+	primary key (shop, sha256, scope, rule_version)
+);
+
+-- 记录直接从 Shopee 读回的既有图片文件；同店图片编号不会改指另一份文件。
+create table if not exists listing_image_file_bindings (
+	shop text not null,
+	image_id text not null,
+	sha256 text not null references images(sha256),
+	primary key (shop, image_id)
+);

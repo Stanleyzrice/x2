@@ -9,6 +9,7 @@ import type { Json, Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import type { Planned, Sent } from "../../platform/tool.ts";
 import { exclusive, type Outcome, type Ran, WriteId, type WriteOp, writeOp } from "../../platform/writes.ts";
+import { imageLanguageBlock } from "../listing/index.ts";
 import { checkIdentity, type Identity, type ProductFact } from "./facts.ts";
 
 const productId = ItemId.refine((id) => /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) && Number(id) > 0, "商品 id 要是正整数且不丢精度");
@@ -83,7 +84,12 @@ async function currentFact(sql: Sql, shop: string, shopId: string, id: string) {
 	if (!row) throw new Usage("当前 Catalog 没有该店铺商品，请先读取目录");
 	return row;
 }
-async function readCurrent(p: Pick<StatusInput, "shop" | "productId">, shopId: string, driver: StatusDriver): Promise<StatusExpected> {
+async function readCurrent(
+	p: Pick<StatusInput, "shop" | "productId">,
+	shopId: string,
+	driver: StatusDriver,
+	checkImages?: (info: ProductInfo) => Promise<void>,
+): Promise<StatusExpected> {
 	checkIdentity({ shop: p.shop, shopId }, await driver.identity());
 	const info = await driver.detail(p.productId);
 	checkIdentity({ shop: p.shop, shopId }, await driver.identity());
@@ -97,6 +103,7 @@ async function readCurrent(p: Pick<StatusInput, "shop" | "productId">, shopId: s
 	});
 	if (!parsed.success) throw new Usage("Shopee 未返回明确的商品名称、在售/下架状态或 unlisted 标识；未提交");
 	stateOf(parsed.data);
+	await checkImages?.(info);
 	return parsed.data;
 }
 async function intentOf(sql: Sql, p: Reference): Promise<Intent> {
@@ -188,7 +195,11 @@ export function statusWrite(driver: StatusDriver = statusDriver): WriteOp<Status
 			const frozen = paramsOf(intent, p);
 			if (!intent.claimed || frozen.fingerprint !== p.fingerprint) throw new Usage("状态修改未确认或冻结参数不一致");
 			await assertProductClear(sql, p);
-			const before = await readCurrent(p, p.expected.shopId, driver);
+			const before = await readCurrent(p, p.expected.shopId, driver, async (info) => {
+				if (p.targetState !== "listed" || Number(info.first_publish_time) > 0) return;
+				const language = await imageLanguageBlock(sql, p.shop, `商品 ${p.productId}`, info);
+				if (language) throw new Usage(language);
+			});
 			assertStatusFresh(p, before);
 			const claimed = await sql`update catalog_status_intents set submission_started = true
 				where request_id = ${p.requestId} and claimed and not submission_started returning request_id`;

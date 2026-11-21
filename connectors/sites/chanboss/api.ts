@@ -6,6 +6,7 @@ import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { reply } from "../../../platform/reply.ts";
+import { claimSiteSubmission } from "../../../platform/site-write.ts";
 
 const ORIGIN = "https://c.chanboss.com";
 const API = "/api/v2/common/cangboss";
@@ -222,6 +223,7 @@ export type Forecast = {
 
 /** 预报一张订单（/pack/add_report_new）。请求体照 chanboss 页面的 JS 拼（2026-10-09 读的：打拣货单时的「自动预报」和批量预报对话框，见同目录的 NOTES.md） */
 export async function forecast(f: Forecast): Promise<Write> {
+	claimSiteSubmission();
 	const b = await call("/pack/add_report_new", {
 		body: {
 			report_type: "order",

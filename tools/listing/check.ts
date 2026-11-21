@@ -1,7 +1,8 @@
 // 检查商品稿：每份的当前步骤、要提醒人的、agent 能做的进 todo、人同意了就能建商品、上架的（ready）。纯函数，读写库在 index.ts
 
 import type { Reminder } from "../../platform/tool.ts";
-import { auditCurrent, auditIssues, auditNotes } from "./audit.ts";
+import { auditIssues, auditNotes, listingAuditCurrent } from "./audit.ts";
+import { coverageBlock } from "./coverage.ts";
 import { estimateNeeds, type Settings } from "./pricing.ts";
 import { imageNames } from "./product.ts";
 import { productOf } from "./ready.ts";
@@ -10,7 +11,7 @@ import { originalSourceApproved } from "./source-data.ts";
 import { listingName, textProblems } from "./text.ts";
 import { specsOf } from "./variants.ts";
 
-export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待 Gemini 文字检查", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
+export const LISTING_STEPS = ["待批准", "待补充", "待做商品稿", "待写文案", "待终审", "建商品中", "待上架", "已暂停", "已上架", "已放弃"] as const;
 export type ListingStep = (typeof LISTING_STEPS)[number];
 
 /** 库里的一条建商品、上架的写入（params 写的时候照写操作的 zod 校验过，都带 listingId） */
@@ -37,7 +38,7 @@ export type EstimateItem = {
 
 export type Todo =
 	| { kind: "做商品稿"; why: string; tool: "listing.make"; params: { ids: string[] } }
-	| { kind: "Gemini 文字检查"; why: string; tool: "listing.audit"; params: { ids: string[] } }
+	| { kind: "终审"; why: string; tool: "listing.review-preview"; params: { id: string } }
 	| { kind: "估重量、国内运费"; why: string; items: EstimateItem[] }
 	| { kind: "写文案"; why: string; ids: string[] }
 	| { kind: "备注"; why: string; items: { id: string; name: string; note: string }[]; tool: "listing.noted"; params: { ids: string[] } };
@@ -72,7 +73,12 @@ export type ListingsChecked = {
 	ready: { id: string; writes: { op: string; params: Record<string, unknown> }[] }[];
 };
 
-export function checkListings(listings: ListingRow[], settings: Map<string, Settings>, writes: Write[]): ListingsChecked {
+export function checkListings(
+	listings: ListingRow[],
+	settings: Map<string, Settings>,
+	writes: Write[],
+	languageBlocks: ReadonlyMap<string, string> = new Map(),
+): ListingsChecked {
 	const reminders: Reminder[] = [],
 		steps = new Map<string, { step: ListingStep; detail: string | null }>();
 	const ready: ListingsChecked["ready"] = [];
@@ -119,6 +125,14 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 			continue;
 		}
 		if (l.product_id) {
+			if (l.coverage) {
+				const current = productOf(l, s);
+				const coverage = current.product ? coverageBlock(l, current.product) : current.problems.join("；");
+				if (coverage) {
+					set("待补充", coverage);
+					continue;
+				}
+			}
 			set("待上架", lines(`商品 ${l.product_id}（下架）`, refused, "人同意了 x2 listing publish 上架"));
 			ready.push({
 				id,
@@ -184,9 +198,23 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 			});
 			continue;
 		}
-		if (!auditCurrent(l.audit, r.product) && !originalSourceApproved(l.source_approval, l.source_product_id, l.images.imageMode, r.hash)) {
-			set("待 Gemini 文字检查");
+		if (
+			!listingAuditCurrent(l.audit, r.product, l.images.imageMode) &&
+			!originalSourceApproved(l.source_approval, l.source_product_id, l.images.imageMode, r.hash)
+		) {
+			set("待终审");
 			toCheck.push(id);
+			continue;
+		}
+		const language = languageBlocks.get(id);
+		if (language) {
+			set("待终审", language);
+			toCheck.push(id);
+			continue;
+		}
+		const coverage = coverageBlock(l, r.product);
+		if (coverage) {
+			set("待补充", coverage);
 			continue;
 		}
 		set("待批准", lines(refused, auditLines()));
@@ -239,7 +267,7 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 	if (toEstimate.length)
 		todo.push({
 			kind: "估重量、国内运费",
-			why: `${toEstimate.map((x) => `${x.name}缺${x.needs.join("、")}`).join("；")}：照 1688 的标题和规格估，重量往重了估（轻的写 1 kg），国内运费往高了估，留出利润；x2 listing estimate --id <编号> --weight <kg> --freight <元/件>（只写缺的）`,
+			why: `${toEstimate.map((x) => `${x.name}缺${x.needs.join("、")}`).join("；")}。按上架技能保守估计，依据不足时保留未知。用 x2 listing estimate 只填缺项`,
 			items: toEstimate,
 		});
 	if (toWrite.length)
@@ -248,7 +276,8 @@ export function checkListings(listings: ListingRow[], settings: Map<string, Sett
 			why: toWrite.map((x) => `${names.get(x.id)}：${x.why}`).join("；"),
 			ids: toWrite.map((x) => x.id),
 		});
-	if (toCheck.length) todo.push({ kind: "Gemini 文字检查", why: `文案或图还没查过：${named(toCheck)}`, tool: "listing.audit", params: { ids: toCheck } });
+	for (const id of toCheck)
+		todo.push({ kind: "终审", why: languageBlocks.get(id) ?? `${names.get(id)}的当前文案和图片待审`, tool: "listing.review-preview", params: { id } });
 	if (notes.length)
 		todo.push({
 			kind: "备注",

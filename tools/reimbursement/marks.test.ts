@@ -88,6 +88,8 @@ test("拒绝越过页面账号范围、未知和未付款订单，不产生标�
 
 test("mark-reported输入需要显式布尔选择和非负版本，CLI false不被当成true", () => {
 	const params = reimbursement.tools["mark-reported"]!.params;
+	assert.deepEqual(params.parse({ accounts: '["A"]', account: "A", orderId: "order", reported: "false", revision: "0" }).accounts, ["A"]);
+	assert.equal(params.safeParse({ accounts: "A", account: "A", orderId: "order", reported: "false", revision: "0" }).success, false);
 	assert.equal(params.parse({ account: "A", orderId: "order", reported: "false", revision: "0" }).reported, false);
 	assert.equal(params.safeParse({ account: "A", orderId: "order", revision: 0 }).success, false);
 	assert.equal(params.safeParse({ account: "A", orderId: "order", reported: true, revision: -1 }).success, false);

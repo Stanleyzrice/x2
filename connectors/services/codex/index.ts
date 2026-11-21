@@ -1,4 +1,4 @@
-// Codex CLI 连接器只提供执行能力；业务流程经 tools/selection 的依赖注入组合。
+// Codex CLI 连接器只提供执行能力。
 import { get, type Toolkit } from "../../../platform/tool.ts";
 import { codexStatus } from "./api.ts";
 

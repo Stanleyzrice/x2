@@ -67,7 +67,7 @@ function fixture() {
 		startedAt = new Date("2000-01-01T00:00:00.000Z"),
 		serial: Promise<unknown> = Promise.resolve(),
 		submitted = 0;
-	let info: ProductInfo = { id: "42", name: expected.name, parent_sku: expected.parentSku, status: 1, is_unlisted: false };
+	let info: ProductInfo = { id: "42", name: expected.name, parent_sku: expected.parentSku, status: 1, is_unlisted: false, first_publish_time: 1700000000 };
 	let actualIdentity = { shopId: "77", username: "ni1206" };
 	const run = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]> => {
 		const q = strings.join("?").replace(/\s+/g, " ").trim();
@@ -372,6 +372,13 @@ test("上架操作使用原商品；两个方向分别按已核对记录解除�
 	await op.submit(f.sql, r);
 	assert.equal((await op.check(r, before.before, true)).done, true);
 	assert.equal(r.productId, input.productId);
+});
+test("Catalog 的首次上架也要求从商品读取最终图片结论", async () => {
+	const f = fixture();
+	f.setInfo({ status: 8, is_unlisted: true, first_publish_time: 0 });
+	const p = await confirmed(f, { ...input, targetState: "listed" });
+	await assert.rejects(statusWrite(f.driver).prepare(f.sql, p), /图片语言审阅：未读取到最终主图/);
+	assert.equal(f.submitted(), 0);
 });
 test("没有提交前证据或未读到目标时保持未知，核对不调用 submit，读到目标后更新保存状态", async () => {
 	const f = fixture();

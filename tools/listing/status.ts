@@ -1,8 +1,10 @@
 // 商品稿的检查（x2 status 问它；执行完建商品、上架的写入、人在网页上改了格也马上重算）：只看库里的，不读站点
 import type { Sql } from "../../platform/db/index.ts";
 import { checkListings, type Write } from "./check.ts";
+import { imageLanguageBlock } from "./image-language.ts";
 import { savePrices } from "./make.ts";
 import { type Settings, settingsOf } from "./pricing.ts";
+import type { SentInfo } from "./product.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
 
 export async function listingsCheck(sql: Sql, ids?: string[]) {
@@ -24,7 +26,15 @@ export async function listingsCheck(sql: Sql, ids?: string[]) {
 	const writes = await sql<
 		Write[]
 	>`select id::text, batch::text, op, status, params, finished_at as "finishedAt", error from writes where op in ('建商品', '上架')`;
-	const r = checkListings(rows, settings, [...writes]);
+	const checked = checkListings(rows, settings, [...writes]);
+	const languageBlocks = new Map<string, string>();
+	for (const { id, writes: planned } of checked.ready) {
+		const create = planned.find((write) => write.op === "建商品");
+		if (!create) continue;
+		const language = await imageLanguageBlock(sql, String(create.params.shop), `商品稿 #${id}`, create.params.productInfo as SentInfo);
+		if (language) languageBlocks.set(id, language);
+	}
+	const r = languageBlocks.size ? checkListings(rows, settings, [...writes], languageBlocks) : checked;
 	for (const [id, c] of r.steps)
 		await sql`update listings set step = ${c.step}, step_detail = ${c.detail} where id = ${id} and (step is distinct from ${c.step} or step_detail is distinct from ${c.detail})`;
 	return r;

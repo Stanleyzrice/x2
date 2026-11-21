@@ -114,7 +114,7 @@ function fixture() {
 			if (!Array.isArray(query)) return query;
 			const text = query.join("").replace(/\s+/g, " ").trim();
 			queries.push(text);
-			if (text.startsWith("select * from listings")) return Promise.resolve([row]);
+			if (text.startsWith("select *, xmin::text as revision from listings")) return Promise.resolve([{ ...row, revision: "123" }]);
 			if (text.startsWith("select * from shop_settings")) return Promise.resolve([settings]);
 			if (text.startsWith("select snapshot from listing_sources")) return Promise.resolve([{ snapshot: source }]);
 			if (text.startsWith("update listings")) {
@@ -167,13 +167,25 @@ test("prepare-only保存完整详情和已核规格，保留人工文案与成�
 		assert.match(result.problems.join("\n"), /缺可用的主图.*待.*审阅/);
 		assert.equal(fetch.mock.callCount(), 0);
 		assert.equal(f.queries.length, 4, "仅查稿、店铺、采集快照并保存一次");
-		assert.match(f.queries[3]!, /source_fields is not distinct from/);
+		assert.match(f.queries[3]!, /xmin::text = .* and .*deleted_at is null/);
 		const ready = { ...f.row, ...saved } as ListingRow;
 		assert.equal(reviewedImagesPreview(ready).sourceDetailCount, 20);
 		assert.equal(reviewedImagesPreview(ready).requiredOptions.length, 2);
 	} finally {
 		fetch.mock.restore();
 	}
+});
+
+test("新稿默认只准备货源和保存文案，分别留待审图和终审", async () => {
+	const f = fixture();
+	f.row.images = {};
+	const result = await make(f.sql, f.row.id, () => {});
+	assert.ok(f.saved().offer);
+	assert.equal("images" in f.saved(), false);
+	assert.match(result.problems.join("\n"), /reviewed-images-preview/);
+	const text = listing.tools.text!.params.parse({ id: "1" });
+	assert.equal(text.reviewMode, "deferred");
+	assert.equal(text.preserveImages, true);
 });
 
 test("prepare-only无需processed水印，并保留并发人工修改保护", async () => {

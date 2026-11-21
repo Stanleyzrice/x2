@@ -4,15 +4,17 @@
 
 ## 1. 开始和恢复
 
+按批次确认店铺、备选、授权及可售范围。已指定备选或链接时，建稿和做图前直接做批量预检。需挑选范围时用 `listing sources --shop '<店铺>' --json` 查看备选。
+
 ```sh
-node x2.ts status --json
-node x2.ts listing sources --shop '<店铺>' --json
-node x2.ts listing list --json
-node x2.ts listing source-detail --shop '<店铺>' --source-id '<备选编号>' --json
-node x2.ts listing show --id '<已有稿号>' --json
+node x2.ts listing source-preflight --shop '<店铺>' --source-ids '<备选编号列表>' --json
 ```
 
-固定店铺及shopId、备选、货源、所选款式/尺寸/件数、排除项和本次授权。本项目数据库使用本地直连，连接约定见[README](../../../README.md)，不启用旧SSH（安全远程连接）数据库或自动切库，不输出 `.env` 密钥。批次规则、店铺设置及进度集中读取一次；逐件按稿号补缺，只复核变化及工具要求的写前现读、指纹和读回。已在售直接记录；同店同来源复用原稿，已建未上架先核清原建品结果，不能重建。
+也可传 `--links` 查找已有快照，可与 `--source-ids` 合用。卖家优惠已核为本批每件最小购买量一单的同一金额时，加 `--seller-discount-twd '<金额>'`。确认无优惠才填 `0`，未知留空。优惠随商品或数量变化时按实际适用范围分组核对。预检复用已保存的采集时间、源规格和现有稿的人工核价输入，逐件列出供货、规格、成本缺项及已建品状态。缺快照的先补采，缺字段的按清单补核，已有明确问题的留待处理。`can-prepare` 表示通过这三类预检。源数据以快照时间为准，变动或冲突时补读相应事实。后续按实际销售单位检查尺码、件数、材料、图片、类目、履约和整单核价。
+
+有缺项才用 `source-detail` 或 `show` 查对应稿。需要核对已保存模板才用 `listing pricing --shop '<店铺>' --json`，需要核对站点状态才用 `status`。实际成稿前集中核对本批物流档位，已取到的数据整批复用。已在售直接记录，同店同来源续原稿，已建未上架核对原建品结果。连接按本地数据库约定。[README](../../../README.md)
+
+本流程新建的快照归档和批次实测回执存入 NAS（网络存储）的 `rice` 用户目录 `/srv/work/rice/x2/source-preflight/`，按批次建子目录，保留原采集时间。
 
 ## 2. 建立或复用关联，准备完整来源
 
@@ -30,24 +32,27 @@ node x2.ts listing show --id '<已有稿号>' --json
 
 优先复用 `source-detail`、`show` 及完整采集资料，缺失或冲突才补读单个来源。核对offerId、skuId/specId、款色、尺寸单位、件数、采购价、库存、图、起购及发货；一件代发标签不替代真实代发价和单件采购条件。超规格上限不截断、改名或自动拆品，保留完整来源与排除原因；鞋服依现行规则核原始尺码及SKU（货源规格）对应，不生成实测表代替事实。先排明确品类、尺寸、起购或供货硬问题，再估值核价、做图。
 
+研究备注中的改短、加配件等设想属于选品参考。用户或人工稿件未锁定该加工方案时，已有明确可直接下单的同一 SKU 按原规格上架。货源字段明确且能与所选 SKU 对应，可直接采用。通用营销图与 SKU 专属资料不一致时优先专属资料；可省略的卖点、非必填属性和无关内容直接略过。只有实际所收商品、利润、安全、材料合规或履约有实质冲突时才补查对应项。可合理保守估计的成本及物流字段先估，供应商联系留给估不出或会改变上架决定的关键事实。
+
 ```sh
 node x2.ts listing make --ids '<单稿号>' --prepare-only --source-sku-ids '["<源skuId1>","<源skuId2>"]' --json
 ```
 
-全部真实规格都在授权范围时可不传 `--source-sku-ids`；只有明确选过销售子集才传。该参数保存其余规格为排除，必须有依据。prepare-only返回缺主图是预期中间状态，不代表可上架；已有reviewed图不得再次prepare-only。
+按链接授权的商品，默认准备所有符合本店条件的在库规格。研究记录中的代表 SKU 用于定位和核价示例。用户、人工稿件或现行经营条件明确限定销售子集时才传 `--source-sku-ids`；该参数会把未选择项保存为排除。在库款色、尺寸与套装只因具体的供货、规格图、合规、核价或明确授权限制排除，逐项注明对应证据。prepare-only返回缺主图是预期中间状态；已有reviewed图不得再次prepare-only。
 
 `source-prepare` 是原文原图准备路径，可能下载上传未处理图；`source-publish` 的网页批准绑定原文原图，不能拿来代替本任务的图片编辑与实审。
 
 ## 3. 核价及图片
 
 ```sh
-node x2.ts listing pricing --shop '<店铺>' --json
 node x2.ts listing reviewed-images-preview --id '<稿号>' --json
 ```
 
 定价/整单试算按[定价流程](pricing.md)，市场优先复用可比组样本，计算见[市场核价操作](market-pricing.md)。规则与已存模型不同，先核是否已有更新授权；有则按授权更新，无则给出具体差异与方案，不擅改全店或继续套旧值。空白重量、国内运费按证据保守估计，用 `listing estimate` 保存；不能合理估计则保留未知，估重不称实测。差异逐SKU输入用 `pricing-inputs`，保留原始事实和人工值。
 
-有有效样本时用 `listing market-price-preview`；仅市场资料不足时不反复等待，可复用其 `pricing` 成本结果或 `calculator-preview`，在成本及其他硬条件达标后继续，无需逐批市场豁免。市场未知不补零、不报告已比价通过，可靠价格冲突仍须处理。各可成交SKU、起购、卖家优惠及整单组合都须核算；同一有效输入不反复重算，成本、数量、优惠或参数变化才重算，不把试算保存成全店设置。
+有现成可比样本时用 `listing market-price-preview`；缺可用样本直接用 `calculator-preview`，记录市场资料不足，按成本及其他硬条件推进。可靠的价格冲突仍按定价规则处理。相同成本、售价和购买条件的 SKU 共用计算结果；整单按[组合核算](pricing.md#组合与发货门槛)保存依据，成本、数量、优惠或参数变化才重算。
+
+图文以准确介绍实际所售商品为准。选用可核对的同款细节和适用于所选规格的通用结构图，说明示意用途。已有充分的合规素材时直接推进，优先补会影响购买判断的画面；仍需保留实际来源详情图、有效介绍及全部已选规格的映射和真实审阅。
 
 图片编辑、manifest（图片清单）的准确结构、SHA（文件指纹）与全部SKU映射按[独立图片流程](../../../.agents/skills/listing-images/references/reviewed-images.md)。先取得完整主图、详情图及规格图来源；必要文字编辑与干净原图采用该规则，不以生成或上传成功替代实际看图。本店有效文件及上传记录优先复用；`expectedScope` 取当前预览，不手造或沿用其他稿。实际查看并审阅后才导入：
 
@@ -55,7 +60,7 @@ node x2.ts listing reviewed-images-preview --id '<稿号>' --json
 node x2.ts listing reviewed-images --id '<稿号>' --manifest - --json < '<已审图片清单.json>'
 ```
 
-确认导入退出状态及返回主图、详情图、规格图组数，不能因为返回了JSON就当成功；JSON中 `error` 仍是失败。若中途失败，保留回执，按当前状态续做，不能直接宣称图已导入或最终审阅通过。
+导入成功回执用于继续成稿。主图、详情和规格图映射统一在成稿终审核对；回执报错时按已上传记录续做。
 
 ## 4. 类目、属性、文案与物流
 
@@ -65,7 +70,7 @@ node x2.ts listing reviewed-images --id '<稿号>' --manifest - --json < '<已�
 node x2.ts listing category --id '<稿号>' --category '<真实叶子类目ID>' --json
 node x2.ts listing make --ids '<稿号>' --image-mode reviewed --json
 node x2.ts listing show --id '<稿号>' --json
-node x2.ts listing text --items - --review-mode deferred --preserve-images --json < '<繁体文案.json>'
+node x2.ts listing text --items - --json < '<繁体文案.json>'
 ```
 
 `category` 完成后再 `make`，同一稿不并发执行，避免内容变化保护触发。已有准确类目跳过category；超店铺范围按[商品修改](editing.md)的单稿授权分支。缺必填属性、库存或备货按事实通过原工具补齐，不伪造值通过检查。
@@ -78,9 +83,18 @@ node x2.ts listing text --items - --review-mode deferred --preserve-images --jso
 node x2.ts listing channels --id '<稿号>' --channels '<核实的channelId列表>' --options '<按当前渠道返回的档位与运费JSON>' --json
 ```
 
-渠道参数结构见[物流流程](channels.md)，逐稿读取当前原生渠道和档位，按真实外包装选择，不拿展开尺寸或他品运费、库存数作默认。包装未知按物流规则保守处理，仍无法确定则待核对。用户授权的起购数量、预购与库存设置须在真实提交字段中体现，不能只写在描述。
+渠道参数结构见[物流流程](channels.md)，优先复用适用的当前原生渠道与档位，按实际外包装或有依据的外包上限选用。缺精确包装尺寸时先走保守宅配路径。用户授权的起购数量、预购与库存设置须在真实提交字段中体现。
 
 ## 5. 真实审阅并发布
+
+```sh
+node x2.ts listing coverage-preview --id '<稿号>' --json
+node x2.ts listing coverage-review --id '<稿号>' --manifest - --json < '<覆盖审阅.json>'
+```
+
+覆盖审阅使用预览返回的 `expectedScope`。逐项检查原始在库 SKU 与最终款色、尺寸、件数的对应。`excludedSkus` 为 `[{skuId,reason}]`，逐个覆盖预览中的 `excludedInStock`。无在库规格排除时传空数组。货源无库存的规格无需填排除依据。
+
+`detail` 逐项覆盖 `sourceDetail`。保留有购买价值的图与信息，以 `{sourceUrl,imageId}` 绑定当前 `finalDetail` 里的成图；多张来源可合并到同一张成图。对重复画面、售卖范围外款式、引流图或无法证实的营销图用 `{sourceUrl,reason}` 记录实际依据。原详情中的真实规格／尺寸、组合件数和使用／保养说明，只要对下单有帮助且适用于在售款，就排入成图。商品有多个尺寸、件数或款式时，做清晰的对照图，买家应能看到选项与实际收到的商品。先排商品及结构、再排规格与套装、最后排使用或保养。实际逐张检查手机端字可读、主体完整、图宽与边距一致、没有重复或残留供应商文案，在 `layoutEvidence` 留下检查结果。来源或成图顺序、规格范围变动后重新审阅。
 
 ```sh
 node x2.ts listing review-preview --id '<稿号>' --json
@@ -92,7 +106,7 @@ node x2.ts listing review-preview --id '<稿号>' --json
 node x2.ts listing review --id '<稿号>' --expected-key '<当前expectedKey>' --provider codex-visual --evidence '<真实审阅依据与文件位置>' --text-issues '<真实问题JSON数组>' --images '<逐图结果JSON数组>' --json
 ```
 
-`images` 为 `[{"id":"<当前预览图片ID>","issues":[]}]`；只有真实看过且确认无问题时才填 `[]`。`expectedScope` 保护来源/规格范围，`expectedKey` 保护当前图文规格审阅，发布另有完整商品内容指纹保护，不能互相替代或手改为匹配。
+逐图 JSON（结构化数据）用 `id`、`issues` 和 `language`。语言结论填写 `state`、预览中的 `sha256`、以及本图实际看见的 `evidence`。可用状态为 `no-chinese`（无中文）、`traditional`（繁体通过）、`printed-with-note`（实物印字已附繁体说明）、`pending-check`（待检查）及 `needs-correction`（待修正）。实物印字另填 `note`，这段台湾繁体说明须出现在最终商品描述。空 `issues` 只记录问题清单。已保存且适用规格、文件指纹、规则版本一致的结论可以复用，交该图片 `id` 和实际 `issues` 即可。一次批次从实际审阅记录读取结论，以回执的 `languagePassed` 判断是否可继续。
 
 在本次明确授权内，仅对工具要求首次试单的操作：
 
@@ -108,6 +122,8 @@ node x2.ts listing publish --ids '<已就绪稿号>' --json
 
 每件依次执行“建成下架→读回核对→上架→读回在售”。publish只收待批准/待上架，混入缺项会整组拒绝；优先单件或小组，保存stdout（结果）与stderr（进度），不能因超时丢掉原始回执。授权和命令范围一致，不默认全选、不重发已有请求。
 
+`cheeroutdoor` 新品由 NAS 追踪上架后第 3、7、14 个完整日。一次 `publish` 或一次网页上架确认是一个跟踪批。同一运营批分多次 `publish` 时，先生成一个 UUID（批次编号），每次传同一个 `--tracking-batch`。跨日期上架会按实际读回日期分组，只有已核对的新品进入跟踪。报表运行与恢复见 [NAS 跟踪说明](follow-up.md)。
+
 ## 6. 异常与结果
 
 | 情况 | 下一步 |
@@ -120,7 +136,7 @@ node x2.ts listing publish --ids '<已就绪稿号>' --json
 | 仅缺市场样本或主流参考组 | 按当前默认复用成本核价，成本及其他硬条件达标可继续；记录市场待补，不能冒充比价通过或掩盖已知冲突 |
 | 关键成本/供货/规格/图文/履约缺项、超规格上限或规则冲突 | 留备选/原稿，记录具体硬缺项，不删款凑数、不静默拆品；其他就绪商品继续 |
 
-不为提高速度删审阅、不为验证重复提交。最终取 `listing sources --shop '<店铺>'` 和原发布读回；普通稿可用 `listing list`，必要时通过对应店铺的catalog工具现读。已有写入引擎明确核对成功，不再无故全店重复同步。
+以 `listing publish` 返回的在售结论结单，商品号从本地 `source-detail` 或已保存的稿件清单读取。只有回执不齐、结果未知或读回不一致才到站点复查原写入和对应商品。
 
 按件交付 `备选编号 / 来源 / 商品稿编号 / 最终状态 / Shopee链接 / 未上架原因`，本批目录保留最终规格、成本估计依据、图片清单与证据、内容指纹和原发布回执。只有真实shopId与productId可生成商品链接；页面可访问不等于已在售。
 

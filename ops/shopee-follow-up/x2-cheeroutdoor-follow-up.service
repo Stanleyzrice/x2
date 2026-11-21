@@ -1,0 +1,8 @@
+[Unit]
+Description=X2 cheeroutdoor product cohort reporting
+
+[Service]
+Type=oneshot
+ExecStart=/run/current-system/sw/bin/python3 /srv/work/rice/x2/shopee-follow-up/scheduler.py tick
+NoNewPrivileges=true
+UMask=0077

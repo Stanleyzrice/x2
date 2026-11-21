@@ -40,6 +40,7 @@ const run = (status: RunStatus = "running", updatedAt = "2026-11-17T10:00:00Z"):
 	createdAt: "2026-11-17T09:59:00Z",
 	updatedAt,
 	error: null,
+	cancelRequested: false,
 	events: [],
 	candidates: [],
 });
@@ -53,6 +54,7 @@ test("策略组件固定当前新增店铺，不能从输入替换身份或调�
 		"selection.run-start",
 		"selection.run-detail",
 		"selection.run-cancel",
+		"selection.run-delete",
 		"selection.workflow-save",
 		"selection.workflow-reset",
 	]);
@@ -134,6 +136,12 @@ test("候选只能关联实际保存的查询事实，缺失引用继续标待�
 	const fact = {
 		query: { keyword: "整理盒", sourceKeyword: "整理盒", categoryPath: [], role: "product" as const },
 		observedAt: "2026-11-17T10:00:00Z",
+		updateTime: null,
+		words: [],
+		items: [],
+		competition: null,
+		needs: null,
+		errors: [],
 		searchSignal: true,
 		purchaseSignal: false,
 		demandScope: "keyword-category-or-whole-listing" as const,

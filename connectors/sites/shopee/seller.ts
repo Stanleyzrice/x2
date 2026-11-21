@@ -9,6 +9,7 @@ import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { idText, reply } from "../../../platform/reply.ts";
+import { claimSiteSubmission } from "../../../platform/site-write.ts";
 
 export const ORIGIN = "https://seller.shopee.tw";
 /** 商品图、订单图的地址：图片 id 接在后面，加 _tn 是缩略图 */
@@ -147,6 +148,7 @@ export const row = z.looseObject({});
 export type Write = { kind: "done"; data: unknown } | { kind: "refused"; code: number | undefined; why: string } | { kind: "unknown"; why: string };
 
 export async function write(path: string, req: Req): Promise<Write> {
+	claimSiteSubmission();
 	const r = await call(path, req);
 	if (r.kind === "signin") return { kind: "refused", code: undefined, why: "Shopee 卖家中心没有登录" };
 	if (r.kind === "unknown") return { kind: "unknown", why: r.why };

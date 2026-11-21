@@ -14,6 +14,7 @@ import {
 	type SelectionServices,
 	trendQualification,
 } from "./runs.ts";
+import { dateWindow } from "./social-discovery.ts";
 import { summarizeTimeSeries, timeSeriesInputSchema } from "./time-series.ts";
 
 const trendParameters = {
@@ -359,7 +360,6 @@ test("模型编造货源或SKU会先拒绝整份选择，不导入前面的合�
 test("取消后迟到成本结果不能继续导入，后台任务独立于start响应", async () => {
 	const f = fixture(),
 		store = memoryStore();
-	f.services.background = true;
 	let release: () => void = () => {},
 		entered: () => void = () => {};
 	const gate = new Promise<void>((resolve) => {
@@ -377,7 +377,7 @@ test("取消后迟到成本结果不能继续导入，后台任务独立于start
 		return original(id, input);
 	};
 	const runner = createSelectionRunner(store, f.services),
-		run = await runner.start(config(), "cancel");
+		run = await runner.start(config(), "cancel", true);
 	assert.equal(["queued", "running"].includes(run.status), true);
 	await waiting;
 	await runner.cancel(run.id);
@@ -741,7 +741,6 @@ test("普通模型错误不重试；取消与超时同时发生时优先取消�
 	assert.equal(failedAsks, 1);
 	const cancelled = fixture(),
 		store = memoryStore();
-	cancelled.services.background = true;
 	let enter: () => void = () => {},
 		release: () => void = () => {},
 		cancelledAsks = 0;
@@ -758,7 +757,7 @@ test("普通模型错误不重试；取消与超时同时发生时优先取消�
 		throw Object.assign(new Error("等待超时"), { code: "CODEX_TIMEOUT" });
 	};
 	const runner = createSelectionRunner(store, cancelled.services),
-		run = await runner.start(config(), "cancel-timeout");
+		run = await runner.start(config(), "cancel-timeout", true);
 	await entered;
 	await runner.cancel(run.id);
 	release();
@@ -807,6 +806,101 @@ function reviewedFixture() {
 	};
 	return { ...f, research, audit, requestCount: () => requests };
 }
+
+test("小红书只凭自己原帖及匹配的台湾近期购买准入，并保留图片出处和核价状态", async () => {
+	for (const issue of ["none", "reused", "long-keyword", "old-note", "wrong-quote", "old-sales", "wrong-site", "other-product", "wrong-comparable"] as const) {
+		const qualifies = issue === "none" || issue === "reused" || issue === "long-keyword";
+		const f = reviewedFixture();
+		const originalCall = f.services.callTool;
+		const input = reviewedConfig();
+		input.strategy.id = "xiaohongshu-discovery";
+		input.marketSiteId = 1;
+		input.limit = 1;
+		input.policyText = "规划流程独有的长说明";
+		input.assessmentPolicy = "筛选判断标准";
+		const { today } = dateWindow(new Date(), 30);
+		const id = "6ae4536200000000190006ad";
+		const note = {
+			id,
+			url: `https://www.xiaohongshu.com/explore/${id}`,
+			title: "台湾虾皮商品复盘",
+			publishedAt: issue === "old-note" ? "2020-01-01" : today,
+			body: "雨天通勤时腾出双手",
+			photos: [{ index: 2, url: "https://sns-webpic-qc.xhscdn.com/pic.jpg" }],
+		};
+		f.services.ask = async (request) => {
+			if (request.images?.length) return { images: [{ index: 1, text: "雨天通勤時騰出雙手" }] };
+			if (request.prompt.includes("已读原帖和图片文字"))
+				return {
+					focus: "雨天通勤",
+					queries: [
+						{
+							keyword: issue === "long-keyword" ? "手機防水掛繩" : "手機掛繩",
+							sourceKeyword: "手机带",
+							categoryPath: [100, 101],
+							role: "product",
+							note: {
+								noteId: id,
+								part: 2,
+								relation: "scene-extension",
+								quote: issue === "wrong-quote" ? "未知内容补写" : "雨天通勤時騰出雙手",
+								marketQuote: note.title,
+								matchTerms: issue === "long-keyword" ? ["掛繩", "防水"] : ["手機掛繩"],
+							},
+						},
+					],
+				};
+			assert.ok(request.prompt.includes(input.assessmentPolicy!));
+			assert.ok(!request.prompt.includes(input.policyText));
+			return {
+				summary: "匹配商品",
+				audit: f.audit,
+				candidates: [{ ...f.choice, research: f.research, comparedItemId: issue === "wrong-comparable" ? "999" : "789" }],
+			};
+		};
+		f.services.callTool = async (tool, parameters) => {
+			if (tool === "zhixia.context") return { siteId: 1 };
+			if (tool === "xiaohongshu.search-notes") return [note];
+			if (tool === "xiaohongshu.read-photo") return { data: "eA==" };
+			if (tool === "zhixia.hot-word-items")
+				return {
+					rows: [
+						{
+							itemId: "789",
+							shopId: "19",
+							siteId: issue === "wrong-site" ? 2 : 1,
+							itemName: issue === "other-product" ? "手機保護貼" : "戶外防水可調式手機掛繩",
+							itemDataList: [{ sales30Day: 20, timest: issue === "old-sales" ? "20200101" : today.replaceAll("-", "") }],
+						},
+					],
+				};
+			if (tool === "listing.collect-source" && issue === "reused") {
+				const saved = (await originalCall(tool, parameters)) as Record<string, unknown>;
+				return { ...saved, status: "existing" };
+			}
+			return originalCall(tool, parameters);
+		};
+		const run = await createSelectionRunner(memoryStore(), f.services).start(input, `social-${issue}`);
+		assert.equal(run.status, "completed", run.error ?? issue);
+		assert.equal(run.found, qualifies && issue !== "reused" ? 1 : 0, issue);
+		assert.equal(
+			f.calls.some((call) => call.tool === "listing.collect-source"),
+			qualifies,
+			issue,
+		);
+		if (!qualifies && issue !== "wrong-comparable") assert.ok(!f.calls.some((call) => call.tool === "1688.search"), issue);
+		if (issue === "reused") {
+			assert.equal(run.candidates[0]?.status, "existing");
+			assert.match(run.events.at(-1)?.message ?? "", /目标已达成/);
+			assert.equal(run.events.filter((event) => event.data?.kind === "plan").length, 1);
+		}
+		if (issue === "none") {
+			assert.equal(run.candidates[0]?.qualification, "priced");
+			assert.equal(run.candidates[0]?.social?.note.reference.part, 2);
+			assert.equal(run.candidates[0]?.social?.purchases[0]?.itemId, "789");
+		}
+	}
+});
 
 test("新版研究持久化真实事实、本批步骤核对及候选研究；保存回执独立于模型分析", async () => {
 	const f = reviewedFixture();
@@ -984,6 +1078,23 @@ test("新版爆款周边缺独立周边查询即停止，不能沿用主品查�
 	assert.equal(run.status, "failed");
 	assert.match(run.error ?? "", /主品.*周边.*独立查询/);
 	assert.ok(!f.calls.some((call) => call.tool === "1688.search"));
+});
+
+test("普通策略拒绝模型借用主品或周边查询角色，自定义步骤不能扩大执行范围", async () => {
+	for (const id of ["peer-benchmark", "unmet-needs", "bundle-sales"] as const) {
+		const f = reviewedFixture();
+		const input = reviewedConfig();
+		input.strategy.id = id;
+		input.strategy.steps = ["将选品当作主品查询"];
+		f.services.ask = async () => ({
+			focus: "试图改变查询角色",
+			queries: [{ keyword: "手機", sourceKeyword: "手机", categoryPath: [100, 101], role: "main" }],
+		});
+		const run = await createSelectionRunner(memoryStore(), f.services).start(input, `wrong-query-role-${id}`);
+		assert.equal(run.status, "failed");
+		assert.match(run.error ?? "", /仅接受候选商品查询角色/);
+		assert.ok(!f.calls.some((call) => ["zhixia.hot-words", "1688.search", "listing.collect-source"].includes(call.tool)));
+	}
 });
 
 test("新版周边研究必须引用本批主品事实；主品购买未知仍可保留未知，不新增需求门槛", async () => {
@@ -1171,6 +1282,69 @@ function trendFixture(values = [...Array<number>(9).fill(50), ...Array<number>(7
 	};
 	return { ...f, input, charts };
 }
+
+test("趋势流程按策略快照读取一轮超过三个的热词，仍逐个筛查", async () => {
+	const f = trendFixture(Array<number>(30).fill(100));
+	f.input.limit = 10;
+	f.input.strategy.trend = { ...trendParameters, maxQueriesPerRound: 8 };
+	const queries = Array.from({ length: 8 }, (_, i) => ({ keyword: `熱詞${i}`, sourceKeyword: `采购词${i}`, categoryPath: [100, 101] }));
+	let planned = false;
+	f.services.ask = async () => {
+		if (planned) return { focus: "没有新的方向", decision: "stop", queries: [] };
+		planned = true;
+		return { focus: "覆盖八个独立方向", queries };
+	};
+	const original = f.services.callTool;
+	f.services.callTool = async (tool, input) =>
+		tool === "zhixia.hot-words"
+			? { updateTime: null, rows: queries.map(({ keyword }, i) => ({ word: keyword, hotWordId: i + 1, searchVal: 100, sales30day: 50 })) }
+			: original(tool, input);
+	const run = await createSelectionRunner(memoryStore(), f.services).start(f.input, "trend-expanded-queries");
+	assert.equal(run.status, "completed");
+	assert.equal(run.found, 0);
+	assert.equal(run.events.filter((event) => event.data?.kind === "query").length, 8);
+	assert.equal(f.calls.filter(({ tool }) => tool === "zhixia.demand-change").length, 8);
+	assert.ok(!f.calls.some(({ tool }) => tool.startsWith("1688.")));
+});
+
+test("两个合格趋势方向分别筛选并只引用各自市场事实", async () => {
+	const f = trendFixture();
+	f.input.limit = 2;
+	const queries = [
+		{ keyword: "手機掛繩", sourceKeyword: "手机带", categoryPath: [100, 101] },
+		{ keyword: "編織掛繩", sourceKeyword: "编织挂绳", categoryPath: [100, 101] },
+	];
+	let batch = 0;
+	f.services.ask = async (input) => {
+		if (input.schema.properties && typeof input.schema.properties === "object" && "focus" in input.schema.properties) return { focus: "两个真实热词", queries };
+		const index = batch++;
+		const offerId = String(123 + index);
+		assert.match(input.prompt, new RegExp(`marketFactIndex=${index}`));
+		assert.doesNotMatch(input.prompt, new RegExp(`"offerId":"${124 - index}"`));
+		return {
+			summary: "保留来源自身的趋势与规格",
+			audit: { ...f.audit, steps: f.audit.steps.map((step) => ({ ...step, queryFactIndexes: [index], offerIds: [offerId] })) },
+			candidates: [{ ...f.choice, offerId, research: { ...f.research, queryFactIndexes: [index] } }],
+		};
+	};
+	const original = f.services.callTool;
+	f.services.callTool = async (tool, input) => {
+		if (tool === "zhixia.hot-words")
+			return { updateTime: null, rows: queries.map(({ keyword }, i) => ({ word: keyword, hotWordId: i + 5, searchVal: 100, sales30day: 50 })) };
+		if (tool === "1688.search" && input.keyword === "编织挂绳") return { rows: [{ offerId: "124", title: "编织挂绳" }] };
+		if (tool === "1688.offer" && input.id === "124") return { ...f.offer, offerId: "124", url: "https://detail.1688.com/offer/124.html" };
+		if (tool === "listing.collect-source" && input.link === "https://detail.1688.com/offer/124.html")
+			return { sourceId: "8", offerId: "124", title: "编织挂绳", status: "added", problems: [] };
+		return original(tool, input);
+	};
+	const run = await createSelectionRunner(memoryStore(), f.services).start(f.input, "trend-facts-per-keyword");
+	assert.equal(run.status, "completed", run.error ?? undefined);
+	assert.equal(run.found, 2);
+	assert.deepEqual(
+		run.candidates.map((candidate) => candidate.research?.queryFactIndexes),
+		[[0], [1]],
+	);
+});
 
 test("新趋势流程使用真实原生词绑定完整30点；样本观察值可作初筛并保存，口径局限随证据保留", async () => {
 	const f = trendFixture(),

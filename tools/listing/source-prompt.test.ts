@@ -199,6 +199,9 @@ test("真实模板引用项目通用skill并说明本地执行、图片分流和
 	assert.match(result.prompt, /OpenAI Image/);
 	assert.match(result.prompt, /clean-original/);
 	assert.match(result.prompt, /Logo/);
+	assert.match(result.prompt, /品牌商品.*可选可上架/);
+	assert.match(result.prompt, /遮挡.*品牌露出/);
+	assert.match(result.prompt, /品牌字段可留空时留空/);
 	assert.match(result.prompt, /样本均价/);
 	assert.match(result.prompt, /中位数.*主流价带/);
 	assert.match(result.prompt, /定价模板.*目标毛利/);

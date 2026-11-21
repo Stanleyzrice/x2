@@ -21,7 +21,8 @@ test("模型规则输入保留完整现行限制和执行边界，不重复四�
 	]);
 	const template = { fx: 4.8, feeRate: 0.16, freightPerKgRmb: 10, labelFeeRmb: 1.5, minMargin: 0.2, maxMargin: 0.3 };
 	const compact = researchPolicyText(workbench, rules, template);
-	assert.ok(compact.includes(rules));
+	assert.ok(compact.includes(rules.split("\n## 研究判断\n")[0]!.trim()));
+	assert.ok(!compact.includes("## 研究判断"));
 	assert.ok(compact.includes(strategyInstructions(workbench, "执行、停止与交付")));
 	assert.ok(!compact.includes('"strategies"'));
 	assert.ok(!compact.includes("## 竞品对标"));
@@ -50,6 +51,11 @@ test("缺少方法或重复策略不能创建研究任务", async () => {
 	assert.throws(() => parseWorkbenchPolicy(`\x60\x60\x60json\n${JSON.stringify(policy)}\n\x60\x60\x60`), /不能重复/);
 	assert.throws(() => strategyInstructions("## 其他\n内容", "竞品对标"), /缺少详细/);
 	assert.throws(() => parsePolicyJson("无参数"), /缺少运行参数/);
+});
+
+test("策略说明不能改变执行契约中的商品发现或销售单位类型", async () => {
+	const markdown = await readFile(new URL("../../skills/selection/references/workbench.md", import.meta.url), "utf8");
+	assert.throws(() => parseWorkbenchPolicy(markdown.replace('"kind": "discovery"', '"kind": "sales-unit"')), /策略分类与执行契约不符/);
 });
 
 test("用户研究步骤只覆盖运行配置并保留规则；拒绝空步骤、过长或超量输入", async () => {
@@ -101,21 +107,29 @@ test("缺少购买理由、所需证据或淘汰条件不能发布为完整研�
 	}
 });
 
-test("趋势流程必须保存技能中的试行参数且自定义步骤不能去掉数据门槛", async () => {
+test("趋势门槛来自执行契约，自定义步骤和文档不能改变参数；小红书策略由代码注册", async () => {
 	const definition = (await loadStrategyDefinitions()).find((s) => s.id === "rising-demand")!;
 	assert.ok(definition);
 	assert.deepEqual(definition.trend, {
 		windowDays: 7,
 		minPoints: 7,
 		maxLagDays: 3,
-		minGrowthRate: 0.2,
-		minPreviousGrowthRate: 0.05,
-		minRobustGrowthRate: 0.1,
+		minGrowthRate: 0.03,
+		minPreviousGrowthRate: 0.01,
+		minRobustGrowthRate: 0.02,
 		minBaselineMean: 10,
+		maxQueriesPerRound: 12,
 	});
 	assert.deepEqual(withWorkflow(definition, ["先查毛帽"]).trend, definition.trend);
 	const markdown = await readFile(new URL("../../skills/selection/references/workbench.md", import.meta.url), "utf8");
 	const policy = parseWorkbenchPolicy(markdown);
-	delete policy.strategies.find((s) => s.id === "rising-demand")!.trend;
-	assert.throws(() => parseWorkbenchPolicy(`\x60\x60\x60json\n${JSON.stringify(policy)}\n\x60\x60\x60`));
+	assert.throws(() =>
+		parseWorkbenchPolicy(
+			`\x60\x60\x60json\n${JSON.stringify({
+				...policy,
+				strategies: policy.strategies.map((strategy) => (strategy.id === "rising-demand" ? { ...strategy, trend: { windowDays: 1 } } : strategy)),
+			})}\n\x60\x60\x60`,
+		),
+	);
+	assert.ok((await loadStrategyDefinitions()).some((strategy) => strategy.id === "xiaohongshu-discovery" && strategy.kind === "discovery"));
 });

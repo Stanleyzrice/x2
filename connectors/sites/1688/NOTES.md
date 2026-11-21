@@ -57,6 +57,8 @@
 
 `fixtures/description-live.json` 是 2026-11-13 经指定 Ego 浏览器的既有 CDP 商品读取获得 detailUrl 后，读取的公开详情原始响应（商品 777744281955）；仅含公开商品图片地址，没有账号、订单或买家信息。解析得到 18 张图片、没有独立网页文字。`description()` 与既有 `detailImages()` 共用请求和解析；新增 HTML 字图混排测试为合成输入，用于覆盖实体、文字顺序和脚本排除，不声称是真站回包。
 
+`fixtures/description-legacy-live.json` 来自 2026-11-18 商品 838977258465 的旧版公开详情响应，去掉了推荐占位图片的标题属性。响应以 `var desc` 包裹 HTML，包含站内推荐和实际详情。解析保留 5 张本品详情图片，跳过推荐区块和其占位图片。
+
 `fixtures/*.json` 是 api.ts 解析的回包，api.test.ts 拿它们跑解析。除上述真实样本外，早期样本是照代码和上面记的字段写的（不是抓的真回包）：`offer.json` 的值取自一个真货源解析后的样子，反推成商品页上的几块。登录以后用 live.ts 读一遍，把真回包换进来（买家、卖家的名字、电话、地址换成假的）。
 
 `purchases.ts` 使用同一采购列表接口，金额字段保留为整数分字符串，缺失为 null；只用 `gmtPayment` 作为付款时间证据，不从状态名推定已付款。分页汇总缺失、不安全数字 ID 或金额会报错。供应商只读取明确的 sellerCompanyName、sellerLoginId 或 sellerInfo 对应字段；既有采购回包样本未含这些字段，缺失时返回 null。`buyer-order-facts.json` 为在既有合成样本上扩充的解析用 fixture，覆盖缺项、长金额和供应商字段，不是 live 证据。

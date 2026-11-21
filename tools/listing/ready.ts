@@ -4,14 +4,14 @@ import { categoryAllowed } from "./category.ts";
 import { channelsOf } from "./channels.ts";
 import type { Pics } from "./pics.ts";
 import { estimateNeeds, pricingProblems, reprice, type Settings } from "./pricing.ts";
-import { type Product, productInfo, usedPics } from "./product.ts";
+import { type Product, productInfo, type SentInfo, usedPics } from "./product.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
 import { validateSavedReviewedImages } from "./reviewed-images.ts";
 import type { ListingRow } from "./row.ts";
 import { sizeChartOf } from "./size-chart.ts";
 import { OLD_SPECS, specsOf, structureProblems } from "./variants.ts";
 
-export function productOf(l: ListingRow, s: Settings): { product?: Product; info?: Record<string, unknown>; hash?: string; problems: string[] } {
+export function productOf(l: ListingRow, s: Settings): { product?: Product; info?: SentInfo; hash?: string; problems: string[] } {
 	const problems: string[] = [];
 	if (!l.offer) return { problems: ["未做商品稿"] };
 	const specs = specsOf(l.variants);

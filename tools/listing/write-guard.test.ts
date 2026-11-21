@@ -2,11 +2,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "../../platform/db/index.ts";
-import { catalogWriteBlock, sameCatalogProduct } from "./write-guard.ts";
+import { catalogWriteBlock, listingWriteTried, sameCatalogProduct } from "./write-guard.ts";
 import { LISTING_WRITES } from "./writes.ts";
 
 const saved = { id: "9", shopId: "77", productId: "42", parentSku: "old-sku" };
 const existing = { shopId: "77", productId: "42", parentSku: "renamed" };
+
+test("扩规格沿用本店已核对的试单，限定操作和店铺", async () => {
+	let found = true;
+	const sql = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+		assert.match(strings.join("?"), /op = \? and status = '已核对' and params->>'shopId' = \?/);
+		assert.deepEqual(values, ["展开规格", "77"]);
+		return found ? [{ tried: 1 }] : [];
+	}) as unknown as Sql;
+	assert.equal(await listingWriteTried(sql, "展开规格", "77"), true);
+	found = false;
+	assert.equal(await listingWriteTried(sql, "展开规格", "77"), false);
+});
 
 test("已有商品按稳定店铺和商品 id 匹配 Catalog，SKU 改名不改变身份", () => {
 	assert.equal(sameCatalogProduct(saved, existing), true);

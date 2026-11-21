@@ -50,7 +50,7 @@ const tools = {
 	traces: all("采购单的物流轨迹", z.object({ orders: strs("采购单号") }), (p) => traces(p.orders.map((orderId) => ({ orderId })))),
 };
 
-export const alibaba: Toolkit = {
+export const alibaba = {
 	name: "1688",
 	title: "1688（采购）",
 	kind: "site",
@@ -71,4 +71,4 @@ export const alibaba: Toolkit = {
 			cookie: { url: "https://www.1688.com/", signedIn: alibabaCookie },
 		},
 	},
-};
+} satisfies Toolkit;

@@ -1,14 +1,14 @@
 // 选品记录：保存实验状态、方法文档引用、版本与历史；现行规则正文在 skills，历史数据库不作为规则维护入口。
 import { z } from "zod";
+import { codexStatus } from "../../connectors/services/codex/index.ts";
 import { db, type Json } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, str, type Toolkit } from "../../platform/tool.ts";
+import { defaultSelectionLimit } from "../../platform/ui/interactable/selection/types.ts";
 import { loadRunConfig, loadSelectionPolicy, loadStrategyDefinitions, saveWorkflow, selectionStrategyId, workflowStepsSchema } from "./definitions.ts";
-import { cancelRun, getRun, listRuns, recoverInterruptedRuns, selectionAgentStatus, startRun } from "./runs.ts";
+import { deleteRun, type RunDetail } from "./run-store.ts";
+import { cancelRun, getRun, listRuns, recoverInterruptedRuns, startRun, timeSeriesSummaryTool } from "./runs.ts";
 import { SELECTION_TABLES } from "./tables.ts";
-import { summarizeTimeSeries, timeSeriesInputSchema } from "./time-series.ts";
-
-export { setSelectionServices } from "./runs.ts";
 
 const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
 const STATUS = ["试验中", "使用中", "已停用"] as const;
@@ -33,6 +33,7 @@ export function strategyDiff(
 const text = z.string().trim().min(1);
 const skillRef = text.regex(/^skills\/[\w-]+\/(?:SKILL\.md|references\/[\w.-]+\.md)(?:#[\w-]+)?$/, "方法只保存 skills 下的 Markdown 文件引用");
 const RULE_SOURCE = "skills/selection/references/rules.md";
+const runReceipt = (run: RunDetail) => (run.deleted ? { id: run.id, shop: run.shop, deleted: true as const } : run);
 
 const changeLines = (before: Record<string, unknown> | null, after: Record<string, unknown>) =>
 	Object.entries(after).map(([k, v]) => `${FIELD[k as Field] ?? k}：${before && k in before ? `${before[k] ?? "（空）"} → ` : ""}${v ?? "（空）"}`);
@@ -46,9 +47,7 @@ export const selection: Toolkit = {
 	title: "选品记录：策略实验、方法引用、规则历史",
 	kind: "tool",
 	tools: {
-		"time-series-summary": get("描述同口径时间序列的三窗口变化、缺失与尖峰敏感性；不产生选品准入或盈利结论", timeSeriesInputSchema, async (input) =>
-			summarizeTimeSeries(input),
-		),
+		"time-series-summary": timeSeriesSummaryTool,
 		workbench: get("当前商品发现与组合设计流程、证据边界及agent状态；不自动启动研究", z.object({ shop: str("目标店铺") }), async ({ shop }) => {
 			const sql = await db();
 			await recoverInterruptedRuns(sql);
@@ -56,7 +55,7 @@ export const selection: Toolkit = {
 			const saved = await sql<{ name: string; status: string }[]>`select name, status from strategies`;
 			const strategies = definitions.filter((definition) => !saved.some((row) => row.name === definition.name && row.status === "已停用"));
 			const { methodology } = await loadSelectionPolicy();
-			return { shop, strategies, methodology, agent: await selectionAgentStatus(), runs: await listRuns(sql, shop) };
+			return { shop, strategies, methodology, agent: await codexStatus(), runs: await listRuns(sql, shop) };
 		}),
 		"workflow-save": get(
 			"保存当前店铺的自定义研究步骤，不更改经营规则或已启动的研究",
@@ -73,11 +72,12 @@ export const selection: Toolkit = {
 			z.strictObject({
 				shop: str("目标店铺"),
 				strategyId: selectionStrategyId,
-				limit: z.coerce.number().int().min(1).max(10).default(3),
+				limit: z.coerce.number().int().min(1).max(10).optional(),
 				brief: z.string().trim().max(2000).default(""),
 				requestId: z.string().uuid(),
 			}),
-			async ({ requestId, ...input }) => {
+			async ({ requestId, limit, ...fields }, source) => {
+				const input = { ...fields, limit: limit ?? defaultSelectionLimit(fields.strategyId) };
 				const sql = await db();
 				// 未收到启动回执时先查原请求；之后保存的流程不能改变该次运行快照。
 				const [previous] = await sql<
@@ -91,10 +91,12 @@ export const selection: Toolkit = {
 						previous.brief !== input.brief
 					)
 						throw new Usage("该requestId已用于另一组研究输入，请使用新的请求编号");
-					return getRun(sql, previous.id);
+					const run = await getRun(sql, previous.id);
+					if (!run) throw new Usage("没有这家店的研究任务");
+					return runReceipt(run);
 				}
 				const config = await loadRunConfig(sql, input);
-				const agent = await selectionAgentStatus();
+				const agent = await codexStatus();
 				if (agent.model && agent.reasoningEffort) config.agent = { model: agent.model, reasoningEffort: agent.reasoningEffort };
 				const [saved] = await sql<{ status: string }[]>`select status from strategies where name = ${config.strategy.name}`;
 				if (saved?.status === "已停用") throw new Usage("该策略已停用，请选择当前研究方法");
@@ -107,13 +109,14 @@ export const selection: Toolkit = {
 						values (${config.strategy.name}, 1, ${tx.json({ status: "试验中", bet: config.strategy.description, how: config.strategy.policyPath })},
 						'用户从策略工作台启动研究，按当前项目技能执行')`;
 				});
-				return startRun(sql, config, requestId);
+				// 网页由服务继续执行，命令行等到结束再关闭数据库。
+				return runReceipt(await startRun(sql, config, requestId, source === "web"));
 			},
 		),
 		"run-detail": get("读取一项研究的步骤、证据及备选结果", z.strictObject({ shop: str("目标店铺"), runId: z.string().uuid() }), async ({ shop, runId }) => {
 			const run = await getRun(await db(), runId);
 			if (!run || run.shop !== shop) throw new Usage("没有这家店的研究任务");
-			return run;
+			return runReceipt(run);
 		}),
 		"run-cancel": get(
 			"停止研究；保留已经保存的备选，不再新增",
@@ -121,9 +124,12 @@ export const selection: Toolkit = {
 			async ({ shop, runId }) => {
 				const sql = await db();
 				const run = await getRun(sql, runId);
-				if (!run || run.shop !== shop) throw new Usage("没有这家店的研究任务");
+				if (!run || run.shop !== shop || run.deleted) throw new Usage("没有这家店的研究任务");
 				return cancelRun(sql, runId);
 			},
+		),
+		"run-delete": get("删除历史研究记录，保留已保存的备选货源", z.strictObject({ shop: str("目标店铺"), runId: z.string().uuid() }), async ({ shop, runId }) =>
+			deleteRun(await db(), shop, runId),
 		),
 		"strategy-add": get(
 			"记一个策略（试验中，第 1 版）",

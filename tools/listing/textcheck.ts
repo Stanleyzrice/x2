@@ -160,7 +160,7 @@ export async function textChecks(sql: Sql, ids: ListingId[], allowImageDrop = tr
 				a = await textCheck(c.r.product, {
 					image: (x) => unmarked(sql, pics, x),
 					kept: c.kept,
-					canDrop: allowImageDrop && round < MAX_RECHECK,
+					canDrop: allowImageDrop && pics.imageMode !== "reviewed" && round < MAX_RECHECK,
 					cachedAudit: c.l.audit,
 				});
 				const drops = a.images.filter((x) => x.dropped);

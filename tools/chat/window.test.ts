@@ -28,6 +28,16 @@ test("窗口由调用方显式指定有效天数，Tool不默认或固定7天", 
 	assert.equal(chat.tools.messages!.params.safeParse({ shop: "ni1206", conversationId: "3", historyDays: 30 }).success, true);
 	assert.equal(chat.tools.messages!.params.safeParse({ shop: "ni1206", conversationId: "3" }).success, false);
 });
+
+test("续页绑定现有上下文，生成建议只用项目客服规则", () => {
+	const target = { shop: "ni1206", conversationId: "3", historyDays: 7 };
+	const contextId = "11111111-1111-4111-8111-111111111111";
+	assert.equal(chat.tools.messages!.params.safeParse({ ...target, cursor: "next" }).success, false);
+	assert.equal(chat.tools.messages!.params.safeParse({ ...target, cursor: "next", contextId }).success, true);
+	assert.equal(chat.tools.draft!.params.safeParse(target).success, false);
+	assert.equal(chat.tools.draft!.params.parse({ ...target, contextId }).policyPath, ".agents/skills/chat/SKILL.md");
+	assert.equal(chat.tools.draft!.params.safeParse({ ...target, contextId, policyPath: "local.md" }).success, false);
+});
 test("会话在Backend移除旧消息预览，未知时间不冒充窗口内", () => {
 	const raw = (id: string, at: string | null, text: string) => ({
 		id,

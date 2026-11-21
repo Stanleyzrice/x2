@@ -1,0 +1,15 @@
+{
+	"code": 0,
+	"result": {
+		"product_card": {
+			"total": { "product_clicks": 12 },
+			"breakdown": [
+				{ "source": "psd_label_my_purchase", "product_clicks": 0 },
+				{ "source": "psd_label_recommendation", "product_clicks": 10 },
+				{ "source": "psd_label_search", "product_clicks": 1 },
+				{ "source": "psd_label_shop", "product_clicks": 0 },
+				{ "source": "psd_label_others", "product_clicks": 1 }
+			]
+		}
+	}
+}

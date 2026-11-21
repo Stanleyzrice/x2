@@ -1,7 +1,10 @@
 // 写入引擎的判断：没核清的同一个对象不再做；结果未知停下这一批、不重发；被拒的记下原因，同一个 key 再交加次数
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { admit, failed, gate, held, LOOK, type Stuck, settle, stuck } from "./writes.ts";
+import { z } from "zod";
+import type { Sql } from "./db/index.ts";
+import { claimSiteSubmission, runSiteSubmission } from "./site-write.ts";
+import { admit, failed, gate, held, LOOK, perform, type Stuck, settle, stuck, type WriteOp, writeOp } from "./writes.ts";
 
 const none = (): Stuck => ({ batches: new Set(), targets: new Set() });
 const w = { op: "试写", batch: "1", target: "t:1" };
@@ -67,4 +70,46 @@ test("写入：记意图之前再看库里（别的批、别的进程的也算�
 	assert.equal(held(me, [row("3", "k:1", "t:2", "结果未知")]), "同一个对象有没核清的写入 #3：先核清再做");
 	assert.equal(held(me, [row("3", "k:1", "t:1", "已核对")]), "重复：写入 #3 已经做过");
 	assert.equal(held(me, [row("3", "k:2", "t:1", "已核对")]), null);
+});
+
+test("试单在任何一批入库前检查全部目标，允许同一个对象的连续步骤", async () => {
+	const sql = {
+		reserve: async () => {
+			throw new Error("开始拿锁");
+		},
+	} as unknown as Sql;
+	const op: WriteOp<{ target: string }, null> = {
+		describe: "测试",
+		params: z.object({ target: z.string() }),
+		target: (p) => p.target,
+		key: (p) => p.target,
+		display: (p) => p.target,
+		where: (_sql, _p, fn) => fn(),
+		prepare: async (_sql, p) => ({ params: p, before: null }),
+		submit: async () => ({ kind: "done" }),
+		check: async () => ({ done: true, readback: null }),
+	};
+	const ops = { 建商品: writeOp(op), 上架: writeOp(op) };
+	const create = { op: "建商品", params: { target: "商品1" } };
+	const list = { op: "上架", params: { target: "商品1" } };
+	const another = { op: "建商品", params: { target: "商品2" } };
+	await assert.rejects(perform(sql, [[create], [another]], { try: true }, ops), /只允许试一个对象/);
+	await assert.rejects(perform(sql, [[create], [list]], { try: true }, ops), /开始拿锁/);
+	await assert.rejects(perform(sql, [[create], [another]], {}, ops), /开始拿锁/);
+});
+
+test("站点提交额度只在本次提交期间有效，首次领取后不能再用", async () => {
+	assert.throws(claimSiteSubmission, /只能由写入引擎提交一次/);
+	await runSiteSubmission(async () => {
+		await Promise.resolve();
+		claimSiteSubmission();
+		assert.throws(claimSiteSubmission, /只能由写入引擎提交一次/);
+	});
+	const deferred = Promise.withResolvers<void>();
+	let late: Promise<void> | undefined;
+	await runSiteSubmission(async () => {
+		late = deferred.promise.then(claimSiteSubmission);
+	});
+	deferred.resolve();
+	await assert.rejects(late!, /只能由写入引擎提交一次/);
 });

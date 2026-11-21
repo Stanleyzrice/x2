@@ -210,7 +210,7 @@ test("并发恢复在锁内重探测，后到者使用已恢复的转发，不�
 	for (const socket of sockets) socket.destroy();
 });
 
-test("SSH仅使用当前目标的专属控制路径与仓库配置，密码不进入路径或参数", () => {
+test("SSH仅使用当前目标的专属控制路径与本机 SSH 配置，密码不进入路径或参数", () => {
 	assert.equal(tunnelTarget(url.replace("password-not-sent", "other-secret"), "x2-db").controlPath, target.controlPath);
 	assert.notEqual(tunnelTarget(url.replace("15432", "15433"), "x2-db").controlPath, target.controlPath);
 	assert.notEqual(tunnelTarget(url, "another-alias").controlPath, target.controlPath);

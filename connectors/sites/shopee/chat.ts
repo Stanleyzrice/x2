@@ -10,6 +10,7 @@ import { z } from "zod";
 import { page } from "../../../platform/browser/browser.ts";
 import { NeedsHuman } from "../../../platform/errors.ts";
 import { reply } from "../../../platform/reply.ts";
+import { claimSiteSubmission } from "../../../platform/site-write.ts";
 import type { Sent } from "../../../platform/tool.ts";
 import { ORIGIN, shop } from "./seller.ts";
 
@@ -189,6 +190,7 @@ export async function sendViaChatPage(input: { target: ChatTarget; text: string;
 }
 
 export async function sendMessage(target: ChatTarget, text: string): Promise<Sent> {
+	claimSiteSubmission();
 	const current = await shop();
 	if (current.shopId !== target.shopId || current.userId !== target.userId) return { kind: "refused", why: "发送前店铺账号改变" };
 	const p = await page(ORIGIN);

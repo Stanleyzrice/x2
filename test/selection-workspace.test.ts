@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actions, inputs, props } from "../platform/ui/interactable/selection/schema.ts";
+import { defaultSelectionLimit, socialDiscoveryStrategy } from "../platform/ui/interactable/selection/types.ts";
 import { TOOLKITS } from "../x2.ts";
 
 test("策略选品是位于人工采集前的固定工作区", () => {
@@ -24,4 +25,23 @@ test("页面只调用选品运行工具，旧方法、缺请求编号和超量�
 	assert.equal(tools["run-start"]!.params.safeParse({ ...base, strategyId: "old-product-extension" }).success, false);
 	assert.equal(tools["run-start"]!.params.safeParse({ ...base, limit: 11 }).success, false);
 	assert.equal(tools["run-start"]!.params.safeParse({ ...base, requestId: undefined }).success, false);
+});
+
+test("研究记录删除从工作区绑定店铺，只接受运行编号", () => {
+	const tools = TOOLKITS.find((kit) => kit.name === "selection")!.tools;
+	assert.equal(actions.delete, "selection.run-delete");
+	const params = tools["run-delete"]!.params;
+	const input = { shop: "cheeroutdoor", runId: "d8c75f9d-13ef-4071-8dd4-5e8625cef514" };
+	assert.equal(params.safeParse(input).success, true);
+	assert.equal(params.safeParse({ runId: input.runId }).success, false);
+	assert.equal(params.safeParse({ ...input, runId: "invalid" }).success, false);
+});
+
+test("小红书策略可由工作台正常启动，默认十个，名额仍有上限", () => {
+	const params = TOOLKITS.find((kit) => kit.name === "selection")!.tools["run-start"]!.params;
+	const input = { shop: "cheeroutdoor", strategyId: socialDiscoveryStrategy, requestId: "d8c75f9d-13ef-4071-8dd4-5e8625cef514" };
+	assert.equal(params.safeParse(input).success, true);
+	assert.equal(params.safeParse({ ...input, limit: 11 }).success, false);
+	assert.equal(defaultSelectionLimit(input.strategyId), 10);
+	assert.equal(defaultSelectionLimit("peer-benchmark"), 3);
 });

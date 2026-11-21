@@ -2,11 +2,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
+import { alibaba } from "../connectors/sites/1688/index.ts";
+import { createListing } from "../connectors/sites/shopee/publish.ts";
 import { needsHuman } from "../connectors/sites/shopee/seller.ts";
 import { bySales30Day } from "../connectors/sites/zhixia/api.ts";
 import { runTool } from "../platform/cli.ts";
 import { Usage } from "../platform/errors.ts";
-import { byPage, day, flag, get, ints, parseJson, str, type Toolkit } from "../platform/tool.ts";
+import { byPage, day, flag, get, ints, parseJson, runReadTool, str, type Toolkit } from "../platform/tool.ts";
 
 const seen: unknown[] = [];
 const fake: Toolkit = {
@@ -20,6 +22,7 @@ const fake: Toolkit = {
 			return { rows: all.slice((n - 1) * 2, n * 2), more: n * 2 < all.length };
 		}),
 		when: get("时间", z.object({ start: day("开始"), end: day("结束", true) }), async (p) => p),
+		thread: get("逐页读会话", z.object({ cursor: z.string(), contextId: z.string() }), async (p) => p),
 		note: get("开关和字", z.object({ why: str("理由"), force: flag("覆盖").default(false) }), async (p) => p),
 		raw: get("JSON 参数", z.object({ query: z.preprocess(parseJson, z.record(z.string(), z.unknown())).default({}) }), async (p) => p),
 	},
@@ -35,10 +38,27 @@ test("list 默认翻到底，输出 { rows, next }", async () => {
 	assert.deepEqual(await value(["items", "--shop-id", "7"]), { rows: [1, 2, 3, 4, 5], next: null });
 });
 
+test("连接器的业务写操作在写入引擎外直接调用会拒绝", async () => {
+	const cart = alibaba.tools["cart-add"];
+	await assert.rejects(cart.submit(cart.params.parse({ offerId: "1", specId: "", qty: 1 })), /只能由写入引擎提交一次/);
+	await assert.rejects(createListing.submit({ productInfo: {} }), /只能由写入引擎提交一次/);
+});
+
+test("工具从命令行调用时默认在前台，网页入口传入自己的执行来源", async () => {
+	const tool = get("测试执行来源", undefined, async (_p, source) => source);
+	assert.equal(await runReadTool("source", tool, {}), "cli");
+	assert.equal(await runReadTool("source", tool, {}, "web"), "web");
+});
+
 test("--pages 只翻几页，next 能接着翻", async () => {
 	const first = (await value(["items", "--shop-id", "7", "--pages", "1"])) as { next: string };
 	assert.deepEqual(first, { rows: [1, 2], next: "2" });
 	assert.deepEqual(await value(["items", "--shop-id", "7", "--cursor", first.next]), { rows: [3, 4, 5], next: null });
+});
+
+test("工具声明的 --cursor 交给工具校验；分页工具继续使用通用游标", async () => {
+	assert.deepEqual(await value(["thread", "--cursor", "next", "--context-id", "thread-1"]), { cursor: "next", contextId: "thread-1" });
+	await assert.rejects(runTool(fake, ["note", "--why", "示例", "--cursor", "next"]), /没有参数 --cursor/);
 });
 
 test("参数：--kebab-case 对上 camelCase，逗号分隔的转成数组", async () => {

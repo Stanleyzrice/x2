@@ -243,7 +243,7 @@ const tools = {
 	),
 };
 
-export const shopee: Toolkit = {
+export const shopee = {
 	name: "shopee",
 	title: "Shopee 卖家中心（台湾站）",
 	kind: "site",
@@ -266,4 +266,4 @@ export const shopee: Toolkit = {
 		description: "在登录着这家店的浏览器里读（账号名，例 ni1206；也可以给店铺 id）；只有一个浏览器登录着 Shopee 时不用给",
 		run: (shop, fn) => inAccount("shopee", shop, fn),
 	},
-};
+} satisfies Toolkit;

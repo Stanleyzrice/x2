@@ -2,7 +2,7 @@
 // 只提示、不挡：挑出的问题带编号写进商品稿的「说明」，人审稿时看。印在商品上的不算问题；后加的文案，详情图和不是封面的主图 x2 去掉、重组商品再查，
 // 封面、规格图少了会影响商品，只提示；保留的图（人说要用的）不问、不去掉
 import { createHash } from "node:crypto";
-import type { Pic, Pics } from "./pics.ts";
+import type { ImageMode, Pic, Pics } from "./pics.ts";
 import type { Product } from "./product.ts";
 
 export const AUDIT_VERSION = 4;
@@ -66,6 +66,10 @@ export function auditCurrent(a: Partial<Audit> | null | undefined, p: Product): 
 	if (!a || a.key !== auditKey(p)) return false;
 	if (a.provider === "codex-visual" || a.provider === "human") return reviewedAuditCurrent(a, p);
 	return a.provider === undefined || a.provider === "gemini";
+}
+
+export function listingAuditCurrent(a: Partial<Audit> | null | undefined, p: Product, imageMode: ImageMode | undefined): boolean {
+	return imageMode === "reviewed" ? reviewedAuditCurrent(a, p) : auditCurrent(a, p);
 }
 
 export const auditProviderName = (provider?: AuditProvider) =>

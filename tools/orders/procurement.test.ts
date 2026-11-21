@@ -2,7 +2,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "../../platform/db/index.ts";
-import { monitor } from "./procurement.ts";
+import { monitor, selectionParams } from "./procurement.ts";
+
+test("采购预览的 CLI 与网页复用订单号数组校验并保留长编号", () => {
+	const requestId = "11111111-1111-4111-8111-111111111111";
+	const orders = ["12345678901234567890"];
+	assert.deepEqual(selectionParams.parse({ shops: '["cheeroutdoor"]', orders: JSON.stringify(orders), requestId }), {
+		shops: ["cheeroutdoor"],
+		orders,
+		requestId,
+	});
+	assert.equal(selectionParams.safeParse({ orders: "[12345678901234567890]", requestId }).success, false);
+});
 
 test("采购快照并行读取已有货源索引，保留待核对状态且不假造 Shopee 核对时间", async () => {
 	const wait = Promise.withResolvers<void>();

@@ -6,8 +6,10 @@ import { attributes as attributeTree } from "../../connectors/sites/shopee/produ
 import { db, type Json, type Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { get, type Planned, write } from "../../platform/tool.ts";
-import { auditCurrent } from "./audit.ts";
+import { listingAuditCurrent } from "./audit.ts";
 import { updatedAttributes } from "./category.ts";
+import { coverageBlock } from "./coverage.ts";
+import { imageLanguageBlock } from "./image-language.ts";
 import { make } from "./make.ts";
 import { addListings } from "./pick.ts";
 import { type Settings, settingsOf } from "./pricing.ts";
@@ -109,7 +111,11 @@ async function deleteSources(sql: Sql, input: z.output<typeof sourceDeleteParams
 }
 const effectiveShop = (p: SourceShopInput) => p.targetShop ?? p.shop;
 
-async function saveSourceTransaction(tx: QuerySql, source: SourceProduct): Promise<{ id: string; isNew: boolean; repaired: boolean }> {
+async function saveSourceTransaction(
+	tx: QuerySql,
+	source: SourceProduct,
+	refreshMissingDetail = false,
+): Promise<{ id: string; isNew: boolean; repaired: boolean }> {
 	const [added] = await tx<
 		{ id: string }[]
 	>`insert into listing_sources (platform, source_id, url, snapshot) values (${source.platform}, ${source.sourceId}, ${source.url}, ${tx.json(source as Json)}) on conflict (platform, source_id) do nothing returning id::text`;
@@ -117,13 +123,15 @@ async function saveSourceTransaction(tx: QuerySql, source: SourceProduct): Promi
 	const [old] = await tx<SourceRow[]>`select * from listing_sources where platform = ${source.platform} and source_id = ${source.sourceId} for update`;
 	if (!old) throw new Usage("备选商品刚变化，请重试采集");
 	if (old.deleted_at) throw new Usage("采集期间已删除，请重新点击加入备选");
-	// 只修复已明确失败的采集，成功快照不被重复采集悄悄替换；人工补充值不在快照里。
+	// 已明确失败的采集可修复。显式补采只填完全为空的详情，保留其他原始字段和人工补充值。
+	const fillDetail = refreshMissingDetail && !old.snapshot.description.blocks.length && source.description.blocks.length > 0;
 	let repaired = false;
-	if (old.snapshot.errors.length && !source.errors.length) {
+	if (!source.errors.length && (old.snapshot.errors.length || fillDetail)) {
 		const [blocked] =
 			await tx`select 1 from listing_source_links x join listings l on l.id = x.listing_id where x.source_id = ${old.id} and (l.product_id is not null or l.listed_at is not null or exists (select 1 from writes w where w.params->>'listingId' = l.id::text and w.status in ('待执行','已提交','结果未知','不一致'))) limit 1`;
 		if (!blocked) {
-			await tx`update listing_sources set snapshot = ${tx.json(source as Json)}, url = ${source.url}, captured_at = now() where id = ${old.id}`;
+			const snapshot = old.snapshot.errors.length ? source : { ...old.snapshot, description: source.description };
+			await tx`update listing_sources set snapshot = ${tx.json(snapshot as Json)}, url = ${snapshot.url}, captured_at = now() where id = ${old.id}`;
 			repaired = true;
 		}
 	}
@@ -154,7 +162,7 @@ export async function saveCollectedSource(sql: Sql, input: CollectSourceInput, p
 			const [strategy] = await tx`select name from strategies where name = ${input.provenance.strategyName}`;
 			if (!strategy) throw new Usage(`没有策略「${input.provenance.strategyName}」，未加入备选`);
 		}
-		const saved = await saveSourceTransaction(tx, source);
+		const saved = await saveSourceTransaction(tx, source, input.refreshMissingDetail);
 		const [row] = await tx<SourceRow[]>`select * from listing_sources where id = ${saved.id} for update`;
 		if (!row || row.deleted_at) throw new Usage("商品已从备选区移除，未重新加入");
 		if (input.provenance) {
@@ -259,7 +267,10 @@ function issues(row: ListingRow, settings: Settings, sourceId?: string): string[
 	if (row.product_id) return [];
 	const ready = productOf(row, settings);
 	const problems = [...ready.problems, ...textProblems(row.title ?? "", row.description ?? "")];
-	if (ready.product && !row.source_product_id && !auditCurrent(row.audit, ready.product)) problems.push("现有商品稿尚未完成原有发布前审阅");
+	const coverage = ready.product && coverageBlock(row, ready.product);
+	if (coverage) problems.push(coverage);
+	if (ready.product && !row.source_product_id && !listingAuditCurrent(row.audit, ready.product, row.images.imageMode))
+		problems.push("现有商品稿尚未完成发布前审阅");
 	return [...new Set(problems)];
 }
 
@@ -378,6 +389,7 @@ async function detail(sql: Sql, input: z.output<typeof sourceDetailParams>) {
 		research: z.array(sourceResearchSchema).parse(source.research ?? []),
 		minQty: fields.minQty ?? source.snapshot.minQty,
 		freightRmb: row?.freight_rmb === null || !row ? source.snapshot.freightRmb : Number(row.freight_rmb),
+		tags: source.snapshot.tags ?? null,
 	};
 }
 
@@ -438,7 +450,18 @@ function publicationHash(row: ListingRow, settings: Settings): string | undefine
 
 async function publishPreview(sql: Sql, input: z.output<typeof sourceSelectionParams>) {
 	const ctx = await context(sql, input, input.sourceIds);
-	const prepared = { items: ctx.sources.map((s) => itemOf(s, ctx)) };
+	const items = await Promise.all(
+		ctx.sources.map(async (source) => {
+			const item = itemOf(source, ctx);
+			if (item.status !== "ready") return item;
+			const row = ctx.listings.get(item.id)!;
+			if (row.product_id) return item; // 上架关卡现读站点实际图片。
+			const { info } = productOf(row, ctx.settings);
+			const problem = info && (await imageLanguageBlock(sql, row.shop, `商品稿 #${row.id}`, info));
+			return problem ? { ...item, status: "needs-input" as const, problems: [...item.problems, problem] } : item;
+		}),
+	);
+	const prepared = { items };
 	const products = prepared.items
 		.filter((i) => i.status === "ready")
 		.map((i) => {
@@ -476,7 +499,9 @@ async function publishPreview(sql: Sql, input: z.output<typeof sourceSelectionPa
 	};
 }
 
-async function publishSourcePlan(sql: Sql, input: SourcePublishInput, plan: (sql: Sql, ids: string[]) => Promise<Planned[][]>) {
+type PublishPlan = (sql: Sql, ids: string[], trackingBatch: string) => Promise<Planned[][]>;
+
+async function publishSourcePlan(sql: Sql, input: SourcePublishInput, plan: PublishPlan) {
 	const ctx = await context(sql, input, input.sourceIds);
 	const [saved] = await sql<
 		{ shop: string; products: SourcePublishInput["products"] }[]
@@ -501,7 +526,7 @@ async function publishSourcePlan(sql: Sql, input: SourcePublishInput, plan: (sql
 		ids.push(String(row.id));
 	}
 	await sql`update listing_source_requests set executing_at = now() where request_id = ${input.requestId}`;
-	return plan(sql, ids);
+	return plan(sql, ids, input.requestId);
 }
 
 async function publishResult(sql: Sql, input: z.output<typeof sourcePublishResultParams>) {
@@ -530,7 +555,7 @@ async function publishResult(sql: Sql, input: z.output<typeof sourcePublishResul
 	return { requestId: input.requestId, state, items };
 }
 
-export function sourceTools(plan: (sql: Sql, ids: string[]) => Promise<Planned[][]>) {
+export function sourceTools(plan: PublishPlan) {
 	return {
 		sources: get("人工采集备选区：按平台、关键词和上架状态查看已保存原文原图", sourceListParams, async (p) => sources(await db(), p)),
 		"source-prompt": get("导出明确选中商品的上架提示词；只读取已有资料，不准备稿件或执行上架", sourcePromptParams, async (p) => {
