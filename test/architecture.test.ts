@@ -40,6 +40,7 @@ const TOP = [
 	".gitignore",
 	"AGENTS.md",
 	"CLAUDE.md",
+	"LICENSE",
 	"README.md",
 	"ops",
 	"biome.json",
