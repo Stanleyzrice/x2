@@ -7,10 +7,12 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { setTimeout } from "node:timers/promises";
+import { inspect } from "../connectors/services/image/api.ts";
 import { OfferId, SkuId, SpecId } from "../connectors/sites/1688/api.ts";
 import { ModelId } from "../connectors/sites/shopee/seller.ts";
 import { client, type Sql } from "../platform/db/index.ts";
 import { register } from "../platform/tool.ts";
+import { deleteConversation, listConversations, readConversation, saveImportedConversation } from "../platform/web/hermes-history.ts";
 import { coverageScope, saveCoverage } from "../tools/listing/coverage.ts";
 import { editImageTarget, editParams } from "../tools/listing/edit.ts";
 import { listingHermesTools } from "../tools/listing/hermes.ts";
@@ -24,12 +26,14 @@ import {
 import { settingsOf } from "../tools/listing/pricing.ts";
 import { productOf } from "../tools/listing/ready.ts";
 import { previewListingReview, setListingReview } from "../tools/listing/review.ts";
+import { reviewedImagesScope } from "../tools/listing/reviewed-images.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "../tools/listing/row.ts";
 import { sizeChartScope } from "../tools/listing/size-chart.ts";
 import { saveCollectedSource } from "../tools/listing/source.ts";
 import { type CollectSourceInput, sourceProductSchema } from "../tools/listing/source-data.ts";
 import { translate, translationState } from "../tools/listing/translations.ts";
 import { LISTING_WRITES } from "../tools/listing/writes.ts";
+import { shopImageFlow, xiangjiImages, xiangjiImagesParams } from "../tools/listing/xiangji-images.ts";
 import { deleteRun, postgresRunStore, type RunCreation, type RunLease, type RunStore } from "../tools/selection/run-store.ts";
 import { TOOLKITS } from "../x2.ts";
 
@@ -104,6 +108,48 @@ test("独立临时库：选品运行租约、幂等与货源导入事务", { tim
 			await sql.unsafe(await readFile(new URL(file, import.meta.url), "utf8"));
 		}
 		await sql`insert into strategies(name) values('集成测试策略')`;
+		await t.test("旧会话迁移可重复请求并恢复指定会话的原文和任务回执", async () => {
+			const id = randomUUID(),
+				previous = randomUUID();
+			await sql`insert into hermes_web_runs (id,owner,kind,fingerprint,state,result) values (${previous},${randomUUID()},'chat','fixture','completed',${sql.json({ text: "旧任务的回复" })})`;
+			const turns = [{ id: "user-fixture", role: "user" as const, content: "之前的消息" }];
+			await Promise.all([
+				saveImportedConversation(firstSql, { id, turns, runIds: [previous] }),
+				saveImportedConversation(secondSql, { id, turns, runIds: [previous] }),
+			]);
+			assert.deepEqual(
+				(await listConversations(secondSql)).map(({ title }) => title),
+				["之前的消息"],
+			);
+			const record = await readConversation(secondSql, id, (row) => row);
+			assert.deepEqual(
+				record?.entries.filter((entry) => entry.role !== "task").map(({ content }) => content),
+				["之前的消息", "旧任务的回复"],
+			);
+			assert.equal(await readConversation(secondSql, randomUUID(), (row) => row), null);
+		});
+		await t.test("删除会话清除正文、保留上架回执，并且已删除的编号不会被旧迁移复活", async () => {
+			const id = randomUUID(),
+				owner = randomUUID(),
+				chat = randomUUID(),
+				publish = randomUUID();
+			const turns = [{ id: "user-delete", role: "user" as const, content: "需要删除的原文" }];
+			await saveImportedConversation(sql, { id, turns, runIds: [] });
+			await sql`insert into hermes_web_runs (id,owner,kind,fingerprint,state,conversation_id,message,result) values
+				(${chat},${owner},'chat','chat-fixture','running',${id},'用户消息',null),
+				(${publish},${owner},'publish','publish-fixture','completed',${id},'任务消息',${sql.json({ batch: "receipt" })})`;
+			await assert.rejects(deleteConversation(firstSql, id, owner), /正在执行/);
+			await sql`update hermes_web_runs set state='completed', result=${sql.json({ text: "聊天回复" })} where id=${chat}`;
+			await deleteConversation(firstSql, id, owner);
+			await deleteConversation(secondSql, id, owner);
+			await saveImportedConversation(secondSql, { id, turns, runIds: [] });
+			assert.equal(await readConversation(secondSql, id, (row) => row), null);
+			assert.ok(!(await listConversations(secondSql)).some((entry) => entry.id === id));
+			const [retained] = await sql`select result, message from hermes_web_runs where id=${publish}`;
+			const [removed] = await sql`select result, message from hermes_web_runs where id=${chat}`;
+			assert.deepEqual(retained, { result: { batch: "receipt" }, message: null });
+			assert.deepEqual(removed, { result: null, message: null });
+		});
 		const first = postgresRunStore(firstSql);
 		const second = postgresRunStore(secondSql);
 		const request = creation();
@@ -407,6 +453,58 @@ await translate(sql, ${JSON.stringify([item])}, { submit: async () => {
 			await assert.rejects(translate(readOnly, [item], { submit: async () => assert.fail("意图未落库不能收费提交") }), /read-only/);
 		});
 		await t.test("重放 #203 尺码原图漏译：图已上传、逐图 issues 为空，普通与原图建品仍拦下", () => replayImageLanguage(sql));
+		await t.test("象寄直接翻译只处理本稿选图，读回和重复选择复用译图，店铺模式可来回切换", async () => {
+			const url = "https://cbu01.alicdn.com/xiangji-fixture.jpg";
+			const offerId = OfferId.parse("600914");
+			const skuId = SkuId.parse("test-sku"),
+				specId = SpecId.parse("test-spec");
+			const offer = { ...product(offerId), offerId, images: [url], skus: [{ skuId, specId, name: "標準", attrs: ["標準"], image: url }] };
+			const variants = {
+				tiers: [{ source: "款式", name: "款式", options: [{ source: "標準", name: "標準", image: url }] }],
+				variants: [{ sku: "fixture", skuId, specId, options: [0], weightKg: 0.1, costRmb: 1, stock: 9, priceTwd: 120 }],
+			};
+			const [row] = await sql<ListingRow[]>`insert into listings (shop,offer_id,offer,variants) values
+				('cheeroutdoor',${offerId},${sql.json(offer)},${sql.json(variants)}) returning *`;
+			assert.ok(row);
+			const bytes = await readFile(new URL("../tools/listing/fixtures/size-chart-simplified.jpg", import.meta.url));
+			const originalImage = inspect(bytes);
+			const translated = inspect(Buffer.concat([bytes, Buffer.from("test-translated")]));
+			const outputUrl = "https://example.test/xiangji-fixture.jpg";
+			const config = { userKey: "fixture", imgTransKey: "fixture", base: "https://example.test" };
+			let calls = 0;
+			const deps = {
+				original: async () => {
+					await sql`insert into images (sha256,kind,source) values (${originalImage.sha256},'原图',${url}) on conflict do nothing`;
+					return originalImage;
+				},
+				checkConfig: () => config,
+				translate: (db: Sql, items: { sha: string; url: string }[]) =>
+					translate(db, items, {
+						submit: async ({ urls }) => {
+							calls++;
+							assert.deepEqual(urls, [url]);
+							return { kind: "done", data: { kind: "done", results: [{ origin: url, url: outputUrl }], failed: [], missing: [] } };
+						},
+						save: async () => {
+							await sql`insert into images (sha256,kind,source,from_sha,bytes) values
+								(${translated.sha256},'译图',${outputUrl},${originalImage.sha256},${Buffer.from(translated.bytes)})`;
+						},
+					}),
+			};
+			const p = xiangjiImagesParams.parse({ id: row.id, expectedScope: reviewedImagesScope(row), urls: [url] });
+			await assert.rejects(xiangjiImages(sql, { ...p, urls: ["https://cbu01.alicdn.com/other.jpg"], submit: true }, deps), /不在本稿/);
+			assert.equal((await xiangjiImages(sql, p, deps)).images[0]?.status, "not-submitted");
+			const result = await xiangjiImages(sql, { ...p, submit: true }, deps);
+			assert.deepEqual(result.images[0]?.translation, { url: outputUrl, sha256: translated.sha256 });
+			assert.deepEqual(await xiangjiImages(sql, { ...p, submit: true }, deps), result);
+			assert.equal(calls, 1);
+			assert.deepEqual((await sql`select images from listings where id=${row.id}`)[0]?.images, {});
+			assert.equal((await shopImageFlow(sql, row.shop)).mode, "xiangji");
+			await shopImageFlow(sql, row.shop, "processed");
+			assert.equal((await shopImageFlow(secondSql, row.shop)).mode, "processed");
+			assert.equal((await shopImageFlow(secondSql, "ni1206")).mode, "xiangji");
+			await shopImageFlow(sql, row.shop, "xiangji");
+		});
 		await t.test("Hermes 真实库工具范围锁定已勾选来源和目标店，未决写入保留原编号", async () => {
 			register(...TOOLKITS);
 			const fixture = product("600109");

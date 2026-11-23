@@ -1,4 +1,3 @@
-// 策略研究：模型只规划和判断；外部事实走显式只读工具，合格来源进入现有备选，不建稿或刊登。
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";

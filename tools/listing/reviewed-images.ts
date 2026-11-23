@@ -16,6 +16,7 @@ import { detailFits, MAX_DETAIL, MAX_MAIN } from "./product.ts";
 import { inShopQueued } from "./queue.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "./row.ts";
 import { sizeChartScope } from "./size-chart.ts";
+import { cachedTranslation } from "./translations.ts";
 import { specsOf } from "./variants.ts";
 
 const hash = z.string().regex(/^[a-f\d]{64}$/);
@@ -23,9 +24,9 @@ const evidence = z.string().trim().min(1);
 const image = z.strictObject({
 	sourceUrl: z.url({ protocol: /^https?$/ }),
 	sourceSha256: hash,
-	path: z.string().trim().refine(isAbsolute, "图片须为本地绝对路径"),
+	path: z.string().trim().refine(isAbsolute, "图片须为本地绝对路径").nullable().default(null),
 	sha256: hash,
-	provider: z.enum(["openai-image", "clean-original"]),
+	provider: z.enum(["openai-image", "clean-original", "xiangji"]),
 	evidence,
 });
 export const reviewedImagesManifest = z.strictObject({
@@ -137,6 +138,21 @@ export function validateReviewedBytes(input: ImageInput, processed: Bytes, sourc
 	if (role === "detail" && !detailFits(processed.width, processed.height)) throw new Usage("已审详情图须宽≥700、高≥32、宽高比0.5–32；请先处理合规尺寸");
 }
 
+async function reviewedBytes(sql: Sql, input: ImageInput, role: (typeof roles)[number]): Promise<Bytes> {
+	const source = await original(sql, input.sourceUrl);
+	let processed: Bytes;
+	if (input.provider === "xiangji") {
+		if (input.path !== null) throw new Usage("象寄译图直接从 X2 回执读取，请省略本地路径");
+		const saved = await cachedTranslation(sql, source.sha256, input.sha256);
+		if (!saved) throw new Usage("没有这张原图和译图对应的象寄回执，请核对实际译图");
+		processed = saved.image;
+	} else if (input.path) processed = inspect(new Uint8Array(await readFile(input.path)), input.path);
+	else if (input.provider === "clean-original") processed = source;
+	else throw new Usage("OpenAI Image 编辑图须填写本地绝对路径");
+	validateReviewedBytes(input, processed, source.sha256, role);
+	return processed;
+}
+
 /** 续做和发布前验证已保存清单仍属于当前源规格，不把旧审阅套到新款上。 */
 export function validateSavedReviewedImages(row: SourceRow): void {
 	if (row.images.imageMode !== "reviewed") throw new Usage("尚未导入已审图片，先 listing reviewed-images");
@@ -192,20 +208,17 @@ export async function importReviewedImages(sql: Sql, p: z.output<typeof reviewed
 	const [shop] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop = ${row.shop}`;
 	if (!shop) throw new Usage(`没有店铺设置 ${row.shop}`);
 	const settings = settingsOf(shop);
-	const files = new Map<string, Bytes>();
+	const files = new Map<ImageInput, Bytes>();
 	// 整份清单先验证，再上传；文件变动、错SHA、错款不会留下部分商品稿。
 	for (const role of roles)
 		for (const input of p.manifest[role]) {
-			const processed = inspect(new Uint8Array(await readFile(input.path)), input.path);
-			const source = await original(sql, input.sourceUrl);
-			validateReviewedBytes(input, processed, source.sha256, role);
-			files.set(input.path, processed);
+			files.set(input, await reviewedBytes(sql, input, role));
 		}
 	const pics: Pics = { imageMode: "reviewed", main: [], detail: [], options: [] };
 	const cache = new Map<string, { reused: boolean; chunks: number }>();
 	for (const role of roles)
 		for (const input of p.manifest[role]) {
-			const processed = files.get(input.path)!;
+			const processed = files.get(input)!;
 			const provenance = {
 				provider: input.provider,
 				evidence: input.evidence,
@@ -266,9 +279,7 @@ export async function uploadReviewedAssets(sql: Sql, p: z.output<typeof reviewed
 	];
 	const verified = await Promise.all(
 		assets.map(async (asset) => {
-			const processed = inspect(new Uint8Array(await readFile(asset.input.path)), asset.input.path);
-			const source = await original(sql, asset.input.sourceUrl);
-			validateReviewedBytes(asset.input, processed, source.sha256, asset.role);
+			const processed = await reviewedBytes(sql, asset.input, asset.role);
 			return { ...asset, processed };
 		}),
 	);

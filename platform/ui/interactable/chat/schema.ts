@@ -21,5 +21,5 @@ export const actions = {
 };
 export const writeActions = { send: "chat.send" };
 export const writePreviews = { send: "chat.preview" };
-export const inputs = ["conversationId", "cursor", "contextId", "text", "revision", "requestId", "contextHash"];
+export const inputs = ["conversationId", "cursor", "contextId", "text", "revision", "requestId", "contextHash", "model"];
 export const examples: z.input<typeof props>[] = [{ shop: "ni1206", policyPath: ".agents/skills/chat/SKILL.md", historyDays: 7 }];

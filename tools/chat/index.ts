@@ -1,10 +1,10 @@
-// Chat：会话事实、人工草稿与版本化建议；发送只经写工具和至多一次写入引擎。
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { chatModelConfig, suggest } from "../../connectors/services/chat-model/api.ts";
 import { db } from "../../platform/db/index.ts";
 import { get, str, type Toolkit, write } from "../../platform/tool.ts";
+import { hermesModel } from "../../platform/ui/hermes-schema.ts";
 import { exclusive } from "../../platform/writes.ts";
 import { assertSuggestionContext, sendInput } from "./context.ts";
 import { pendingReplies } from "./pending.ts";
@@ -21,6 +21,7 @@ const suggestionInput = conversation.extend({
 	historyDays,
 	contextId: z.string().uuid().describe("messages 返回的会话上下文编号"),
 	policyPath: z.literal(projectPolicy).default(projectPolicy).describe("本项目的客服规则"),
+	model: hermesModel.optional().describe("客服建议使用的 DeepSeek 模型，省略时沿用 X2 设置"),
 });
 const contextInput = conversation
 	.extend({ historyDays, contextId: z.string().uuid().optional(), cursor: z.string().min(1).optional() })
@@ -43,7 +44,7 @@ export const chat: Toolkit = {
 		),
 		messages: get("现读所选会话的上下文，返回范围、指纹、建议、人工稿和发送状态；cursor仅连续向前加载", contextInput, readContext),
 		draft: get("用已配置的客服模型生成绑定上下文的建议；不覆盖人工草稿、不发送", suggestionInput, async (p) => {
-			const config = chatModelConfig();
+			const config = chatModelConfig(p.model);
 			const { context } = await readContext(p),
 				sql = await db();
 			assertSuggestionContext(context);

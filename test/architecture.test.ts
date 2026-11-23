@@ -1,4 +1,3 @@
-// 层间依赖按 TypeScript 语法树与规范路径检查；文档只维护规则和必要说明。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -106,9 +105,11 @@ function readImportProblems(paths = CODE, virtual = new Map<string, string>()): 
 					(isExportDeclaration(parent) && parent.isTypeOnly) ||
 					(parent.parent !== undefined && isImportTypeNode(parent.parent));
 				if (isAbsolute(node.text) || win32.isAbsolute(node.text) || /^file:/i.test(node.text)) return [`${rel(file)}：禁止绝对路径导入 ${node.text}`];
+				const from = rel(file);
+				if (/^@modelcontextprotocol\/sdk(?:\/|$)/.test(node.text) && from !== "platform/mcp.ts" && !from.endsWith(".test.ts"))
+					return [`${from}：Agent 工具通过 platform/mcp.ts 注册`];
 				const to = target(file, node.text);
 				if (!to) return [];
-				const from = rel(file);
 				const dest = rel(to);
 				if (!allowedImport(from, dest, typeOnly)) return [`${from} → ${dest}`];
 				if (dest === "platform/site-write.ts" && from.startsWith("connectors/")) {
@@ -266,6 +267,12 @@ test("跨业务只经公开入口，连接器、界面和装配各守依赖边�
 	assert.equal(rel(target(join(ROOT, "platform/ui/interactable/catalog/view.tsx"), "@/../web/tables.ts")!), "platform/web/tables.ts");
 });
 
+test("业务工具只能从平台注册 Agent 工具，参数声明和校验共用一个 schema", () => {
+	const file = join(ROOT, "tools/listing/hermes.ts");
+	for (const statement of ['import type { Tool } from "@modelcontextprotocol/sdk/types.js";', 'await import("@modelcontextprotocol/sdk/server/index.js");'])
+		assert.deepEqual(readImportProblems([file], new Map([[file, statement]])), ["tools/listing/hermes.ts：Agent 工具通过 platform/mcp.ts 注册"]);
+});
+
 test("只有写入引擎可以开放站点提交，连接器只领取凭证", () => {
 	const file = join(ROOT, "connectors/sites/shopee/seller.ts");
 	const deps = "../../../platform/site-write.ts";
@@ -351,6 +358,7 @@ const DOCS = [
 	/^\.agents\/skills\/[^/]+\/references\/[^/]+\.md$/,
 	/^\.claude\/agents\/[^/]+\.md$/,
 	/^connectors\/(sites|services)\/[^/]+\/NOTES\.md$/,
+	/^connectors\/services\/hermes\/AGENTS\.md$/,
 ];
 
 test("文档只放在 README、AGENTS.md、skill、子 agent、连接器的 NOTES.md 里：别的说不清的先想能不能写进目录、lint、测试、代码", () => {

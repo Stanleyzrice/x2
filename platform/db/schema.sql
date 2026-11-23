@@ -42,6 +42,18 @@ create table if not exists hermes_web_runs (
 	created_at timestamptz not null default now()
 );
 alter table hermes_web_runs add column if not exists trace jsonb not null default '[]'::jsonb;
+create table if not exists hermes_conversations (
+	id uuid primary key,
+	title text not null,
+	imported jsonb not null default '[]'::jsonb,
+	updated_at timestamptz not null default now()
+);
+alter table hermes_conversations add column if not exists deleted_at timestamptz;
+alter table hermes_web_runs add column if not exists conversation_id uuid references hermes_conversations(id);
+alter table hermes_web_runs add column if not exists message text;
+alter table hermes_web_runs add column if not exists context text;
+alter table hermes_web_runs add column if not exists model text;
+create index if not exists hermes_runs_conversation on hermes_web_runs (conversation_id, created_at, id);
 
 drop table if exists inbox;
 alter table writes alter column status set default '待执行';

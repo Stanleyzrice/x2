@@ -1,4 +1,3 @@
-// 库里读出的商品稿、店铺设置的一行：列照 schema.sql（numeric、bigint 回字符串，jsonb 回写进去的样子）。读库的地方用 sql<ListingRow[]>，不再当 any 往下传
 import { z } from "zod";
 import type { Freight, Offer, OfferId, Tags } from "../../connectors/sites/1688/api.ts";
 import type { Audit } from "./audit.ts";

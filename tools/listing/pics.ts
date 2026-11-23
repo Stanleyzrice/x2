@@ -1,14 +1,16 @@
-// 商品稿的图的类型（纯数据）：筛字的结论、一张图走到哪了、水印的设置
+import { z } from "zod";
+
 export type Verdict = "d" | "r" | "m" | "p" | "n";
-export type ImageMode = "processed" | "original" | "reviewed";
+export const imageModeSchema = z.enum(["processed", "original", "reviewed"]);
+export type ImageMode = z.infer<typeof imageModeSchema>;
 
 /** 独立审阅的真实来源，不作为 Gemini 筛字或象寄检查缓存。 */
 export type ImageReview = {
-	provider: "openai-image" | "clean-original";
+	provider: "openai-image" | "clean-original" | "xiangji";
 	evidence: string;
 	sourceSha256: string;
 	processedSha256: string;
-	path: string;
+	path: string | null;
 	scope: string;
 	skuIds?: string[];
 	at: string;

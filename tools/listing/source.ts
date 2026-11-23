@@ -1,4 +1,3 @@
-// 人工备选区复用商品稿、核价和发布；快照与补充值分开保存，发布按钮只批准本次冻结的原文原图指纹。
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
@@ -10,11 +9,13 @@ import { listingAuditCurrent } from "./audit.ts";
 import { updatedAttributes } from "./category.ts";
 import { coverageBlock } from "./coverage.ts";
 import { imageLanguageBlock } from "./image-language.ts";
+import { original } from "./images.ts";
 import { make } from "./make.ts";
 import { addListings } from "./pick.ts";
 import { type Settings, settingsOf } from "./pricing.ts";
 import { inShopQueued } from "./queue.ts";
 import { productOf } from "./ready.ts";
+import { importReviewedImages, reviewedImagesParams, reviewedImagesPreview } from "./reviewed-images.ts";
 import type { ListingRow, ShopSettingsRow } from "./row.ts";
 import {
 	type CollectedSourceResult,
@@ -43,6 +44,7 @@ import {
 } from "./source-data.ts";
 import { type SourcePromptSnapshot, sourcePrompt, sourcePromptSnapshotSchema } from "./source-prompt.ts";
 import { textProblems } from "./text.ts";
+import { listingSourceImageUrl, xiangjiImages, xiangjiImagesParams } from "./xiangji-images.ts";
 
 export { type SourceItem, sourceDeleteParams } from "./source-data.ts";
 export { saveSource };
@@ -448,6 +450,65 @@ function publicationHash(row: ListingRow, settings: Settings): string | undefine
 	return sourcePublicationHash(row, productOf(row, settings).hash);
 }
 
+async function sourceImageDraft(sql: Sql, p: z.output<typeof sourceDetailParams>, prepare = false) {
+	const ctx = await context(sql, p, [p.sourceId]);
+	const source = ctx.sources[0]!;
+	let row = ctx.listings.get(String(p.sourceId)) ?? (prepare ? await ensureDraft(sql, source, ctx.shop) : undefined);
+	if (!row || row.cancelled || row.product_id || row.listed_at || ctx.pending.has(String(row.id)))
+		throw new Usage("仅有效且没有未决上架请求的商品稿可修改图片");
+	if (!ctx.listings.has(String(p.sourceId))) {
+		const [pending] = await sql`select 1 from writes where params->>'listingId' = ${String(row.id)}
+			and op in ('建商品','上架') and status in ('待执行','已提交','结果未知','不一致') limit 1`;
+		if (pending) throw new Usage("该商品稿有未决上架请求，请先查原请求");
+	}
+	if (prepare && !row.offer) {
+		const result = await make(sql, row.id, () => {}, { prepareOnly: true });
+		[row] = await sql<ListingRow[]>`select * from listings where id = ${row.id}`;
+		if (!row?.offer) throw new Usage(result.problems.join("；") || "商品稿尚未保存完整来源");
+	}
+	return row;
+}
+
+const sourceImageChoice = z.object({ url: z.url(), translatedSha: xiangjiImagesParams.shape.expectedScope.optional() });
+const sourceImageImport = sourceDetailParams.extend({
+	expectedScope: xiangjiImagesParams.shape.expectedScope,
+	main: z.array(sourceImageChoice).min(1).max(9),
+	detail: z.array(sourceImageChoice).max(12),
+	options: z.array(sourceImageChoice).max(100),
+	evidence: z.string().trim().min(1).max(2000),
+});
+
+async function saveSourceImageChoices(sql: Sql, p: z.output<typeof sourceImageImport>) {
+	const row = await sourceImageDraft(sql, p);
+	const preview = reviewedImagesPreview(row);
+	if (
+		preview.expectedScope !== p.expectedScope ||
+		p.main.some(({ url }) => !preview.sourceMain.includes(url)) ||
+		p.detail.some(({ url }) => !preview.sourceDetail.includes(url)) ||
+		p.options.length !== preview.requiredOptions.length ||
+		preview.requiredOptions.some(({ sourceUrl }) => !p.options.some(({ url }) => url === sourceUrl))
+	)
+		throw new Usage("图序、来源或规格图范围已变化，请重新准备图片");
+	const originals = new Map<string, string>();
+	for (const { url } of [...p.main, ...p.detail, ...p.options]) {
+		if (!originals.has(url)) originals.set(url, (await original(sql, listingSourceImageUrl(url), { redirect: "error" })).sha256);
+	}
+	const entry = ({ url, translatedSha }: z.output<typeof sourceImageChoice>) => ({
+		sourceUrl: url,
+		sourceSha256: originals.get(url)!,
+		sha256: translatedSha ?? originals.get(url)!,
+		provider: translatedSha ? "xiangji" : "clean-original",
+		evidence: p.evidence,
+	});
+	const manifest = {
+		expectedScope: p.expectedScope,
+		main: p.main.map(entry),
+		detail: p.detail.map(entry),
+		options: p.options.map((choice) => ({ ...entry(choice), skuIds: preview.requiredOptions.find((option) => option.sourceUrl === choice.url)!.skuIds })),
+	};
+	return importReviewedImages(sql, reviewedImagesParams.parse({ id: row.id, manifest }));
+}
+
 async function publishPreview(sql: Sql, input: z.output<typeof sourceSelectionParams>) {
 	const ctx = await context(sql, input, input.sourceIds);
 	const items = await Promise.all(
@@ -610,6 +671,32 @@ export function sourceTools(plan: PublishPlan) {
 			deleteSources(await db(), p),
 		),
 		"source-detail": get("备选商品的原始主图、规格、文字和详情图，以及当前店铺补充值", sourceDetailParams, async (p) => detail(await db(), p)),
+		"source-images-preview": get("准备当前备选稿的图片来源与已选规格图，不提交翻译", sourceDetailParams, async (p) => {
+			const row = await sourceImageDraft(await db(), p, true);
+			const preview = reviewedImagesPreview(row);
+			return {
+				...preview,
+				selectedMain:
+					row.images.main?.filter((p) => p.imageId && !p.drop).map((p) => p.from) ?? row.source_fields?.mainImages ?? preview.sourceMain.slice(0, 9),
+				selectedDetail:
+					row.images.detail?.filter((p) => p.imageId && !p.drop).map((p) => p.from) ?? row.source_fields?.detailImages ?? preview.sourceDetail.slice(0, 12),
+				hasSavedImages: Boolean(row.images.main?.some((p) => p.imageId && !p.drop)),
+			};
+		}),
+		"source-xiangji-images": get(
+			"对当前备选稿选中的原图用象寄翻译或查询回执",
+			sourceDetailParams.extend({
+				expectedScope: xiangjiImagesParams.shape.expectedScope,
+				urls: xiangjiImagesParams.shape.urls,
+				submit: xiangjiImagesParams.shape.submit,
+			}),
+			async (p) => {
+				const sql = await db();
+				const row = await sourceImageDraft(sql, p);
+				return xiangjiImages(sql, { ...p, id: row.id });
+			},
+		),
+		"source-images-save": get("将已核对的原图和译图保存至当前备选稿，不发布商品", sourceImageImport, async (p) => saveSourceImageChoices(await db(), p)),
 		"source-update": get("明确补充备选商品资料；保留来源快照，不覆盖已发布或结果未知商品", sourceUpdateParams, async (p) => update(await db(), p)),
 		"source-prepare": get("按现有规则做原文原图商品稿：缺项留在备选区，不提交外站", sourceSelectionParams, async (p) => prepareSources(await db(), p)),
 		"source-publish-preview": get("冻结本次可上架子集及内容指纹，缺项商品保留，不提交", sourceSelectionParams, async (p) => publishPreview(await db(), p)),

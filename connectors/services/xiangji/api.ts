@@ -80,13 +80,18 @@ export function parse(urls: string[], raw: unknown): Outcome {
 	return { kind: "done", results, failed, missing, raw };
 }
 
-export async function translate(urls: string[]): Promise<Outcome> {
-	if (urls.length === 0 || urls.length > BATCH) throw new Error(`一批交 1 到 ${BATCH} 张，这批 ${urls.length} 张`);
+export function translationConfig() {
 	const userKey = process.env.XIANGJI_USER_KEY,
 		imgTransKey = process.env.XIANGJI_IMG_TRANS_KEY;
 	if (!userKey || !imgTransKey) throw new Error("没有设 XIANGJI_USER_KEY、XIANGJI_IMG_TRANS_KEY（写在 .env 里）");
 	const base = process.env.XIANGJI_BASE || "https://api.tosoiot.com";
 	if (!base.startsWith("https://")) throw new Error("XIANGJI_BASE 要是 https 地址");
+	return { userKey, imgTransKey, base };
+}
+
+export async function translate(urls: string[]): Promise<Outcome> {
+	if (urls.length === 0 || urls.length > BATCH) throw new Error(`一批交 1 到 ${BATCH} 张，这批 ${urls.length} 张`);
+	const { userKey, imgTransKey, base } = translationConfig();
 	let raw: unknown;
 	try {
 		const r = await fetch(base, {

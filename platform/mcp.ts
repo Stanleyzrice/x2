@@ -4,6 +4,28 @@ import { createServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, type CallToolResult, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { Usage } from "./errors.ts";
+
+export function localTool<P extends z.ZodObject>(name: string, description: string, params: P, run: (input: z.output<P>) => Promise<unknown>) {
+	const input = params.strict();
+	const spec: Tool = { name, description, inputSchema: z.toJSONSchema(input, { io: "input", unrepresentable: "any" }) as Tool["inputSchema"] };
+	return { spec, run: (args: Record<string, unknown>) => run(input.parse(args) as z.output<P>) };
+}
+
+export function localToolset(tools: readonly ReturnType<typeof localTool>[]) {
+	const byName = new Map(tools.map((tool) => [tool.spec.name, tool]));
+	if (byName.size !== tools.length) throw new Error("Agent 工具名重复");
+	return {
+		specifications: tools.map(({ spec }) => spec),
+		async call(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+			const tool = byName.get(name);
+			if (!tool) throw new Usage("本次任务未开放这个工具");
+			const result = await tool.run(args);
+			return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }] };
+		},
+	};
+}
 
 export type ToolTraceStep = { id: string; name: string; state: "running" | "completed" | "failed" };
 const toolTrace = new AsyncLocalStorage<(step: ToolTraceStep) => void>();
@@ -29,6 +51,7 @@ export async function withLocalTools<T>(
 			const step: ToolTraceStep | null = trace && allowed.has(params.name) ? { id: randomUUID(), name: params.name, state: "running" } : null;
 			try {
 				if (closing) throw new Error("本次工具连接已结束");
+				if (!allowed.has(params.name)) throw new Usage("本次任务未开放这个工具");
 				if (step) trace?.(step);
 				const result = await call(params.name, params.arguments ?? {});
 				if (step) trace?.({ ...step, state: result.isError ? "failed" : "completed" });

@@ -1,10 +1,8 @@
-// 网页的组件：文件夹就是分类（platform/ui/generative/<名字>/、platform/ui/interactable/<名字>/），每个文件夹有 schema.ts 和 view.tsx，服务端、网页都照目录收。
-// 少了文件、名字两类撞了、例子过不了自己的校验（引用的表、列要在 tables.ts 里，所以登记全部 toolkit）就失败
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { register } from "../platform/tool.ts";
+import { findTool, register } from "../platform/tool.ts";
 import { COMPONENTS, KINDS, parseProps } from "../platform/web/pages.ts";
 import { TOOLKITS } from "../x2.ts";
 
@@ -50,6 +48,17 @@ test("每个组件有说明、至少一个例子，例子过得了自己的校�
 		assert.ok(c.description, `${c.name}：没有说明`);
 		assert.ok(c.examples.length, `${c.name}：没有例子`);
 		for (const e of c.examples) assert.doesNotThrow(() => parseProps(c.name, e), `${c.name} 的例子 ${JSON.stringify(e)}`);
+	}
+});
+
+test("组件动作引用已登记工具，站点写入必须有独立的读取预览", () => {
+	for (const c of COMPONENTS.values()) {
+		assert.deepEqual(Object.keys(c.writeActions ?? {}).sort(), Object.keys(c.writePreviews ?? {}).sort(), c.name);
+		for (const id of Object.values({ ...c.actions, ...c.writePreviews })) assert.equal(findTool(id)?.kind, "read", `${c.name} → ${id}`);
+		for (const id of Object.values(c.writeActions ?? {})) {
+			const tool = findTool(id);
+			assert.ok(tool?.kind === "write" && "plan" in tool, `${c.name} → ${id}`);
+		}
 	}
 });
 

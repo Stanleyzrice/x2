@@ -1,12 +1,14 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { NeedsHuman } from "../../../platform/errors.ts";
+import { currentHermesOutput } from "../../../platform/hermes-output.ts";
 import { flashModel, type HermesModel, hermesModel } from "../../../platform/ui/hermes-schema.ts";
 
 const exec = promisify(execFile);
@@ -94,10 +96,12 @@ export async function runHermes(
 			memory: { memory_enabled: false, user_profile_enabled: false },
 		};
 		await writeFile(join(directory, "config.yaml"), JSON.stringify(profile), { mode: 0o600 });
-		await writeFile(task, JSON.stringify({ prompt, history }), { mode: 0o600 });
+		const receive = currentHermesOutput();
+		const instructions = await readFile(new URL("./AGENTS.md", import.meta.url), "utf8");
+		await writeFile(task, JSON.stringify({ prompt, history, stream: Boolean(receive), instructions }), { mode: 0o600 });
 		const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => systemEnv.has(key.toUpperCase())));
 		const runner = fileURLToPath(new URL("./run.py", import.meta.url));
-		const { stdout } = await exec(config.executable, [runner, task, config.model, mcpName], {
+		const launched = exec(config.executable, [runner, task, config.model, mcpName], {
 			cwd,
 			env: {
 				...env,
@@ -107,8 +111,21 @@ export async function runHermes(
 				DEEPSEEK_API_KEY: config.apiKey,
 			},
 			timeout: 30 * 60_000,
-			maxBuffer: 1024 * 1024,
+			maxBuffer: (receive ? 4 : 1) * 1024 * 1024,
 		});
+		const prefix = "x2-delta ";
+		if (receive && launched.child.stdout) {
+			createInterface({ input: launched.child.stdout }).on("line", (line) => {
+				if (!line.startsWith(prefix)) return;
+				try {
+					const delta: unknown = JSON.parse(line.slice(prefix.length));
+					if (typeof delta === "string" || delta === null) receive(delta);
+				} catch {
+					// Hermes 自身的进程日志也走标准输出。
+				}
+			});
+		}
+		const { stdout } = await launched;
 		return z.object({ text: z.string().trim().min(1) }).parse(JSON.parse(stdout.trim().split("\n").at(-1) ?? "")).text;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as { code?: unknown }).code === 11)
@@ -187,6 +204,6 @@ export function askDeepSeek(
 }
 
 /** 发送真实图片字节做视觉检查，避免依赖 Agent 的工具结果能否携带像素。 */
-export function inspectWithDeepSeek(apiKey: string, image: Image, prompt: string, request: typeof fetch = fetch) {
-	return deepSeekJson(apiKey, { model: flashModel, prompt, images: [image], signal: AbortSignal.timeout(90_000) }, request);
+export function inspectWithDeepSeek(apiKey: string, image: Image | readonly Image[], prompt: string, request: typeof fetch = fetch) {
+	return deepSeekJson(apiKey, { model: flashModel, prompt, images: "bytes" in image ? [image] : image, signal: AbortSignal.timeout(90_000) }, request);
 }

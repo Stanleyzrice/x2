@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// x2 的装配：把连接器、业务工具登记进平台的注册表，交给平台的命令行（platform/cli.ts）。唯一同时认识三层的文件：只 import platform、连接器和业务工具的入口（index.ts）。
-// node x2.ts <命令> 跑命令行；别的文件（测试）import 它拿全部 toolkit，不跑命令行
 import "./platform/env.ts";
 import { codex } from "./connectors/services/codex/index.ts";
 import { gemini } from "./connectors/services/gemini/index.ts";

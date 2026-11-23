@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, type Item, usePoll } from "../../api.ts";
 import { ResizableSheetContent } from "../../resizable-sheet.tsx";
 import { DetailImage, DetailsContent } from "./details-content.tsx";
+import { SourceImageTranslation } from "./source-image-translation.tsx";
 import type { SourceDetail, SourceFields } from "./source-types.ts";
 
 const platformName = (_platform: SourceDetail["platform"]) => "1688";
@@ -136,6 +137,7 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 					<TabsTrigger value="specs">规格</TabsTrigger>
 					<TabsTrigger value="content">原文与详情图</TabsTrigger>
 					<TabsTrigger value="fields">补充上架资料</TabsTrigger>
+					{!detail.productId && detail.status !== "unknown" && <TabsTrigger value="translation">翻译图片</TabsTrigger>}
 				</TabsList>
 				<TabsContent value="specs" className="pt-4">
 					<Table>
@@ -195,8 +197,12 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 						<SourceEditor detail={detail} item={item} targetShop={targetShop} onSaved={saved} />
 					)}
 				</TabsContent>
+				{!detail.productId && detail.status !== "unknown" && (
+					<TabsContent value="translation" className="pt-5">
+						<SourceImageTranslation item={item.id} sourceId={detail.id} targetShop={targetShop} onSaved={saved} />
+					</TabsContent>
+				)}
 			</Tabs>
-			<p className="text-xs text-muted-foreground">保留货源原始文字与全部图片；本阶段不做文字或图片翻译。</p>
 			{lightbox.lightbox}
 		</div>
 	);

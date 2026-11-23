@@ -1,7 +1,3 @@
-// 一份商品稿的图：收图 → 取字节、量尺寸、剔掉占位图 → 筛字（Gemini）→ 要译的交象寄
-// → 译图检查（Gemini 分两次问）→ 本店水印 → 传 Shopee。都按字节的 sha256 记在 images、shop_images 表里：重跑不重复付钱、不重复传。
-// 每张图单独判，同时做：取图、问 Gemini 不排队（上限在 queue.ts），同一张图同时要的只做一次；
-// 加水印（在页面的 canvas 里画）、传图（用页面的 UploadService）碰浏览器，在这家店的浏览器里排队（调用方给的 browser）
 import * as OpenCC from "opencc-js";
 import { type Image, model } from "../../connectors/services/gemini/api.ts";
 import { type Bytes, fetchImage, inspect } from "../../connectors/services/image/api.ts";
@@ -16,12 +12,13 @@ import { saveTranslation, translate, translationState } from "./translations.ts"
 import { markKey, watermark } from "./watermark.ts";
 
 const fetched = new Map<string, Promise<Bytes>>();
-export async function original(sql: Sql, url: string): Promise<Bytes> {
-	let got = fetched.get(url);
+export async function original(sql: Sql, url: string, options?: Pick<RequestInit, "redirect">): Promise<Bytes> {
+	const key = options?.redirect ? `${options.redirect}:${url}` : url;
+	let got = fetched.get(key);
 	if (!got) {
-		got = download(() => fetchImage(url));
-		fetched.set(url, got);
-		got.catch(() => fetched.delete(url));
+		got = download(() => fetchImage(url, options));
+		fetched.set(key, got);
+		got.catch(() => fetched.delete(key));
 	}
 	const b = await got;
 	await sql`insert into images ${sql({ sha256: b.sha256, kind: "原图", source: url, mime: b.mime, width: b.width, height: b.height })} on conflict (sha256) do nothing`;

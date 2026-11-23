@@ -58,6 +58,31 @@ export function inspect(bytes: Uint8Array, from = "图片"): Bytes {
 	return { bytes, mime, sha256: sha256(bytes), ...size };
 }
 
+export async function readImageBytes(source: string, maxBytes: number): Promise<Uint8Array> {
+	const url = new URL(source);
+	if (!["http:", "https:"].includes(url.protocol)) throw new Error("图片须为网络地址");
+	const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+	if (!response.ok || !response.body || Number(response.headers.get("content-length")) > maxBytes) throw new Error("图片无法读取或过大");
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		for (;;) {
+			const next = await reader.read();
+			if (next.done) break;
+			size += next.value.byteLength;
+			if (size > maxBytes) {
+				await reader.cancel();
+				throw new Error("图片过大");
+			}
+			chunks.push(next.value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return Buffer.concat(chunks, size);
+}
+
 /** 取一张网上的图。1688（alicdn）要带 Referer，不然 403 */
 export async function fetchImage(url: string, options?: Pick<RequestInit, "redirect">): Promise<Bytes> {
 	const u = new URL(url.startsWith("//") ? `https:${url}` : url);

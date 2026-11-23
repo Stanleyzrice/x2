@@ -1,4 +1,3 @@
-// 策略工作台从项目技能读取方法与经营输入；运行快照使用当前规则，不从历史策略表恢复已停用方法。
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { Sql } from "../../platform/db/index.ts";

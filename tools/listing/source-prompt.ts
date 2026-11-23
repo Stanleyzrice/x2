@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { Usage } from "../../platform/errors.ts";
+import { imageModeSchema } from "./pics.ts";
 import { type SourceId, type SourceResearch, sourceResearchSchema } from "./source-data.ts";
 
 const numericId = z.string().regex(/^\d+$/);
@@ -11,7 +12,7 @@ export const sourcePromptSnapshotSchema = z.object({
 	productId: numericId.nullable(),
 	listed: z.boolean(),
 	cancelled: z.boolean(),
-	imageMode: z.enum(["original", "processed", "reviewed"]).nullable(),
+	imageMode: imageModeSchema.nullable(),
 	hasSavedOffer: z.boolean(),
 	capturedAt: isoTime,
 	listingUpdatedAt: isoTime.nullable(),

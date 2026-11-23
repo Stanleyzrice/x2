@@ -128,6 +128,8 @@ alter table listings drop column if exists unapproved_why;
 
 -- 可选的百分比费用模型输入；null 使用原有数值模型。
 alter table shop_settings add column if not exists pricing_template jsonb;
+alter table shop_settings add column if not exists image_translation_flow text not null default 'xiangji'
+	check (image_translation_flow in ('xiangji', 'processed'));
 
 -- 单稿最低购买数量；null 沿用 shop_settings.min_purchase，不改全店配置。
 alter table listings add column if not exists min_purchase int check (min_purchase > 0);

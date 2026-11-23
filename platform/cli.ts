@@ -1,9 +1,3 @@
-// 命令行：照注册表（tool.ts）生成。x2 <toolkit> <工具> [--参数 值…] [--json]；平台的工具直接是命令（x2 status）；x2 orders.cart 和 x2 orders cart 一样。
-// 参数经工具的 zod 声明校验、转换：--kebab-case 对上 camelCase，单独的 --名字 是开关，值写 - 从 stdin 读（例 JSON）。
-// 读一页一页的：默认翻到底，--pages N 只翻 N 页，--cursor 从上次输出的 next 接着翻，输出 { rows, next }。
-// 写（业务工具的写工具）：照它排的一批或几批交给写入引擎执行，--try 跑还没在真站点上跑过的写操作；连接器的写工具只经业务工具的写工具调。
-// 输出约定：stdout 只放结果（--json 时是一个 JSON 值，出错是 { "error": { "kind", "message" } }）；stderr 只放进度。
-// 退出码：0 成功；1 出错；2 用法不对；3 要人处理（登录、滑块、浏览器没连上）；4 写的结果未知（不许重发，先 x2 verify）
 import { z } from "zod";
 import { close, db } from "./db/index.ts";
 import { EXIT, kindOf, Usage } from "./errors.ts";

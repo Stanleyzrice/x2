@@ -1,7 +1,3 @@
-// 页：agent 开一页（x2 page create），往上放组件（x2 page push）。网页的侧栏是页列表，中间是页上 generative 组件的流，右边是 interactable 组件（一个一个 tab）。
-// generative 是快照：agent 说话那一刻的内容，数据在组件里，人只看。interactable 是引用：组件里只记指向谁（例 一张表的哪几行），数据每次现读，人在上面做的事写回去。
-// 文件夹就是分类：组件放在 platform/ui/generative/<名字>/ 或 platform/ui/interactable/<名字>/，参数、说明、例子在它的 schema.ts（只有 zod），网页照 view.tsx 画。
-// 这里照这两个目录收 schema.ts：x2 page push 照它校验（不对说哪一格），x2 page components 照它给 agent 看
 import { readdirSync } from "node:fs";
 import { z } from "zod";
 import type { Json, Sql } from "../db/index.ts";

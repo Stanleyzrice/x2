@@ -1,4 +1,5 @@
-// 工作簿保留精确文本并内嵌下单商品图；图片读取有界、去重，失败不影响金额与订单导出。
+import { readImageBytes } from "../../connectors/services/image/api.ts";
+
 export type Sheet = {
 	name: string;
 	columns: { header: string; width: number }[];
@@ -10,32 +11,6 @@ export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsh
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 type Picture = { buffer: Buffer; extension: "png" | "jpeg" | "gif"; width: number; height: number };
 
-async function downloadImage(source: string): Promise<Uint8Array> {
-	const url = new URL(source);
-	if (!["http:", "https:"].includes(url.protocol)) throw new Error("商品图片不是网络图片地址");
-	const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-	if (!response.ok || !response.body || Number(response.headers.get("content-length")) > MAX_IMAGE_BYTES) throw new Error("商品图片无法读取或过大");
-	const reader = response.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	try {
-		for (;;) {
-			const next = await reader.read();
-			if (next.done) break;
-			size += next.value.byteLength;
-			if (size > MAX_IMAGE_BYTES) {
-				await reader.cancel();
-				throw new Error("商品图片过大");
-			}
-			chunks.push(next.value);
-		}
-	} finally {
-		reader.releaseLock();
-	}
-	return Buffer.concat(chunks, size);
-}
-
-/** 检查真实图片签名及宽高，避免把网站返回的 HTML 当作图片写进文件。 */
 function pictureOf(bytes: Uint8Array): Picture {
 	const buffer = Buffer.from(bytes);
 	if (buffer.length > MAX_IMAGE_BYTES) throw new Error("商品图片过大");
@@ -87,7 +62,7 @@ async function readPictures(sheets: Sheet[], readImage: ImageReader): Promise<Ma
 	return pictures;
 }
 
-export async function xlsxBuffer(sheets: Sheet[], capturedAt: Date, readImage: ImageReader = downloadImage): Promise<Buffer> {
+export async function xlsxBuffer(sheets: Sheet[], capturedAt: Date, readImage: ImageReader = (url) => readImageBytes(url, MAX_IMAGE_BYTES)): Promise<Buffer> {
 	const { default: ExcelJS } = await import("exceljs");
 	const workbook = new ExcelJS.Workbook();
 	const pictures = await readPictures(sheets, readImage);

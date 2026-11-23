@@ -1,7 +1,5 @@
 # Shopee 卖家中心（台湾站）
 
-读者是给 x2 加 Shopee 操作的 agent。
-
 ## 怎么发请求
 
 - 请求一定在卖家中心页面里用页面的 `fetch` 发（`seller.ts` 的 `call`）。Shopee 的反爬 SDK 给页面里的请求现签名，页面外发会被拒（90309999）。
@@ -11,55 +9,7 @@
 - 金额：订单是新台币；广告、折扣、财务是新台币乘 100000。时间是秒，台湾时间（UTC+8，没有夏令时）。
 - 图片 id 接在 `https://down-tw.img.susercontent.com/file/` 后面，加 `_tn` 是缩略图。
 
-## 已经写成函数的
-
-| 文件 | 函数 | 接口 |
-|---|---|---|
-| `seller.ts` | `shop` | `GET /api/selleraccount/shop_info/`（shop_id 是店铺 id）、`GET /api/selleraccount/user_info/`（user_id 是卖家账号，不是店铺 id）、`GET /api/v3/general/get_shop_info/` |
-| `shop-categories.ts` | `shopCategories`、`shopCategory`、`shopCategoryDrafts` | `GET /api/shopcategory/v4/category/get_collection_list/`、`get_collection/`、`get_collection_draft_list/` |
-| | `createShopCategoryDraft`、`createShopCategory`（写） | `POST /api/shopcategory/v4/category/create_collection_draft/`、`create_parent_or_sub_category/` |
-| | `setShopCategoryStatus`、`sortShopCategories`（写） | `POST /api/shopcategory/v4/category/update_category/`、`update_shop_collection_sequence/` |
-| `orders.ts` | `orderIndex`、`orders`、`toShipOrders` | `POST /api/v3/order/search_order_list_index` |
-| | `orderCards` | `POST /api/v3/order/get_order_list_card_list`（一次最多 5 张） |
-| | `oneOrder` | `GET /api/v3/order/get_one_order` |
-| | `arrangeDropoff`（写） | `POST /api/v3/shipment/init_order` |
-| `products.ts` | `liveProducts` | `GET /api/v3/opt/mpsku/list/v2/get_product_list?list_type=live_all`（一页最多 48） |
-| | `allProducts` | `GET /api/v3/opt/mpsku/list/v2/get_product_list?list_type=all`（page_number 分页，一页最多48） |
-| | `productInfo` | `GET /api/v3/product/get_product_info` |
-| | `channels` | `POST /api/v3/listing-upload/component/get_product_channel_info` |
-| | `countLimit` | `GET /api/v3/opt/mpsku/list/get_product_count_limit` |
-| | `performance` | `GET /api/mydata/v4/product/performance/` |
-| | `categoryTree` | `GET /api/v3/category/get_category_tree` |
-| | `attributes` | `POST /api/v3/listing-upload/component/get_attribute_tree` |
-| | `recommendedCategory` | `POST /api/v3/category/get_recommended_category`（只给标题回空；要标题加一张已传的图） |
-| | `shippingDays` | `GET /api/v3/product/get_product_constraints/` |
-| | `createProduct`（写） | `POST /api/v3/product/create_product_info` |
-| | `updateProduct`、`setUnlisted`（写） | `POST /api/v3/product/update_product_info` |
-| `variants.ts` | `addSizeProduct`（写） | 同一更新接口的 `name`、`description_info`、`std_tier_variation_list`、`model_list`；既有模型提交 `id`、`tier_index`、`price`，新模型使用 `id: 0` 和 `stock_setting_list`、货号、图片 |
-| | `expandProduct`（写） | 同一更新接口，只显式交最终 `std_tier_variation_list`、`model_list` 及可选 `weight`；既有模型带原 `id`、新索引、原价、规格图，新模型带 `id: 0`、货号、显式库存、价格、规格图；不交标题、描述或旧库存 |
-| | `edit-product`（写，只经业务工具调用） | 同上；`name` 和可选的 `model_list`（规格 id、tier_index、price），不交库存、规格名或商品其他字段 |
-| | `deleteProducts`（写） | `POST /api/v3/product/delete_product_info` |
-| | `uploadImage`（写） | 原生 upload lazy loader 返回的 default 实例，或旧版 `UploadService.$instance.uploadImage` |
-| `mass.ts` | `template` | `GET /api/tool/mass_product/download_template/`、`download_basic_template/` |
-| | `records`、`recordFile` | `GET /api/tool/mass_product/get_mass_record_list/`、`download_record_file/` |
-| | `drafts` | `GET /api/tool/mass_product/get_unpublished_product_list/` |
-| | `upload`（写） | `POST /api/mass/mpsku/upload_template`（multipart） |
-| | `publish`、`deleteDrafts`（写） | `POST /api/tool/mass_product/publish_product/`、`delete_product/` |
-| `finance.ts` | `income` | `POST /api/v4/accounting/pc/seller_income/income_overview/get_income_detail` |
-| | `incomeComponents` | `POST /api/v4/accounting/pc/seller_income/income_detail/get_order_income_components` |
-| `returns.ts` | `cases` | `POST /api/v4/seller_center/return/return_list/get_exceptional_case_list` |
-| `marketing.ts` | `shopMetrics` | `GET /api/mydata/v3/dashboard/key-metrics/` |
-| | `productTraffic` | `GET /api/mydata/v1/product/traffic/details/`（单日商品卡来源） |
-| | `reviews` | `GET /api/v3/settings/search_shop_rating_comments_new/` |
-| | `adsAccount`、`adsSetup`、`campaigns`、`campaign`、`campaignGraph`、`gmsItems` | `POST /api/pas/v1/…`（见函数注释） |
-| | `vouchers`、`voucher` | `GET /api/marketing/v3/voucher/list/`、`/api/marketing/v3/voucher/` |
-| | `bundles` | `POST /api/marketing/v3/public/discount/list/`（`discount_type` 3） |
-| | `discounts`、`discountItems` | `POST /api/marketing/v4/discount/get_discount_list/`、`get_discount_items_aggregated/` |
-| | `updateDiscountItems`（写） | `POST /api/marketing/v4/discount/update_seller_discount_items/` |
-| `chat.ts` | `conversations`、`unreplied`、`messages` | `/webchat/api/v1.2/conversations`、`conversation/list`、`conversations/<id>/messages` |
-| `help.ts` | `articles`、`article` | `GET /help/api/v3/article/list/`、`detail/` |
-
-读的都对真店跑通过（`connectors/sites/shopee/live.ts`）。写的除了上品用的，都还没在 x2 里接上；第一次用时和人一起跑。
+已登记接口和参数见 `node x2.ts shopee --help`。
 
 ## 只能在页面上点的（没写成函数）
 

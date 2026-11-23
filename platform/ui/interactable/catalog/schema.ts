@@ -26,6 +26,9 @@ export const actions = {
 	sources: "listing.sources",
 	sourceDetail: "listing.source-detail",
 	sourceUpdate: "listing.source-update",
+	sourceImagesPreview: "listing.source-images-preview",
+	sourceXiangjiImages: "listing.source-xiangji-images",
+	sourceImagesSave: "listing.source-images-save",
 	sourceDelete: "listing.source-delete",
 	sourcePrompt: "listing.source-prompt",
 	sourcePrepare: "listing.source-prepare",
@@ -62,5 +65,12 @@ export const inputs = [
 	"prices",
 	"mainImages",
 	"detailImages",
+	"expectedScope",
+	"urls",
+	"submit",
+	"main",
+	"detail",
+	"options",
+	"evidence",
 ];
 export const examples: z.input<typeof props>[] = [{ shop: "ni1206" }, { shop: "cheeroutdoor", title: "cheeroutdoor Catalog" }];

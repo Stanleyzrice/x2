@@ -1,14 +1,3 @@
-// 网页的服务（x2 web）：照 tables.ts 读写库，发打好的界面（platform/ui/dist）。
-// 组件在 schema.ts 声明可调用工具：actions 只调读工具；writePreviews/writeActions 经冻结预览和逐条确认进入写入引擎。
-// platform 不 import connectors、tools，只通过注册表认识工具 id。
-// GET /api/meta：每张表的列（类型从库里读）、表单；GET /api/rows?ref=：一个 datagrid 引用的行（ref 是它的 props 的 JSON，照组件的校验查过、grid.ts 拼成 SQL，只给要的列）；
-// PATCH /api/rows { table, key, col, value }：人改一格（只收 tables.ts 里人能改的）；POST /api/rows { table, values }：表单添一行；
-// GET /api/pages：页列表；GET /api/page?id=：一页和它的组件；DELETE /api/page?id=：删页；DELETE /api/page/item?id=：关掉右边的一个 tab；POST /api/page/answer { item, answer }：人在组件上回答（例 choice 选了），照组件的 answer 查；
-// POST /api/page/act { item, action, input }：替组件调它声明的工具
-// POST /api/pages/delete { ids }：整批校验后只删除临时页
-// POST /api/page/note { item, note: { rowId, text } }：人在允许的行填写描述，独立于选用决定保存
-// POST /api/page/prepare { item, action, input }：冻结精确预览；POST /api/page/confirm { token, confirmed, trial }：确认一次写入
-
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -270,7 +259,8 @@ export async function serve(
 		return active;
 	};
 	const database = () => workspace().then(({ sql }) => sql);
-	const publicRoutes = { ...setupRoutes(database, boundPort, !scratch), ...hermesRoutes(database, boundPort) };
+	const hermes = hermesRoutes(database, boundPort);
+	const publicRoutes = { ...setupRoutes(database, boundPort, !scratch), ...hermes.routes };
 	const send = (res: ServerResponse, status: number, type: string, body: string | Buffer) => {
 		res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
 		res.end(body);
@@ -280,6 +270,10 @@ export async function serve(
 		if (url.pathname.startsWith("/api/")) {
 			try {
 				const key = `${req.method} ${url.pathname}`;
+				if (key === "GET /api/hermes/run/events") {
+					await hermes.stream(url, req, res);
+					return;
+				}
 				const route = publicRoutes[key] ?? (await workspace()).routes[key];
 				if (!route) {
 					send(res, 404, "application/json", JSON.stringify({ error: "没有这个接口" }));
@@ -299,6 +293,10 @@ export async function serve(
 				if (!b.success) throw new Usage("请求体要是一个 JSON 对象");
 				send(res, 200, "application/json", JSON.stringify(await route(b.data, url, req)));
 			} catch (e) {
+				if (res.headersSent) {
+					res.destroy();
+					return;
+				}
 				const told =
 					e instanceof Usage || e instanceof NeedsHuman || (e as { code?: string }).code?.startsWith("23") || (e as { code?: string }).code === "22P02";
 				if (!told) console.error(e);
@@ -322,6 +320,7 @@ export async function serve(
 		stop: async () => {
 			await stopCollections();
 			await stopJobs();
+			hermes.closeStreams();
 			await new Promise<void>((ok) => server.close(() => ok()));
 		},
 	};

@@ -1,4 +1,3 @@
-// 显式人工/Codex审阅：核对当前内容指纹和完整逐图结果，只保存审阅来源与证据，不调用或冒充 Gemini。
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";

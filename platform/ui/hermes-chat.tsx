@@ -10,11 +10,12 @@ import {
 	QuoteIcon,
 	Settings2Icon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ToolTraceStep } from "../web/hermes.ts";
-import { api, type HermesRequest, type HermesRun, type HermesTurn, type SetupState } from "./api.ts";
+import type { ConversationEntry, HistoryMessage } from "../web/hermes-history.ts";
+import { ApiError, api, type Conversation, type HermesRequest, type HermesRun, type SetupState } from "./api.ts";
 import { Badge } from "./components/ui/badge";
 import { Bubble, BubbleContent } from "./components/ui/bubble";
 import { Button } from "./components/ui/button";
@@ -36,53 +37,48 @@ import { SidebarTrigger } from "./components/ui/sidebar";
 import { Spinner } from "./components/ui/spinner";
 import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceLine, TraceTitle } from "./components/ui/trace";
 import { HermesComposer } from "./hermes-composer.tsx";
-import {
-	attachmentLimit,
-	chatAttachmentText,
-	flashModel,
-	type HermesAttachment,
-	type HermesModel,
-	hermesModels,
-	modelLabels,
-	quoteLimit,
-} from "./hermes-schema.ts";
+import { ConversationHistory } from "./hermes-history.tsx";
+import { attachmentLimit, chatAttachmentText, flashModel, type HermesAttachment, hermesModels, modelLabels, quoteLimit } from "./hermes-schema.ts";
 import { errorOf } from "./lib/state.ts";
 
 type Batch = { shop: string; sourceIds: string[]; notes?: string };
-type Turn = HermesTurn & { id: string; context?: string; model?: HermesModel; trace?: ToolTraceStep[] };
-type Session = { turns: Turn[]; awaiting: HermesRequest | null; lastPublish: HermesRun | null };
+type LegacySession = { turns: HistoryMessage[]; awaiting: HermesRequest | null; lastPublish: HermesRun | null };
 const sessionKey = "x2-hermes-session";
+const activeKey = "x2bot-active-conversation";
+const importKey = "x2bot-import-conversation";
 const handoffKey = "x2-hermes-listing-handoff";
-const empty: Session = { turns: [], awaiting: null, lastPublish: null };
 const modelKey = "x2-hermes-model";
 
-export function openHermesForBatch(batch: Batch) {
-	sessionStorage.setItem(handoffKey, JSON.stringify(batch));
-	location.hash = "x2bot";
-}
-
-function savedSession(): Session {
+function stored<T>(key: string): T | null {
 	try {
-		return JSON.parse(sessionStorage.getItem(sessionKey) ?? "null") ?? empty;
-	} catch {
-		return empty;
-	}
-}
-
-function savedBatch(): Batch | null {
-	try {
-		return JSON.parse(sessionStorage.getItem(handoffKey) ?? "null");
+		return JSON.parse(sessionStorage.getItem(key) ?? "null");
 	} catch {
 		return null;
 	}
 }
 
-function storeSession(session: Session) {
+function saveStorage(key: string, value: unknown) {
 	try {
-		sessionStorage.setItem(sessionKey, JSON.stringify({ ...session, turns: session.turns.slice(-24) }));
+		if (value === null) sessionStorage.removeItem(key);
+		else sessionStorage.setItem(key, JSON.stringify(value));
 	} catch {
-		// 当前页仍保留消息和请求编号，浏览器储存配额不足时也能继续查询进度。
+		// 浏览器配额不足时，已提交的会话仍从数据库读取。
 	}
+}
+
+export function openHermesForBatch(batch: Batch) {
+	saveStorage(handoffKey, batch);
+	location.hash = "x2bot";
+}
+
+function legacyImport() {
+	const value = stored<LegacySession>(sessionKey);
+	if (!value) return null;
+	const runIds = [...new Set([value.lastPublish?.id, value.awaiting?.id].filter((id): id is string => Boolean(id)))];
+	const turns = value.turns ?? [];
+	if (!turns.length && !runIds.length) return null;
+	const id = stored<string>(importKey) ?? crypto.randomUUID();
+	return { id, turns, runIds };
 }
 
 const shortcuts = [
@@ -91,120 +87,237 @@ const shortcuts = [
 ] as const;
 
 export function HermesChat({ setup, openSettings }: { setup: SetupState; openSettings: () => void }) {
-	const [session, setSession] = useState(savedSession);
-	const [batch, setBatch] = useState(savedBatch);
+	const [legacy] = useState(() => (setup.local ? legacyImport() : null));
+	const [active, setActive] = useState(() => (setup.local ? (stored<string>(activeKey) ?? legacy?.id ?? crypto.randomUUID()) : ""));
+	const [importing, setImporting] = useState(Boolean(legacy));
+	const [importError, setImportError] = useState<string | null>(null);
+	const [importAttempt, retryImport] = useState(0);
+	useEffect(() => {
+		saveStorage(activeKey, active || null);
+	}, [active]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 重试使用同一份旧会话和导入编号。
+	useEffect(() => {
+		if (!legacy) return;
+		let current = true;
+		saveStorage(importKey, legacy.id);
+		void api
+			.importHermesConversation(legacy)
+			.then(() => {
+				saveStorage(sessionKey, null);
+				saveStorage(importKey, null);
+				if (current) setImportError(null);
+			})
+			.catch((failure) => {
+				if (current) setImportError(errorOf(failure));
+			})
+			.finally(() => {
+				if (current) setImporting(false);
+			});
+		return () => {
+			current = false;
+		};
+	}, [legacy, importAttempt]);
+
+	if (active === legacy?.id && (importing || importError))
+		return (
+			<div className="grid min-h-svh place-items-center bg-muted/20 p-5">
+				<div className="w-full max-w-sm space-y-4 rounded-xl border bg-background p-5 text-sm">
+					{importError ? (
+						<>
+							<p role="alert">旧会话导入失败。{importError}</p>
+							<div className="flex gap-2">
+								<Button
+									onClick={() => {
+										setImporting(true);
+										retryImport(importAttempt + 1);
+									}}
+								>
+									重试导入
+								</Button>
+								<Button variant="outline" onClick={() => setActive(crypto.randomUUID())}>
+									新对话
+								</Button>
+							</div>
+						</>
+					) : (
+						<p role="status" className="flex gap-2">
+							<Spinner aria-hidden="true" />
+							正在导入此标签页的对话
+						</p>
+					)}
+				</div>
+			</div>
+		);
+	return <ConversationChat key={active} id={active} setup={setup} openSettings={openSettings} select={setActive} />;
+}
+
+function ConversationChat({ id, setup, openSettings, select }: { id: string; setup: SetupState; openSettings: () => void; select: (id: string) => void }) {
+	const pendingKey = `x2bot-unconfirmed:${id}`;
+	const [conversation, setConversation] = useState<Conversation | null | undefined>();
+	const [pendingRequest, setPendingRequest] = useState(() => stored<HermesRequest>(pendingKey));
+	const [batch, setBatch] = useState(() => stored<Batch>(handoffKey));
 	const [message, setMessage] = useState("");
 	const [attachments, setAttachments] = useState<HermesAttachment[]>([]);
 	const [reading, setReading] = useState(false);
 	const [model, setSelectedModel] = useState(() => {
-		const saved = sessionStorage.getItem(modelKey);
-		return hermesModels.find((value) => value === saved) ?? hermesModels.find((value) => value === setup.model) ?? flashModel;
+		const previous = sessionStorage.getItem(modelKey);
+		return hermesModels.find((value) => value === previous) ?? hermesModels.find((value) => value === setup.model) ?? flashModel;
 	});
 	const [error, setError] = useState<string | null>(null);
+	const [loadError, setLoadError] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [confirm, setConfirm] = useState(false);
 	const [trial, setTrial] = useState(false);
-	const [polling, setPolling] = useState(true);
+	const [pollAttempt, retryPoll] = useState(0);
 	const [liveTrace, setLiveTrace] = useState<ToolTraceStep[]>([]);
-	const pending = session.awaiting;
+	const [streamText, setStreamText] = useState("");
+	const sending = useRef(false);
+	const activeRun = conversation?.pending;
+	const runningId = activeRun?.id;
 	const blocked = !setup.hermes || !setup.local;
-	const busy = Boolean(pending) || submitting || reading;
-	const save = (state: Session) => {
-		storeSession(state);
-		setSession(state);
-	};
-	const setModel = (value: HermesModel) => {
-		setSelectedModel(value);
-		sessionStorage.setItem(modelKey, value);
-	};
+	const busy = (setup.local && conversation === undefined) || Boolean(activeRun || pendingRequest) || submitting || reading;
+	const refresh = useCallback(async () => {
+		const next = await api.hermesConversation(id);
+		setConversation(next);
+		setLoadError(null);
+		return next;
+	}, [id]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 重新读取时重新启动读取和进度监听。
 	useEffect(() => {
-		if (!pending || !polling || submitting) return;
+		if (!setup.local) return;
 		let current = true;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const read = async () => {
-			try {
-				const run = await api.hermesRun(pending.id);
+		void api
+			.hermesConversation(id)
+			.then((next) => {
 				if (!current) return;
-				setLiveTrace(run.trace ?? []);
-				if (run.state === "running") {
-					timer = setTimeout(() => void read(), 1800);
-					return;
-				}
-				const turns =
-					run.result && "text" in run.result
-						? [...session.turns, { id: `assistant-${run.id}`, role: "assistant" as const, content: run.result.text, model: pending.model, trace: run.trace }]
-						: session.turns;
-				const next = { turns, awaiting: null, lastPublish: run.kind === "publish" ? run : session.lastPublish };
-				storeSession(next);
-				setSession(next);
-				if (run.state === "failed" || run.state === "interrupted") setError(run.error ?? "上次任务已中断，可查看原商品稿和发布回执。");
-			} catch (failure) {
-				if (!current) return;
-				setError(errorOf(failure));
-				setPolling(false);
-			}
-		};
-		void read();
+				setConversation(next);
+				setLoadError(null);
+			})
+			.catch((failure) => {
+				if (current) setLoadError(errorOf(failure));
+			});
 		return () => {
 			current = false;
-			if (timer) clearTimeout(timer);
 		};
-	}, [pending, polling, session.lastPublish, session.turns, submitting]);
+	}, [id, setup.local, pollAttempt]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 手动重新读取时重新订阅同一任务。
+	useEffect(() => {
+		if (!runningId) return;
+		let current = true;
+		const events = new EventSource(api.hermesEvents(runningId));
+		events.addEventListener("snapshot", (event: MessageEvent<string>) => {
+			const snapshot: { text: string; trace: ToolTraceStep[] } = JSON.parse(event.data);
+			setStreamText(snapshot.text);
+			setLiveTrace(snapshot.trace);
+			setLoadError(null);
+		});
+		events.addEventListener("delta", (event: MessageEvent<string>) => {
+			const delta: string = JSON.parse(event.data);
+			setStreamText((text) => text + delta);
+		});
+		events.addEventListener("reset", () => setStreamText(""));
+		events.addEventListener("tool", (event: MessageEvent<string>) => {
+			const step: ToolTraceStep = JSON.parse(event.data);
+			setLiveTrace((steps) => (steps.some((entry) => entry.id === step.id) ? steps.map((entry) => (entry.id === step.id ? step : entry)) : [...steps, step]));
+		});
+		events.addEventListener("done", () => {
+			events.close();
+			void api
+				.hermesConversation(id)
+				.then((next) => {
+					if (!current) return;
+					setConversation(next);
+					setLoadError(next?.pending?.id === runningId ? "任务回执尚未更新，请重新读取" : null);
+				})
+				.catch((failure) => {
+					if (current) setLoadError(errorOf(failure));
+				});
+		});
+		events.onerror = () => {
+			if (current) setLoadError("回复连接暂时中断，正在重新连接");
+		};
+		return () => {
+			current = false;
+			events.close();
+		};
+	}, [id, runningId, pollAttempt]);
+
+	useEffect(() => {
+		if (!pendingRequest || !conversation) return;
+		if (conversation.pending?.id === pendingRequest.id || conversation.entries.some((entry) => entry.id === `user-${pendingRequest.id}`)) {
+			saveStorage(pendingKey, null);
+			setPendingRequest(null);
+		}
+	}, [conversation, pendingRequest, pendingKey]);
 
 	async function launch(request: HermesRequest) {
+		if (sending.current) return;
+		sending.current = true;
 		setSubmitting(true);
 		setError(null);
 		setLiveTrace([]);
+		setStreamText("");
+		setPendingRequest(request);
+		saveStorage(pendingKey, request);
+		let accepted = false;
 		try {
 			await api.startHermes(request);
-			setPolling(true);
+			accepted = true;
+			await refresh();
+			setPendingRequest(null);
+			saveStorage(pendingKey, null);
 		} catch (failure) {
 			setError(errorOf(failure));
-			// 保留原编号与输入。再次点击会查询或领取同一请求。
-			setPolling(false);
+			if (!accepted && failure instanceof ApiError && failure.status === 400) {
+				setPendingRequest(null);
+				saveStorage(pendingKey, null);
+				if (request.kind === "chat") {
+					setMessage(request.message);
+					setAttachments(request.attachments ?? []);
+				} else {
+					const original = { shop: request.shop, sourceIds: request.sourceIds, notes: request.notes };
+					setBatch(original);
+					saveStorage(handoffKey, original);
+				}
+				await refresh().catch(() => {});
+			}
 		} finally {
+			sending.current = false;
 			setSubmitting(false);
 		}
 	}
+
 	const send = (value: string) => {
 		const content = value.trim();
 		if (busy || blocked || (!content && !attachments.length)) return;
-		const request: HermesRequest = {
-			kind: "chat",
-			id: crypto.randomUUID(),
-			message: content,
-			model,
-			history: session.turns.slice(-16).map(({ role, content, context }) => ({
-				role,
-				content: [content, context].filter(Boolean).join("\n\n").slice(0, 30_000),
-			})),
-			attachments,
-		};
-		const context = chatAttachmentText(attachments);
-		save({ ...session, turns: [...session.turns, { id: `user-${request.id}`, role: "user", content, context }], awaiting: request });
 		setMessage("");
 		setAttachments([]);
-		void launch(request);
+		void launch({ kind: "chat", id: crypto.randomUUID(), conversationId: id, message: content, model, history: [], attachments });
 	};
 	const publish = () => {
 		if (!batch || busy || blocked) return;
-		const request: HermesRequest = {
-			kind: "publish",
-			id: crypto.randomUUID(),
-			shop: batch.shop,
-			sourceIds: batch.sourceIds,
-			confirmed: true,
-			trial,
-			notes: batch.notes,
-			model,
-		};
-		save({ ...session, awaiting: request });
-		sessionStorage.removeItem(handoffKey);
+		const request: HermesRequest = { kind: "publish", id: crypto.randomUUID(), conversationId: id, ...batch, confirmed: true, trial, model };
+		saveStorage(handoffKey, null);
 		setBatch(null);
 		setConfirm(false);
 		setTrial(false);
 		void launch(request);
 	};
+	const entries: ConversationEntry[] = conversation?.entries ?? [];
+	const optimistic =
+		pendingRequest?.kind === "chat" && !entries.some((entry) => entry.id === `user-${pendingRequest.id}`)
+			? [
+					...entries,
+					{
+						id: `user-${pendingRequest.id}`,
+						role: "user" as const,
+						content: pendingRequest.message,
+						context: chatAttachmentText(pendingRequest.attachments ?? []),
+					},
+				]
+			: entries;
 	const quoteFrom = (element: HTMLElement, content: string) => {
 		const selection = window.getSelection();
 		const text =
@@ -229,28 +342,30 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 				<Badge variant="outline" className="hidden text-muted-foreground sm:inline-flex">
 					{setup.hermes ? "已连接" : "待连接"}
 				</Badge>
-				<Button
-					className="ml-auto"
-					size="sm"
-					variant="ghost"
-					disabled={busy}
-					onClick={() => {
-						save(empty);
-						setMessage("");
-						setAttachments([]);
-						setError(null);
-					}}
-				>
-					<PlusIcon />
-					新对话
-				</Button>
+				{conversation && <span className="hidden min-w-0 truncate border-l pl-3 text-sm text-muted-foreground md:block">{conversation.title}</span>}
+				{setup.local && (
+					<div className="ml-auto flex shrink-0 items-center gap-1">
+						<ConversationHistory
+							active={id}
+							select={select}
+							onDeleted={(removed) => {
+								saveStorage(`x2bot-unconfirmed:${removed}`, null);
+								if (removed === id) select(crypto.randomUUID());
+							}}
+						/>
+						<Button size="sm" variant="ghost" onClick={() => select(crypto.randomUUID())}>
+							<PlusIcon />
+							新对话
+						</Button>
+					</div>
+				)}
 			</header>
 			<div className="min-h-0 flex-1">
 				<MessageScrollerProvider autoScroll defaultScrollPosition="end">
 					<MessageScroller>
 						<MessageScrollerViewport aria-label="x2bot 对话消息">
 							<MessageScrollerContent className="mx-auto max-w-4xl gap-5 px-4 py-6 sm:px-8 sm:py-9">
-								{!session.turns.length && !session.lastPublish && !pending && (
+								{!optimistic.length && !activeRun && !pendingRequest && (
 									<MessageScrollerItem messageId="welcome" className="flex flex-1">
 										<Empty className="mx-auto max-w-xl flex-1 items-start px-0 py-8">
 											<EmptyHeader className="max-w-none items-start text-left">
@@ -280,65 +395,66 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 										</Empty>
 									</MessageScrollerItem>
 								)}
-								{session.turns.map((turn) => (
-									<MessageScrollerItem key={turn.id} messageId={turn.id} scrollAnchor={turn.role === "user"} data-chat-turn>
-										<Message align={turn.role === "user" ? "end" : "start"} className="items-start gap-3">
-											{turn.role === "assistant" && (
-												<MessageAvatar className="mt-1 size-8 self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-													<BotIcon className="size-4" />
-												</MessageAvatar>
-											)}
-											<MessageContent className="gap-1">
-												<Bubble align={turn.role === "user" ? "end" : "start"} variant={turn.role === "user" ? "muted" : "ghost"}>
-													<BubbleContent className={turn.role === "assistant" ? "leading-6" : undefined}>
-														{turn.role === "user" ? (
-															<>
-																{turn.context && (
-																	<details className="mb-2 text-xs text-muted-foreground">
-																		<summary className="cursor-pointer">随消息发送的资料</summary>
-																		<div className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap">{turn.context}</div>
-																	</details>
-																)}
-																<p className="whitespace-pre-wrap">{turn.content}</p>
-															</>
-														) : (
-															<div className="space-y-2">
-																{turn.trace && <ExecutionTrace steps={turn.trace} />}
-																<div className="markdown">
-																	<Markdown skipHtml remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
-																		{turn.content}
-																	</Markdown>
-																</div>
-															</div>
-														)}
-													</BubbleContent>
-												</Bubble>
-												{turn.content && (
-													<MessageFooter className="gap-2">
-														<Button
-															aria-label="引用这条消息中的段落"
-															variant="ghost"
-															size="xs"
-															disabled={blocked || busy || attachments.length >= attachmentLimit}
-															onMouseDown={(event) => event.preventDefault()}
-															onClick={(event) => {
-																const element = event.currentTarget.closest<HTMLElement>("[data-chat-turn]");
-																if (element) quoteFrom(element, turn.content);
-															}}
-														>
-															<QuoteIcon /> 引用
-														</Button>
-														{turn.model && <span>{modelLabels[turn.model]}</span>}
-													</MessageFooter>
+								{optimistic.map((turn) =>
+									turn.role === "task" ? (
+										<MessageScrollerItem key={turn.id} messageId={turn.id}>
+											<TaskReceipt run={turn.run} />
+										</MessageScrollerItem>
+									) : (
+										<MessageScrollerItem key={turn.id} messageId={turn.id} scrollAnchor={turn.role === "user"} data-chat-turn>
+											<Message align={turn.role === "user" ? "end" : "start"} className="items-start gap-3">
+												{turn.role === "assistant" && (
+													<MessageAvatar className="mt-1 size-8 self-start group-has-data-[slot=message-footer]/message:translate-y-0">
+														<BotIcon className="size-4" />
+													</MessageAvatar>
 												)}
-											</MessageContent>
-										</Message>
-									</MessageScrollerItem>
-								))}
-								{session.lastPublish && (
-									<MessageScrollerItem messageId={`receipt-${session.lastPublish.id}`}>
-										<PublishReceipt run={session.lastPublish} />
-									</MessageScrollerItem>
+												<MessageContent className="gap-1">
+													<Bubble align={turn.role === "user" ? "end" : "start"} variant={turn.role === "user" ? "muted" : "ghost"}>
+														<BubbleContent className={turn.role === "assistant" ? "leading-6" : undefined}>
+															{turn.role === "user" ? (
+																<>
+																	{turn.context && (
+																		<details className="mb-2 text-xs text-muted-foreground">
+																			<summary className="cursor-pointer">随消息发送的资料</summary>
+																			<div className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap">{turn.context}</div>
+																		</details>
+																	)}
+																	<p className="whitespace-pre-wrap">{turn.content}</p>
+																</>
+															) : (
+																<div className="space-y-2">
+																	{turn.trace && <ExecutionTrace steps={turn.trace} />}
+																	<div className="markdown">
+																		<Markdown skipHtml remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
+																			{turn.content}
+																		</Markdown>
+																	</div>
+																</div>
+															)}
+														</BubbleContent>
+													</Bubble>
+													{turn.content && (
+														<MessageFooter className="gap-2">
+															<Button
+																aria-label="引用这条消息中的段落"
+																variant="ghost"
+																size="xs"
+																disabled={blocked || busy || attachments.length >= attachmentLimit}
+																onMouseDown={(event) => event.preventDefault()}
+																onClick={(event) => {
+																	const element = event.currentTarget.closest<HTMLElement>("[data-chat-turn]");
+																	if (element) quoteFrom(element, turn.content);
+																}}
+															>
+																<QuoteIcon /> 引用
+															</Button>
+															{turn.model && <span>{modelLabels[turn.model]}</span>}
+														</MessageFooter>
+													)}
+												</MessageContent>
+											</Message>
+										</MessageScrollerItem>
+									),
 								)}
 								{batch && (
 									<MessageScrollerItem messageId="listing-handoff">
@@ -377,30 +493,52 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 										</Item>
 									</MessageScrollerItem>
 								)}
-								{pending && polling && (
-									<MessageScrollerItem messageId={`assistant-${pending.id}`} key={`assistant-${pending.id}`}>
-										<ExecutionTrace steps={liveTrace} running />
+								{(activeRun || submitting) && (
+									<MessageScrollerItem messageId={`assistant-${activeRun?.id ?? pendingRequest?.id ?? "pending"}`}>
+										<Message className="items-start gap-3">
+											<MessageAvatar className="mt-1 size-8 self-start">
+												<BotIcon className="size-4" />
+											</MessageAvatar>
+											<MessageContent className="gap-2">
+												<ExecutionTrace steps={liveTrace.length ? liveTrace : (activeRun?.trace ?? [])} running />
+												{streamText && (
+													<div className="markdown text-sm leading-6 wrap-anywhere">
+														<Markdown skipHtml remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
+															{streamText}
+														</Markdown>
+														<span aria-hidden="true" className="inline-block h-3.5 w-0.5 animate-pulse rounded-full bg-foreground motion-reduce:animate-none" />
+													</div>
+												)}
+											</MessageContent>
+										</Message>
 									</MessageScrollerItem>
 								)}
-								{error && (
+								{(error || loadError || (pendingRequest && !submitting && !activeRun)) && (
 									<MessageScrollerItem messageId="chat-error">
-										{!pending && !session.lastPublish?.trace?.length && liveTrace.length > 0 && <ExecutionTrace steps={liveTrace} />}
 										<div
 											role="alert"
 											className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/20 bg-background p-3 text-sm text-destructive"
 										>
-											{error}
-											{pending && !polling && (
-												<Button variant="outline" size="sm" onClick={() => void launch(pending)}>
-													重试原请求
+											{loadError ?? error ?? "上次提交结果待核对"}
+											{loadError ? (
+												<Button variant="outline" size="sm" onClick={() => retryPoll(pollAttempt + 1)}>
+													重新读取
 												</Button>
+											) : (
+												pendingRequest &&
+												!submitting &&
+												!activeRun && (
+													<Button variant="outline" size="sm" onClick={() => void launch(pendingRequest)}>
+														核对原请求
+													</Button>
+												)
 											)}
 										</div>
 									</MessageScrollerItem>
 								)}
 							</MessageScrollerContent>
 						</MessageScrollerViewport>
-						{(session.turns.length > 0 || pending || session.lastPublish || batch) && <MessageScrollerButton aria-label="回到最新消息" />}
+						{(optimistic.length > 0 || activeRun || pendingRequest || batch) && <MessageScrollerButton aria-label="回到最新消息" />}
 					</MessageScroller>
 				</MessageScrollerProvider>
 			</div>
@@ -420,10 +558,13 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 						message={message}
 						setMessage={setMessage}
 						model={model}
-						setModel={setModel}
+						setModel={(value) => {
+							setSelectedModel(value);
+							sessionStorage.setItem(modelKey, value);
+						}}
 						attachments={attachments}
 						setAttachments={setAttachments}
-						busy={Boolean(pending) || submitting}
+						busy={busy}
 						reading={reading}
 						setReading={setReading}
 						onSend={() => send(message)}
@@ -511,9 +652,15 @@ function ExecutionTrace({ steps, running = false }: { steps: ToolTraceStep[]; ru
 	);
 }
 
-function PublishReceipt({ run }: { run: HermesRun }) {
+function TaskReceipt({ run }: { run: HermesRun }) {
 	const result = run.result && "items" in run.result ? run.result : null;
-	if (!result) return run.trace?.length ? <ExecutionTrace steps={run.trace} /> : null;
+	if (!result)
+		return (
+			<section className="space-y-2 rounded-xl border bg-background p-4">
+				<p className="text-sm text-muted-foreground">{run.error ?? "任务已中断"}</p>
+				{run.trace.length > 0 && <ExecutionTrace steps={run.trace} />}
+			</section>
+		);
 	const listed = result.items.filter((item) => item.url).length;
 	return (
 		<section className="space-y-3 rounded-xl border bg-background p-4">

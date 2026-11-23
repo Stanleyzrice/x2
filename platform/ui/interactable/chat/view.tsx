@@ -18,10 +18,12 @@ import {
 	MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { errorOf } from "@/lib/state";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
+import { type HermesModel, hermesModel, hermesModels, modelLabels } from "../../hermes-schema.ts";
 import { type Conversation, type Inbox, inboxSnapshots, type Suggestion, snapshotKey, type ThreadData, threadSnapshots, type Window } from "./cache.ts";
 import type { Props } from "./schema.ts";
 
@@ -274,6 +276,8 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 
 function Thread({ item, shop, conversationId, now, historyDays }: { item: string; shop: string; conversationId: string; now: number; historyDays: number }) {
 	const cacheKey = snapshotKey(item, shop, historyDays, conversationId);
+	const modelKey = `x2-chat-model:${shop}`;
+	const [model, setModel] = useState<HermesModel | "default">(() => hermesModel.safeParse(localStorage.getItem(modelKey)).data ?? "default");
 	const [data, setData] = useState<ThreadData | null>(() => threadSnapshots.peek(cacheKey)),
 		[error, setError] = useState<string | null>(null),
 		[busy, setBusy] = useState(false),
@@ -388,7 +392,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 	const generate = async () => {
 		if (!data || !live || reading || !visibleMessages.length || windowChanged) return;
 		const id = ++generation.current;
-		const result = await api.act<Suggestion>(item, "draft", { conversationId, contextId: data.context.id });
+		const result = await api.act<Suggestion>(item, "draft", { conversationId, contextId: data.context.id, ...(model === "default" ? {} : { model }) });
 		if (mounted.current && generation.current === id) setSuggestion(result);
 	};
 	const prepare = async () => {
@@ -558,6 +562,27 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 					rows={3}
 				/>
 				<div className="flex flex-wrap items-center gap-2">
+					<Select
+						value={model}
+						disabled={busy}
+						onValueChange={(value) => {
+							const next = hermesModel.safeParse(value).data ?? "default";
+							setModel(next);
+							localStorage.setItem(modelKey, next);
+						}}
+					>
+						<SelectTrigger size="sm" aria-label="客服建議模型">
+							<SelectValue>{model === "default" ? "跟隨 X2 設定" : modelLabels[model]}</SelectValue>
+						</SelectTrigger>
+						<SelectContent align="start">
+							<SelectItem value="default">跟隨 X2 設定</SelectItem>
+							{hermesModels.map((option) => (
+								<SelectItem key={option} value={option}>
+									{modelLabels[option]}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
 					<Button
 						variant="outline"
 						size="sm"

@@ -1,8 +1,7 @@
-// 象寄译图的调用与缓存；独立于商品发布，原图和译图均按内容指纹保存。
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { fetchImage } from "../../connectors/services/image/api.ts";
-import { BATCH } from "../../connectors/services/xiangji/api.ts";
+import { fetchImage, inspect } from "../../connectors/services/image/api.ts";
+import { BATCH, translationConfig } from "../../connectors/services/xiangji/api.ts";
 import { translateImages } from "../../connectors/services/xiangji/index.ts";
 import type { Sql } from "../../platform/db/index.ts";
 
@@ -17,6 +16,18 @@ type TranslationReceipt = { status: "done"; url: string } | { status: "failed" |
 type Settlement = { sha: string; record: TranslationReceipt };
 type TranslationState = { url?: string; failed?: string; saved: boolean; retryable: boolean };
 const UNKNOWN = "收费译图结果未知，请人工核对该图与象寄账单；不会重复提交";
+
+export async function cachedTranslation(sql: Sql, sourceSha: string, sha?: string) {
+	const [row] = await sql<{ sha256: string; source: string; bytes: Buffer }[]>`
+		select sha256, source, bytes from images
+		where kind = '译图' and from_sha = ${sourceSha} and bytes is not null
+		${sha ? sql`and sha256 = ${sha}` : sql``}
+		order by created_at desc, sha256 limit 1`;
+	if (!row) return null;
+	const image = inspect(row.bytes);
+	if (image.sha256 !== row.sha256) throw new Error("象寄译图缓存指纹不一致，须核对原提交");
+	return { url: row.source, image };
+}
 
 const translatedReply = z.object({
 	kind: z.literal("done"),
@@ -63,6 +74,7 @@ export async function translate(
 	if (items.length > BATCH) throw new Error(`译图每批最多 ${BATCH} 张，未提交`);
 	if (new Set(items.map((item) => item.sha)).size !== items.length || new Set(items.map((item) => item.url)).size !== items.length)
 		throw new Error("译图输入的原图指纹或地址重复，未提交");
+	if (!dependencies.submit) translationConfig();
 	const requestId = randomUUID();
 	const at = new Date().toISOString();
 	// 领取和意图在同一条语句提交；外部请求前已落库，进程消失后也不能把提交中当成尚未提交。

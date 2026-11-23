@@ -1,6 +1,6 @@
-// 客服建议调用所配置服务商的 OpenAI Chat Completions 兼容接口。
 import { z } from "zod";
 import { NeedsHuman } from "../../../platform/errors.ts";
+import { flashModel, type HermesModel, hermesModel } from "../../../platform/ui/hermes-schema.ts";
 
 const completion = z.looseObject({
 	model: z.string().min(1),
@@ -10,11 +10,16 @@ const completion = z.looseObject({
 const statusDetails: Record<number, string> = { 401: "（请检查 API Key）", 402: "（额度不足）", 403: "（请检查模型访问权限）", 429: "（请求频率或额度受限）" };
 
 type ChatModelConfig = { baseUrl: string; apiKey: string; model: string };
-export function chatModelConfig(): ChatModelConfig {
+export function chatModelConfig(selected?: HermesModel): ChatModelConfig {
+	const deepSeekKey = process.env.DEEPSEEK_API_KEY?.trim();
+	if (deepSeekKey) {
+		const saved = hermesModel.safeParse(process.env.X2_HERMES_MODEL?.trim()).data;
+		return { baseUrl: "https://api.deepseek.com", apiKey: deepSeekKey, model: selected ?? saved ?? flashModel };
+	}
 	const baseUrl = process.env.X2_CHAT_BASE_URL?.trim(),
 		apiKey = process.env.X2_CHAT_API_KEY?.trim(),
 		model = process.env.X2_CHAT_MODEL?.trim();
-	if (!baseUrl || !apiKey || !model) throw new NeedsHuman("请在 .env 配置 X2_CHAT_BASE_URL、X2_CHAT_API_KEY 和 X2_CHAT_MODEL，再生成客服建议");
+	if (selected || !baseUrl || !apiKey || !model) throw new NeedsHuman("请先在 X2 设置中连接 DeepSeek，再生成客服建议");
 	return { baseUrl, apiKey, model };
 }
 export function endpoint(base: string): URL {

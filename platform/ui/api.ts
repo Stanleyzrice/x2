@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { BrowserAuthorization } from "../web/browser-authorizations.ts";
 import type { BrowserConnectionInput, BrowserConnectionResult } from "../web/browser-connection.ts";
 import type { HermesRequest, HermesRun } from "../web/hermes.ts";
+import type { Conversation, ConversationSummary, HistoryImport } from "../web/hermes-history.ts";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
 import type { SetupState } from "../web/setup.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
@@ -20,6 +21,8 @@ export type {
 	BrowserAuthorization,
 	BrowserConnectionInput,
 	BrowserConnectionResult,
+	Conversation,
+	ConversationSummary,
 	Grid,
 	HermesRequest,
 	HermesRun,
@@ -85,7 +88,11 @@ export const api = {
 	setupShop: (accountId: string) => call<SetupState>("POST", "/api/setup/shop", { accountId }),
 	finishSetup: () => call<SetupState>("POST", "/api/setup/finish", {}),
 	startHermes: (request: HermesRequest) => call<HermesRun>("POST", "/api/hermes/run", request),
-	hermesRun: (id: string) => call<HermesRun>("GET", `/api/hermes/run?id=${q(id)}`),
+	hermesEvents: (id: string) => `/api/hermes/run/events?id=${q(id)}`,
+	hermesConversations: () => call<ConversationSummary[]>("GET", "/api/hermes/conversations"),
+	hermesConversation: (id: string) => call<Conversation | null>("GET", `/api/hermes/conversation?id=${q(id)}`),
+	deleteHermesConversation: (id: string) => call<{ id: string }>("DELETE", `/api/hermes/conversation?id=${q(id)}`),
+	importHermesConversation: (input: HistoryImport) => call<{ id: string }>("POST", "/api/hermes/conversation/import", input),
 	connectBrowser: (input: BrowserConnectionInput) => call<BrowserConnectionResult>("POST", "/api/browser/connect", input),
 	browserAuthorizations: (site: string) => call<BrowserAuthorization[]>("GET", `/api/browser/authorizations?site=${q(site)}`),
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),

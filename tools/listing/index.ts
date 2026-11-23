@@ -1,5 +1,3 @@
-// 上品（x2 listing <工具>）：把 1688 的货源做成店里在售的商品。x2 status 问它的检查（只看库里的）；建商品、上架是写（publish：人说了批准才调）。
-// 输出里商品稿都叫「简称（店铺，#编号）」（listingName）：编号是工具要用的
 import { z } from "zod";
 import { offerIdOf } from "../../connectors/sites/1688/api.ts";
 import { type Category, categoryTree } from "../../connectors/sites/shopee/products.ts";
@@ -26,6 +24,7 @@ import { make, readOffer1688, savePrices } from "./make.ts";
 import { marketPricingTools } from "./market-pricing.ts";
 import { orderPrice, orderPricingInput } from "./order-pricing.ts";
 import { addListings, type PickSnapshot, pickSnapshot, snapshotLine } from "./pick.ts";
+import { imageModeSchema } from "./pics.ts";
 import { estimateNeeds, pricingPolicy, pricingProblems, quote, settingsOf } from "./pricing.ts";
 import { pricingCalculatorTools } from "./pricing-calculator.ts";
 import { pricingInputsParams, setPricingInputs } from "./pricing-input.ts";
@@ -53,6 +52,7 @@ import { type TextCheckResult, textChecks } from "./textcheck.ts";
 import { planUnlist, previewUnlist, UNLIST_WRITES, unlistParams } from "./unlist.ts";
 import { dropSpecs, isSingle, OLD_SPECS, priceRange, removedOf, renameSpecs, specsOf, specsText, tierNames } from "./variants.ts";
 import { LISTING_WRITES } from "./writes.ts";
+import { imageTranslationFlow, shopImageFlow, xiangjiImages, xiangjiImagesParams } from "./xiangji-images.ts";
 
 async function namesOf(sql: Sql, ids: string[]): Promise<(id: string) => string> {
 	const valid = [...new Set(ids.filter((id) => /^\d+$/.test(id)))];
@@ -141,7 +141,15 @@ export const listing: Toolkit = {
 			if (!row) throw new Usage(`没有商品稿 ${p.id}`);
 			return { id: p.id, shop: row.shop, ...reviewedImagesPreview(row) };
 		}),
-		"reviewed-images": get("导入已审本地图片：验源SKU/SHA/尺寸，经X2水印、上传及持久化；不改规格售价，不伪装Gemini审核", reviewedImagesParams, async (p) =>
+		"image-flow": get("读取或明确切换店铺后续的 x2bot 图片翻译默认流程", z.object({ shop: str("店铺"), mode: imageTranslationFlow.optional() }), async (p) =>
+			shopImageFlow(await db(), p.shop, p.mode),
+		),
+		"xiangji-images": get(
+			"选定稿件原图直接用象寄翻译，默认只读回执；明确 submit 后收费。返回逐图译图，不调用 Gemini、不改商品稿",
+			xiangjiImagesParams,
+			async (p) => xiangjiImages(await db(), p),
+		),
+		"reviewed-images": get("导入已审本地图片、干净原图或象寄回执：验源SKU/SHA/尺寸，经X2水印、上传及持久化", reviewedImagesParams, async (p) =>
 			importReviewedImages(await db(), p),
 		),
 		"upload-reviewed-assets": get(
@@ -333,10 +341,7 @@ export const listing: Toolkit = {
 						.preprocess(parseJson, skuImagesSchema)
 						.optional()
 						.describe("本次按已选skuId指定审核后的规格图，JSON数组[{skuId,url}]；仅限单稿，不改原货源"),
-					imageMode: z
-						.enum(["processed", "original", "reviewed"])
-						.optional()
-						.describe("original原图、processed模型处理、reviewed沿用已审图片；省略时沿用稿件模式，新稿只准备来源"),
+					imageMode: imageModeSchema.optional().describe("original原图、processed模型处理、reviewed沿用已审图片；省略时沿用稿件模式，新稿只准备来源"),
 				})
 				.refine((p) => !(p.sourceSkuIds || p.mainImages || p.detailImages || p.skuImages) || p.ids?.length === 1, "明确货源或图片范围时必须只指定一份商品稿")
 				.refine((p) => !p.prepareOnly || p.ids?.length === 1, "仅准备时必须明确指定一份商品稿")

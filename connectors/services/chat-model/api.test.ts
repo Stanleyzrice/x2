@@ -2,7 +2,22 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { completionOf, endpoint, suggest } from "./api.ts";
+import { chatModelConfig, completionOf, endpoint, suggest } from "./api.ts";
+
+test("客服复用 X2 设置中的 DeepSeek 密钥和默认模型，也接受模型切换", (t) => {
+	const previousKey = process.env.DEEPSEEK_API_KEY;
+	const previousModel = process.env.X2_HERMES_MODEL;
+	t.after(() => {
+		if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+		else process.env.DEEPSEEK_API_KEY = previousKey;
+		if (previousModel === undefined) delete process.env.X2_HERMES_MODEL;
+		else process.env.X2_HERMES_MODEL = previousModel;
+	});
+	process.env.DEEPSEEK_API_KEY = "fixture-deepseek";
+	process.env.X2_HERMES_MODEL = "deepseek-v4-pro";
+	assert.deepEqual(chatModelConfig(), { baseUrl: "https://api.deepseek.com", apiKey: "fixture-deepseek", model: "deepseek-v4-pro" });
+	assert.equal(chatModelConfig("deepseek-flash").model, "deepseek-flash");
+});
 
 test("模型地址保留服务商 API 路径并拒绝远程 HTTP 和 URL 凭证", () => {
 	assert.equal(endpoint("https://provider.example.test/v1/").pathname, "/v1/chat/completions");

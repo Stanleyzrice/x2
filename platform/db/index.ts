@@ -1,4 +1,3 @@
-// PostgreSQL 连接与迁移；数据库由 X2_DATABASE_URL 指定，按配置直连或经 SSH 隧道。
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import postgres from "postgres";
