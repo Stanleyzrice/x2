@@ -15,7 +15,7 @@ x2_installer="$(mktemp)" && curl -fsSL https://raw.githubusercontent.com/Stanley
 **Windows 64 位（PowerShell）**
 
 ```powershell
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Stanleyzrice/x2/main/ops/install/windows.ps1').Content))
+$x2Installer = Join-Path $env:TEMP 'x2-install.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Stanleyzrice/x2/main/ops/install/windows.ps1' -OutFile $x2Installer -ErrorAction Stop; & ([scriptblock]::Create((Get-Content -LiteralPath $x2Installer -Raw -Encoding UTF8)))
 ```
 
 安装后，在专用浏览器登录 Shopee、1688，回 X2 填入自己的 DeepSeek API Key 并绑定店铺。安装器会在当前用户目录保存独立数据库和浏览器资料。之后打开 X2 可再次执行同一条命令。

@@ -129,7 +129,12 @@ try {
 	await installHermes();
 	const booey = dirname(fileURLToPath(import.meta.resolve("@wuwe1/booey/package.json")));
 	const browser = await chrome();
-	if (!checkOnly) run(process.execPath, [join(booey, "dist", "cli", "booey.js"), "daemon", "start"]);
+	if (!checkOnly) {
+		const cli = join(booey, "dist", "cli", "booey.js");
+		const status = spawnSync(process.execPath, [cli, "daemon", "status"], { ...update, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+		if (status.error || status.status !== 0) throw new Error("Could not read Booey status.");
+		if (!JSON.parse(status.stdout).running) run(process.execPath, [cli, "daemon", "start"]);
+	}
 	const webPort = await port(5170).catch(() => port());
 	const url = `http://127.0.0.1:${webPort}`;
 	const web = spawn(process.execPath, ["x2.ts", "web", "--port", String(webPort)], { ...update, env });

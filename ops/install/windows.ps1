@@ -17,7 +17,9 @@ function Invoke-X2Runtime {
 }
 
 if (-not (Test-Path $pixi)) {
-    & ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://pixi.sh/install.ps1').Content))
+    $pixiInstaller = Join-Path $runtime 'pixi-install.ps1'
+    Invoke-WebRequest -UseBasicParsing 'https://pixi.sh/install.ps1' -OutFile $pixiInstaller
+    & ([scriptblock]::Create((Get-Content -LiteralPath $pixiInstaller -Raw -Encoding UTF8)))
 }
 if (-not (Test-Path $pixi)) { throw 'Pixi did not install.' }
 if (-not (Test-Path $manifest)) {
