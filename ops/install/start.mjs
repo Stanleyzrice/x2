@@ -9,6 +9,7 @@ import { pipeline } from "node:stream/promises";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { createDaemon } from "@wuwe1/booey/daemon";
 
 const app = fileURLToPath(new URL("../../", import.meta.url));
 const root = resolve(process.argv[2] ?? join(app, ".."));
@@ -129,16 +130,23 @@ async function chrome(python) {
 	return binary(version);
 }
 
+async function relayReady(port) {
+	const response = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1500) }).catch(() => null);
+	if (!response?.ok) return false;
+	const status = await response.json().catch(() => null);
+	return Number.isInteger(status?.version) && Array.isArray(status?.browsers);
+}
+
 const env = await database();
+let relay;
 try {
 	const python = await installHermes();
 	const booey = dirname(fileURLToPath(import.meta.resolve("@wuwe1/booey/package.json")));
 	const browser = await chrome(python);
-	if (!checkOnly) {
-		const cli = join(booey, "dist", "cli", "booey.js");
-		const status = spawnSync(process.execPath, [cli, "daemon", "status"], { ...update, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-		if (status.error || status.status !== 0) throw new Error("Could not read Booey status.");
-		if (!JSON.parse(status.stdout).running) run(process.execPath, [cli, "daemon", "start"]);
+	const relayPort = Number(process.env.BOOEY_PORT || 9224);
+	if (checkOnly || !(await relayReady(relayPort))) {
+		relay = await createDaemon({ port: checkOnly ? 0 : relayPort });
+		if (!(await relayReady(relay.port))) throw new Error("Booey did not start.");
 	}
 	const webPort = await port(5170).catch(() => port());
 	const url = `http://127.0.0.1:${webPort}`;
@@ -177,5 +185,6 @@ try {
 		}
 	}
 } finally {
+	await relay?.close();
 	if (checkOnly && existsSync(join(root, "postgres", "PG_VERSION"))) run(exe("pg_ctl"), ["-D", join(root, "postgres"), "-w", "stop"]);
 }
