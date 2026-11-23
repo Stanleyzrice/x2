@@ -86,9 +86,10 @@ async function installHermes() {
 	}
 	if (!existsSync(python)) run(exe("uv"), ["sync", "--project", path, "--locked", "--python", "3.14", "--extra", "mcp"]);
 	run(python, ["-c", "from run_agent import AIAgent; import mcp"]);
+	return python;
 }
 
-async function chrome() {
+async function chrome(python) {
 	const platform = win ? "win64" : process.arch === "arm64" ? "mac-arm64" : "mac-x64";
 	const directory = join(root, "browser");
 	const binary = (folder) =>
@@ -118,20 +119,8 @@ async function chrome() {
 		const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(300_000) });
 		if (!response.ok || !response.body) throw new Error("Could not download Chrome for Testing.");
 		await pipeline(response.body, createWriteStream(archive));
-		if (win) {
-			run(
-				"powershell.exe",
-				[
-					"-NoProfile",
-					"-NonInteractive",
-					"-Command",
-					"Expand-Archive -LiteralPath $env:X2_CHROME_ARCHIVE -DestinationPath $env:X2_CHROME_PATH -ErrorAction Stop",
-				],
-				{
-					env: { ...process.env, X2_CHROME_ARCHIVE: archive, X2_CHROME_PATH: extracted },
-				},
-			);
-		} else run("/usr/bin/ditto", ["-x", "-k", archive, extracted]);
+		if (win) run(python, ["-m", "zipfile", "-e", archive, extracted]);
+		else run("/usr/bin/ditto", ["-x", "-k", archive, extracted]);
 		await rename(extracted, release);
 	} finally {
 		await rm(staging, { recursive: true, force: true });
@@ -142,9 +131,9 @@ async function chrome() {
 
 const env = await database();
 try {
-	await installHermes();
+	const python = await installHermes();
 	const booey = dirname(fileURLToPath(import.meta.resolve("@wuwe1/booey/package.json")));
-	const browser = await chrome();
+	const browser = await chrome(python);
 	if (!checkOnly) {
 		const cli = join(booey, "dist", "cli", "booey.js");
 		const status = spawnSync(process.execPath, [cli, "daemon", "status"], { ...update, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
