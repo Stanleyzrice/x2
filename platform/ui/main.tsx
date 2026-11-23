@@ -149,6 +149,7 @@ function Root() {
 
 function App({ id, setup }: { id: string; setup: SetupState }) {
 	const [pages, error, reload] = usePoll(api.pages, 5000, []);
+	const bot = id === "x2bot" || id === "hermes";
 	const current = pages?.find((p) => p.id === id || p.workspace?.key === id)?.id ?? (/^\d+$/.test(id) ? id : "");
 	usePagePreload(pages ?? [], current);
 	return (
@@ -157,7 +158,7 @@ function App({ id, setup }: { id: string; setup: SetupState }) {
 			<Nav
 				pages={pages ?? []}
 				active={current}
-				hermes={id === "hermes"}
+				hermes={bot}
 				shop={setup.shop}
 				onDeleted={(deleted) => {
 					if (deleted.includes(route())) location.hash = "home";
@@ -165,7 +166,7 @@ function App({ id, setup }: { id: string; setup: SetupState }) {
 				}}
 			/>
 			<SidebarInset className="min-w-0">
-				{id === "hermes" ? (
+				{bot ? (
 					<HermesChat
 						setup={setup}
 						openSettings={() => {
@@ -291,12 +292,12 @@ function Nav({
 						<SidebarMenuItem>
 							<SidebarMenuButton
 								isActive={hermes}
-								render={<a href="#hermes" />}
+								render={<a href="#x2bot" />}
 								className="h-9 font-medium data-[active=true]:bg-emerald-500/10 data-[active=true]:text-emerald-800 dark:data-[active=true]:text-emerald-200"
 								onClick={() => setOpenMobile(false)}
 							>
 								<BotIcon />
-								<span>Hermes Chat</span>
+								<span>x2bot</span>
 							</SidebarMenuButton>
 						</SidebarMenuItem>
 					</SidebarMenu>

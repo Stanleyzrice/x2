@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { askCodex, codexStatus } from "../../connectors/services/codex/index.ts";
+import { askDeepSeek, deepSeekStatus } from "../../connectors/services/hermes/index.ts";
+import { inspect } from "../../connectors/services/image/index.ts";
 import { alibaba } from "../../connectors/sites/1688/index.ts";
 import { shopee } from "../../connectors/sites/shopee/index.ts";
 import { xiaohongshu } from "../../connectors/sites/xiaohongshu/index.ts";
@@ -33,11 +35,12 @@ export type { RunCandidate, RunDetail, RunEvent, RunStatus, RunSummary } from ".
 export type AgentProgress = { type: string; message: string };
 export type SelectionAgentStatus = { available: boolean; version: string | null; error: string | null; model?: string; reasoningEffort?: string };
 export type SelectionServices = {
-	agentStatus: () => Promise<SelectionAgentStatus>;
+	agentStatus: (model?: SelectionRunConfig["deepSeekModel"]) => Promise<SelectionAgentStatus>;
 	ask: (input: {
 		prompt: string;
 		schema: Record<string, unknown>;
 		cwd: string;
+		model?: SelectionRunConfig["deepSeekModel"];
 		images?: readonly Uint8Array[];
 		signal: AbortSignal;
 		timeoutMs: number;
@@ -227,9 +230,9 @@ const collectedSchema = z.object({
 	reusedSnapshot: z.boolean().optional(),
 });
 
-export function requestFingerprint(config: Pick<SelectionRunConfig, "shop" | "strategy" | "limit" | "brief">): string {
+export function requestFingerprint(config: Pick<SelectionRunConfig, "shop" | "strategy" | "limit" | "brief" | "deepSeekModel">): string {
 	return createHash("sha256")
-		.update(JSON.stringify({ shop: config.shop, strategyId: config.strategy.id, limit: config.limit, brief: config.brief }))
+		.update(JSON.stringify({ shop: config.shop, strategyId: config.strategy.id, limit: config.limit, brief: config.brief, model: config.deepSeekModel }))
 		.digest("hex");
 }
 const errorText = (error: unknown) =>
@@ -468,6 +471,7 @@ export function createSelectionRunner(store: RunStore, services: SelectionServic
 								: `${prompt}\n上次只读分析等待超时。本次直接给最短结构化结论；${step === "智能体规划" ? "规则冲突时返回停止或需处理，不强行寻找替代查询。" : "不合格来源给出排除结论，不复述完整流程；本批没有合格来源时candidates可为空。"}`,
 						schema: z.toJSONSchema(schema),
 						cwd: ROOT,
+						...(config.deepSeekModel ? { model: config.deepSeekModel } : {}),
 						...(images?.length ? { images } : {}),
 						signal,
 						timeoutMs,
@@ -493,7 +497,7 @@ export function createSelectionRunner(store: RunStore, services: SelectionServic
 			const trendParameters = market === "trend" ? config.strategy.trend : undefined;
 			if (market === "trend" && !trendParameters) throw new Usage("近期趋势攀升缺少本次技能参数快照，未启动外部读取");
 			if (market === "social" && config.marketSiteId !== 1) throw new Usage("小红书选品须绑定知虾台湾站");
-			const agent = await services.agentStatus();
+			const agent = await services.agentStatus(config.deepSeekModel);
 			if (!agent.available) throw new NeedsHuman(agent.error ?? "本机智能体不可用");
 			const activeAgent = config.agent ?? agent;
 			await event(
@@ -1265,8 +1269,8 @@ export function createSelectionRunner(store: RunStore, services: SelectionServic
 }
 
 const services: SelectionServices = {
-	agentStatus: codexStatus,
-	ask: askCodex,
+	agentStatus: async (model) => (model ? { ...deepSeekStatus(), version: null, model, reasoningEffort: "none" } : codexStatus()),
+	ask: (input) => (input.model ? askDeepSeek({ ...input, model: input.model, images: input.images?.map((bytes) => inspect(bytes)) }) : askCodex(input)),
 	callTool: (id, input) => {
 		const read = () => runReadTool(id, researchTools[id], input);
 		return id.startsWith("shopee.") ? shopee.scope.run(z.string().min(1).parse(input.shop), read) : read();
@@ -1295,4 +1299,3 @@ export async function getRun(sql: Sql, id: string): Promise<RunDetail | null> {
 	await store.recover();
 	return store.get(id);
 }
-export const recoverInterruptedRuns = (sql: Sql): Promise<number> => postgresRunStore(sql).recover();

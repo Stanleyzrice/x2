@@ -1,13 +1,15 @@
 // 选品记录：保存实验状态、方法文档引用、版本与历史；现行规则正文在 skills，历史数据库不作为规则维护入口。
 import { z } from "zod";
 import { codexStatus } from "../../connectors/services/codex/index.ts";
+import { deepSeekStatus } from "../../connectors/services/hermes/index.ts";
 import { db, type Json } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, str, type Toolkit } from "../../platform/tool.ts";
+import { hermesModel } from "../../platform/ui/hermes-schema.ts";
 import { defaultSelectionLimit } from "../../platform/ui/interactable/selection/types.ts";
 import { loadRunConfig, loadSelectionPolicy, loadStrategyDefinitions, saveWorkflow, selectionStrategyId, workflowStepsSchema } from "./definitions.ts";
 import { deleteRun, type RunDetail } from "./run-store.ts";
-import { cancelRun, getRun, listRuns, recoverInterruptedRuns, startRun, timeSeriesSummaryTool } from "./runs.ts";
+import { cancelRun, getRun, listRuns, startRun, timeSeriesSummaryTool } from "./runs.ts";
 import { SELECTION_TABLES } from "./tables.ts";
 
 const when = (t: string | Date) => new Date(t).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
@@ -48,14 +50,15 @@ export const selection: Toolkit = {
 	kind: "tool",
 	tools: {
 		"time-series-summary": timeSeriesSummaryTool,
-		workbench: get("当前商品发现与组合设计流程、证据边界及agent状态；不自动启动研究", z.object({ shop: str("目标店铺") }), async ({ shop }) => {
+		workbench: get("当前商品发现与组合设计流程、证据边界及agent状态；不自动启动研究", z.object({ shop: str("目标店铺") }), async ({ shop }, source) => {
 			const sql = await db();
-			await recoverInterruptedRuns(sql);
 			const definitions = await loadStrategyDefinitions(sql, shop);
 			const saved = await sql<{ name: string; status: string }[]>`select name, status from strategies`;
 			const strategies = definitions.filter((definition) => !saved.some((row) => row.name === definition.name && row.status === "已停用"));
+			const runs = await listRuns(sql, shop);
+			if (source === "web") return { shop, strategies: strategies.map(({ id, name }) => ({ id, name })), agent: deepSeekStatus(), runs };
 			const { methodology } = await loadSelectionPolicy();
-			return { shop, strategies, methodology, agent: await codexStatus(), runs: await listRuns(sql, shop) };
+			return { shop, strategies, methodology, agent: await codexStatus(), runs };
 		}),
 		"workflow-save": get(
 			"保存当前店铺的自定义研究步骤，不更改经营规则或已启动的研究",
@@ -75,29 +78,37 @@ export const selection: Toolkit = {
 				limit: z.coerce.number().int().min(1).max(10).optional(),
 				brief: z.string().trim().max(2000).default(""),
 				requestId: z.string().uuid(),
+				model: hermesModel.optional().describe("使用已配置的 DeepSeek 模型"),
 			}),
-			async ({ requestId, limit, ...fields }, source) => {
+			async ({ requestId, limit, model, ...fields }, source) => {
 				const input = { ...fields, limit: limit ?? defaultSelectionLimit(fields.strategyId) };
 				const sql = await db();
 				// 未收到启动回执时先查原请求；之后保存的流程不能改变该次运行快照。
 				const [previous] = await sql<
-					{ id: string; shop: string; strategy_id: string; limit_count: number; brief: string }[]
-				>`select id,shop,strategy_id,limit_count,brief from selection_runs where request_id=${requestId}`;
+					{ id: string; shop: string; strategy_id: string; limit_count: number; brief: string; model: string | null }[]
+				>`select id,shop,strategy_id,limit_count,brief,config->>'deepSeekModel' as model from selection_runs where request_id=${requestId}`;
 				if (previous) {
 					if (
 						previous.shop !== input.shop ||
 						previous.strategy_id !== input.strategyId ||
 						previous.limit_count !== input.limit ||
-						previous.brief !== input.brief
+						previous.brief !== input.brief ||
+						previous.model !== (model ?? null)
 					)
 						throw new Usage("该requestId已用于另一组研究输入，请使用新的请求编号");
 					const run = await getRun(sql, previous.id);
 					if (!run) throw new Usage("没有这家店的研究任务");
 					return runReceipt(run);
 				}
+				if (source === "web" && !model) throw new Usage("请选择 DeepSeek 模型后开始");
 				const config = await loadRunConfig(sql, input);
-				const agent = await codexStatus();
-				if (agent.model && agent.reasoningEffort) config.agent = { model: agent.model, reasoningEffort: agent.reasoningEffort };
+				if (model) {
+					config.deepSeekModel = model;
+					config.agent = { model, reasoningEffort: "none" };
+				} else {
+					const agent = await codexStatus();
+					config.agent = { model: agent.model, reasoningEffort: agent.reasoningEffort };
+				}
 				const [saved] = await sql<{ status: string }[]>`select status from strategies where name = ${config.strategy.name}`;
 				if (saved?.status === "已停用") throw new Usage("该策略已停用，请选择当前研究方法");
 				await sql.begin(async (tx) => {

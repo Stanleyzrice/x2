@@ -27,3 +27,4 @@ export const image: Toolkit = {
 		),
 	},
 };
+export { inspect } from "./api.ts";

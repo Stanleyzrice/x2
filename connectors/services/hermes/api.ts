@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { NeedsHuman } from "../../../platform/errors.ts";
-import { flashModel } from "../../../platform/ui/hermes-schema.ts";
+import { flashModel, type HermesModel, hermesModel } from "../../../platform/ui/hermes-schema.ts";
 
 const exec = promisify(execFile);
 const mcpName = "x2";
@@ -41,6 +41,12 @@ export function hermesConfig(model?: string) {
 		executable: hermesExecutable(),
 		model: model || process.env.X2_HERMES_MODEL?.trim() || flashModel,
 	};
+}
+
+export function deepSeekStatus() {
+	const available = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+	const model = hermesModel.safeParse(process.env.X2_HERMES_MODEL?.trim());
+	return { available, model: model.success ? model.data : flashModel, error: available ? null : "请先在设置中连接 DeepSeek" };
 }
 
 export async function checkHermesConnection(apiKey: string | undefined, model: string, python?: string) {
@@ -116,34 +122,71 @@ export async function runHermes(
 
 const answer = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().trim().min(1) }) })).min(1) });
 
-/** 发送真实图片字节做视觉检查，避免依赖 Agent 的工具结果能否携带像素。 */
-export async function inspectWithDeepSeek(apiKey: string, image: { bytes: Uint8Array; mime: string }, prompt: string, request: typeof fetch = fetch) {
+type Image = { bytes: Uint8Array; mime: string };
+type JsonPrompt = { model: HermesModel; prompt: string; images?: readonly Image[]; signal: AbortSignal };
+
+async function deepSeekJson(apiKey: string, { model, prompt, images, signal }: JsonPrompt, request: typeof fetch) {
+	const content = images?.length
+		? [
+				{ type: "text", text: prompt },
+				...images.map(({ bytes, mime }) => ({ type: "image_url", image_url: { url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}` } })),
+			]
+		: prompt;
 	const result = await request("https://api.deepseek.com/chat/completions", {
 		method: "POST",
 		redirect: "error",
-		signal: AbortSignal.timeout(90_000),
+		signal,
 		headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
 		body: JSON.stringify({
-			model: flashModel,
+			model,
 			thinking: { type: "disabled" },
 			response_format: { type: "json_object" },
-			messages: [
-				{
-					role: "user",
-					content: [
-						{ type: "text", text: prompt },
-						{ type: "image_url", image_url: { url: `data:${image.mime};base64,${Buffer.from(image.bytes).toString("base64")}` } },
-					],
-				},
-			],
+			messages: [{ role: "user", content }],
 		}),
+	}).catch(() => {
+		signal.throwIfAborted();
+		throw new Error("DeepSeek 连接失败");
 	});
-	if (!result.ok) throw new NeedsHuman(`DeepSeek 视觉检查返回 HTTP ${result.status}`);
-	const body = answer.safeParse(await result.json());
-	if (!body.success) throw new Error("DeepSeek 视觉检查没有返回有效正文");
+	if (!result.ok) {
+		const message = `DeepSeek 返回 HTTP ${result.status}`;
+		if ([401, 402, 403, 429].includes(result.status)) throw new NeedsHuman(`${message}，请检查密钥、权限或额度`);
+		throw new Error(message);
+	}
+	const body = answer.safeParse(await result.json().catch(() => null));
+	if (!body.success) throw new Error("DeepSeek 没有返回有效正文");
 	try {
 		return JSON.parse(body.data.choices[0]!.message.content) as unknown;
 	} catch {
-		throw new Error("DeepSeek 视觉检查没有返回有效 JSON");
+		throw new Error("DeepSeek 没有返回有效 JSON");
 	}
+}
+
+export function askDeepSeek(
+	{
+		model,
+		prompt,
+		schema,
+		images,
+		signal,
+		timeoutMs,
+	}: Omit<JsonPrompt, "images"> & { schema: Record<string, unknown>; images?: readonly Image[]; timeoutMs: number },
+	request: typeof fetch = fetch,
+) {
+	const key = process.env.DEEPSEEK_API_KEY?.trim();
+	if (!key) throw new NeedsHuman("请先在设置中连接 DeepSeek");
+	return deepSeekJson(
+		key,
+		{
+			model: images?.length ? flashModel : model,
+			prompt: `${prompt}\n\n只返回符合以下 JSON Schema 的 JSON 对象。\n${JSON.stringify(schema)}`,
+			images,
+			signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+		},
+		request,
+	);
+}
+
+/** 发送真实图片字节做视觉检查，避免依赖 Agent 的工具结果能否携带像素。 */
+export function inspectWithDeepSeek(apiKey: string, image: Image, prompt: string, request: typeof fetch = fetch) {
+	return deepSeekJson(apiKey, { model: flashModel, prompt, images: [image], signal: AbortSignal.timeout(90_000) }, request);
 }

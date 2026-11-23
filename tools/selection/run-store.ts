@@ -73,32 +73,34 @@ export function runSnapshot(config: unknown): RunSnapshot {
 	if (!parsed.success) return {};
 	return { ...(parsed.data.strategy ? { workflow: parsed.data.strategy.steps } : {}), ...(parsed.data.agent ? { agent: parsed.data.agent } : {}) };
 }
+type SummaryRow = Omit<Row, "request_id" | "input_fingerprint" | "events" | "candidates" | "config" | "cancel_requested" | "deleted_at"> & {
+	existing_count?: number;
+};
+const summary = (r: SummaryRow): RunSummary => ({
+	id: r.id,
+	shop: r.shop,
+	strategyId: r.strategy_id,
+	strategyName: r.strategy_name,
+	limit: r.limit_count,
+	brief: r.brief,
+	status: runStatus.parse(r.status),
+	step: r.step,
+	found: r.found,
+	...(r.strategy_id === socialDiscoveryStrategy ? { selected: r.found + (r.existing_count ?? 0) } : {}),
+	createdAt: r.created_at.toISOString(),
+	updatedAt: r.updated_at.toISOString(),
+	error: r.error,
+});
 const detail = (r: Row): RunDetail => {
 	const candidates = z.array(candidateSchema).parse(r.candidates);
 	return {
-		id: r.id,
-		shop: r.shop,
-		strategyId: r.strategy_id,
-		strategyName: r.strategy_name,
-		limit: r.limit_count,
-		brief: r.brief,
-		status: runStatus.parse(r.status),
-		step: r.step,
-		found: r.found,
-		...(r.strategy_id === socialDiscoveryStrategy ? { selected: r.found + candidates.filter((candidate) => candidate.status === "existing").length } : {}),
-		createdAt: r.created_at.toISOString(),
-		updatedAt: r.updated_at.toISOString(),
-		error: r.error,
+		...summary({ ...r, existing_count: candidates.filter((candidate) => candidate.status === "existing").length }),
 		events: z.array(eventSchema).parse(r.events),
 		candidates,
 		cancelRequested: r.cancel_requested,
 		...(r.deleted_at ? { deleted: true } : {}),
 		...runSnapshot(r.config),
 	};
-};
-const summary = (r: Row): RunSummary => {
-	const { events: _events, candidates: _candidates, cancelRequested: _cancel, workflow: _workflow, agent: _agent, deleted: _deleted, ...value } = detail(r);
-	return value;
 };
 
 export async function deleteRun(sql: Sql, shop: string, id: string): Promise<{ id: string }> {
@@ -165,9 +167,12 @@ export function postgresRunStore(sql: Sql): RunStore {
 		recover,
 		list: async (shop) =>
 			(
-				await connection()<
-					Row[]
-				>`select * from selection_runs where deleted_at is null and (${shop ?? null}::text is null or shop=${shop ?? null}) order by created_at desc limit 40`
+				await connection()<SummaryRow[]>`select id, shop, strategy_id, strategy_name, limit_count, brief, status, step, found, created_at, updated_at, error,
+					case when strategy_id = ${socialDiscoveryStrategy} then
+						(select count(*)::int from jsonb_array_elements(candidates) entry where entry->>'status' = 'existing')
+					end as existing_count
+					from selection_runs where deleted_at is null and (${shop ?? null}::text is null or shop=${shop ?? null})
+					order by created_at desc limit 40`
 			).map(summary),
 		open: (input) =>
 			serializeOpen(async () => {

@@ -5,6 +5,10 @@ export const flashModel = "deepseek-flash";
 export const hermesModels = [flashModel, "deepseek-v4-pro"] as const;
 export const hermesModel = z.enum(hermesModels);
 export type HermesModel = (typeof hermesModels)[number];
+export const modelLabels: Record<HermesModel, string> = {
+	"deepseek-flash": "DeepSeek Flash",
+	"deepseek-v4-pro": "DeepSeek V4 Pro",
+};
 
 export const attachmentLimit = 4;
 export const textFileLimit = 8_000;

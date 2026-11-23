@@ -45,9 +45,9 @@ test("页面只调用选品运行工具，旧方法、缺请求编号和超量�
 	assert.equal(tools["run-start"]!.params.safeParse({ ...base, requestId: undefined }).success, false);
 });
 
-test("研究记录删除从工作区绑定店铺，只接受运行编号", () => {
+test("网页研究历史只读，旧的命令行删除仍绑定店铺和运行编号", () => {
 	const tools = TOOLKITS.find((kit) => kit.name === "selection")!.tools;
-	assert.equal(actions.delete, "selection.run-delete");
+	assert.ok(!Object.values(actions).includes("selection.run-delete"));
 	const params = tools["run-delete"]!.params;
 	const input = { shop: "cheeroutdoor", runId: "d8c75f9d-13ef-4071-8dd4-5e8625cef514" };
 	assert.equal(params.safeParse(input).success, true);

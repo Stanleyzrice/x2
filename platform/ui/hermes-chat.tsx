@@ -1,7 +1,19 @@
-import { BotIcon, CheckCircle2Icon, ExternalLinkIcon, FileSearchIcon, ListChecksIcon, PackageIcon, PlusIcon, QuoteIcon, Settings2Icon } from "lucide-react";
+import {
+	BotIcon,
+	CheckCircle2Icon,
+	CircleAlertIcon,
+	ExternalLinkIcon,
+	FileSearchIcon,
+	ListChecksIcon,
+	PackageIcon,
+	PlusIcon,
+	QuoteIcon,
+	Settings2Icon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { ToolTraceStep } from "../web/hermes.ts";
 import { api, type HermesRequest, type HermesRun, type HermesTurn, type SetupState } from "./api.ts";
 import { Badge } from "./components/ui/badge";
 import { Bubble, BubbleContent } from "./components/ui/bubble";
@@ -22,12 +34,22 @@ import {
 } from "./components/ui/message-scroller";
 import { SidebarTrigger } from "./components/ui/sidebar";
 import { Spinner } from "./components/ui/spinner";
-import { HermesComposer, modelLabels } from "./hermes-composer.tsx";
-import { attachmentLimit, chatAttachmentText, flashModel, type HermesAttachment, type HermesModel, hermesModels, quoteLimit } from "./hermes-schema.ts";
+import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceLine, TraceTitle } from "./components/ui/trace";
+import { HermesComposer } from "./hermes-composer.tsx";
+import {
+	attachmentLimit,
+	chatAttachmentText,
+	flashModel,
+	type HermesAttachment,
+	type HermesModel,
+	hermesModels,
+	modelLabels,
+	quoteLimit,
+} from "./hermes-schema.ts";
 import { errorOf } from "./lib/state.ts";
 
 type Batch = { shop: string; sourceIds: string[]; notes?: string };
-type Turn = HermesTurn & { id: string; context?: string; model?: HermesModel };
+type Turn = HermesTurn & { id: string; context?: string; model?: HermesModel; trace?: ToolTraceStep[] };
 type Session = { turns: Turn[]; awaiting: HermesRequest | null; lastPublish: HermesRun | null };
 const sessionKey = "x2-hermes-session";
 const handoffKey = "x2-hermes-listing-handoff";
@@ -36,7 +58,7 @@ const modelKey = "x2-hermes-model";
 
 export function openHermesForBatch(batch: Batch) {
 	sessionStorage.setItem(handoffKey, JSON.stringify(batch));
-	location.hash = "hermes";
+	location.hash = "x2bot";
 }
 
 function savedSession(): Session {
@@ -83,6 +105,7 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 	const [confirm, setConfirm] = useState(false);
 	const [trial, setTrial] = useState(false);
 	const [polling, setPolling] = useState(true);
+	const [liveTrace, setLiveTrace] = useState<ToolTraceStep[]>([]);
 	const pending = session.awaiting;
 	const blocked = !setup.hermes || !setup.local;
 	const busy = Boolean(pending) || submitting || reading;
@@ -102,13 +125,14 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 			try {
 				const run = await api.hermesRun(pending.id);
 				if (!current) return;
+				setLiveTrace(run.trace ?? []);
 				if (run.state === "running") {
 					timer = setTimeout(() => void read(), 1800);
 					return;
 				}
 				const turns =
 					run.result && "text" in run.result
-						? [...session.turns, { id: `assistant-${run.id}`, role: "assistant" as const, content: run.result.text, model: pending.model }]
+						? [...session.turns, { id: `assistant-${run.id}`, role: "assistant" as const, content: run.result.text, model: pending.model, trace: run.trace }]
 						: session.turns;
 				const next = { turns, awaiting: null, lastPublish: run.kind === "publish" ? run : session.lastPublish };
 				storeSession(next);
@@ -130,6 +154,7 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 	async function launch(request: HermesRequest) {
 		setSubmitting(true);
 		setError(null);
+		setLiveTrace([]);
 		try {
 			await api.startHermes(request);
 			setPolling(true);
@@ -195,12 +220,12 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 		selection?.removeAllRanges();
 		focusComposer();
 	};
-	const focusComposer = () => document.querySelector<HTMLTextAreaElement>("[aria-label='发消息给 Hermes']")?.focus({ preventScroll: true });
+	const focusComposer = () => document.querySelector<HTMLTextAreaElement>("[aria-label='发消息给 x2bot']")?.focus({ preventScroll: true });
 	return (
 		<div className="flex h-svh min-h-0 flex-col bg-muted/20">
 			<header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 sm:px-5">
 				<SidebarTrigger />
-				<span className="min-w-0 truncate text-sm font-semibold">DeepSeek Hermes</span>
+				<span className="min-w-0 truncate text-sm font-semibold">x2bot</span>
 				<Badge variant="outline" className="hidden text-muted-foreground sm:inline-flex">
 					{setup.hermes ? "已连接" : "待连接"}
 				</Badge>
@@ -223,35 +248,37 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 			<div className="min-h-0 flex-1">
 				<MessageScrollerProvider autoScroll defaultScrollPosition="end">
 					<MessageScroller>
-						<MessageScrollerViewport aria-label="Hermes 对话消息">
+						<MessageScrollerViewport aria-label="x2bot 对话消息">
 							<MessageScrollerContent className="mx-auto max-w-4xl gap-5 px-4 py-6 sm:px-8 sm:py-9">
 								{!session.turns.length && !session.lastPublish && !pending && (
-									<Empty className="mx-auto max-w-xl flex-1 items-start px-0 py-8">
-										<EmptyHeader className="max-w-none items-start text-left">
-											<EmptyMedia variant="icon">
-												<BotIcon />
-											</EmptyMedia>
-											<EmptyTitle className="text-2xl tracking-tight sm:text-3xl">今天要处理什么？</EmptyTitle>
-											<EmptyDescription>查看商品稿和运营流程，或接手从上架备选区交来的任务。</EmptyDescription>
-										</EmptyHeader>
-										<EmptyContent className="grid max-w-none gap-2 sm:grid-cols-2">
-											{shortcuts.map(({ label, message, icon: Icon }) => (
-												<Button
-													key={label}
-													variant="outline"
-													disabled={blocked}
-													className="justify-start rounded-full bg-background"
-													onClick={() => {
-														setMessage(message);
-														focusComposer();
-													}}
-												>
-													<Icon />
-													{label}
-												</Button>
-											))}
-										</EmptyContent>
-									</Empty>
+									<MessageScrollerItem messageId="welcome" className="flex flex-1">
+										<Empty className="mx-auto max-w-xl flex-1 items-start px-0 py-8">
+											<EmptyHeader className="max-w-none items-start text-left">
+												<EmptyMedia variant="icon">
+													<BotIcon />
+												</EmptyMedia>
+												<EmptyTitle className="text-2xl tracking-tight sm:text-3xl">今天要处理什么？</EmptyTitle>
+												<EmptyDescription>查看商品稿和运营流程，或接手从上架备选区交来的任务。</EmptyDescription>
+											</EmptyHeader>
+											<EmptyContent className="grid max-w-none gap-2 sm:grid-cols-2">
+												{shortcuts.map(({ label, message, icon: Icon }) => (
+													<Button
+														key={label}
+														variant="outline"
+														disabled={blocked}
+														className="justify-start rounded-full bg-background"
+														onClick={() => {
+															setMessage(message);
+															focusComposer();
+														}}
+													>
+														<Icon />
+														{label}
+													</Button>
+												))}
+											</EmptyContent>
+										</Empty>
+									</MessageScrollerItem>
 								)}
 								{session.turns.map((turn) => (
 									<MessageScrollerItem key={turn.id} messageId={turn.id} scrollAnchor={turn.role === "user"} data-chat-turn>
@@ -275,10 +302,13 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 																<p className="whitespace-pre-wrap">{turn.content}</p>
 															</>
 														) : (
-															<div className="markdown">
-																<Markdown skipHtml remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
-																	{turn.content}
-																</Markdown>
+															<div className="space-y-2">
+																{turn.trace && <ExecutionTrace steps={turn.trace} />}
+																<div className="markdown">
+																	<Markdown skipHtml remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
+																		{turn.content}
+																	</Markdown>
+																</div>
 															</div>
 														)}
 													</BubbleContent>
@@ -305,71 +335,79 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 										</Message>
 									</MessageScrollerItem>
 								))}
-								{session.lastPublish && <PublishReceipt run={session.lastPublish} />}
+								{session.lastPublish && (
+									<MessageScrollerItem messageId={`receipt-${session.lastPublish.id}`}>
+										<PublishReceipt run={session.lastPublish} />
+									</MessageScrollerItem>
+								)}
 								{batch && (
-									<Item variant="outline" className="bg-background">
-										<ItemMedia variant="icon">
-											<PackageIcon />
-										</ItemMedia>
-										<ItemContent>
-											<ItemTitle>上架备选任务</ItemTitle>
-											<ItemDescription>
-												{batch.shop} · {batch.sourceIds.length} 件
-											</ItemDescription>
-											<p className="text-sm text-muted-foreground">备选编号 {batch.sourceIds.join("、")}</p>
-											{batch.notes && (
-												<details className="text-sm">
-													<summary className="cursor-pointer">查看修改后的任务提示词</summary>
-													<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{batch.notes}</pre>
-												</details>
-											)}
-										</ItemContent>
-										<ItemActions className="flex-wrap">
-											<Button size="sm" disabled={busy || blocked} onClick={() => setConfirm(true)}>
-												确认上架任务
-											</Button>
-											<Button
-												size="sm"
-												variant="ghost"
-												onClick={() => {
-													setBatch(null);
-													sessionStorage.removeItem(handoffKey);
-												}}
-											>
-												移除任务
-											</Button>
-										</ItemActions>
-									</Item>
+									<MessageScrollerItem messageId="listing-handoff">
+										<Item variant="outline" className="bg-background">
+											<ItemMedia variant="icon">
+												<PackageIcon />
+											</ItemMedia>
+											<ItemContent>
+												<ItemTitle>上架备选任务</ItemTitle>
+												<ItemDescription>
+													{batch.shop} · {batch.sourceIds.length} 件
+												</ItemDescription>
+												<p className="text-sm text-muted-foreground">备选编号 {batch.sourceIds.join("、")}</p>
+												{batch.notes && (
+													<details className="text-sm">
+														<summary className="cursor-pointer">查看修改后的任务提示词</summary>
+														<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{batch.notes}</pre>
+													</details>
+												)}
+											</ItemContent>
+											<ItemActions className="flex-wrap">
+												<Button size="sm" disabled={busy || blocked} onClick={() => setConfirm(true)}>
+													确认上架任务
+												</Button>
+												<Button
+													size="sm"
+													variant="ghost"
+													onClick={() => {
+														setBatch(null);
+														sessionStorage.removeItem(handoffKey);
+													}}
+												>
+													移除任务
+												</Button>
+											</ItemActions>
+										</Item>
+									</MessageScrollerItem>
 								)}
 								{pending && polling && (
-									<div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-										<Spinner aria-hidden="true" />
-										{pending.kind === "publish" ? `正在处理 ${pending.shop} 的 ${pending.sourceIds.length} 件备选` : "Hermes 正在处理"}
-									</div>
+									<MessageScrollerItem messageId={`assistant-${pending.id}`} key={`assistant-${pending.id}`}>
+										<ExecutionTrace steps={liveTrace} running />
+									</MessageScrollerItem>
 								)}
 								{error && (
-									<div
-										role="alert"
-										className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/20 bg-background p-3 text-sm text-destructive"
-									>
-										{error}
-										{pending && !polling && (
-											<Button variant="outline" size="sm" onClick={() => void launch(pending)}>
-												重试原请求
-											</Button>
-										)}
-									</div>
+									<MessageScrollerItem messageId="chat-error">
+										{!pending && !session.lastPublish?.trace?.length && liveTrace.length > 0 && <ExecutionTrace steps={liveTrace} />}
+										<div
+											role="alert"
+											className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/20 bg-background p-3 text-sm text-destructive"
+										>
+											{error}
+											{pending && !polling && (
+												<Button variant="outline" size="sm" onClick={() => void launch(pending)}>
+													重试原请求
+												</Button>
+											)}
+										</div>
+									</MessageScrollerItem>
 								)}
 							</MessageScrollerContent>
 						</MessageScrollerViewport>
-						<MessageScrollerButton aria-label="回到最新消息" />
+						{(session.turns.length > 0 || pending || session.lastPublish || batch) && <MessageScrollerButton aria-label="回到最新消息" />}
 					</MessageScroller>
 				</MessageScrollerProvider>
 			</div>
 			<div className="shrink-0 border-t bg-background px-4 py-3 sm:px-8 sm:py-4">
 				{blocked ? (
 					<div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3 text-sm">
-						<span>{setup.local ? "连接 DeepSeek 后，可以在这里与 Hermes 对话。" : "请通过本机地址使用 Hermes Chat。"}</span>
+						<span>{setup.local ? "连接 DeepSeek 后即可使用 x2bot。" : "请通过本机地址使用 x2bot。"}</span>
 						{setup.local && (
 							<Button size="sm" variant="outline" onClick={openSettings}>
 								<Settings2Icon />
@@ -395,7 +433,7 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 			<Dialog open={confirm} onOpenChange={setConfirm}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>确认交给 Hermes 上架</DialogTitle>
+						<DialogTitle>确认交给 x2bot 上架</DialogTitle>
 						<DialogDescription>
 							使用 {modelLabels[model]} 为 {batch?.shop} 处理 {batch?.sourceIds.length} 件备选。符合 X2 审阅和发布条件的商品会正式上架。
 						</DialogDescription>
@@ -421,12 +459,65 @@ export function HermesChat({ setup, openSettings }: { setup: SetupState; openSet
 	);
 }
 
+const toolLabels: Record<string, string> = {
+	read_rules: "读取 X2 流程",
+	recent_listings: "查看最近商品稿",
+	source_preflight: "预检备选商品",
+	source_detail: "读取备选货源",
+	source_update: "关联商品稿",
+	listing_pricing: "读取定价模板",
+	estimate: "试算商品价格",
+	inspect_source_image: "检查货源图片",
+	inspect_final_image: "检查商品图片",
+	finish_review: "保存终审结果",
+	publish: "调用上架工具",
+};
+
+function ExecutionTrace({ steps, running = false }: { steps: ToolTraceStep[]; running?: boolean }) {
+	const [open, setOpen] = useState<boolean>();
+	return (
+		<Trace className="max-w-lg text-muted-foreground">
+			<TraceCollapsible open={open ?? running} onOpenChange={setOpen}>
+				<TraceCollapsibleTrigger>
+					<TraceLine status={running ? "running" : undefined}>
+						<TraceTitle>{running ? "正在执行" : "执行链路"}</TraceTitle>
+						{steps.length > 0 && <TraceDescription>{steps.length} 次工具调用</TraceDescription>}
+					</TraceLine>
+				</TraceCollapsibleTrigger>
+				<TraceCollapsibleContent keepMounted>
+					<Trace>
+						{steps.length === 0 && (
+							<TraceLine>
+								<TraceTitle>{running ? "等待模型响应" : "本轮未调用 X2 工具"}</TraceTitle>
+							</TraceLine>
+						)}
+						{steps.map((step) => (
+							<TraceLine key={step.id} status={step.state === "running" ? "running" : step.state === "failed" ? "error" : undefined}>
+								{step.state === "running" ? (
+									<Spinner aria-hidden="true" />
+								) : step.state === "failed" ? (
+									<CircleAlertIcon className="size-4" />
+								) : (
+									<CheckCircle2Icon className="size-4" />
+								)}
+								<TraceTitle>{toolLabels[step.name] ?? step.name}</TraceTitle>
+								<TraceDescription>{step.state === "running" ? "调用中" : step.state === "failed" ? "调用失败" : "已返回"}</TraceDescription>
+							</TraceLine>
+						))}
+					</Trace>
+				</TraceCollapsibleContent>
+			</TraceCollapsible>
+		</Trace>
+	);
+}
+
 function PublishReceipt({ run }: { run: HermesRun }) {
 	const result = run.result && "items" in run.result ? run.result : null;
-	if (!result) return null;
+	if (!result) return run.trace?.length ? <ExecutionTrace steps={run.trace} /> : null;
 	const listed = result.items.filter((item) => item.url).length;
 	return (
 		<section className="space-y-3 rounded-xl border bg-background p-4">
+			{run.trace && <ExecutionTrace steps={run.trace} />}
 			<div className="flex items-center gap-2 text-sm font-semibold">
 				<CheckCircle2Icon className="size-4 text-emerald-700 dark:text-emerald-300" />
 				{result.shop} · 已在售 {listed}/{result.items.length}

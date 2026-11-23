@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
+import type { HermesModel } from "../../platform/ui/hermes-schema.ts";
 import { socialDiscoveryStrategy, strategyIds } from "../../platform/ui/interactable/selection/types.ts";
 import { parsePolicyJson, sourcePolicySchema, WORKBENCH_POLICY } from "../listing/index.ts";
 import { strategyExecution, trendPolicySchema } from "./strategy-execution.ts";
@@ -73,6 +74,7 @@ export type SelectionRunConfig = {
 	sellerDiscountTwd: number | null;
 	existingOfferIds: string[];
 	agent?: { model: string; reasoningEffort: string };
+	deepSeekModel?: HermesModel;
 };
 
 export function withWorkflow(definition: StrategyDefinition, steps: unknown): StrategyDefinition {

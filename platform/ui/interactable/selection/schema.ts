@@ -8,11 +8,7 @@ export type Props = z.infer<typeof props>;
 export const actions = {
 	workbench: "selection.workbench",
 	start: "selection.run-start",
-	detail: "selection.run-detail",
 	cancel: "selection.run-cancel",
-	delete: "selection.run-delete",
-	"save-workflow": "selection.workflow-save",
-	"reset-workflow": "selection.workflow-reset",
 };
-export const inputs = ["strategyId", "limit", "brief", "requestId", "runId", "steps"];
+export const inputs = ["strategyId", "limit", "brief", "requestId", "runId", "model"];
 export const examples: z.input<typeof props>[] = [{ shop: "cheeroutdoor", title: "策略选品" }];

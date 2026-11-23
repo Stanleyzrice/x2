@@ -44,7 +44,7 @@ selection.workspaces = [
 	{
 		key: "strategy-selection",
 		title: "策略选品",
-		group: "采购",
+		group: "选品与上架",
 		component: "selection",
 		props: { shop: "cheeroutdoor", title: "策略选品" },
 		icon: "search",

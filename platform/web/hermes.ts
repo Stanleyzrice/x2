@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Json, Sql } from "../db/index.ts";
 import { NeedsHuman, Usage } from "../errors.ts";
+import { type ToolTraceStep, withToolTrace } from "../mcp.ts";
 import { invoke } from "../tool.ts";
 import { hermesChatFields, hermesModel, validChat } from "../ui/hermes-schema.ts";
 import { type Route, requireLocal } from "./setup.ts";
@@ -36,17 +37,22 @@ export type HermesRun = {
 	state: "running" | "completed" | "failed" | "interrupted";
 	result: { text: string } | PublishResult | null;
 	error: string | null;
+	trace: ToolTraceStep[];
 };
+export type { ToolTraceStep } from "../mcp.ts";
+
 type RunRow = Omit<HermesRun, "state"> & { state: Exclude<HermesRun["state"], "interrupted">; owner: string; fingerprint: string };
 
 export function hermesRoutes(workspace: () => Promise<Sql>, port: () => number): Record<string, Route> {
 	const owner = randomUUID();
+	const liveTraces = new Map<string, Map<string, ToolTraceStep>>();
 	const publicRun = (run: RunRow): HermesRun => ({
 		id: run.id,
 		kind: run.kind,
 		state: run.state === "running" && run.owner !== owner ? "interrupted" : run.state,
 		result: run.result,
 		error: run.error,
+		trace: [...(liveTraces.get(run.id)?.values() ?? run.trace)],
 	});
 	const getRun = async (sql: Sql, id: string) => {
 		const [row] = await sql<RunRow[]>`select * from hermes_web_runs where id = ${id}`;
@@ -78,12 +84,21 @@ export function hermesRoutes(workspace: () => Promise<Sql>, port: () => number):
 				return publicRun(prior);
 			}
 			const run = async () => {
+				const steps = new Map<string, ToolTraceStep>();
+				liveTraces.set(p.id, steps);
 				try {
-					const result = p.kind === "chat" ? await invoke("listing.hermes-chat", p) : await invoke("listing.source-hermes", { ...p, publish: true });
-					await sql`update hermes_web_runs set state='completed', result=${sql.json(result as Json)} where id=${p.id} and owner=${owner}`;
+					const result = await withToolTrace(
+						(step) => {
+							if (steps.size < 100 || steps.has(step.id)) steps.set(step.id, step);
+						},
+						() => (p.kind === "chat" ? invoke("listing.hermes-chat", p) : invoke("listing.source-hermes", { ...p, publish: true })),
+					);
+					await sql`update hermes_web_runs set state='completed', result=${sql.json(result as Json)}, trace=${sql.json([...steps.values()])} where id=${p.id} and owner=${owner}`;
 				} catch (error) {
-					const message = error instanceof NeedsHuman || error instanceof Usage ? error.message : "Hermes 任务中断，请查看原商品稿和发布回执";
-					await sql`update hermes_web_runs set state='failed', error=${message} where id=${p.id} and owner=${owner}`;
+					const message = error instanceof NeedsHuman || error instanceof Usage ? error.message : "x2bot 任务中断，请查看原商品稿和发布回执";
+					await sql`update hermes_web_runs set state='failed', error=${message}, trace=${sql.json([...steps.values()])} where id=${p.id} and owner=${owner}`;
+				} finally {
+					liveTraces.delete(p.id);
 				}
 			};
 			void run().catch(() => {}); // 进程中断或数据库失联时保留领取状态，查询显示原任务待核对。

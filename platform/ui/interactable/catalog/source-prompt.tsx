@@ -98,7 +98,7 @@ export function SourcePromptButton({ item, shop, sourceIds, disabled }: { item: 
 				<DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-5 overflow-y-auto p-4 sm:max-w-[740px] sm:p-6">
 					<DialogHeader>
 						<DialogTitle className="text-xl">导出上架提示词</DialogTitle>
-						<DialogDescription>可补充本批要求，然后交给 Hermes，或复制、下载提示词。</DialogDescription>
+						<DialogDescription>可补充本批要求，然后交给 x2bot，或复制、下载提示词。</DialogDescription>
 						{batch && (
 							<p className="text-sm text-muted-foreground">
 								{batch.selection.shop} · {batch.selection.sourceIds.length} 件商品
@@ -157,7 +157,7 @@ export function SourcePromptButton({ item, shop, sourceIds, disabled }: { item: 
 							}}
 						>
 							<BotIcon />
-							交给 Hermes
+							交给 x2bot
 						</Button>
 					</DialogFooter>
 				</DialogContent>

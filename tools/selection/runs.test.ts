@@ -26,6 +26,14 @@ const trendParameters = {
 	minRobustGrowthRate: 0.05,
 	minBaselineMean: 10,
 };
+
+test("选品的 DeepSeek 模型随请求固定，旧请求和新模型的标识独立", () => {
+	const input = config();
+	const flash = requestFingerprint({ ...input, deepSeekModel: "deepseek-flash" });
+	const pro = requestFingerprint({ ...input, deepSeekModel: "deepseek-v4-pro" });
+	assert.notEqual(flash, pro);
+	assert.notEqual(pro, requestFingerprint(input));
+});
 function temporalSummary(values: number[], basis: "daily" | "observed" | "unknown" = "daily") {
 	return summarizeTimeSeries({
 		metric: "sales",
@@ -231,6 +239,12 @@ test("研究真通路使用工具事实进入现有备选，不建稿不刊登�
 	const f = fixture(),
 		runner = createSelectionRunner(memoryStore(), f.services),
 		input = config();
+	input.deepSeekModel = "deepseek-v4-pro";
+	const ask = f.services.ask;
+	f.services.ask = (request) => {
+		assert.equal(request.model, input.deepSeekModel);
+		return ask(request);
+	};
 	const run = await runner.start(input, "request-a");
 	assert.equal(run.status, "completed");
 	assert.equal(run.found, 1);

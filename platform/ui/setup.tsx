@@ -11,7 +11,7 @@ import { errorOf } from "./lib/state.ts";
 type Section = "database" | "hermes" | "shop" | "finish";
 const steps = [
 	{ id: "database", title: "数据库", icon: DatabaseIcon },
-	{ id: "hermes", title: "DeepSeek Hermes", icon: BotIcon },
+	{ id: "hermes", title: "DeepSeek", icon: BotIcon },
 	{ id: "shop", title: "Shopee 店铺", icon: StoreIcon },
 ] as const;
 
@@ -164,7 +164,7 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 						{error("database")}
 					</section>
 					<section id="setup-hermes" className="space-y-3 border-b pb-5">
-						<SectionTitle name="DeepSeek Hermes" checked={state.hermes} />
+						<SectionTitle name="DeepSeek" checked={state.hermes} />
 						<form className="space-y-3" onSubmit={(e) => submit(e, "hermes", saveHermes)}>
 							<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px]">
 								<div className="space-y-2">

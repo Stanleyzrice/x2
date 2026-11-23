@@ -34,6 +34,13 @@ export type {
 	SetupState,
 };
 export type Column = Meta["columns"][number];
+export class ApiError extends Error {
+	readonly status: number;
+	constructor(message: string, status: number) {
+		super(message);
+		this.status = status;
+	}
+}
 
 async function call<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
 	const r = await fetch(path, {
@@ -45,7 +52,7 @@ async function call<T>(method: string, path: string, body?: unknown, keepalive =
 	const data: unknown = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
 	if (!r.ok) {
 		const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string" ? data.error : `${r.status}`;
-		throw new Error(message);
+		throw new ApiError(message, r.status);
 	}
 	return data as T;
 }

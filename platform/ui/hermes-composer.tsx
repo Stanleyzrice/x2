@@ -30,6 +30,7 @@ import {
 	type HermesAttachment,
 	type HermesModel,
 	hermesModels,
+	modelLabels,
 	photoDataLimit,
 	photoTypes,
 	quoteLimit,
@@ -37,11 +38,6 @@ import {
 	textFileLimit,
 } from "./hermes-schema.ts";
 import { errorOf } from "./lib/state.ts";
-
-export const modelLabels: Record<HermesModel, string> = {
-	"deepseek-flash": "DeepSeek Flash",
-	"deepseek-v4-pro": "DeepSeek V4 Pro",
-};
 
 type Props = {
 	message: string;
@@ -207,11 +203,11 @@ export function HermesComposer({ message, setMessage, model, setModel, attachmen
 						</InputGroupAddon>
 					)}
 					<InputGroupTextarea
-						aria-label="发消息给 Hermes"
+						aria-label="发消息给 x2bot"
 						value={message}
 						maxLength={10_000}
 						onChange={(event) => setMessage(event.target.value)}
-						placeholder="发消息给 Hermes…"
+						placeholder="发消息给 x2bot…"
 						className="min-h-16 max-h-44 px-4 pt-3"
 						onKeyDown={(event) => {
 							if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -256,8 +252,8 @@ export function HermesComposer({ message, setMessage, model, setModel, attachmen
 									<ChevronDownIcon className="text-muted-foreground" />
 								</DropdownMenuTrigger>
 								<DropdownMenuContent side="top" align="end" className="w-52">
-									<DropdownMenuLabel>{includesPhotos ? "照片使用 DeepSeek Flash" : "选择模型"}</DropdownMenuLabel>
 									<DropdownMenuRadioGroup value={model} onValueChange={(value) => setModel(value as HermesModel)}>
+										<DropdownMenuLabel>{includesPhotos ? "照片使用 DeepSeek Flash" : "选择模型"}</DropdownMenuLabel>
 										{hermesModels.map((option) => (
 											<DropdownMenuRadioItem key={option} value={option} closeOnClick disabled={includesPhotos && option !== flashModel}>
 												{modelLabels[option]}
@@ -282,7 +278,7 @@ export function HermesComposer({ message, setMessage, model, setModel, attachmen
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>引用文字段落</DialogTitle>
-						<DialogDescription>粘贴想让 Hermes 参考的原文。</DialogDescription>
+						<DialogDescription>粘贴想让 x2bot 参考的原文。</DialogDescription>
 					</DialogHeader>
 					<Textarea aria-label="引用原文" value={quote} onChange={(event) => setQuote(event.target.value)} maxLength={quoteLimit} rows={5} />
 					<DialogFooter>

@@ -41,6 +41,7 @@ create table if not exists hermes_web_runs (
 	error text,
 	created_at timestamptz not null default now()
 );
+alter table hermes_web_runs add column if not exists trace jsonb not null default '[]'::jsonb;
 
 drop table if exists inbox;
 alter table writes alter column status set default '待执行';

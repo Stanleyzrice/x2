@@ -4,7 +4,7 @@ X2 是面向 Shopee（虾皮）台湾站卖家的运营工作台，连接选品�
 
 - **Agent 命令行**：`node x2.ts <命令>` 用自然语言驱动，按技能规则执行，`--json` 输出结构化回执。
 - **网页工作台**：`node x2.ts web` 起 http://127.0.0.1:5170，给人核对、填写和审批。
-- **Hermes Chat（对话）**：在网页选择 DeepSeek 模型、添加照片与文本文件或引用段落，调用 X2 工具查看商品稿及处理已确认的上架任务。
+- **x2bot（对话）**：在网页选择 DeepSeek 模型、添加照片与文本文件或引用段落，查看工具执行链路并处理已确认的上架任务。
 - **浏览器自动化**：经 booey（CDP 中继）复用已登录站点会话，操作 Shopee、1688、知虾与 chanboss，不接触账号密码。
 - **本地 PostgreSQL**：持久化选品稿、上架稿、采购证据与监控快照。
 
@@ -62,7 +62,7 @@ TypeScript · Node 24 · pnpm · PostgreSQL · React + Vite + Tailwind · Chrome
 | [订单采购](.agents/skills/procurement/SKILL.md) | 核对待出货订单、货源和历史采购，按确认加购 |
 | [商品目录](.agents/skills/catalog/SKILL.md)、[客服](.agents/skills/chat/SKILL.md)、[报账](.agents/skills/reimbursement/SKILL.md) | 查询和操作各工作区 |
 | 定价模板 | 只读试算建议售价和整单毛利；复用现有公式与[定价参数](skills/listing/references/pricing.md)，页面调整不保存为全店设置 |
-| [策略选品](.agents/skills/selection/SKILL.md) | 本机 Codex CLI（智能代理命令行工具）按[工作台](skills/selection/references/workbench.md)研究真实资料并保存备选；不自动建稿、采购或发布 |
+| [策略选品](.agents/skills/selection/SKILL.md) | 在网页勾选策略和 DeepSeek 模型，按[工作台规则](skills/selection/references/workbench.md)研究真实资料并保存备选 |
 | [商品上架](.agents/skills/listing/SKILL.md) | [主流程](skills/listing/SKILL.md)统一串联来源、核价、图文、审阅和授权发布；命令及续做见[操作顺序](skills/listing/references/workflow.md) |
 | [图片处理](.agents/skills/listing-images/SKILL.md) | 必要的 OpenAI Image（图片编辑）与已审干净原图经 X2 导入、上传及指纹审阅 |
 
