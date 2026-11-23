@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -109,16 +109,32 @@ async function chrome() {
 	const url = new URL(downloads.chrome.find((entry) => entry.platform === platform).url);
 	if (url.origin !== "https://storage.googleapis.com" || !url.pathname.startsWith("/chrome-for-testing-public/") || !/^\d+(\.\d+){3}$/.test(version))
 		throw new Error("Unexpected browser download URL.");
-	const archive = join(directory, `${version}.zip`);
+	const staging = await mkdtemp(join(directory, "download-"));
+	const archive = join(staging, `${version}.zip`);
+	const extracted = join(staging, "extracted");
 	const release = join(directory, version);
-	await mkdir(release, { recursive: true });
+	await mkdir(extracted);
 	try {
 		const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(300_000) });
 		if (!response.ok || !response.body) throw new Error("Could not download Chrome for Testing.");
 		await pipeline(response.body, createWriteStream(archive));
-		run(win ? "tar.exe" : "/usr/bin/ditto", win ? ["-xf", archive, "-C", release] : ["-x", "-k", archive, release]);
+		if (win) {
+			run(
+				"powershell.exe",
+				[
+					"-NoProfile",
+					"-NonInteractive",
+					"-Command",
+					"Expand-Archive -LiteralPath $env:X2_CHROME_ARCHIVE -DestinationPath $env:X2_CHROME_PATH -ErrorAction Stop",
+				],
+				{
+					env: { ...process.env, X2_CHROME_ARCHIVE: archive, X2_CHROME_PATH: extracted },
+				},
+			);
+		} else run("/usr/bin/ditto", ["-x", "-k", archive, extracted]);
+		await rename(extracted, release);
 	} finally {
-		await rm(archive, { force: true });
+		await rm(staging, { recursive: true, force: true });
 	}
 	if (!existsSync(binary(version))) throw new Error("Chrome for Testing is missing after extraction.");
 	return binary(version);
