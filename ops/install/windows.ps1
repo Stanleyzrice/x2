@@ -12,8 +12,9 @@ $pixi = Join-Path $env:PIXI_HOME 'bin\pixi.exe'
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 
 function Invoke-X2Runtime {
-    & $pixi run --manifest-path $manifest @args
-    if ($LASTEXITCODE -ne 0) { throw "X2 install step failed (exit $LASTEXITCODE): $($args[0])" }
+    param([Parameter(Mandatory)][string[]]$Command)
+    & $pixi run --manifest-path $manifest @Command
+    if ($LASTEXITCODE -ne 0) { throw "X2 install step failed (exit $LASTEXITCODE): $($Command[0])" }
 }
 
 if (-not (Test-Path $pixi)) {
@@ -28,7 +29,7 @@ if (-not (Test-Path $manifest)) {
 }
 
 if (-not (Test-Path (Join-Path $app '.git'))) {
-    Invoke-X2Runtime git clone --depth 1 https://github.com/Stanleyzrice/x2.git $app
+    Invoke-X2Runtime -Command @('git', 'clone', '--depth', '1', 'https://github.com/Stanleyzrice/x2.git', $app)
 }
 
 & $pixi install --manifest-path $manifest
@@ -39,10 +40,14 @@ $previousShell = $env:npm_config_script_shell
 Push-Location $app
 try {
     $env:npm_config_script_shell = $gitShell
-    Invoke-X2Runtime npm exec --yes --package pnpm@10.18.3 -- pnpm --dir $app install --frozen-lockfile
+    $pnpm = Join-Path $runtime 'node_modules\pnpm\bin\pnpm.cjs'
+    if (-not (Test-Path $pnpm)) {
+        Invoke-X2Runtime -Command @('npm', 'install', '--prefix', $runtime, '--no-audit', '--no-fund', 'pnpm@10.18.3')
+    }
+    Invoke-X2Runtime -Command @('node', $pnpm, '--dir', $app, 'install', '--frozen-lockfile')
     $launch = @('node', (Join-Path $app 'ops\install\start.mjs'), $root)
     if ($Check) { $launch += '--check' }
-    Invoke-X2Runtime @launch
+    Invoke-X2Runtime -Command $launch
 } finally {
     Pop-Location
     $env:npm_config_script_shell = $previousShell
