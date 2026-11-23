@@ -63,15 +63,17 @@ const targetMessage = "请指定商品稿 id，或已建商品的 shop 与 produ
 export const listingReviewPreviewParams = target.refine(validTarget, targetMessage);
 export const listingReviewParams = target.extend(content.shape).refine(validTarget, targetMessage);
 type Target = z.output<typeof target>;
-type Input = z.output<typeof listingReviewParams>;
+const reviewedContent = content.extend({ provider: z.enum(["codex-visual", "human", "deepseek-visual"]) });
+type ReviewContent = z.output<typeof reviewedContent>;
+type Input = Omit<z.output<typeof listingReviewParams>, keyof ReviewContent> & ReviewContent;
 
 export function reviewedAuditEditable(row: Pick<ListingRow, "product_id" | "listed_at">): void {
 	if (row.product_id !== null || row.listed_at !== null) throw new Usage("商品已经建成或上架；草稿审阅工具不修改现有商品");
 }
 
 /** 完整逐图结果与当前内容绑定；任何旧指纹、漏图、重复或外来图片都拒绝。 */
-export function makeReviewedAudit(p: Product, input: z.output<typeof content>, at = new Date().toISOString()): Audit {
-	const v = content.parse(input);
+export function makeReviewedAudit(p: Product, input: ReviewContent, at = new Date().toISOString()): Audit {
+	const v = reviewedContent.parse(input);
 	if (v.expectedKey !== auditKey(p)) throw new Usage("审阅后文案、图片或规格已变化，请重新 review-preview 并审阅");
 	const expected = reviewImages(p);
 	completeImages(expected, v.images);

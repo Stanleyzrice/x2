@@ -65,6 +65,9 @@ test("显式审阅保留真实来源、证据和逐图结果，覆盖尺码图�
 	);
 	const noted = makeReviewedAudit(p, { ...v, textIssues: ["「产品」为简体", "「产品」为简体"] });
 	assert.deepEqual(noted.textIssues, ["「产品」为简体"]);
+	const deepseek = makeReviewedAudit(p, { ...v, provider: "deepseek-visual" });
+	assert.equal(deepseek.provider, "deepseek-visual");
+	assert.equal(reviewedAuditCurrent(deepseek, p), true);
 });
 
 test("人工审阅拒绝旧指纹、漏图、重复或外来图片，空证据不能过门槛", () => {

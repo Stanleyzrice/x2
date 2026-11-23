@@ -90,7 +90,7 @@ export function productsOf(catalog: ProductSummary[], report: Performance[]) {
 	return { inStock, outOfStock, unknownStock, review, offShelf, reported, impressions: reported || !active.size ? impressions : null, blocked };
 }
 
-export async function collectSnapshot(shop: "cheeroutdoor", shopId: string) {
+export async function collectSnapshot(shop: string, shopId: string) {
 	return inAccount("shopee", shopId, async () => {
 		const midnight = twMidnight();
 		const start = midnight - 7 * DAY;

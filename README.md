@@ -1,9 +1,10 @@
 # x2
 
-x2 是一套用 AI Agent 经营 Shopee 台湾店（cheeroutdoor）的工作台：把选品、上架、采购、客服、报账和店铺监控串成可复现的流水线，同时提供一个给人看、给人填的网页。
+X2 是面向 Shopee（虾皮）台湾站卖家的运营工作台，连接选品、上架、采购、客服、报账和店铺监控。经营者可以在网页核对和确认操作，也可以通过 AI Agent（智能代理）调用同一套工具。
 
 - **Agent 命令行**：`node x2.ts <命令>` 用自然语言驱动，按技能规则执行，`--json` 输出结构化回执。
 - **网页工作台**：`node x2.ts web` 起 http://127.0.0.1:5170，给人核对、填写和审批。
+- **Hermes Chat（对话）**：在网页选择 DeepSeek 模型、添加照片与文本文件或引用段落，调用 X2 工具查看商品稿及处理已确认的上架任务。
 - **浏览器自动化**：经 booey（CDP 中继）复用已登录站点会话，操作 Shopee、1688、知虾与 chanboss，不接触账号密码。
 - **本地 PostgreSQL**：持久化选品稿、上架稿、采购证据与监控快照。
 
@@ -28,7 +29,7 @@ TypeScript · Node 24 · pnpm · PostgreSQL · React + Vite + Tailwind · Chrome
 
 1. Node 24、pnpm：`pnpm install`。
 2. 仓库根目录使用本项目独立的 `.env`（不进 git），要设什么照 `.env.example`，保留已有外部服务密钥。本项目的 `X2_DATABASE_URL` 指向本地 PostgreSQL（关系数据库）`127.0.0.1:55432/x2`；`X2_DATABASE_SSH=` 明确留空，`X2_HOME=../.x2-local/state`，日常运行直接连接本地库。
-3. x2 经 booey（浏览器控制中继，`@wuwe1/booey`）使用已有 CDP（浏览器调试协议）连接。本项目在 Ego（浏览器）的对应用户环境登录 Shopee、1688、知虾和 chanboss；两家店保持各自账号身份。启动中继：`pnpm exec booey daemon start`。首次配置扩展时，在 `chrome://extensions` 打开开发者模式，加载 `node_modules/@wuwe1/booey/extension`；已有 cdp-relay 连接时直接复用。用 `pnpm exec booey doctor` 核对中继与扩展。
+3. x2 经 booey（浏览器控制中继，`@wuwe1/booey`）使用已有 CDP（浏览器调试协议）连接。在浏览器登录运营所需的 Shopee、1688、知虾和 chanboss 账号。启动中继：`pnpm exec booey daemon start`。首次配置扩展时，在 `chrome://extensions` 打开开发者模式，加载 `node_modules/@wuwe1/booey/extension`；已有 cdp-relay 连接时直接复用。用 `pnpm exec booey doctor` 核对中继与扩展。
 4. 本地数据库：复用持久数据目录 `../.x2-local/pgdata`，确认 PostgreSQL 在 `127.0.0.1:55432` 运行后再执行 X2 命令。运行 `../.x2-local/start-web.sh` 会先启动未运行的既有库，再启动 X2 网页服务。`x2 web --scratch` 仍用于复制当前本地库作临时验证，需要与服务端版本兼容的 `pg_dump`、`psql`。本项目不启用 SSH（安全远程连接）数据库隧道，直接连本地库。
 
 `postgres` 固定为 3.4.9，项目补丁由 `package.json` 的 `pnpm.patchedDependencies` 和锁文件登记，使用项目指定的 pnpm 10.18.3 执行 `pnpm install --frozen-lockfile` 会自动应用。补丁回移官方 [#1209](https://github.com/porsager/postgres/pull/1209) 对 [#1208](https://github.com/porsager/postgres/issues/1208) 的修复，覆盖包内 ESM、CommonJS 与 Cloudflare 构建：断线后清掉待写缓冲并以 `CONNECTION_CLOSED` 拒绝待处理查询，避免延迟写入抛出未捕获异常；不自动重发查询。升级驱动时，只有目标版本已包含此修复且断线回归测试通过，才能一起移除补丁及对应锁项。

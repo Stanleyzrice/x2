@@ -19,6 +19,7 @@
 		"prepare": "git config core.hooksPath .githooks"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.32.2",
 		"@wuwe1/booey": "github:wuwe1/booey#v2.0.0",
 		"exceljs": "4.4.0",
 		"opencc-js": "^1.4.2",

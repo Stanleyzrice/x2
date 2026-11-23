@@ -4,6 +4,7 @@ import "./app.css";
 import {
 	ActivityIcon,
 	ArrowRightIcon,
+	BotIcon,
 	CalculatorIcon,
 	FileTextIcon,
 	HouseIcon,
@@ -12,6 +13,7 @@ import {
 	PackageIcon,
 	ReceiptIcon,
 	SearchCheckIcon,
+	Settings2Icon,
 	StoreIcon,
 	SunIcon,
 	Trash2Icon,
@@ -20,7 +22,7 @@ import { ThemeProvider, useTheme } from "next-themes";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Sidebar,
@@ -40,10 +42,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { api, type PageSummary, usePoll } from "./api.ts";
+import { api, type PageSummary, type SetupState, usePoll } from "./api.ts";
+import { HermesChat } from "./hermes-chat.tsx";
 import { OrderNotifications } from "./interactable/procurement/view.tsx";
 import { PageView } from "./page.tsx";
 import { preloadPage, usePagePreload } from "./preload.ts";
+import { SetupPage } from "./setup.tsx";
 
 const route = () => {
 	try {
@@ -57,22 +61,94 @@ const iconOf = (icon?: string) =>
 		({
 			activity: ActivityIcon,
 			search: SearchCheckIcon,
+			settings: Settings2Icon,
 			calculator: CalculatorIcon,
 			package: PackageIcon,
 			message: MessageSquareIcon,
 			receipt: ReceiptIcon,
 		}) as Record<string, typeof FileTextIcon>
 	)[icon ?? ""] ?? FileTextIcon;
-const groupsOf = (pages: PageSummary[]) => [...new Set(pages.filter((p) => p.workspace).map((p) => p.workspace!.group ?? "工作台"))];
+const groups = ["店铺运营", "选品与上架", "履约与账务"] as const;
+function pageGroup(page: PageSummary) {
+	const workspace = page.workspace;
+	if (workspace?.component === "procurement" || workspace?.component === "reimbursement") return groups[2];
+	if (workspace?.component === "selection" || workspace?.component === "pricing-calculator" || workspace?.props.mode) return groups[1];
+	return groups[0];
+}
+const groupsOf = (pages: PageSummary[]) => groups.filter((group) => pages.some((p) => p.workspace && pageGroup(p) === group));
 
-function App() {
+function Root() {
 	const [id, setId] = useState(route);
-	const [pages, error, reload] = usePoll(api.pages, 5000, []);
+	const [setup, setSetup] = useState<SetupState | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [retry, setRetry] = useState(0);
 	useEffect(() => {
 		const on = () => setId(route());
 		window.addEventListener("hashchange", on);
 		return () => window.removeEventListener("hashchange", on);
 	}, []);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 用户点击重新连接时重新读取启动状态。
+	useEffect(() => {
+		let active = true;
+		void api
+			.setup()
+			.then((value) => {
+				if (active) {
+					setSetup(value);
+					setError(null);
+				}
+			})
+			.catch((failure) => {
+				if (active) setError(errorOf(failure));
+			});
+		return () => {
+			active = false;
+		};
+	}, [retry]);
+	if (!setup)
+		return (
+			<div className="grid min-h-svh place-items-center bg-muted/30 p-5">
+				<Card className="w-full max-w-md">
+					<CardContent className="space-y-3 py-6">
+						<h1 className="font-semibold">X2 工作台</h1>
+						{error ? (
+							<>
+								<p role="alert" className="text-sm text-destructive">
+									{error}
+								</p>
+								<Button
+									variant="outline"
+									onClick={() => {
+										setError(null);
+										setRetry(retry + 1);
+									}}
+								>
+									重新连接
+								</Button>
+							</>
+						) : (
+							<Skeleton className="h-6 w-44" />
+						)}
+					</CardContent>
+				</Card>
+			</div>
+		);
+	if (!setup.ready || id === "setup")
+		return (
+			<SetupPage
+				state={setup}
+				onChange={setSetup}
+				onEnter={() => {
+					location.hash = "home";
+					setId("home");
+				}}
+			/>
+		);
+	return <App id={id} setup={setup} />;
+}
+
+function App({ id, setup }: { id: string; setup: SetupState }) {
+	const [pages, error, reload] = usePoll(api.pages, 5000, []);
 	const current = pages?.find((p) => p.id === id || p.workspace?.key === id)?.id ?? (/^\d+$/.test(id) ? id : "");
 	usePagePreload(pages ?? [], current);
 	return (
@@ -81,13 +157,22 @@ function App() {
 			<Nav
 				pages={pages ?? []}
 				active={current}
+				hermes={id === "hermes"}
+				shop={setup.shop}
 				onDeleted={(deleted) => {
 					if (deleted.includes(route())) location.hash = "home";
 					reload();
 				}}
 			/>
 			<SidebarInset className="min-w-0">
-				{current ? (
+				{id === "hermes" ? (
+					<HermesChat
+						setup={setup}
+						openSettings={() => {
+							location.hash = "setup";
+						}}
+					/>
+				) : current ? (
 					<PageView
 						key={current}
 						id={current}
@@ -105,7 +190,19 @@ function App() {
 	);
 }
 
-function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: string; onDeleted: (ids: string[]) => void }) {
+function Nav({
+	pages,
+	active,
+	hermes,
+	shop,
+	onDeleted,
+}: {
+	pages: PageSummary[];
+	active: string;
+	hermes: boolean;
+	shop: string | null;
+	onDeleted: (ids: string[]) => void;
+}) {
 	const { setOpenMobile } = useSidebar();
 	const [managing, setManaging] = useState(false);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -159,7 +256,8 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 						)}
 						<SidebarMenuButton
 							isActive={p.id === active}
-							render={<a href={`#${p.workspace?.key ?? p.id}`} />}
+							className="h-9 data-[active=true]:bg-emerald-500/10 data-[active=true]:text-emerald-800 dark:data-[active=true]:text-emerald-200"
+							render={<a href={`#${encodeURIComponent(p.workspace?.key ?? p.id)}`} />}
 							onClick={() => setOpenMobile(false)}
 							onMouseEnter={() => void preloadPage(p.id)}
 							onFocus={() => void preloadPage(p.id)}
@@ -172,24 +270,33 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 			});
 	return (
 		<Sidebar>
-			<SidebarHeader className="border-b px-4 py-5">
-				<a href="#home" className="flex items-center gap-3">
-					<span className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-						<StoreIcon className="size-5" />
-					</span>
-					<span>
-						<span className="block font-semibold tracking-tight">X2</span>
-						<span className="text-xs text-muted-foreground">Commerce workspace</span>
+			<SidebarHeader className="border-b px-4 py-4">
+				<a href="#home" className="flex min-w-0 items-center gap-3">
+					<span className="grid size-9 shrink-0 place-items-center rounded-xl bg-foreground text-sm font-bold tracking-tight text-background">X2</span>
+					<span className="min-w-0">
+						<span className="block truncate text-sm font-semibold tracking-tight">运营工作台</span>
+						{shop && <span className="block truncate text-xs text-muted-foreground">{shop}</span>}
 					</span>
 				</a>
 			</SidebarHeader>
-			<SidebarContent className="gap-1 py-2">
+			<SidebarContent className="gap-0 px-1 py-2">
 				<SidebarGroup>
 					<SidebarMenu>
 						<SidebarMenuItem>
-							<SidebarMenuButton isActive={!active} render={<a href="#home" />} onClick={() => setOpenMobile(false)}>
+							<SidebarMenuButton isActive={!active && !hermes} render={<a href="#home" />} className="h-9" onClick={() => setOpenMobile(false)}>
 								<HouseIcon />
 								<span>工作台</span>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								isActive={hermes}
+								render={<a href="#hermes" />}
+								className="h-9 font-medium data-[active=true]:bg-emerald-500/10 data-[active=true]:text-emerald-800 dark:data-[active=true]:text-emerald-200"
+								onClick={() => setOpenMobile(false)}
+							>
+								<BotIcon />
+								<span>Hermes Chat</span>
 							</SidebarMenuButton>
 						</SidebarMenuItem>
 					</SidebarMenu>
@@ -197,7 +304,7 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 				{groupsOf(pages).map((group) => (
 					<SidebarGroup key={group}>
 						<SidebarGroupLabel>{group}</SidebarGroupLabel>
-						<SidebarMenu>{entries(pages.filter((p) => p.workspace && (p.workspace.group ?? "工作台") === group))}</SidebarMenu>
+						<SidebarMenu>{entries(pages.filter((p) => p.workspace && pageGroup(p) === group))}</SidebarMenu>
 					</SidebarGroup>
 				))}
 				{temporary.length > 0 && (
@@ -236,9 +343,16 @@ function Nav({ pages, active, onDeleted }: { pages: PageSummary[]; active: strin
 					</SidebarGroup>
 				)}
 			</SidebarContent>
-			<SidebarFooter className="border-t px-4 py-3">
+			<SidebarFooter className="border-t px-3 py-2">
 				<div className="flex items-center justify-between gap-2">
-					<p className="text-xs text-muted-foreground">事实、草稿与操作状态</p>
+					<SidebarMenu>
+						<SidebarMenuItem>
+							<SidebarMenuButton render={<a href="#setup" />} onClick={() => setOpenMobile(false)}>
+								<Settings2Icon />
+								<span>设置</span>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					</SidebarMenu>
 					<ThemeToggle />
 				</div>
 			</SidebarFooter>
@@ -280,17 +394,16 @@ function Home({ pages, error, reload }: { pages: PageSummary[] | null; error: st
 										<StoreIcon className="size-5" />
 									</div>
 									<CardTitle className="text-xl">{group}</CardTitle>
-									<CardDescription>打开常用功能</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-2">
 									{pages
-										?.filter((p) => p.workspace && (p.workspace.group ?? "工作台") === group)
+										?.filter((p) => p.workspace && pageGroup(p) === group)
 										.map((p) => {
 											const Icon = iconOf(p.workspace?.icon);
 											return (
 												<a
 													key={p.id}
-													href={`#${p.workspace?.key}`}
+													href={`#${encodeURIComponent(p.workspace!.key)}`}
 													className="flex items-center gap-3 rounded-lg border bg-background px-4 py-3 text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
 												>
 													<Icon className="size-4 text-muted-foreground" />
@@ -326,7 +439,7 @@ createRoot(document.getElementById("root")!).render(
 	<StrictMode>
 		<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 			<TooltipProvider>
-				<App />
+				<Root />
 				<Toaster />
 			</TooltipProvider>
 		</ThemeProvider>

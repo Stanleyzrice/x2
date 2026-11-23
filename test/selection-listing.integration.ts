@@ -10,8 +10,10 @@ import { setTimeout } from "node:timers/promises";
 import { OfferId, SkuId, SpecId } from "../connectors/sites/1688/api.ts";
 import { ModelId } from "../connectors/sites/shopee/seller.ts";
 import { client, type Sql } from "../platform/db/index.ts";
+import { register } from "../platform/tool.ts";
 import { coverageScope, saveCoverage } from "../tools/listing/coverage.ts";
 import { editImageTarget, editParams } from "../tools/listing/edit.ts";
+import { listingHermesTools } from "../tools/listing/hermes.ts";
 import {
 	IMAGE_LANGUAGE_RULE_VERSION,
 	imageLanguageBlock,
@@ -29,6 +31,7 @@ import { type CollectSourceInput, sourceProductSchema } from "../tools/listing/s
 import { translate, translationState } from "../tools/listing/translations.ts";
 import { LISTING_WRITES } from "../tools/listing/writes.ts";
 import { deleteRun, postgresRunStore, type RunCreation, type RunLease, type RunStore } from "../tools/selection/run-store.ts";
+import { TOOLKITS } from "../x2.ts";
 
 const product = (id: string, title = "测试原始货源") =>
 	sourceProductSchema.parse({
@@ -404,6 +407,23 @@ await translate(sql, ${JSON.stringify([item])}, { submit: async () => {
 			await assert.rejects(translate(readOnly, [item], { submit: async () => assert.fail("意图未落库不能收费提交") }), /read-only/);
 		});
 		await t.test("重放 #203 尺码原图漏译：图已上传、逐图 issues 为空，普通与原图建品仍拦下", () => replayImageLanguage(sql));
+		await t.test("Hermes 真实库工具范围锁定已勾选来源和目标店，未决写入保留原编号", async () => {
+			register(...TOOLKITS);
+			const fixture = product("600109");
+			const [source] = await sql<{ id: string }[]>`insert into listing_sources(platform, source_id, url, snapshot)
+				values ('1688', ${fixture.sourceId}, ${fixture.url}, ${sql.json(fixture)}) returning id::text`;
+			const [draft, other] = await sql<{ id: string; shop: string }[]>`insert into listings (shop, offer_id)
+				values ('cheeroutdoor', ${fixture.sourceId}), ('ni1206', ${fixture.sourceId}) returning id::text, shop`;
+			assert.ok(source && draft && other);
+			await sql`insert into listing_source_links (source_id, shop, listing_id)
+				values (${source.id}, ${draft.shop}, ${draft.id}), (${source.id}, ${other.shop}, ${other.id})`;
+			const [pending] = await sql<{ id: string }[]>`insert into writes (batch, op, target, params, key, status)
+				values (1, '上架', ${draft.id}, ${sql.json({ listingId: draft.id })}, 'hermes-fixture', '结果未知') returning id::text`;
+			assert.ok(pending);
+			const { call } = listingHermesTools(sql, { shop: draft.shop, shopId: "1554182542", sourceIds: [source.id], trial: false, batch: "fixture" }, "fixture");
+			await assert.rejects(call("publish", { id: other.id }), /不在本次已授权/);
+			await assert.rejects(call("publish", { id: draft.id }), new RegExp(`原写入待核对 ${pending.id}`));
+		});
 	} finally {
 		for (const lease of leases) await lease.release().catch(() => {});
 		for (const sql of clients) await sql.end({ timeout: 5 });

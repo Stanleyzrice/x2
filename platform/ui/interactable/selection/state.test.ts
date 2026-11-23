@@ -45,9 +45,10 @@ const run = (status: RunStatus = "running", updatedAt = "2026-11-17T10:00:00Z"):
 	candidates: [],
 });
 
-test("策略组件固定当前新增店铺，不能从输入替换身份或调用发布", () => {
+test("策略组件接受服务端绑定的店铺，动作输入不能替换身份或调用发布", () => {
 	assert.deepEqual(props.parse({ shop: "cheeroutdoor" }), { shop: "cheeroutdoor" });
-	assert.equal(props.safeParse({ shop: "ni1206" }).success, false);
+	assert.deepEqual(props.parse({ shop: "ni1206" }), { shop: "ni1206" });
+	assert.equal(props.safeParse({ shop: "" }).success, false);
 	assert.equal(props.safeParse({ shop: "cheeroutdoor", strategyId: "peer-benchmark" }).success, false);
 	assert.deepEqual(Object.values(actions), [
 		"selection.workbench",

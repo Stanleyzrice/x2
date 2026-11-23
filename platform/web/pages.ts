@@ -6,7 +6,7 @@ import { readdirSync } from "node:fs";
 import { z } from "zod";
 import type { Json, Sql } from "../db/index.ts";
 import { Usage } from "../errors.ts";
-import { invoke, toolkits, type Workspace } from "../tool.ts";
+import { configuredWorkspaces, invoke, type Workspace } from "../tool.ts";
 import { checkRef, type Ref } from "./grid.ts";
 import { tables } from "./tables.ts";
 
@@ -134,7 +134,7 @@ type ItemRow = {
 	fixed?: boolean;
 };
 
-export const workspaces = () => toolkits().flatMap((k) => k.workspaces ?? []);
+export const workspaces = configuredWorkspaces;
 
 export async function ensureWorkspaces(sql: Sql): Promise<void> {
 	for (const w of workspaces()) {

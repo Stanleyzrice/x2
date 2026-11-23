@@ -21,6 +21,7 @@ import { EDIT_WRITES, editParams, planEdit, previewEdit } from "./edit.ts";
 import { cancelBlock, categoryBlock, estimateFill, keepImages } from "./edits.ts";
 import { EXPAND_WRITES, expandParams, planExpand, previewExpand } from "./expand.ts";
 import { followUpBatchId, followUpEvents, followUpEventsParams, markFollowUpBatch } from "./follow-up.ts";
+import { hermesChatTool, sourceHermesTool } from "./hermes.ts";
 import { make, readOffer1688, savePrices } from "./make.ts";
 import { marketPricingTools } from "./market-pricing.ts";
 import { orderPrice, orderPricingInput } from "./order-pricing.ts";
@@ -113,6 +114,22 @@ export const listing: Toolkit = {
 		...marketPricingTools,
 		...collectionTools,
 		...sourceTools(publishPlan),
+		"configure-shop": get(
+			"为已验证的店铺准备独立工作区设置，保留既有店铺配置",
+			z.object({ name: z.string().trim().max(100), shopId: z.string().regex(/^\d+$/) }),
+			async ({ name, shopId }) => {
+				const sql = await db();
+				const [existing] = await sql<{ shop: string }[]>`select shop from shop_settings where shop_id = ${shopId}`;
+				if (existing) return existing;
+				const shop = name && [...name].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127) ? name : `shopee-${shopId}`;
+				const [saved] = await sql<{ shop: string }[]>`insert into shop_settings (shop, shop_id, paused)
+				values (${shop}, ${shopId}, '首次发布前请在店铺设置核对费率、物流和毛利后解除暂停')
+				on conflict (shop_id) do update set shop_id = excluded.shop_id returning shop`;
+				return saved!;
+			},
+		),
+		"source-hermes": sourceHermesTool,
+		"hermes-chat": hermesChatTool,
 		"follow-up-events": get("只读导出 cheeroutdoor 已确认上架的新品和跟踪批次", followUpEventsParams, async (p) => followUpEvents(await db(), p.after)),
 		"source-preflight": get("批量复用已保存的1688采集快照，在做图前查供货、规格和成本；只读", sourcePreflightParams, async (p) =>
 			sourcePreflight(await db(), p),

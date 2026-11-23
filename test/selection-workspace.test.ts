@@ -1,8 +1,10 @@
 // 策略选品入口的装配契约：固定侧栏、四方法、明确请求及受限操作，不退化成临时提示词页面。
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { configuredWorkspaces, register } from "../platform/tool.ts";
 import { actions, inputs, props } from "../platform/ui/interactable/selection/schema.ts";
 import { defaultSelectionLimit, socialDiscoveryStrategy } from "../platform/ui/interactable/selection/types.ts";
+import { actParams } from "../platform/web/pages.ts";
 import { TOOLKITS } from "../x2.ts";
 
 test("策略选品是位于人工采集前的固定工作区", () => {
@@ -12,7 +14,23 @@ test("策略选品是位于人工采集前的固定工作区", () => {
 	assert.equal(workspace.component, "selection");
 	assert.deepEqual(props.parse(workspace.props).shop, "cheeroutdoor");
 	assert.ok(workspace.order! < TOOLKITS.find((kit) => kit.name === "listing")!.workspaces!.find((item) => item.key === "manual-collection")!.order!);
-	assert.equal(props.safeParse({ shop: "ni1206" }).success, false);
+	assert.equal(props.safeParse({ shop: "" }).success, false);
+});
+
+test("首次设置把固定工作区绑定到新店，网页动作保留服务端绑定", (t) => {
+	register(...TOOLKITS);
+	const previous = process.env.X2_DEFAULT_SHOP;
+	t.after(() => {
+		if (previous === undefined) delete process.env.X2_DEFAULT_SHOP;
+		else process.env.X2_DEFAULT_SHOP = previous;
+	});
+	process.env.X2_DEFAULT_SHOP = "new-shop";
+	const workspaces = configuredWorkspaces();
+	const selection = workspaces.find((workspace) => workspace.component === "selection")!;
+	assert.equal(props.parse(selection.props).shop, "new-shop");
+	assert.ok(workspaces.some((workspace) => workspace.key === "catalog-new-shop"));
+	assert.deepEqual(actParams(selection.props, { shop: "old-shop", limit: 3 }, inputs).shop, "new-shop");
+	assert.deepEqual(workspaces.find((workspace) => workspace.component === "procurement")?.props.shops, ["new-shop"]);
 });
 
 test("页面只调用选品运行工具，旧方法、缺请求编号和超量输入被拒", () => {

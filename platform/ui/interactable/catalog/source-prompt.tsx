@@ -1,6 +1,6 @@
 // 选中备选的任务导出：固定本批店铺与商品，复用弹窗和文本框预览、复制及下载，不触发上架。
 
-import { CopyIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
+import { BotIcon, CopyIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,10 +8,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { errorOf } from "@/lib/state";
 import { api, type Item } from "../../api.ts";
+import { openHermesForBatch } from "../../hermes-chat.tsx";
 import type { SourcePrompt } from "./source-types.ts";
 
 type Selection = { shop: string; sourceIds: string[] };
-type Batch = { selection: Selection; file: SourcePrompt | null; error: string | null };
+type Batch = { selection: Selection; file: SourcePrompt | null; error: string | null; original?: string };
 
 export function SourcePromptButton({ item, shop, sourceIds, disabled }: { item: Item; shop: string; sourceIds: string[]; disabled: boolean }) {
 	const [batch, setBatch] = useState<Batch | null>(null);
@@ -34,7 +35,7 @@ export function SourcePromptButton({ item, shop, sourceIds, disabled }: { item: 
 			const file = await api.act<SourcePrompt>(item.id, "sourcePrompt", { targetShop: selection.shop, sourceIds: selection.sourceIds });
 			if (generation.current !== request) return;
 			if (file.shop !== selection.shop || file.count !== selection.sourceIds.length) throw new Error("导出内容与本次选择不一致，请重试");
-			setBatch({ selection, file, error: null });
+			setBatch({ selection, file, error: null, original: file.prompt });
 		} catch (error) {
 			if (generation.current === request) setBatch({ selection, file: null, error: errorOf(error) });
 		}
@@ -97,7 +98,7 @@ export function SourcePromptButton({ item, shop, sourceIds, disabled }: { item: 
 				<DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-5 overflow-y-auto p-4 sm:max-w-[740px] sm:p-6">
 					<DialogHeader>
 						<DialogTitle className="text-xl">导出上架提示词</DialogTitle>
-						<DialogDescription>已按项目上架技能生成，可在下方补充本批要求；复制或下载后交给 Agent（助手）执行。</DialogDescription>
+						<DialogDescription>可补充本批要求，然后交给 Hermes，或复制、下载提示词。</DialogDescription>
 						{batch && (
 							<p className="text-sm text-muted-foreground">
 								{batch.selection.shop} · {batch.selection.sourceIds.length} 件商品
@@ -140,8 +141,23 @@ export function SourcePromptButton({ item, shop, sourceIds, disabled }: { item: 
 							<DownloadIcon />
 							下载 .txt
 						</Button>
-						<Button disabled={!batch?.file?.prompt.trim() || copying} onClick={() => void copy()}>
+						<Button variant="outline" disabled={!batch?.file?.prompt.trim() || copying} onClick={() => void copy()}>
 							{copying ? <LoaderCircleIcon className="animate-spin" /> : <CopyIcon />}复制提示词
+						</Button>
+						<Button
+							disabled={!batch?.file?.prompt.trim()}
+							onClick={() => {
+								if (!batch?.file) return;
+								try {
+									openHermesForBatch({ ...batch.selection, ...(batch.file.prompt !== batch.original ? { notes: batch.file.prompt } : {}) });
+									close();
+								} catch {
+									toast.error("无法交接任务，请检查浏览器是否允许保存临时会话");
+								}
+							}}
+						>
+							<BotIcon />
+							交给 Hermes
 						</Button>
 					</DialogFooter>
 				</DialogContent>

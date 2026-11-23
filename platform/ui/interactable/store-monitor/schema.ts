@@ -2,7 +2,7 @@ import { z } from "zod";
 import { title } from "../../props.ts";
 
 export const description = "查看虾皮店铺流量、按日对比商品访客及点击来源，监控商品可售状态";
-export const props = z.strictObject({ shop: z.literal("cheeroutdoor"), title });
+export const props = z.strictObject({ shop: z.string().min(1), title });
 export const actions = { snapshot: "store-monitor.snapshot", refresh: "store-monitor.refresh", daily: "store-monitor.daily" };
 export const inputs = ["date"];
 export const examples: z.input<typeof props>[] = [{ shop: "cheeroutdoor", title: "店铺监控" }];
@@ -12,7 +12,7 @@ const count = z.number().int().nonnegative();
 const id = z.string().regex(/^\d+$/);
 const metric = z.object({ total: count, change: z.number().nullable() });
 export const snapshotSchema = z.object({
-	shop: z.literal("cheeroutdoor"),
+	shop: z.string().min(1),
 	shopId: id,
 	capturedAt: z.iso.datetime({ offset: true }),
 	start: z.iso.date(),

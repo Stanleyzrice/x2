@@ -7,7 +7,7 @@ import { snapshotSchema } from "../../platform/ui/interactable/store-monitor/sch
 import { collectDay } from "./daily.ts";
 import { collectSnapshot } from "./snapshot.ts";
 
-const params = z.object({ shop: z.literal("cheeroutdoor") });
+const params = z.object({ shop: z.string().min(1) });
 type Shop = z.output<typeof params>["shop"];
 
 async function configuredShopId(sql: Sql | import("postgres").TransactionSql, shop: Shop): Promise<string> {
@@ -19,8 +19,9 @@ async function configuredShopId(sql: Sql | import("postgres").TransactionSql, sh
 async function readSnapshot(sql: Sql, shop: Shop) {
 	const [saved] = await sql<{ snapshot: unknown }[]>`select snapshot from store_monitor_snapshots where shop = ${shop}`;
 	if (saved) return snapshotSchema.parse(saved.snapshot);
+	if (shop !== "cheeroutdoor") return null;
 	try {
-		const file = new URL(`../../artifacts/store-monitor/${shop}.json`, import.meta.url);
+		const file = new URL("../../artifacts/store-monitor/cheeroutdoor.json", import.meta.url);
 		return snapshotSchema.parse(JSON.parse(await readFile(file, "utf8")));
 	} catch (error) {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;

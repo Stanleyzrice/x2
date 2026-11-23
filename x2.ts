@@ -4,6 +4,7 @@
 import "./platform/env.ts";
 import { codex } from "./connectors/services/codex/index.ts";
 import { gemini } from "./connectors/services/gemini/index.ts";
+import { hermes } from "./connectors/services/hermes/index.ts";
 import { image } from "./connectors/services/image/index.ts";
 import { market } from "./connectors/services/market/index.ts";
 import { xiangji } from "./connectors/services/xiangji/index.ts";
@@ -25,7 +26,7 @@ import { storeMonitor } from "./tools/store-monitor/index.ts";
 
 catalog.workspaces = ["cheeroutdoor"].map((shop) => ({
 	key: `catalog-${shop}`,
-	title: "Catalog",
+	title: "商品目录",
 	group: shop,
 	component: "catalog",
 	props: { shop, defaultStatus: "1" },
@@ -33,7 +34,7 @@ catalog.workspaces = ["cheeroutdoor"].map((shop) => ({
 }));
 chat.workspaces = ["cheeroutdoor"].map((shop) => ({
 	key: `chat-${shop}`,
-	title: "Chat",
+	title: "买家客服",
 	group: shop,
 	component: "chat",
 	props: { shop, policyPath: ".agents/skills/chat/SKILL.md", historyDays: 7 },
@@ -54,7 +55,7 @@ orders.workspaces = [
 	{
 		key: "procurement",
 		order: 10,
-		title: "Procurement",
+		title: "订单采购",
 		group: "采购",
 		component: "procurement",
 		props: { shops: ["cheeroutdoor"] },
@@ -62,6 +63,14 @@ orders.workspaces = [
 	},
 ];
 listing.workspaces = [
+	{
+		key: "shop-settings",
+		title: "店铺设置",
+		component: "datagrid",
+		props: { table: "shop_settings", filter: { shop: "cheeroutdoor" }, layout: "cards" },
+		icon: "settings",
+		order: 40,
+	},
 	{
 		key: "pricing-calculator",
 		title: "定价模板",
@@ -96,7 +105,7 @@ reimbursement.workspaces = [
 	{
 		key: "reimbursement",
 		order: 20,
-		title: "Reimbursement",
+		title: "采购报账",
 		group: "采购",
 		component: "reimbursement",
 		props: { schedule: { hour: reimbursementRefresh.hour, timeZone: reimbursementRefresh.timeZone } },
@@ -122,6 +131,7 @@ export const TOOLKITS: Toolkit[] = [
 	market,
 	codex,
 	gemini,
+	hermes,
 	xiangji,
 	image,
 ];

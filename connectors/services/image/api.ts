@@ -59,9 +59,9 @@ export function inspect(bytes: Uint8Array, from = "图片"): Bytes {
 }
 
 /** 取一张网上的图。1688（alicdn）要带 Referer，不然 403 */
-export async function fetchImage(url: string): Promise<Bytes> {
+export async function fetchImage(url: string, options?: Pick<RequestInit, "redirect">): Promise<Bytes> {
 	const u = new URL(url.startsWith("//") ? `https:${url}` : url);
-	const r = await fetch(u, { headers: { "user-agent": UA, referer: `https://${u.host}/` }, signal: AbortSignal.timeout(30_000) });
+	const r = await fetch(u, { ...options, headers: { "user-agent": UA, referer: `https://${u.host}/` }, signal: AbortSignal.timeout(30_000) });
 	if (!r.ok) throw new Error(`取图 HTTP ${r.status}：${u.href}`);
 	return inspect(new Uint8Array(await r.arrayBuffer()), u.href);
 }

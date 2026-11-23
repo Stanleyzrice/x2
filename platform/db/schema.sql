@@ -31,6 +31,17 @@ create table if not exists writes (
 create index if not exists writes_key on writes (key);
 create index if not exists writes_batch on writes (batch);
 
+create table if not exists hermes_web_runs (
+	id uuid primary key,
+	owner uuid not null,
+	kind text not null check (kind in ('chat', 'publish')),
+	fingerprint text not null,
+	state text not null check (state in ('running', 'completed', 'failed')),
+	result jsonb,
+	error text,
+	created_at timestamptz not null default now()
+);
+
 drop table if exists inbox;
 alter table writes alter column status set default '待执行';
 update writes set status = '未执行', error = coalesce(error, '没有批准就没执行：批准的流程去掉了'), finished_at = coalesce(finished_at, now()) where status in ('待批准', '已批准');

@@ -22,7 +22,9 @@ import { listBrowserAuthorizations, restoreBrowserAuthorizations, saveBrowserAut
 import { connectBrowserRequest, requestOriginUrl } from "./browser-connection.ts";
 import { confirmWrite, prepareConfirmation } from "./confirmations.ts";
 import { type Ref, refQuery } from "./grid.ts";
+import { hermesRoutes } from "./hermes.ts";
 import { act, answer, closeItem, deletePage, deletePages, ensureWorkspaces, listPages, parseProps, saveNote, showPage } from "./pages.ts";
+import { type Route, setupRoutes } from "./setup.ts";
 import { type ColumnType, type Key, type Meta, type Row, type Shown, type Table, tables } from "./tables.ts";
 
 /** 网页发来的请求体：一个 JSON 对象（各个接口再照自己要的格解析） */
@@ -96,10 +98,7 @@ function shape(t: Table, cols: Map<string, ColumnType>, row: Row, only: readonly
 	return out;
 }
 
-export async function serve(
-	sql: Sql,
-	{ host, port, dist, background = true }: { host: string; port: number; dist: string; background?: boolean },
-): Promise<{ port: number; stop: () => Promise<void> }> {
+async function workspaceRoutes(sql: Sql, port: () => number): Promise<Record<string, Route>> {
 	await ensureWorkspaces(sql);
 	await restoreBrowserAuthorizations(sql);
 	const colTypes = await types(sql);
@@ -123,11 +122,11 @@ export async function serve(
 		return row ? shape(t, colTypes.get(t.name)!, row) : null;
 	};
 
-	const api: Record<string, (body: Record<string, unknown>, url: URL, req: IncomingMessage) => Promise<unknown>> = {
+	return {
 		"GET /api/browser/authorizations": async (_, url) => listBrowserAuthorizations(sql, url.searchParams.get("site")),
 		"POST /api/browser/connect": async (b, _, req) =>
 			connectBrowserRequest(b, {
-				port: (server.address() as { port: number }).port,
+				port: port(),
 				origin: req.headers.origin,
 				authorize: (site, account, browser) => saveBrowserAuthorization(sql, site, account, browser),
 			}),
@@ -244,21 +243,54 @@ export async function serve(
 			return { key: shape(t, cols, r!)._key };
 		},
 	};
+}
 
+export async function serve(
+	getSql: () => Promise<Sql>,
+	{ host, port, dist, scratch = false }: { host: string; port: number; dist: string; scratch?: boolean },
+): Promise<{ port: number; stop: () => Promise<void> }> {
+	let active: Promise<{ sql: Sql; routes: Record<string, Route> }> | undefined;
+	let stopJobs: () => Promise<void> = async () => {};
+	const boundPort = () => (server.address() as { port: number }).port;
+	const workspace = () => {
+		active ??= getSql()
+			.then(async (sql) => {
+				const routes = await workspaceRoutes(sql, boundPort);
+				if (!scratch)
+					stopJobs = startJobs(
+						sql,
+						toolkits().flatMap((kit) => kit.jobs ?? []),
+					);
+				return { sql, routes };
+			})
+			.catch((failure: unknown) => {
+				active = undefined;
+				throw failure;
+			});
+		return active;
+	};
+	const database = () => workspace().then(({ sql }) => sql);
+	const publicRoutes = { ...setupRoutes(database, boundPort, !scratch), ...hermesRoutes(database, boundPort) };
 	const send = (res: ServerResponse, status: number, type: string, body: string | Buffer) => {
 		res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
 		res.end(body);
 	};
 	const handle = async (req: IncomingMessage, res: ServerResponse) => {
 		const url = new URL(req.url ?? "/", "http://x");
-		const route = api[`${req.method} ${url.pathname}`];
-		if (route) {
+		if (url.pathname.startsWith("/api/")) {
 			try {
+				const key = `${req.method} ${url.pathname}`;
+				const route = publicRoutes[key] ?? (await workspace()).routes[key];
+				if (!route) {
+					send(res, 404, "application/json", JSON.stringify({ error: "没有这个接口" }));
+					return;
+				}
 				if (req.method !== "GET") {
 					if (req.headers["sec-fetch-site"] === "cross-site") throw new Usage("不接受跨站操作");
 					if (req.headers.origin && requestOriginUrl(req.headers.origin).host !== req.headers.host) throw new Usage("操作必须来自当前 X2 页面");
 				}
 				let raw = "";
+				req.setEncoding("utf8");
 				for await (const c of req) {
 					raw += c;
 					if (raw.length > 2 * 1024 * 1024) throw new Usage("请求体过大");
@@ -284,12 +316,7 @@ export async function serve(
 
 	const server = createServer((req, res) => void handle(req, res));
 	await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, host, ok));
-	const stopJobs = background
-		? startJobs(
-				sql,
-				toolkits().flatMap((k) => k.jobs ?? []),
-			)
-		: async () => {};
+	if (process.env.X2_DATABASE_URL) void workspace().catch(() => {});
 	return {
 		port: (server.address() as { port: number }).port,
 		stop: async () => {

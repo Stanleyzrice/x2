@@ -9,7 +9,7 @@ export const AUDIT_VERSION = 4;
 export type Where = "印在商品上" | "后加的文案";
 export type Role = "封面" | "规格图" | "主图" | "详情图" | "尺码图";
 export type AuditImage = { id: string; issues: string[]; where?: Where; role?: Role; dropped?: boolean };
-export type AuditProvider = "gemini" | "codex-visual" | "human";
+export type AuditProvider = "gemini" | "codex-visual" | "deepseek-visual" | "human";
 export type Audit = {
 	key: string;
 	textIssues: string[];
@@ -28,6 +28,7 @@ export const auditImages = (p: Product) => [...new Set([...p.images, ...p.detail
 export const reviewImages = (p: Product) => [...new Set([...auditImages(p), ...(p.sizeChart ? [p.sizeChart] : [])])];
 
 export const specNames = (p: Product) => p.tiers.map((t) => ({ name: t.name, options: t.options.map((o) => o.name) }));
+const visualReviewers = new Set<AuditProvider | undefined>(["codex-visual", "deepseek-visual", "human"]);
 
 export function auditKey(p: Product): string {
 	return createHash("sha256")
@@ -47,7 +48,7 @@ export function auditKey(p: Product): string {
 
 /** 人工结果须有证据及完整逐图覆盖，不能仅填一个匹配 key 冒充审阅。 */
 export function reviewedAuditCurrent(a: Partial<Audit> | null | undefined, p: Product): a is Audit {
-	if (!a || (a.provider !== "codex-visual" && a.provider !== "human") || a.key !== auditKey(p)) return false;
+	if (!a || !visualReviewers.has(a.provider) || a.key !== auditKey(p)) return false;
 	if (!a.evidence?.trim() || !a.at || !Array.isArray(a.textIssues) || !Array.isArray(a.images) || !Array.isArray(a.reviewedImageIds)) return false;
 	const expected = reviewImages(p),
 		seen = new Set(a.reviewedImageIds),
@@ -64,7 +65,7 @@ export function reviewedAuditCurrent(a: Partial<Audit> | null | undefined, p: Pr
 /** 既有 Gemini 结果按当前指纹复用；显式人工结果另验来源与覆盖。 */
 export function auditCurrent(a: Partial<Audit> | null | undefined, p: Product): boolean {
 	if (!a || a.key !== auditKey(p)) return false;
-	if (a.provider === "codex-visual" || a.provider === "human") return reviewedAuditCurrent(a, p);
+	if (visualReviewers.has(a.provider)) return reviewedAuditCurrent(a, p);
 	return a.provider === undefined || a.provider === "gemini";
 }
 
@@ -72,8 +73,8 @@ export function listingAuditCurrent(a: Partial<Audit> | null | undefined, p: Pro
 	return imageMode === "reviewed" ? reviewedAuditCurrent(a, p) : auditCurrent(a, p);
 }
 
-export const auditProviderName = (provider?: AuditProvider) =>
-	provider === "codex-visual" ? "Codex 视觉审阅" : provider === "human" ? "人工审阅" : "Gemini 文字检查";
+export const auditProviderName = (provider: AuditProvider = "gemini") =>
+	({ "codex-visual": "Codex 视觉审阅", "deepseek-visual": "DeepSeek 视觉审阅", human: "人工审阅", gemini: "Gemini 文字检查" })[provider];
 
 export function roleOf(p: Product, id: string): Role {
 	if (p.images[0] === id) return "封面";

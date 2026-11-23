@@ -3,7 +3,7 @@ import { z } from "zod";
 import { title } from "../../props.ts";
 
 export const description = "选择竞品对标、爆款周边、细分需求、组合销售或近期趋势攀升，由agent（智能代理）研究并将筛出的候选保存到上架备选区，供后续审核和上架";
-export const props = z.strictObject({ shop: z.literal("cheeroutdoor"), title });
+export const props = z.strictObject({ shop: z.string().min(1), title });
 export type Props = z.infer<typeof props>;
 export const actions = {
 	workbench: "selection.workbench",

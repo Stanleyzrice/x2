@@ -8,7 +8,7 @@ import { ChanbossOrderId, type Order } from "../../connectors/sites/chanboss/api
 import { challengeIn, inAccount, logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
-import { type Read, toolkits } from "../../platform/tool.ts";
+import { configuredWorkspaces, type Read } from "../../platform/tool.ts";
 import type { CartLine, Purchase } from "./allocate.ts";
 import { readShopeeOrders, shopeeOrderRow } from "./shopee.ts";
 import { refreshChosen } from "./source.ts";
@@ -239,8 +239,7 @@ export async function read1688(sql: Sql, log: (s: string) => void = console.erro
 export function configuredOrderShops(): string[] {
 	const shops = [
 		...new Set(
-			toolkits()
-				.flatMap((k) => k.workspaces ?? [])
+			configuredWorkspaces()
 				.filter((w) => w.component === "procurement")
 				.flatMap((w) => (Array.isArray(w.props.shops) ? w.props.shops.filter((shop): shop is string => typeof shop === "string" && Boolean(shop)) : [])),
 		),

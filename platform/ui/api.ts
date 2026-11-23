@@ -3,8 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { BrowserAuthorization } from "../web/browser-authorizations.ts";
 import type { BrowserConnectionInput, BrowserConnectionResult } from "../web/browser-connection.ts";
+import type { HermesRequest, HermesRun } from "../web/hermes.ts";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
+import type { SetupState } from "../web/setup.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
+import type { HermesTurn } from "./hermes-schema.ts";
 import type { SourceDetail, SourceList } from "./interactable/catalog/source-types.ts";
 import type { CatalogResult } from "./interactable/catalog/types.ts";
 import { preserveMonitor } from "./interactable/procurement/sync.ts";
@@ -13,7 +16,23 @@ import type { Data as ReimbursementData } from "./interactable/reimbursement/typ
 import { errorOf } from "./lib/state.ts";
 import { readCache } from "./read-cache.ts";
 
-export type { BrowserAuthorization, BrowserConnectionInput, BrowserConnectionResult, Grid, Item, Key, Meta, Page, PageSummary, Pic, Row };
+export type {
+	BrowserAuthorization,
+	BrowserConnectionInput,
+	BrowserConnectionResult,
+	Grid,
+	HermesRequest,
+	HermesRun,
+	HermesTurn,
+	Item,
+	Key,
+	Meta,
+	Page,
+	PageSummary,
+	Pic,
+	Row,
+	SetupState,
+};
 export type Column = Meta["columns"][number];
 
 async function call<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
@@ -52,6 +71,14 @@ const reimbursementKey = (item: string, input: ReimbursementQuery) =>
 	`${item}:${JSON.stringify([input.accounts ?? null, input.account ?? null, input.search, input.paidFrom, input.paidTo, input.offset])}`;
 
 export const api = {
+	setup: () => call<SetupState>("GET", "/api/setup"),
+	setupDatabase: (url: string) => call<SetupState>("POST", "/api/setup/database", { url }),
+	setupHermes: (input: { apiKey?: string; model: string; python?: string }) => call<SetupState>("POST", "/api/setup/hermes", input),
+	setupShops: () => call<BrowserAuthorization[]>("GET", "/api/setup/shops"),
+	setupShop: (accountId: string) => call<SetupState>("POST", "/api/setup/shop", { accountId }),
+	finishSetup: () => call<SetupState>("POST", "/api/setup/finish", {}),
+	startHermes: (request: HermesRequest) => call<HermesRun>("POST", "/api/hermes/run", request),
+	hermesRun: (id: string) => call<HermesRun>("GET", `/api/hermes/run?id=${q(id)}`),
 	connectBrowser: (input: BrowserConnectionInput) => call<BrowserConnectionResult>("POST", "/api/browser/connect", input),
 	browserAuthorizations: (site: string) => call<BrowserAuthorization[]>("GET", `/api/browser/authorizations?site=${q(site)}`),
 	pages: () => call<PageSummary[]>("GET", "/api/pages"),

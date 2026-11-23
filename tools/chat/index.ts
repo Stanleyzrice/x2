@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { suggest } from "../../connectors/services/penna/api.ts";
+import { chatModelConfig, suggest } from "../../connectors/services/chat-model/api.ts";
 import { db } from "../../platform/db/index.ts";
 import { get, str, type Toolkit, write } from "../../platform/tool.ts";
 import { exclusive } from "../../platform/writes.ts";
@@ -42,13 +42,14 @@ export const chat: Toolkit = {
 			listConversations(p.shop, p.cursor, rollingWindow(p.historyDays)),
 		),
 		messages: get("现读所选会话的上下文，返回范围、指纹、建议、人工稿和发送状态；cursor仅连续向前加载", contextInput, readContext),
-		draft: get("经Penna gateway DeepSeek生成绑定上下文的建议；不覆盖人工草稿、不发送", suggestionInput, async (p) => {
+		draft: get("用已配置的客服模型生成绑定上下文的建议；不覆盖人工草稿、不发送", suggestionInput, async (p) => {
+			const config = chatModelConfig();
 			const { context } = await readContext(p),
 				sql = await db();
 			assertSuggestionContext(context);
 			const instructions = (await readFile(new URL(`../../${p.policyPath}`, import.meta.url), "utf8")).trim();
 			if (!instructions) throw new Error("客服规则是空的");
-			const result = await suggest(instructions, draftPrompt(p.shop, context.messages));
+			const result = await suggest(instructions, draftPrompt(p.shop, context.messages), config);
 			const text = z.string().trim().min(1).max(2000).parse(result.text),
 				id = randomUUID();
 			await sql`insert into chat_suggestions (id, shop, shop_id, conversation_id, context_id, context_hash, latest_buyer_id, text, model) values (${id}, ${p.shop}, ${context.shopId}, ${p.conversationId}, ${context.id}, ${context.contextHash}, ${context.latestBuyerId}, ${text}, ${result.model})`;

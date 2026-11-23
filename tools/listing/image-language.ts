@@ -23,7 +23,7 @@ export const imageLanguageVerdict = z.discriminatedUnion("state", [
 ]);
 export type ImageLanguageVerdict = z.output<typeof imageLanguageVerdict>;
 type Database = Sql | postgres.TransactionSql;
-const reviewer = z.enum(["human", "codex-visual"]);
+const reviewer = z.enum(["human", "codex-visual", "deepseek-visual"]);
 type Reviewer = z.output<typeof reviewer>;
 const storedVerdict = z.object({ language: imageLanguageVerdict, provider: reviewer });
 

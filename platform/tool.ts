@@ -75,6 +75,22 @@ export function register(...add: Toolkit[]): void {
 }
 export const toolkits = (): readonly Toolkit[] => kits;
 
+export function configuredWorkspaces(): Workspace[] {
+	const shop = process.env.X2_DEFAULT_SHOP?.trim();
+	const workspaces = toolkits().flatMap((kit) => kit.workspaces ?? []);
+	if (!shop) return workspaces;
+	return workspaces.map((workspace) => {
+		const primary = workspace.props.shop;
+		if (typeof primary === "string" && primary !== shop) {
+			const key = workspace.key.endsWith(`-${primary}`) ? `${workspace.key.slice(0, -primary.length)}${shop}` : workspace.key;
+			return { ...workspace, key, group: workspace.group === primary ? shop : workspace.group, props: { ...workspace.props, shop } };
+		}
+		const filter = workspace.props.filter;
+		if (filter && typeof filter === "object" && "shop" in filter) return { ...workspace, props: { ...workspace.props, filter: { ...filter, shop } } };
+		return Array.isArray(workspace.props.shops) ? { ...workspace, props: { ...workspace.props, shops: [shop] } } : workspace;
+	});
+}
+
 export function findTool(id: string): Tool | undefined {
 	const dot = id.indexOf(".");
 	const [kit, name] = dot < 0 ? ["", id] : [id.slice(0, dot), id.slice(dot + 1)];

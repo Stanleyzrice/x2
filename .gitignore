@@ -1,5 +1,7 @@
 node_modules/
 .env
+.x2-setup.json
+.x2-setup-*.tmp
 .DS_Store
 
 # Claude Code 子 agent 的临时工作目录

@@ -63,7 +63,7 @@ export async function db(): Promise<Sql> {
 }
 
 /** 这个进程改用另一个库（x2 web --scratch 的临时库）：在第一次 db() 之前调 */
-export function setDatabase(url: string): void {
+export function setDatabase(url: string | null): void {
 	if (lifecycle.active()) throw new Error("已经连上 X2_DATABASE_URL 的库了，换不了");
 	target = url;
 }
