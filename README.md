@@ -4,6 +4,24 @@ X2 是面向 Shopee（虾皮）台湾站的运营工作台。网页提供策略�
 
 ## 新电脑安装
 
+按系统复制一条命令。安装器会准备 Node.js、PostgreSQL、Hermes Agent、Booey 和 X2 专用浏览器，再打开首次设置。
+
+**Mac（终端）**
+
+```sh
+x2_installer="$(mktemp)" && curl -fsSL https://raw.githubusercontent.com/Stanleyzrice/x2/main/ops/install/mac.sh -o "$x2_installer" && /bin/bash "$x2_installer"
+```
+
+**Windows 64 位（PowerShell）**
+
+```powershell
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Stanleyzrice/x2/main/ops/install/windows.ps1').Content))
+```
+
+安装后，在专用浏览器登录 Shopee、1688，回 X2 填入自己的 DeepSeek API Key 并绑定店铺。安装器会在当前用户目录保存独立数据库和浏览器资料。之后打开 X2 可再次执行同一条命令。
+
+### 手动安装
+
 准备 Git、Node.js 24、pnpm 10.18.3、Chrome（浏览器）及 PostgreSQL（关系数据库）。用以下命令安装并启动 X2。
 
 ```sh

@@ -1,0 +1,34 @@
+name: installer
+on:
+  push:
+    paths: ['ops/install/**', '.github/workflows/installer.yml', 'pnpm-lock.yaml']
+  pull_request:
+    paths: ['ops/install/**', '.github/workflows/installer.yml', 'pnpm-lock.yaml']
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export X2_INSTALL_DIR="$RUNNER_TEMP/x2"
+          mkdir -p "$X2_INSTALL_DIR/runtime"
+          cp ops/install/pixi.toml "$X2_INSTALL_DIR/runtime/"
+          git clone --local "$GITHUB_WORKSPACE" "$X2_INSTALL_DIR/app"
+          bash ops/install/mac.sh --check
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:X2_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'x2'
+          $runtime = Join-Path $env:X2_INSTALL_DIR 'runtime'
+          New-Item -ItemType Directory -Path $runtime | Out-Null
+          Copy-Item ops/install/pixi.toml $runtime
+          git clone --local $env:GITHUB_WORKSPACE (Join-Path $env:X2_INSTALL_DIR 'app')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./ops/install/windows.ps1 -Check
