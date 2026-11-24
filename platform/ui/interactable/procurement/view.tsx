@@ -553,13 +553,18 @@ function SkuDemandTable({ rows, selectedCount }: { rows: SkuDemand[]; selectedCo
 						{rows.map((row) => (
 							<TableRow key={row.key}>
 								<TableCell className="min-w-56 max-w-md whitespace-normal align-top">
-									<p className="font-medium">{row.name || "未命名商品"}</p>
-									<p className="text-xs text-muted-foreground">{row.spec || "单规格"}</p>
-									{row.target && (
-										<a className="text-xs underline" href={`https://detail.1688.com/offer/${row.target.offerId}.html`} target="_blank" rel="noreferrer">
-											1688 SKU {row.target.skuId}
-										</a>
-									)}
+									<div className="flex items-start gap-3">
+										<ProductPicture key={row.image ?? "missing"} image={row.image ?? null} name={row.name} spec={row.spec} />
+										<div className="min-w-0">
+											<p className="font-medium">{row.name || "未命名商品"}</p>
+											<p className="text-xs text-muted-foreground">{row.spec || "单规格"}</p>
+											{row.target && (
+												<a className="text-xs underline" href={`https://detail.1688.com/offer/${row.target.offerId}.html`} target="_blank" rel="noreferrer">
+													1688 SKU {row.target.skuId}
+												</a>
+											)}
+										</div>
+									</div>
 								</TableCell>
 								<TableCell className="text-right align-top tabular-nums">{row.qty}</TableCell>
 								<TableCell className="text-right align-top font-semibold tabular-nums">{row.buyQty || !row.reviewQty ? row.buyQty : "待核对"}</TableCell>

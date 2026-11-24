@@ -40,6 +40,7 @@ export type Order = {
 };
 export type Quantities = { qty: number; paidQty: number; unpaidQty: number; buyQty: number; reviewQty: number };
 export type SkuDemand = Quantities & {
+	image?: string | null;
 	key: string;
 	name: string;
 	spec: string;

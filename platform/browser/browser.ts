@@ -143,7 +143,7 @@ async function enter(b: Browser, site: string): Promise<() => void> {
 }
 
 const verification = createVerificationRegistry();
-const accountBrowsers = new Map<string, string>();
+const accountBrowsers = new Map<string, Map<string, string>>();
 
 class Hit extends Error {
 	readonly tabId: number;
@@ -254,7 +254,8 @@ async function attached<T>(c: RelayClient, tabId: number, run: () => Promise<T>)
 }
 
 async function tabFor(c: RelayClient, b: Browser, origin: string, site: string): Promise<number> {
-	for (const t of (await c.tabs()).filter((t) => t.url.startsWith(origin))) {
+	for (const t of await browserTabs(c)) {
+		if (!t.url.startsWith(origin)) continue;
 		const temporary = probeTabs.get(probeTabKey(b.id, t.tabId));
 		if (temporary?.closing) continue;
 		if (temporary && temporary.owner !== opened.getStore()) temporary.shared = true;
@@ -281,6 +282,12 @@ async function tabFor(c: RelayClient, b: Browser, origin: string, site: string):
 	await settle(c, tab.tabId, origin, site);
 	await c.eval(tab.tabId, `window.name = ${JSON.stringify(MARK)}`);
 	return tab.tabId;
+}
+
+export async function browserTabs(client: RelayClient) {
+	const tabs = await client.tabs();
+	if (!Array.isArray(tabs)) throw new Error("Booey 浏览器扩展未返回标签页列表，请确认扩展连接后重新检测");
+	return tabs;
 }
 
 export async function page(origin: string): Promise<Page> {
@@ -376,7 +383,8 @@ function loginIn(site: string, b: Browser): Promise<Login> {
 	if (!p) {
 		const d = siteDef(site);
 		p = (async () => {
-			if (d.login.cookie && d.login.cookie.signedIn(await cookies(b, d.login.cookie.url)) === false) return null;
+			const bound = [...(accountBrowsers.get(site)?.values() ?? [])].includes(b.id);
+			if (!bound && d.login.cookie && d.login.cookie.signedIn(await cookies(b, d.login.cookie.url)) === false) return null;
 			return probe(b.id, d.login.identify);
 		})().then(
 			(value) => ({ value, error: null }),
@@ -438,7 +446,10 @@ export async function focusVerification(site: string, browser: string, driver?: 
 export function setAccountBrowserPreference(site: string, account: Account, browserId: string): void {
 	siteDef(site);
 	if (!account.id || !browserId) throw new Usage("账号与浏览器标识不能为空");
-	for (const name of new Set([account.id, account.name].filter(Boolean))) accountBrowsers.set(JSON.stringify([site, name]), browserId);
+	const bindings = accountBrowsers.get(site) ?? new Map<string, string>();
+	bindings.set(account.id, browserId);
+	if (account.name) bindings.set(account.name, browserId);
+	accountBrowsers.set(site, bindings);
 }
 
 export async function browserName(id: string): Promise<string> {
@@ -529,26 +540,23 @@ export function browserFor(site: string): Promise<string> {
 	return p;
 }
 
-export async function challengeIn(site: string): Promise<Challenge | undefined> {
-	const all = await Promise.all((await browsers()).map((b) => loginIn(site, b)));
-	return all.map((r) => r.error).find((e): e is Challenge => e instanceof Challenge);
-}
-
-export async function inAccount<T>(site: string, account: string, fn: () => Promise<T>): Promise<T> {
+export async function inAccount<T>(site: string, account: string, fn: (identity: Account) => Promise<T>): Promise<T> {
 	const d = siteDef(site);
 	const errors: (Error | null)[] = [];
 	const seen: Account[] = [];
 	const all = await browsers();
-	const preferred = accountBrowsers.get(JSON.stringify([site, account]));
+	if (!all.length) throw new NeedsHuman(`Booey 扩展尚未连接浏览器，无法核对 ${d.title} 账号 ${account}。请打开 X2 专用浏览器后重新检测`);
+	const preferred = accountBrowsers.get(site)?.get(account);
 	const ordered = preferred ? [...all.filter((b) => b.id === preferred), ...all.filter((b) => b.id !== preferred)] : all;
 	for (const b of ordered) {
 		const r = await loginIn(site, b);
-		if (r.value && (r.value.id === account || r.value.name === account)) return using(b.id, fn);
-		if (r.value) seen.push(r.value);
+		const identity = r.value;
+		if (identity && (identity.id === account || identity.name === account)) return using(b.id, () => fn(identity));
+		if (identity) seen.push(identity);
 		errors.push(r.error);
 	}
-	const challenge = errors.find((e) => e instanceof Challenge);
-	if (challenge) throw challenge;
+	const failure = errors.find((e) => e instanceof Challenge) ?? errors.find((e) => e && !(e instanceof NeedsHuman));
+	if (failure) throw failure;
 	// 失败不缓存后，不能为了拼提示再探测一遍所有浏览器。
 	const now = seen.map((a) => a.name || a.id);
 	throw new NeedsHuman(

@@ -9,14 +9,13 @@ import { refreshAccount } from "../reimbursement/index.ts";
 import { checkOrders } from "./check.ts";
 import {
 	assertProcurementAvailable,
-	type EvidenceCatalog,
 	type EvidenceListing,
 	type EvidenceSource,
 	procurementTarget,
 	readPurchaseEvidence,
 	summarizePurchase,
 } from "./procurement-evidence.ts";
-import { type ProcurementItem, procurementDemand, procurementLines } from "./procurement-items.ts";
+import { type EvidenceCatalog, type ProcurementItem, procurementDemand, procurementLines } from "./procurement-items.ts";
 import { type MatchNeed, matchProcurement } from "./procurement-matches.ts";
 import { purchaseState, samePurchase, selectPurchase } from "./purchase.ts";
 import { buyAccount, readAll, reuse, writeOrders } from "./read.ts";
@@ -123,7 +122,7 @@ export async function monitor(sql: Sql, shops: string[]) {
 	const matches = matchProcurement(needs, evidence.records, purchases);
 	const sync = syncs.get(sql)?.get(scopeKey(shops));
 	const orders = rows.map((r) => {
-		const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings).map((line) => ({
+		const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings, catalog).map((line) => ({
 			...line,
 			cartRecorded: r.cart_pending.includes(line.modelId) || r.cart_done.includes(line.modelId),
 			target: targets.get(`${r.sn}:${line.modelId}`) ?? null,

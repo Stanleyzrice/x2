@@ -1,7 +1,7 @@
 // 当前 X2 页用一次性 URL 标记确认浏览器；只读 tabs 元数据，绝不 attach/eval 这个用户页。
 import { RelayClient } from "@wuwe1/booey";
 import { Challenge, NeedsHuman, Usage } from "../errors.ts";
-import { type Account, allSites, browsers, canOpenVerification, focusVerification, refreshLogin, siteDef } from "./browser.ts";
+import { type Account, allSites, browsers, browserTabs, canOpenVerification, focusVerification, refreshLogin, siteDef } from "./browser.ts";
 
 export type ConnectionInput = { url: string; marker: string; site: string; expectedAccount?: string; action?: "check" | "open-verification" };
 export type ConnectionBrowser = { id: string; label: string };
@@ -23,7 +23,7 @@ export type ConnectionDriver = {
 
 const driver: ConnectionDriver = {
 	browsers,
-	tabs: (browser) => new RelayClient({ browser }).tabs(),
+	tabs: (browser) => browserTabs(new RelayClient({ browser })),
 	identify: refreshLogin,
 	canOpenVerification,
 	openVerification: focusVerification,

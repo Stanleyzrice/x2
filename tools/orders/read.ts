@@ -5,7 +5,7 @@
 
 import { type BuyerOrder, buyerOrders, type Refund, cart as readCart, refund as readRefund, traces } from "../../connectors/sites/1688/api.ts";
 import { ChanbossOrderId, type Order } from "../../connectors/sites/chanboss/api.ts";
-import { challengeIn, inAccount, logins } from "../../platform/browser/browser.ts";
+import { inAccount, logins } from "../../platform/browser/browser.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { configuredWorkspaces, type Read } from "../../platform/tool.ts";
@@ -132,9 +132,7 @@ export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: s
 	const [s] = await sql`select buy_account from order_settings where id = 1`;
 	const name = s?.buy_account as string | null;
 	if (!name) return null;
-	const a = (await logins("1688")).find((x) => x.account.name === name || x.account.id === name);
-	if (!a) throw (await challengeIn("1688")) ?? new NeedsHuman(`采购账号「${name}」没有登录：在浏览器里登录这个 1688 账号，确认 booey 扩展已连接`);
-	return { userId: a.account.id, loginId: a.account.name };
+	return inAccount("1688", name, async (account) => ({ userId: account.id, loginId: account.name }));
 }
 
 export type Reads = {
@@ -218,6 +216,7 @@ export async function read1688(sql: Sql, log: (s: string) => void = console.erro
 		() => buyAccount(sql),
 		() => 1,
 	);
+	if (buy) accounts.set(buy.userId, buy.loginId);
 	const cart: CartLine[] = [],
 		purchases: Purchase[] = [];
 	for (const [userId, loginId] of accounts) {

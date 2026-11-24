@@ -5,13 +5,13 @@ import type { Sql } from "../../platform/db/index.ts";
 import { monitor } from "./procurement.ts";
 import {
 	assertProcurementAvailable,
-	type EvidenceCatalog,
 	type EvidenceListing,
 	type EvidenceSource,
 	procurementTarget,
 	readPurchaseEvidence,
 	summarizePurchase,
 } from "./procurement-evidence.ts";
+import type { EvidenceCatalog } from "./procurement-items.ts";
 import type { Match } from "./procurement-matches.ts";
 
 const target = { shop: "one", shopId: "10" };

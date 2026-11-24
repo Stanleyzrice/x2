@@ -3,13 +3,12 @@ import { z } from "zod";
 import type { PurchaseFact } from "../../connectors/sites/1688/purchases.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
-import type { ProcurementItem, ProcurementListingRow, ProcurementSourceRow } from "./procurement-items.ts";
+import type { EvidenceCatalog, ProcurementItem, ProcurementListingRow, ProcurementSourceRow } from "./procurement-items.ts";
 import type { Coverage, Match, MatchNeed, MatchRecord } from "./procurement-matches.ts";
 import { exceptionFor, matchSku } from "./similar.ts";
 
 export type EvidenceSource = ProcurementSourceRow & { skus: unknown; exceptions: string | null };
 export type EvidenceListing = ProcurementListingRow & { variants: unknown; offer: unknown };
-export type EvidenceCatalog = { shop: string; shopId: string; productId: string; models: unknown };
 export type PurchaseEvidence = {
 	coverage: Coverage & { selected: string | null; loginId: string | null };
 	records: MatchRecord[];

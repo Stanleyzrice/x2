@@ -70,6 +70,7 @@ const target: MatchNeed["target"] = { offerId: "123", skuId: "42", specId: "大�
 type DemandLine = Parameters<typeof procurementDemand>[0][number]["lines"][number];
 const demandLine = (qty: number, state: Match["state"] = "unmatched", paidQty = 0, unpaidQty = 0): DemandLine => ({
 	...item,
+	skuImage: item.image,
 	qty,
 	cartRecorded: false,
 	target,
@@ -81,6 +82,38 @@ const demandOrder = (sn: string, ...lines: DemandLine[]) => ({
 	shop: "one",
 	shopId: "1",
 	lines,
+});
+
+test("汇总只取本规格目录或订单行的图片；同组后续订单可补图，商品封面不充当规格图", () => {
+	const pink = "https://img.example/pink.jpg";
+	const grey = "https://img.example/grey.jpg";
+	const models = {
+		...listing,
+		models: [
+			{ modelId: "11", image: pink },
+			{ modelId: "12", image: grey },
+		],
+	};
+	const lines = procurementLines(
+		order([item, { ...item, modelId: "12" }, { ...item, modelId: "13", image: "" }]),
+		[chosen],
+		[],
+		[{ ...models, shopId: "other", models: [{ modelId: "11", image: grey }] }, models],
+	);
+	assert.deepEqual(
+		lines.map((line) => line.skuImage),
+		[pink, grey, null],
+	);
+	assert.equal(lines[2]!.image, chosen.itemImage);
+	const blank = { ...demandLine(1), skuImage: null };
+	const rows = procurementDemand([
+		demandOrder("A", blank),
+		demandOrder("B", ...lines.map((line) => ({ ...blank, ...line, target: line.modelId === "11" ? target : null }))),
+	]);
+	assert.deepEqual(
+		rows.map((row) => row.image),
+		[pink, grey, null],
+	);
 });
 
 test("不同订单的相同 1688 商品规格合计，保留各订单的数量", () => {

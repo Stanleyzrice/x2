@@ -52,7 +52,7 @@ async function call<T>(method: string, path: string, body?: unknown, keepalive =
 		body: body === undefined ? undefined : JSON.stringify(body),
 		keepalive,
 	});
-	const data: unknown = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
+	const data: unknown = await r.json().catch(() => ({ error: r.ok ? "X2 返回的数据不完整，请重新读取" : `${r.status} ${r.statusText}` }));
 	if (!r.ok) {
 		const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string" ? data.error : `${r.status}`;
 		throw new ApiError(message, r.status);

@@ -1,11 +1,14 @@
 // 订单行只关联同商品的已选货源或同店已发布商品稿；链接指向商品，不推断 1688 SKU 对应。
+import { z } from "zod";
 import type { Match, MatchNeed } from "./procurement-matches.ts";
 
 export type ProcurementItem = { itemId: string; modelId: string; name: string; spec: string; qty: number; image: string };
 export type ProcurementSourceRow = { itemId: string; offerId: string; title: string | null; itemImage: string | null; broken: string | null };
 export type ProcurementListingRow = { shop: string; shopId: string; productId: string; offerId: string; title: string | null };
+export type EvidenceCatalog = { shop: string; shopId: string; productId: string; models: unknown };
+const imageModels = z.array(z.object({ modelId: z.string().nullable(), image: z.string().nullish() }));
 export type ProcurementSource = { offerId: string; url: string; title: string; chosen: boolean; broken: string | null; origin: "chosen" | "listing" };
-export type ProcurementLine = Omit<ProcurementItem, "image"> & { image: string | null; sources: ProcurementSource[] };
+export type ProcurementLine = Omit<ProcurementItem, "image"> & { image: string | null; skuImage: string | null; sources: ProcurementSource[] };
 type Quantities = { qty: number; paidQty: number; unpaidQty: number; buyQty: number; reviewQty: number };
 const emptyQuantities = (): Quantities => ({ qty: 0, paidQty: 0, unpaidQty: 0, buyQty: 0, reviewQty: 0 });
 type DemandOrder = {
@@ -18,6 +21,7 @@ type Demand = Quantities & {
 	key: string;
 	name: string;
 	spec: string;
+	image: string | null;
 	target: MatchNeed["target"];
 	orders: (Quantities & { sn: string; shop: string })[];
 };
@@ -25,10 +29,11 @@ type Demand = Quantities & {
 export function procurementDemand(orders: DemandOrder[]): Demand[] {
 	const groups = new Map<string, Omit<Demand, "orders"> & { orders: Map<string, Demand["orders"][number]> }>();
 	for (const order of orders) {
-		for (const { itemId, modelId, name, spec, qty, target, purchase, cartRecorded } of order.lines) {
+		for (const { itemId, modelId, name, spec, skuImage, qty, target, purchase, cartRecorded } of order.lines) {
 			if (!Number.isSafeInteger(qty) || qty < 1) continue;
 			const key = JSON.stringify(target ? ["1688", target.offerId, target.skuId, target.specId ?? null] : ["shopee", order.shopId, itemId, modelId]);
-			const group = groups.get(key) ?? { key, name, spec, target, ...emptyQuantities(), orders: new Map() };
+			const group = groups.get(key) ?? { key, name, spec, target, image: null, ...emptyQuantities(), orders: new Map() };
+			group.image ??= skuImage;
 			const verified = purchase.state === "paid" || purchase.state === "unpaid" || purchase.state === "partial" || purchase.state === "refund";
 			const paidQty = verified ? purchase.paidQty : 0;
 			const unpaidQty = verified ? purchase.unpaidQty : 0;
@@ -64,6 +69,7 @@ export function procurementLines(
 	order: { shop: string; shopId: string; items: ProcurementItem[] },
 	chosen: ProcurementSourceRow[],
 	listings: ProcurementListingRow[],
+	catalog: EvidenceCatalog[] = [],
 ): ProcurementLine[] {
 	return order.items.map((item) => {
 		const own = chosen.filter((row) => row.itemId === item.itemId);
@@ -91,7 +97,10 @@ export function procurementLines(
 				origin: "listing",
 			});
 		}
-		const fallbackImage = own.map((row) => procurementImage(row.itemImage)).find(Boolean) ?? null;
-		return { ...item, image: procurementImage(item.image) ?? fallbackImage, sources: [...links.values()] };
+		const product = catalog.find((row) => row.shop === order.shop && row.shopId === order.shopId && row.productId === item.itemId);
+		const models = imageModels.safeParse(product?.models).data?.filter((model) => model.modelId === item.modelId);
+		const skuImage = (models?.length === 1 && procurementImage(models[0]!.image)) || procurementImage(item.image);
+		const image = skuImage ?? own.map((row) => procurementImage(row.itemImage)).find(Boolean) ?? null;
+		return { ...item, skuImage, image, sources: [...links.values()] };
 	});
 }

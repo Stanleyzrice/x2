@@ -13,6 +13,22 @@ test("API 错误只显示文字消息，空回包或非文字 error 仍保留 HT
 	await assert.rejects(api.pages(), { name: "Error", message: "需要重新登录" });
 });
 
+test("读到截断或缺少订单的回包时不覆盖采购快照，后续可以重读", async (t) => {
+	const item = "procurement-incomplete";
+	const good = { checkedAt: "latest", error: null, orders: [] };
+	const replies = [new Response('{"orders":'), Response.json({}), Response.json(good)];
+	t.mock.method(globalThis, "fetch", async () => replies.shift()!);
+	api.setProcurementMonitor(item, ["one"], good);
+	try {
+		await assert.rejects(api.procurementMonitor(item, ["one"], true), /返回的数据不完整/);
+		await assert.rejects(api.procurementMonitor(item, ["one"], true), /缺少订单列表/);
+		assert.equal(api.peekProcurementMonitor(item, ["one"]), good);
+		assert.deepEqual(await api.procurementMonitor(item, ["one"], true), good);
+	} finally {
+		api.invalidateProcurementMonitor(item);
+	}
+});
+
 test("采购缓存隔离店铺范围，同一范围合并读取，同步结果回填可立即回显", async (t) => {
 	let calls = 0;
 	t.mock.method(globalThis, "fetch", async () => {

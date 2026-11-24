@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import vm from "node:vm";
-import { PageJsError, RelayError } from "@wuwe1/booey";
+import { PageJsError, RelayClient, RelayError } from "@wuwe1/booey";
 import { NeedsHuman } from "../errors.ts";
-import { challenge, focusVerification, page, probe, registerSite, using } from "./browser.ts";
+import { browserTabs, challenge, focusVerification, inAccount, page, probe, registerSite, setAccountBrowserPreference, using } from "./browser.ts";
 
 const origin = "https://browser-test.example";
 const browser = "browser-lifecycle-test";
@@ -100,6 +100,42 @@ function relay(t: TestContext) {
 		},
 	};
 }
+
+test("扩展未返回标签列表时提示重新检测，不把回包当成空列表", async (t) => {
+	t.mock.method(globalThis, "fetch", async () => Response.json({}));
+	await assert.rejects(browserTabs(new RelayClient({ browser })), /未返回标签页列表/);
+});
+
+test("已绑定浏览器按真实身份核对账号，保留读取异常，其他账号不能代用", async (t) => {
+	relay(t);
+	const key = "purchase-account-test";
+	const account = { id: "buyer-id", name: "buyer-login" };
+	let broken = true;
+	registerSite({
+		key,
+		title: "采购测试",
+		origin,
+		hosts: () => false,
+		login: {
+			cookie: { url: origin, signedIn: () => false },
+			identify: async () => {
+				if (broken) throw new Error("扩展读取超时");
+				return account;
+			},
+		},
+	});
+	setAccountBrowserPreference(key, account, browser);
+	await assert.rejects(
+		inAccount(key, account.id, async () => assert.fail()),
+		/扩展读取超时/,
+	);
+	broken = false;
+	assert.deepEqual(await inAccount(key, account.id, async (identity) => identity), account);
+	await assert.rejects(
+		inAccount(key, "different-buyer", async () => assert.fail()),
+		/buyer-login/,
+	);
+});
 
 test("浏览器标签生命周期", async (t) => {
 	const home = await mkdtemp(join(tmpdir(), "x2-browser-test-"));
