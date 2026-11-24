@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { askDeepSeek, inspectWithDeepSeek } from "./api.ts";
+import { askDeepSeek, DeepSeekOutputError, inspectWithDeepSeek } from "./api.ts";
 
 test("DeepSeek 视觉走官方接口并传真实图片数据", async () => {
 	const request: typeof fetch = async (url, input) => {
@@ -40,4 +40,22 @@ test("结构化分析传所选 DeepSeek，含原图时由 Flash 处理", async (
 	};
 	assert.deepEqual(await askDeepSeek(input, request), { ok: true });
 	assert.deepEqual(await askDeepSeek({ ...input, images: [{ mime: "image/png", bytes: new Uint8Array([0, 1, 2]) }] }, request), { ok: true });
+});
+
+test("DeepSeek 空白、截断和非 JSON 输出可以区分于 HTTP 或内容拒绝", async () => {
+	const image = { mime: "image/png", bytes: new Uint8Array([0, 1, 2]) };
+	for (const [reason, content] of [
+		["stop", "  "],
+		["length", '{"ok":'],
+		["stop", "看好了"],
+	] as const) {
+		await assert.rejects(
+			inspectWithDeepSeek("fixture", image, "看图", async () => Response.json({ choices: [{ finish_reason: reason, message: { content } }] })),
+			DeepSeekOutputError,
+		);
+	}
+	await assert.rejects(
+		inspectWithDeepSeek("fixture", image, "看图", async () => Response.json({ choices: [{ finish_reason: "content_filter", message: { content: null } }] })),
+		(error) => error instanceof Error && !(error instanceof DeepSeekOutputError) && /拒绝返回/.test(error.message),
+	);
 });

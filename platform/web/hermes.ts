@@ -180,7 +180,7 @@ export function hermesRoutes(workspace: () => Promise<Sql>, port: () => number) 
 							p.kind === "chat"
 								? withHermesOutput(
 										(delta) => live.append(delta),
-										() => invoke("listing.hermes-chat", { ...p, history }),
+										() => invoke("listing.hermes-chat", { ...p, history, requestId: p.id }, "web"),
 									)
 								: invoke("listing.source-hermes", { ...p, publish: true }),
 					);

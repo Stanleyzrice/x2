@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createStartGate, initialStrategy, mergeRuns, restoredResearch, runOutcome } from "./state.ts";
+import { createStartGate, initialStrategy, mergeRuns, restoredResearch, runOutcome, runOutcomeDetail } from "./state.ts";
 import type { RunStatus, RunSummary, StartInput } from "./types.ts";
 
 const run = (status: RunStatus, overrides: Partial<RunSummary> = {}): RunSummary => ({
@@ -68,4 +68,24 @@ test("历史列表只显示当前店铺，较旧的启动回执不会覆盖完�
 	const completed = run("completed", { updatedAt: "2026-11-17T10:02:00Z" });
 	assert.deepEqual(mergeRuns([completed, run("running", { id: "other", shop: "other" })], run("running"), "demo"), [completed]);
 	assert.deepEqual(mergeRuns([completed], run("running", { updatedAt: completed.updatedAt }), "demo"), [completed]);
+});
+
+test("研究记录区分中途卡住和已结束但不足额，并展示原记录的原因", () => {
+	assert.deepEqual(runOutcomeDetail(run("needs-human", { stoppedAtStep: "读取类目", error: "知虾的工作台没有类目树" })), {
+		summary: "停在「读取类目」",
+		reason: "知虾的工作台没有类目树",
+		nextStep: "在已连接的浏览器打开知虾工作台，确认台湾站类目已加载，再开始选品。",
+	});
+	assert.deepEqual(runOutcomeDetail(run("completed", { found: 1, stopReason: "缺少购买线索" })), {
+		summary: "已结束 · 新增备选 1／3 件",
+		reason: "缺少购买线索",
+		nextStep: "按记录补齐市场或货源证据后再开始选品。",
+	});
+	assert.equal(runOutcomeDetail(run("completed", { found: 0, selected: 2 }))?.summary, "已结束 · 已选 2／3 件");
+	assert.equal(runOutcomeDetail(run("interrupted"))?.summary, "未记录停止步骤");
+	assert.equal(
+		runOutcomeDetail(run("needs-human", { stoppedAtStep: "寻找货源", error: "1688 要过滑块验证：在 cheeroutdoor 的浏览器里拉一下再重试" }))?.nextStep,
+		"在该店铺连接的浏览器完成 1688 滑块验证，再重新开始选品。",
+	);
+	assert.equal(runOutcomeDetail(run("completed", { found: 3 })), null);
 });

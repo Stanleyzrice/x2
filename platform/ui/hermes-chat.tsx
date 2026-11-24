@@ -8,6 +8,7 @@ import {
 	PackageIcon,
 	PlusIcon,
 	QuoteIcon,
+	SearchIcon,
 	Settings2Icon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -82,6 +83,7 @@ function legacyImport() {
 }
 
 const shortcuts = [
+	{ label: "查看选品策略", message: "请列出当前店铺可用的选品策略和最近的选品结果。", icon: SearchIcon },
 	{ label: "查看上架流程", message: "请用 X2 工具读取现有上架流程，概括从备选到发布的步骤。", icon: ListChecksIcon },
 	{ label: "检查最近商品稿", message: "请用 X2 工具查看当前店铺最近的商品稿，概括已发布和还需处理的项目。", icon: FileSearchIcon },
 ] as const;
@@ -373,7 +375,7 @@ function ConversationChat({ id, setup, openSettings, select }: { id: string; set
 													<BotIcon />
 												</EmptyMedia>
 												<EmptyTitle className="text-2xl tracking-tight sm:text-3xl">今天要处理什么？</EmptyTitle>
-												<EmptyDescription>查看商品稿和运营流程，或接手从上架备选区交来的任务。</EmptyDescription>
+												<EmptyDescription>按策略寻找货源、查询选品结果，或继续处理商品稿。</EmptyDescription>
 											</EmptyHeader>
 											<EmptyContent className="grid max-w-none gap-2 sm:grid-cols-2">
 												{shortcuts.map(({ label, message, icon: Icon }) => (
@@ -603,6 +605,9 @@ function ConversationChat({ id, setup, openSettings, select }: { id: string; set
 const toolLabels: Record<string, string> = {
 	read_rules: "读取 X2 流程",
 	recent_listings: "查看最近商品稿",
+	selection_workbench: "查看选品策略和任务",
+	selection_start: "启动策略选品",
+	selection_result: "读取选品结果",
 	source_preflight: "预检备选商品",
 	source_detail: "读取备选货源",
 	source_update: "关联商品稿",

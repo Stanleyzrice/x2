@@ -118,7 +118,8 @@ export function researchPolicyText(markdown: string, rules: string, template: z.
 
 export async function loadSelectionPolicy() {
 	const markdown = await readProjectFile(WORKBENCH_POLICY);
-	return { ...parseWorkbenchPolicy(markdown), markdown };
+	const policy = parseWorkbenchPolicy(markdown);
+	return { ...policy, targetShop: process.env.X2_DEFAULT_SHOP?.trim() || policy.targetShop, markdown };
 }
 
 export async function loadStrategyDefinitions(sql?: Sql, shop?: string): Promise<StrategyDefinition[]> {

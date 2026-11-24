@@ -73,10 +73,11 @@ export function groundedNote(
 	const text = `${post.title}\n${post.body}`;
 	const excerpt = reference.part === 0 ? text : transcripts.get(`${post.id}:${reference.part}`);
 	if (!excerpt || !normal(excerpt).includes(normal(reference.quote))) return null;
-	const market = reference.marketQuote;
+	const title = post.title.trim().slice(0, 160);
+	const market = taiwanShopee(title) ? title : reference.marketQuote;
 	if (!taiwanShopee(market) || ![text, excerpt].some((part) => normal(part).includes(normal(market)))) return null;
 	if (normal(reference.quote).length < 4 || reference.matchTerms.some((term) => normal(term).length < 2)) return null;
-	return { url: post.url, publishedAt: post.publishedAt, title: post.title, reference };
+	return { url: post.url, publishedAt: post.publishedAt, title: post.title, reference: { ...reference, marketQuote: market } };
 }
 
 const marketItem = z.looseObject({

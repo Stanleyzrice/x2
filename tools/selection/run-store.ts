@@ -65,7 +65,19 @@ type Row = {
 	candidates: unknown;
 	cancel_requested: boolean;
 	config: unknown;
+	stopped_at_step?: string | null;
+	stop_reason?: string | null;
 };
+const stopFields = (sql: Sql) => sql`
+	case when status in ('needs-human','failed','interrupted') then (
+		select event->>'step' from jsonb_array_elements(events) with ordinality as history(event, position)
+		where event->>'step' not in ('停止原因','工具读取受限','工具事实')
+		order by position desc limit 1
+	) end as stopped_at_step,
+	case when status='completed' and events->-1->'data'->>'kind'='stop' then
+		case when events->-1->>'step'='完成' and events->-2->>'step'='停止补充' then events->-2->'data'->>'reason'
+			else events->-1->'data'->>'reason' end
+	end as stop_reason`;
 export function runSnapshot(config: unknown): RunSnapshot {
 	const parsed = z
 		.object({ strategy: z.object({ steps: z.array(z.string()) }).optional(), agent: z.object({ model: z.string(), reasoningEffort: z.string() }).optional() })
@@ -85,6 +97,8 @@ const summary = (r: SummaryRow): RunSummary => ({
 	brief: r.brief,
 	status: runStatus.parse(r.status),
 	step: r.step,
+	...(r.stopped_at_step ? { stoppedAtStep: r.stopped_at_step } : {}),
+	...(r.stop_reason ? { stopReason: r.stop_reason } : {}),
 	found: r.found,
 	...(r.strategy_id === socialDiscoveryStrategy ? { selected: r.found + (r.existing_count ?? 0) } : {}),
 	createdAt: r.created_at.toISOString(),
@@ -144,11 +158,12 @@ export function postgresRunStore(sql: Sql): RunStore {
 		}
 	};
 	const get = async (id: string) => {
-		const [r] = await connection(id)<Row[]>`select * from selection_runs where id=${id}`;
+		const query = connection(id);
+		const [r] = await query<Row[]>`select *, ${stopFields(query)} from selection_runs where id=${id}`;
 		return r ? detail(r) : null;
 	};
 	const sameRequest = async (input: RunCreation, query = connection()) => {
-		const [r] = await query<Row[]>`select * from selection_runs where request_id=${input.requestId}`;
+		const [r] = await query<Row[]>`select *, ${stopFields(query)} from selection_runs where request_id=${input.requestId}`;
 		if (!r) return null;
 		sameRunInput(r.input_fingerprint, input.fingerprint);
 		return detail(r);
@@ -165,15 +180,18 @@ export function postgresRunStore(sql: Sql): RunStore {
 	return {
 		get,
 		recover,
-		list: async (shop) =>
-			(
-				await connection()<SummaryRow[]>`select id, shop, strategy_id, strategy_name, limit_count, brief, status, step, found, created_at, updated_at, error,
+		list: async (shop) => {
+			const query = connection();
+			return (
+				await query<SummaryRow[]>`select id, shop, strategy_id, strategy_name, limit_count, brief, status, step, found, created_at, updated_at, error,
+					${stopFields(query)},
 					case when strategy_id = ${socialDiscoveryStrategy} then
 						(select count(*)::int from jsonb_array_elements(candidates) entry where entry->>'status' = 'existing')
 					end as existing_count
 					from selection_runs where deleted_at is null and (${shop ?? null}::text is null or shop=${shop ?? null})
 					order by created_at desc limit 40`
-			).map(summary),
+			).map(summary);
+		},
 		open: (input) =>
 			serializeOpen(async () => {
 				await recover();

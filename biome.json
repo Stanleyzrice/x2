@@ -74,6 +74,10 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["tools/listing/hermes*.ts"],
+			"linter": { "rules": { "style": { "noNonNullAssertion": "error" } } }
 		}
 	],
 	"linter": {

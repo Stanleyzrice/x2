@@ -17,7 +17,12 @@ test("配置写入要求实际本机、准确端口及同源", () => {
 	assert.throws(() => requireLocal(request("127.0.0.1", "outside.example:5170", "http://outside.example:5170"), 5170));
 });
 
-test("没有数据库时仍可以加载启动页面和脱敏配置状态", async () => {
+test("没有数据库时也能配置象寄，成对替换密钥且状态不回显", async (t) => {
+	const original = process.env;
+	process.env = { ...original, XIANGJI_USER_KEY: "", XIANGJI_IMG_TRANS_KEY: "" };
+	t.after(() => {
+		process.env = original;
+	});
 	const dist = await mkdtemp(join(tmpdir(), "x2-setup-test-"));
 	await writeFile(join(dist, "index.html"), "<div id=root>setup</div>");
 	const server = await serve(
@@ -37,6 +42,25 @@ test("没有数据库时仍可以加载启动页面和脱敏配置状态", async
 		assert.equal(setup.local, true);
 		assert.ok(!("apiKey" in setup));
 		assert.ok(!("databaseUrl" in setup));
+		assert.equal(setup.xiangji, false);
+		const save = (data: object) =>
+			fetch(`${base}/api/setup/xiangji`, {
+				method: "POST",
+				headers: { "content-type": "application/json", origin: base },
+				body: JSON.stringify(data),
+			});
+		const pair = { userKey: "test-user-first", imgTransKey: "test-image-first" };
+		const saved = await save(pair);
+		assert.equal(saved.status, 200);
+		const text = await saved.text();
+		assert.equal(JSON.parse(text).xiangji, true);
+		assert.ok(!text.includes(pair.userKey) && !text.includes(pair.imgTransKey));
+		assert.equal((await save({ userKey: "second-only" })).ok, false);
+		assert.equal(process.env.XIANGJI_USER_KEY, pair.userKey);
+		assert.equal(process.env.XIANGJI_IMG_TRANS_KEY, pair.imgTransKey);
+		assert.equal((await save({ userKey: "second-user", imgTransKey: "second-image" })).ok, true);
+		assert.equal(process.env.XIANGJI_USER_KEY, "second-user");
+		assert.equal(process.env.XIANGJI_IMG_TRANS_KEY, "second-image");
 	} finally {
 		await server.stop();
 		await rm(dist, { recursive: true, force: true });

@@ -271,17 +271,45 @@ test("独立临时库：选品运行租约、幂等与货源导入事务", { tim
 			const abandoned = await first.open(abandonedRequest);
 			leases.push(abandoned);
 			await first.running(abandoned.run.id);
+			await first.event(abandoned.run.id, "读取类目", "读取真实类目路径");
 			await abandoned.release();
 			assert.equal(await second.shouldStop(abandoned.run.id), true);
 			assert.equal(await second.recover(), 1);
 			const repeated = await second.open(abandonedRequest);
 			assert.equal(repeated.created, false);
 			assert.equal(repeated.run.status, "interrupted");
+			assert.equal(repeated.run.stoppedAtStep, "读取类目");
 			const fresh = await second.open(creation());
 			leases.push(fresh);
 			assert.equal(fresh.created, true);
 			await second.finish(fresh.run.id, "completed");
 			await fresh.release();
+		});
+
+		await t.test("列表从历史事件读取实际停止步骤和不足额的原因", async () => {
+			const blocked = await first.open(creation());
+			leases.push(blocked);
+			await first.event(blocked.run.id, "读取类目", "读取真实类目路径");
+			await first.event(blocked.run.id, "工具读取受限", "未取得类目树");
+			await first.event(blocked.run.id, "停止原因", "未取得类目树", { kind: "stop", reason: "未取得类目树", added: 0, existing: 0 });
+			await first.finish(blocked.run.id, "needs-human", "未取得类目树");
+			await blocked.release();
+
+			const short = await first.open(creation());
+			leases.push(short);
+			await first.event(short.run.id, "停止补充", "研究计划重复已执行的采购查询", {
+				kind: "stop",
+				reason: "研究计划重复已执行的采购查询",
+				added: 0,
+				existing: 0,
+			});
+			await first.event(short.run.id, "完成", "已完成有界补查，名额不足", { kind: "stop", reason: "已完成有界补查，名额不足", added: 0, existing: 0 });
+			await first.finish(short.run.id, "completed");
+			await short.release();
+
+			const runs = await first.list(request.shop);
+			assert.equal(runs.find((run) => run.id === blocked.run.id)?.stoppedAtStep, "读取类目");
+			assert.equal(runs.find((run) => run.id === short.run.id)?.stopReason, "研究计划重复已执行的采购查询");
 		});
 		await t.test("收费译图先存提交意图，未知回执在另一连接重做时不再发请求", async () => {
 			const item = { sha: "translation-unknown", url: "https://example.test/unknown.png" };
@@ -518,7 +546,24 @@ await translate(sql, ${JSON.stringify([item])}, { submit: async () => {
 			const [pending] = await sql<{ id: string }[]>`insert into writes (batch, op, target, params, key, status)
 				values (1, '上架', ${draft.id}, ${sql.json({ listingId: draft.id })}, 'hermes-fixture', '结果未知') returning id::text`;
 			assert.ok(pending);
-			const { call } = listingHermesTools(sql, { shop: draft.shop, shopId: "1554182542", sourceIds: [source.id], trial: false, batch: "fixture" }, "fixture");
+			const { call, specifications } = listingHermesTools(
+				sql,
+				{ shop: draft.shop, shopId: "1554182542", sourceIds: [source.id], trial: false, batch: "fixture" },
+				"fixture",
+			);
+			const preflight = await call("source_preflight", {});
+			const [content] = preflight.content;
+			assert.ok(content?.type === "text");
+			const plan = JSON.parse(content.text);
+			assert.deepEqual(
+				plan.items.map((item: { status: string; nextTool: string }) => [item.status, item.nextTool]),
+				[["needs-input", "source_detail"]],
+			);
+			const names = new Set(specifications.map((tool) => tool.name));
+			for (const tool of [plan.items[0].nextTool, ...plan.reviewTools, ...Object.values(plan.imageSteps).flat()]) {
+				assert.ok(names.has(typeof tool === "string" ? tool : tool.tool));
+			}
+
 			await assert.rejects(call("publish", { id: other.id }), /不在本次已授权/);
 			await assert.rejects(call("publish", { id: draft.id }), new RegExp(`原写入待核对 ${pending.id}`));
 		});

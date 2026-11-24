@@ -83,7 +83,7 @@ export function parse(urls: string[], raw: unknown): Outcome {
 export function translationConfig() {
 	const userKey = process.env.XIANGJI_USER_KEY,
 		imgTransKey = process.env.XIANGJI_IMG_TRANS_KEY;
-	if (!userKey || !imgTransKey) throw new Error("没有设 XIANGJI_USER_KEY、XIANGJI_IMG_TRANS_KEY（写在 .env 里）");
+	if (!userKey || !imgTransKey) throw new Error("请在 X2 启动配置的「象寄图片翻译」中填写 UserKey 和 ImgTransKey");
 	const base = process.env.XIANGJI_BASE || "https://api.tosoiot.com";
 	if (!base.startsWith("https://")) throw new Error("XIANGJI_BASE 要是 https 地址");
 	return { userKey, imgTransKey, base };

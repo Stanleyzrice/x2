@@ -8,11 +8,12 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { errorOf, remember, saved } from "@/lib/state";
 import { ApiError, api, type Item as PageItem, usePoll } from "../../api.ts";
 import { flashModel, hermesModel, hermesModels, modelLabels } from "../../hermes-schema.ts";
 import type { Props } from "./schema.ts";
-import { canCancelRun, createStartGate, initialStrategy, mergeRuns, restoredResearch, runOutcome } from "./state.ts";
+import { canCancelRun, createStartGate, initialStrategy, mergeRuns, restoredResearch, runOutcome, runOutcomeDetail } from "./state.ts";
 import { defaultSelectionLimit, type RunReceipt, type RunSummary, socialDiscoveryStrategy, strategyIds, type Workbench } from "./types.ts";
 
 const dateTime = (value: string) =>
@@ -177,7 +178,10 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						{activeRun && (
 							<div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
 								<p role="status" className="flex items-center gap-2">
-									<Spinner aria-hidden="true" /> 正在执行{activeRun.strategyName}
+									<Spinner aria-hidden="true" className="shrink-0" />
+									<span>
+										{activeRun.strategyName} · {activeRun.step}
+									</span>
 								</p>
 								<Button
 									type="button"
@@ -202,32 +206,49 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						{!records.length ? (
 							<p className="text-sm text-muted-foreground">暂无研究记录</p>
 						) : (
-							<ul className="divide-y">
-								{records.slice(0, shown).map((run) => {
-									const outcome = runOutcome(run);
-									return (
-										<li
-											key={run.id}
-											className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto_5.5rem]"
-											title={run.error ?? undefined}
-										>
-											<span className="text-sm font-medium">{run.strategyName}</span>
-											<time
-												dateTime={run.createdAt}
-												className="col-start-1 row-start-2 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-1"
-											>
-												{dateTime(run.createdAt)}
-											</time>
-											<Badge
-												variant={outcome === "失败" ? "destructive" : outcome === "成功" ? "default" : "secondary"}
-												className="col-start-2 row-span-2 row-start-1 justify-self-end sm:col-start-3 sm:row-span-1"
-											>
-												{outcome}
-											</Badge>
-										</li>
-									);
-								})}
-							</ul>
+							<Table aria-label="研究记录" className="min-w-[44rem] table-fixed [&_td]:align-top">
+								<TableHeader>
+									<TableRow>
+										<TableHead scope="col" className="w-28">
+											策略
+										</TableHead>
+										<TableHead scope="col" className="w-20">
+											状态
+										</TableHead>
+										<TableHead scope="col" className="w-28">
+											执行结果
+										</TableHead>
+										<TableHead scope="col">具体原因</TableHead>
+										<TableHead scope="col" className="w-40">
+											处理方式
+										</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{records.slice(0, shown).map((run) => {
+										const outcome = runOutcome(run);
+										const detail = runOutcomeDetail(run);
+										return (
+											<TableRow key={run.id}>
+												<TableCell className="whitespace-normal">
+													<p className="font-medium">{run.strategyName}</p>
+													<time dateTime={run.createdAt} className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+														{dateTime(run.createdAt)}
+													</time>
+												</TableCell>
+												<TableCell>
+													<Badge variant={outcome === "失败" ? "destructive" : outcome === "成功" ? "default" : "secondary"}>{outcome}</Badge>
+												</TableCell>
+												<TableCell className="break-words whitespace-normal">{detail?.summary ?? "已达目标"}</TableCell>
+												<TableCell className="break-words whitespace-normal text-muted-foreground">
+													{detail?.reason ?? (detail ? "记录未注明具体原因" : "—")}
+												</TableCell>
+												<TableCell className="break-words whitespace-normal">{detail?.nextStep ?? "—"}</TableCell>
+											</TableRow>
+										);
+									})}
+								</TableBody>
+							</Table>
 						)}
 						{records.length > shown && (
 							<Button variant="ghost" size="sm" onClick={() => setShown(shown + 8)}>

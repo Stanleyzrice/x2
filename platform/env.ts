@@ -1,6 +1,3 @@
-// 本机的 .env（仓库根目录）：外部服务的 key（Gemini、象寄）、库的地址这类只在本机的设置。
-// 命令行启动时最先读一次（x2.ts 第一个 import），环境里已经有的不覆盖。.env 不进 git、不进库
-
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
@@ -8,7 +5,16 @@ import { parseEnv } from "node:util";
 
 const file = new URL("../.env", import.meta.url);
 const setup = new URL("../.x2-setup.json", import.meta.url);
-const setupKeys = ["X2_DATABASE_URL", "X2_DEFAULT_SHOP", "X2_SETUP_COMPLETE", "DEEPSEEK_API_KEY", "X2_HERMES_MODEL", "X2_HERMES_PYTHON"] as const;
+const setupKeys = [
+	"X2_DATABASE_URL",
+	"X2_DEFAULT_SHOP",
+	"X2_SETUP_COMPLETE",
+	"DEEPSEEK_API_KEY",
+	"X2_HERMES_MODEL",
+	"X2_HERMES_PYTHON",
+	"XIANGJI_USER_KEY",
+	"XIANGJI_IMG_TRANS_KEY",
+] as const;
 type SetupKey = (typeof setupKeys)[number];
 type SetupSettings = Partial<Record<SetupKey, string>>;
 
@@ -18,7 +24,9 @@ function readSetup(): SetupSettings {
 	return Object.fromEntries(setupKeys.flatMap((key) => (typeof value[key] === "string" ? [[key, value[key]]] : [])));
 }
 
-for (const [k, v] of Object.entries(readSetup())) process.env[k] ??= v;
+const { XIANGJI_USER_KEY, XIANGJI_IMG_TRANS_KEY, ...startup } = readSetup();
+if (XIANGJI_USER_KEY && XIANGJI_IMG_TRANS_KEY) Object.assign(process.env, { XIANGJI_USER_KEY, XIANGJI_IMG_TRANS_KEY });
+for (const [k, v] of Object.entries(startup)) process.env[k] ??= v;
 if (existsSync(file)) for (const [k, v] of Object.entries(parseEnv(readFileSync(file, "utf8")))) process.env[k] ??= v;
 
 let pending = Promise.resolve();

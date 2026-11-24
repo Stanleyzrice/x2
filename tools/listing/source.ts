@@ -22,6 +22,7 @@ import {
 	type CollectSourceInput,
 	mergeSourceFields,
 	mergeSourceResearch,
+	RemovedSource,
 	SourceId,
 	type SourceItem,
 	type SourceProduct,
@@ -124,7 +125,7 @@ async function saveSourceTransaction(
 	if (added) return { id: added.id, isNew: true, repaired: false };
 	const [old] = await tx<SourceRow[]>`select * from listing_sources where platform = ${source.platform} and source_id = ${source.sourceId} for update`;
 	if (!old) throw new Usage("备选商品刚变化，请重试采集");
-	if (old.deleted_at) throw new Usage("采集期间已删除，请重新点击加入备选");
+	if (old.deleted_at) throw new RemovedSource("采集期间已删除，请重新点击加入备选");
 	// 已明确失败的采集可修复。显式补采只填完全为空的详情，保留其他原始字段和人工补充值。
 	const fillDetail = refreshMissingDetail && !old.snapshot.description.blocks.length && source.description.blocks.length > 0;
 	let repaired = false;
@@ -166,7 +167,7 @@ export async function saveCollectedSource(sql: Sql, input: CollectSourceInput, p
 		}
 		const saved = await saveSourceTransaction(tx, source, input.refreshMissingDetail);
 		const [row] = await tx<SourceRow[]>`select * from listing_sources where id = ${saved.id} for update`;
-		if (!row || row.deleted_at) throw new Usage("商品已从备选区移除，未重新加入");
+		if (!row || row.deleted_at) throw new RemovedSource("商品已从备选区移除，未重新加入");
 		if (input.provenance) {
 			const research = mergeSourceResearch(row.research ?? [], {
 				...input.provenance,

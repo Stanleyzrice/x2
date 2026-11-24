@@ -12,12 +12,44 @@ export type RunSummary = {
 	brief: string;
 	status: RunStatus;
 	step: string;
+	stoppedAtStep?: string;
+	stopReason?: string;
 	found: number;
 	selected?: number;
 	createdAt: string;
 	updatedAt: string;
 	error: string | null;
 };
+export const canCancelRun = (status: RunStatus) => status === "queued" || status === "running";
+
+export function runOutcome(run: Pick<RunSummary, "status" | "found" | "limit" | "selected">): "成功" | "失败" | "需要处理" | null {
+	if (canCancelRun(run.status)) return null;
+	if (run.status === "completed") return (run.selected ?? run.found) >= run.limit ? "成功" : "需要处理";
+	return run.status === "failed" || run.status === "cancelled" ? "失败" : "需要处理";
+}
+
+export function runOutcomeDetail(
+	run: Pick<RunSummary, "status" | "found" | "limit" | "selected" | "stopReason" | "error" | "stoppedAtStep">,
+): { summary: string; reason?: string; nextStep?: string } | null {
+	const outcome = runOutcome(run);
+	if (!outcome || outcome === "成功") return null;
+	if (run.status === "completed") {
+		const count = run.selected === undefined ? `新增备选 ${run.found}` : `已选 ${run.selected}`;
+		return { summary: `已结束 · ${count}／${run.limit} 件`, reason: run.stopReason, nextStep: "按记录补齐市场或货源证据后再开始选品。" };
+	}
+	const reason = run.error ?? run.stopReason;
+	if (run.status === "cancelled") return { summary: "研究已停止", reason };
+	let nextStep: string | undefined;
+	if (run.status === "interrupted") nextStep = "确认 X2 正在运行，再重新开始选品。";
+	if (reason?.startsWith("知虾的工作台没有类目树")) nextStep = "在已连接的浏览器打开知虾工作台，确认台湾站类目已加载，再开始选品。";
+	if (reason?.startsWith("1688 要过滑块验证")) nextStep = "在该店铺连接的浏览器完成 1688 滑块验证，再重新开始选品。";
+	return {
+		summary: run.stoppedAtStep ? `停在「${run.stoppedAtStep}」` : "未记录停止步骤",
+		reason,
+		nextStep,
+	};
+}
+
 const factIndexes = z.array(z.number().int().nonnegative()).max(12);
 const briefText = z.string().trim().min(1).max(500);
 export const researchConclusionSchema = z.object({

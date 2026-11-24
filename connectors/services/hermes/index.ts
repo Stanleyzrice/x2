@@ -2,7 +2,7 @@ import { z } from "zod";
 import { get, type Toolkit } from "../../../platform/tool.ts";
 import { checkHermesConnection } from "./api.ts";
 
-export { askDeepSeek, deepSeekStatus } from "./api.ts";
+export { askDeepSeek, DeepSeekOutputError, deepSeekStatus } from "./api.ts";
 
 export const hermes: Toolkit = {
 	name: "hermes",

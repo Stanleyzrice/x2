@@ -273,6 +273,13 @@ test("业务工具只能从平台注册 Agent 工具，参数声明和校验共�
 		assert.deepEqual(readImportProblems([file], new Map([[file, statement]])), ["tools/listing/hermes.ts：Agent 工具通过 platform/mcp.ts 注册"]);
 });
 
+test("内置上架任务不执行面向人工导出的提示词模板", () => {
+	for (const file of CODE.filter((name) => /^tools\/listing\/hermes(?:-[^/]+)?\.ts$/.test(rel(name)))) {
+		const source = readFileSync(file, "utf8");
+		assert.doesNotMatch(source, /["'](?:listing\.source-prompt|\.\/source-prompt\.ts|[^"']*collecting\.md)["']/, rel(file));
+	}
+});
+
 test("只有写入引擎可以开放站点提交，连接器只领取凭证", () => {
 	const file = join(ROOT, "connectors/sites/shopee/seller.ts");
 	const deps = "../../../platform/site-write.ts";

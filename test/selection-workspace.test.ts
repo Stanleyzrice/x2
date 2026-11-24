@@ -5,6 +5,7 @@ import { configuredWorkspaces, register } from "../platform/tool.ts";
 import { actions, inputs, props } from "../platform/ui/interactable/selection/schema.ts";
 import { defaultSelectionLimit, socialDiscoveryStrategy } from "../platform/ui/interactable/selection/types.ts";
 import { actParams } from "../platform/web/pages.ts";
+import { loadSelectionPolicy } from "../tools/selection/definitions.ts";
 import { TOOLKITS } from "../x2.ts";
 
 test("策略选品是位于人工采集前的固定工作区", () => {
@@ -17,7 +18,7 @@ test("策略选品是位于人工采集前的固定工作区", () => {
 	assert.equal(props.safeParse({ shop: "" }).success, false);
 });
 
-test("首次设置把固定工作区绑定到新店，网页动作保留服务端绑定", (t) => {
+test("首次设置把固定工作区绑定到新店，网页动作保留服务端绑定", async (t) => {
 	register(...TOOLKITS);
 	const previous = process.env.X2_DEFAULT_SHOP;
 	t.after(() => {
@@ -28,6 +29,7 @@ test("首次设置把固定工作区绑定到新店，网页动作保留服务�
 	const workspaces = configuredWorkspaces();
 	const selection = workspaces.find((workspace) => workspace.component === "selection")!;
 	assert.equal(props.parse(selection.props).shop, "new-shop");
+	assert.equal((await loadSelectionPolicy()).targetShop, selection.props.shop);
 	assert.ok(workspaces.some((workspace) => workspace.key === "catalog-new-shop"));
 	assert.deepEqual(actParams(selection.props, { shop: "old-shop", limit: 3 }, inputs).shop, "new-shop");
 	assert.deepEqual(workspaces.find((workspace) => workspace.component === "procurement")?.props.shops, ["new-shop"]);

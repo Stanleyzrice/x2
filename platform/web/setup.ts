@@ -10,7 +10,7 @@ import { listBrowserAuthorizations } from "./browser-authorizations.ts";
 import { requestOriginUrl } from "./browser-connection.ts";
 import { ensureWorkspaces } from "./pages.ts";
 
-export type SetupState = { ready: boolean; database: boolean; local: boolean; hermes: boolean; model: string; shop: string | null };
+export type SetupState = { ready: boolean; database: boolean; local: boolean; hermes: boolean; xiangji: boolean; model: string; shop: string | null };
 export type Route = (body: Record<string, unknown>, url: URL, req: IncomingMessage) => Promise<unknown>;
 
 const loopback = new Set(["127.0.0.1", "[::1]", "localhost"]);
@@ -28,14 +28,16 @@ export function requireLocal(req: IncomingMessage, port: number): void {
 }
 
 const databaseInput = z.object({ url: z.string().trim().min(1).max(4096) });
+const apiKey = z
+	.string()
+	.trim()
+	.min(1)
+	.max(300)
+	.regex(/^[\x21-\x7e]+$/);
+const xiangjiInput = z.strictObject({ userKey: apiKey, imgTransKey: apiKey });
+export type XiangjiInput = z.input<typeof xiangjiInput>;
 const modelInput = z.object({
-	apiKey: z
-		.string()
-		.trim()
-		.min(1)
-		.max(300)
-		.regex(/^[\x21-\x7e]+$/)
-		.optional(),
+	apiKey: apiKey.optional(),
 	model: hermesModel,
 	python: z
 		.string()
@@ -60,6 +62,7 @@ export function setupRoutes(workspace: () => Promise<Sql>, port: () => number, p
 			database,
 			local,
 			hermes,
+			xiangji: Boolean(process.env.XIANGJI_USER_KEY?.trim() && process.env.XIANGJI_IMG_TRANS_KEY?.trim()),
 			model: process.env.X2_HERMES_MODEL?.trim() || flashModel,
 			shop: process.env.X2_DEFAULT_SHOP?.trim() || null,
 		};
@@ -109,6 +112,13 @@ export function setupRoutes(workspace: () => Promise<Sql>, port: () => number, p
 				},
 				persist,
 			);
+			return state(req);
+		},
+		"POST /api/setup/xiangji": async (raw, _url, req) => {
+			requireLocal(req, port());
+			const p = xiangjiInput.safeParse(raw);
+			if (!p.success) throw new Usage("请同时填写象寄的 UserKey 和 ImgTransKey，两项均为无空格的密钥");
+			await saveSetupSettings({ XIANGJI_USER_KEY: p.data.userKey, XIANGJI_IMG_TRANS_KEY: p.data.imgTransKey }, persist);
 			return state(req);
 		},
 		"GET /api/setup/shops": async (_raw, _url, req) => {

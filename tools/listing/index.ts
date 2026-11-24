@@ -103,6 +103,7 @@ export { imageLanguageBlock } from "./image-language.ts";
 
 export const collectSourceTool = collectionTools["collect-source"];
 export const pricingPreviewTool = pricingCalculatorTools["calculator-preview"];
+export { RemovedSource } from "./source-data.ts";
 export { parsePolicyJson, sourcePolicySchema, sourceSkuLimitProblem, sourceSupplyProblems, WORKBENCH_POLICY } from "./source-policy.ts";
 
 export const listing: Toolkit = {

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { type HermesModel, hermesModel } from "../../hermes-schema.ts";
-import { type RunStatus, type RunSummary, type StartInput, type StrategyId, strategyIds } from "./types.ts";
+import { canCancelRun } from "./contract.ts";
+
+import { type RunSummary, type StartInput, type StrategyId, strategyIds } from "./types.ts";
+
+export { canCancelRun, runOutcome, runOutcomeDetail } from "./contract.ts";
 
 const strategy = z.enum(strategyIds);
 const startInput = z.object({
@@ -55,14 +59,6 @@ export function createStartGate(restored: StartInput | null = null) {
 			if (known) request = null;
 		},
 	};
-}
-
-export const canCancelRun = (status: RunStatus) => status === "queued" || status === "running";
-
-export function runOutcome(run: Pick<RunSummary, "status" | "found" | "limit" | "selected">): "成功" | "失败" | "需要处理" | null {
-	if (canCancelRun(run.status)) return null;
-	if (run.status === "completed") return (run.selected ?? run.found) >= run.limit ? "成功" : "需要处理";
-	return run.status === "failed" || run.status === "cancelled" ? "失败" : "需要处理";
 }
 
 export function mergeRuns(runs: RunSummary[], received: RunSummary | null, shop: string): RunSummary[] {

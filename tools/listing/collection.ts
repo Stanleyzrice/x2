@@ -11,6 +11,7 @@ import {
 	type CollectedSourceResult,
 	type CollectSourceInput,
 	collectSourceParams,
+	RemovedSource,
 	type SourceProduct,
 	sourcePlatform,
 	sourceProductSchema,
@@ -73,7 +74,7 @@ export async function readSource(url: string): Promise<SourceProduct> {
 
 type ExistingSource = { snapshot: SourceProduct; deleted: boolean };
 export function collectedSourceDecision(existing: ExistingSource | null, refreshMissingDetail = false): "read" | "reuse" {
-	if (existing?.deleted) throw new Usage("商品已由用户从备选区移除，未自动恢复");
+	if (existing?.deleted) throw new RemovedSource("商品已由用户从备选区移除，未自动恢复");
 	if (refreshMissingDetail && existing && !existing.snapshot.description.blocks.length) return "read";
 	return existing && !existing.snapshot.errors.length ? "reuse" : "read";
 }

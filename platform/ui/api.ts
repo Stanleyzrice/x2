@@ -6,7 +6,7 @@ import type { BrowserConnectionInput, BrowserConnectionResult } from "../web/bro
 import type { HermesRequest, HermesRun } from "../web/hermes.ts";
 import type { Conversation, ConversationSummary, HistoryImport } from "../web/hermes-history.ts";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
-import type { SetupState } from "../web/setup.ts";
+import type { SetupState, XiangjiInput } from "../web/setup.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
 import type { HermesTurn } from "./hermes-schema.ts";
 import type { SourceDetail, SourceList } from "./interactable/catalog/source-types.ts";
@@ -85,6 +85,7 @@ export const api = {
 	setupDatabase: (url: string) => call<SetupState>("POST", "/api/setup/database", { url }),
 	setupHermes: (input: { apiKey?: string; model: string; python?: string }) => call<SetupState>("POST", "/api/setup/hermes", input),
 	setupShops: () => call<BrowserAuthorization[]>("GET", "/api/setup/shops"),
+	setupXiangji: (input: XiangjiInput) => call<SetupState>("POST", "/api/setup/xiangji", input),
 	setupShop: (accountId: string) => call<SetupState>("POST", "/api/setup/shop", { accountId }),
 	finishSetup: () => call<SetupState>("POST", "/api/setup/finish", {}),
 	startHermes: (request: HermesRequest) => call<HermesRun>("POST", "/api/hermes/run", request),

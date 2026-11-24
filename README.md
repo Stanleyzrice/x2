@@ -38,7 +38,7 @@ node x2.ts web
 | PostgreSQL | 给新店用一个独立数据库，连接账号须能在库里建表。地址格式为 `postgresql://x2:<密码>@127.0.0.1:55432/x2`，密码中的 URL 保留字符须编码。已有 PostgreSQL 可以直接建库。 |
 | Shopee 和 1688 | 在 Chrome 登录新店及采购账号。在 `chrome://extensions` 开启开发者模式，加载仓库内 `node_modules/@wuwe1/booey/extension`。执行 `pnpm exec booey daemon start`，再用 `pnpm exec booey doctor` 检查连接。首次设置从当前浏览器识别店铺。 |
 | DeepSeek 和 x2bot | 安装下方 Hermes Agent（智能代理）环境后，在首次设置填店铺自己的 DeepSeek API Key（接口密钥）并测试。客服建议复用这把密钥。 |
-| 象寄翻译 | 用到时在仓库根目录的 `.env` 填 `XIANGJI_USER_KEY`、`XIANGJI_IMG_TRANS_KEY`。旧 Gemini 流程、知虾镜像与其他集成按 [配置示例](.env.example) 选配。 |
+| 象寄翻译 | 在启动配置的「象寄图片翻译」打开[象寄官网](https://www.xiangjifanyi.com/home/)，注册或登录自己的账号，填写 UserKey（用户密钥）和 ImgTransKey（图片翻译服务标识码）。旧 Gemini 流程、知虾镜像与其他集成按 [配置示例](.env.example) 选配。 |
 
 本机已安装 Docker（容器工具）时，可以用官方 PostgreSQL 镜像启动新库。先把命令里的示例密码换成自己的密码。
 

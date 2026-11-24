@@ -2,7 +2,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { type Offer, OfferId, offerIdOf, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
+import { Usage } from "../../platform/errors.ts";
 import { parseJson, strs } from "../../platform/tool.ts";
+
+export class RemovedSource extends Usage {}
 
 export const SourceId = z.string().regex(/^\d+$/).brand<"SourceId">();
 export type SourceId = z.output<typeof SourceId>;

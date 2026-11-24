@@ -137,12 +137,14 @@ export async function runHermes(
 	}
 }
 
-const answer = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().trim().min(1) }) })).min(1) });
+const answer = z.object({ choices: z.array(z.object({ finish_reason: z.string().nullish(), message: z.object({ content: z.string().nullish() }) })).min(1) });
+
+export class DeepSeekOutputError extends Error {}
 
 type Image = { bytes: Uint8Array; mime: string };
-type JsonPrompt = { model: HermesModel; prompt: string; images?: readonly Image[]; signal: AbortSignal };
+type JsonPrompt = { model: HermesModel; prompt: string; images?: readonly Image[]; maxTokens?: number; signal: AbortSignal };
 
-async function deepSeekJson(apiKey: string, { model, prompt, images, signal }: JsonPrompt, request: typeof fetch) {
+async function deepSeekJson(apiKey: string, { model, prompt, images, maxTokens, signal }: JsonPrompt, request: typeof fetch) {
 	const content = images?.length
 		? [
 				{ type: "text", text: prompt },
@@ -156,6 +158,7 @@ async function deepSeekJson(apiKey: string, { model, prompt, images, signal }: J
 		headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
 		body: JSON.stringify({
 			model,
+			max_tokens: maxTokens,
 			thinking: { type: "disabled" },
 			response_format: { type: "json_object" },
 			messages: [{ role: "user", content }],
@@ -169,24 +172,25 @@ async function deepSeekJson(apiKey: string, { model, prompt, images, signal }: J
 		if ([401, 402, 403, 429].includes(result.status)) throw new NeedsHuman(`${message}，请检查密钥、权限或额度`);
 		throw new Error(message);
 	}
-	const body = answer.safeParse(await result.json().catch(() => null));
+	const raw = await result.json().catch(() => {
+		signal.throwIfAborted();
+		return null;
+	});
+	const body = answer.safeParse(raw);
 	if (!body.success) throw new Error("DeepSeek 没有返回有效正文");
+	const { finish_reason: reason, message } = body.data.choices[0]!;
+	if (reason === "content_filter") throw new Error("DeepSeek 拒绝返回本次内容");
+	if (reason === "length") throw new DeepSeekOutputError("DeepSeek 的 JSON 输出被截断");
+	if (!message.content?.trim()) throw new DeepSeekOutputError("DeepSeek 返回了空的 JSON 正文");
 	try {
-		return JSON.parse(body.data.choices[0]!.message.content) as unknown;
+		return JSON.parse(message.content) as unknown;
 	} catch {
-		throw new Error("DeepSeek 没有返回有效 JSON");
+		throw new DeepSeekOutputError("DeepSeek 没有返回有效 JSON");
 	}
 }
 
 export function askDeepSeek(
-	{
-		model,
-		prompt,
-		schema,
-		images,
-		signal,
-		timeoutMs,
-	}: Omit<JsonPrompt, "images"> & { schema: Record<string, unknown>; images?: readonly Image[]; timeoutMs: number },
+	{ model, prompt, schema, images, signal, timeoutMs }: Omit<JsonPrompt, "maxTokens"> & { schema: Record<string, unknown>; timeoutMs: number },
 	request: typeof fetch = fetch,
 ) {
 	const key = process.env.DEEPSEEK_API_KEY?.trim();
@@ -197,6 +201,7 @@ export function askDeepSeek(
 			model: images?.length ? flashModel : model,
 			prompt: `${prompt}\n\n只返回符合以下 JSON Schema 的 JSON 对象。\n${JSON.stringify(schema)}`,
 			images,
+			maxTokens: 12_288,
 			signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
 		},
 		request,

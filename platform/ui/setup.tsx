@@ -1,4 +1,4 @@
-import { ArrowRightIcon, BotIcon, CheckIcon, DatabaseIcon, KeyRoundIcon, LoaderCircleIcon, Settings2Icon, StoreIcon } from "lucide-react";
+import { ArrowRightIcon, BotIcon, CheckIcon, DatabaseIcon, KeyRoundIcon, LanguagesIcon, LoaderCircleIcon, Settings2Icon, StoreIcon } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, type BrowserAuthorization, type SetupState } from "./api.ts";
 import { BrowserConnection } from "./browser-connection.tsx";
@@ -8,16 +8,18 @@ import { Label } from "./components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { errorOf } from "./lib/state.ts";
 
-type Section = "database" | "hermes" | "shop" | "finish";
+type Section = "database" | "hermes" | "xiangji" | "shop" | "finish";
 const steps = [
 	{ id: "database", title: "数据库", icon: DatabaseIcon },
 	{ id: "hermes", title: "DeepSeek", icon: BotIcon },
+	{ id: "xiangji", title: "象寄图片翻译", icon: LanguagesIcon },
 	{ id: "shop", title: "Shopee 店铺", icon: StoreIcon },
 ] as const;
 
 export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onChange: (state: SetupState) => void; onEnter: () => void }) {
 	const [url, setUrl] = useState("");
 	const [key, setKey] = useState("");
+	const [xiangji, setXiangji] = useState({ userKey: "", imgTransKey: "" });
 	const [model, setModel] = useState(state.model);
 	const [python, setPython] = useState("");
 	const [accounts, setAccounts] = useState<BrowserAuthorization[]>([]);
@@ -25,7 +27,7 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 	const [busy, setBusy] = useState<Section | null>(null);
 	const [problem, setProblem] = useState<{ section: Section; text: string } | null>(null);
 	const [checked, setChecked] = useState<Section | null>(null);
-	const ready = { database: state.database, hermes: state.hermes, shop: Boolean(state.shop) };
+	const ready = { database: state.database, hermes: state.hermes, xiangji: state.xiangji, shop: Boolean(state.shop) };
 	useEffect(() => {
 		if (!state.database || !state.local) return;
 		let active = true;
@@ -53,6 +55,7 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 				setPython("");
 			}
 			if (section === "database") setUrl("");
+			if (section === "xiangji") setXiangji({ userKey: "", imgTransKey: "" });
 			if (section === "finish") onEnter();
 		} catch (error) {
 			setProblem({ section, text: errorOf(error) });
@@ -63,7 +66,13 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 	const saveHermes = () => api.setupHermes({ model, ...(key.trim() ? { apiKey: key.trim() } : {}), ...(python.trim() ? { python: python.trim() } : {}) });
 	function enter() {
 		const pendingModel = state.local && (key.trim() || (state.hermes && (model !== state.model || python.trim())));
-		if (state.ready && !pendingModel) {
+		const pendingXiangji = state.local && Boolean(xiangji.userKey.trim() || xiangji.imgTransKey.trim());
+		if (pendingXiangji && !(xiangji.userKey.trim() && xiangji.imgTransKey.trim())) {
+			setProblem({ section: "xiangji", text: "请同时填写 UserKey 和 ImgTransKey。" });
+			document.getElementById(xiangji.userKey.trim() ? "xiangji-imgTransKey" : "xiangji-userKey")?.focus();
+			return;
+		}
+		if (state.ready && !pendingModel && !pendingXiangji) {
 			onEnter();
 			return;
 		}
@@ -74,6 +83,11 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 				onChange(next);
 				setKey("");
 				setPython("");
+			}
+			if (pendingXiangji) {
+				next = await api.setupXiangji(xiangji);
+				onChange(next);
+				setXiangji({ userKey: "", imgTransKey: "" });
 			}
 			return next.ready ? next : api.finishSetup();
 		});
@@ -105,7 +119,7 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 						<span className="grid size-10 place-items-center rounded-xl bg-foreground text-base font-bold tracking-tight text-background">X2</span>
 						<span className="text-sm font-semibold tracking-wide">运营工作台</span>
 					</div>
-					<nav aria-label="配置进度" className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-3 lg:mt-12 lg:grid-cols-1">
+					<nav aria-label="配置进度" className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-12 lg:grid-cols-1">
 						{steps.map(({ id, icon: Icon, title }) => (
 							<a
 								key={id}
@@ -127,7 +141,7 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 					<header>
 						<h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{state.ready ? "工作台设置" : "设置 X2"}</h1>
 						<p className="mt-2 text-sm text-muted-foreground">
-							{state.ready ? "管理本机数据库、模型连接和默认店铺。" : "连接数据库后进入工作台。也可以在这里配置模型和绑定店铺。"}
+							{state.ready ? "管理本机数据库、模型、图片翻译和默认店铺。" : "连接数据库后进入工作台。在这里配置模型、图片翻译和店铺。"}
 						</p>
 					</header>
 					{!state.local && (
@@ -228,6 +242,52 @@ export function SetupPage({ state, onChange, onEnter }: { state: SetupState; onC
 							</div>
 						</form>
 						{error("hermes")}
+					</section>
+					<section id="setup-xiangji" className="space-y-3 border-b pb-5">
+						<SectionTitle name="象寄图片翻译" checked={state.xiangji} />
+						<p className="text-sm text-muted-foreground">使用你自己的象寄账号。实际提交译图时使用该账号的额度。</p>
+						<div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+							<a className="underline underline-offset-4" href="https://www.xiangjifanyi.com/home/" target="_blank" rel="noopener noreferrer">
+								去象寄官网申请密钥 ↗
+							</a>
+							<a className="underline underline-offset-4" href="https://openapi-doc.xiangjifanyi.com/6573979m0" target="_blank" rel="noopener noreferrer">
+								密钥获取说明 ↗
+							</a>
+						</div>
+						<form className="space-y-3" onSubmit={(e) => submit(e, "xiangji", () => api.setupXiangji(xiangji))}>
+							<div className="grid gap-3 sm:grid-cols-2">
+								{(
+									[
+										["userKey", "UserKey（用户密钥）"],
+										["imgTransKey", "ImgTransKey（图片翻译服务标识码）"],
+									] as const
+								).map(([field, name]) => (
+									<div key={field} className="space-y-2">
+										<Label htmlFor={`xiangji-${field}`}>{name}</Label>
+										<Input
+											id={`xiangji-${field}`}
+											type="password"
+											autoComplete="new-password"
+											spellCheck={false}
+											required
+											value={xiangji[field]}
+											onChange={(e) => setXiangji({ ...xiangji, [field]: e.target.value })}
+											placeholder={state.xiangji ? "已保存，替换时重新输入两项" : "填写象寄账号的密钥"}
+											disabled={!state.local || Boolean(busy)}
+										/>
+									</div>
+								))}
+							</div>
+							<Button type="submit" variant="outline" disabled={!state.local || !(xiangji.userKey.trim() && xiangji.imgTransKey.trim()) || Boolean(busy)}>
+								{label("xiangji", "保存象寄密钥", "保存中…")}
+							</Button>
+							{checked === "xiangji" && (
+								<span role="status" className="ml-3 text-sm text-muted-foreground">
+									已保存到本机。
+								</span>
+							)}
+						</form>
+						{error("xiangji")}
 					</section>
 					<section id="setup-shop" className="space-y-3 border-b pb-5">
 						<SectionTitle name="Shopee（虾皮）店铺" checked={Boolean(state.shop)} />
