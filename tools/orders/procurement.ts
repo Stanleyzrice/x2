@@ -46,37 +46,32 @@ type MonitorRow = {
 	items_text: string | null;
 	items: ProcurementItem[];
 	step: string | null;
-	cart_pending: boolean;
-	cart_done: boolean;
+	cart_pending: string[];
+	cart_done: string[];
 };
 const syncs = new WeakMap<Sql, Map<string, { at: string | null; error: string | null }>>();
-const purchaseErrors = new WeakMap<Sql, string>();
+const purchaseErrors = new WeakMap<Sql, { account: string | null; capturedAt: string | null; error: string }>();
 const scopeKey = (shops: string[]) => JSON.stringify([...new Set(shops)].sort());
 async function refreshPurchases(sql: Sql): Promise<void> {
-	try {
-		const account = await buyAccount(sql);
-		if (!account) throw new Usage("请先配置 1688 采购账号");
-		const result = await refreshAccount(sql, { id: account.userId, name: account.loginId });
-		if (result.status !== "succeeded") throw new Error(result.error ?? "1688 采购订单仍在同步，保留上次成功快照");
-		purchaseErrors.delete(sql);
-	} catch (e) {
-		purchaseErrors.set(sql, (e as Error).message);
-		throw e;
-	}
+	const account = await buyAccount(sql);
+	if (!account) throw new Usage("请先配置 1688 采购账号");
+	const result = await refreshAccount(sql, { id: account.userId, name: account.loginId });
+	if (result.status !== "succeeded") throw new Error(result.error ?? "1688 采购订单仍在同步，保留上次成功快照");
+	purchaseErrors.delete(sql);
 }
 
 export async function monitor(sql: Sql, shops: string[]) {
 	const [rows, historical, evidence] = await Promise.all([
 		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
-		exists (select 1 from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
+		array(select distinct l->>'modelId' from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
 			and w.status in ('待执行', '已提交', '结果未知', '不一致') and l->>'sn' = o.sn) as cart_pending,
-		exists (select 1 from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
+		array(select distinct l->>'modelId' from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
 			and w.status in ('成功', '已核对') and l->>'sn' = o.sn) as cart_done
 		from orders o where o.shop in ${sql(shops)} and o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货'
 		order by o.created_at desc nulls last, o.sn desc`,
 		// 其他店铺及已履约需求一起分配数量，不能把以前已购买的件数重新分给当前待采购订单。
 		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
-		false as cart_pending, false as cart_done from orders o where o.order_source = 'shopee'
+		array[]::text[] as cart_pending, array[]::text[] as cart_done from orders o where o.order_source = 'shopee'
 		and o.platform_status in ('待出货', '已出货', '已完成', '退货退款')`,
 		readPurchaseEvidence(sql),
 	]);
@@ -119,13 +114,15 @@ export async function monitor(sql: Sql, shops: string[]) {
 		})),
 	);
 	const targets = new Map(needs.map((need) => [`${need.sn}:${need.modelId}`, need.target]));
-	const purchaseError = evidence.coverage.selected && purchaseErrors.get(sql);
+	const failure = purchaseErrors.get(sql);
+	const purchaseError = failure && failure.account === evidence.coverage.selected && failure.capturedAt === evidence.coverage.capturedAt ? failure.error : null;
 	const purchases = purchaseError ? { ...evidence.coverage, complete: false, error: purchaseError } : evidence.coverage;
 	const matches = matchProcurement(needs, evidence.records, purchases);
 	const sync = syncs.get(sql)?.get(scopeKey(shops));
 	const orders = rows.map((r) => {
 		const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings).map((line) => ({
 			...line,
+			cartRecorded: r.cart_pending.includes(line.modelId) || r.cart_done.includes(line.modelId),
 			target: targets.get(`${r.sn}:${line.modelId}`) ?? null,
 			purchase: matches.get(`${r.sn}:${line.modelId}`)!,
 		}));
@@ -140,8 +137,8 @@ export async function monitor(sql: Sql, shops: string[]) {
 			lines,
 			purchase,
 			step: purchase.label,
-			cartPending: r.cart_pending,
-			cartDone: r.cart_done,
+			cartPending: r.cart_pending.length > 0,
+			cartDone: r.cart_done.length > 0,
 		};
 	});
 	return {
@@ -153,7 +150,7 @@ export async function monitor(sql: Sql, shops: string[]) {
 	};
 }
 
-export async function syncMonitor(sql: Sql, shops: string[]) {
+export async function syncMonitor(sql: Sql, shops: string[], force = false) {
 	const key = scopeKey(shops);
 	const states = syncs.get(sql) ?? new Map<string, { at: string | null; error: string | null }>();
 	syncs.set(sql, states);
@@ -164,13 +161,28 @@ export async function syncMonitor(sql: Sql, shops: string[]) {
 				await writeOrders(sql, shops);
 				return new Date().toISOString();
 			},
-			60_000,
+			force ? 0 : 60_000,
 		);
 		states.set(key, { at, error: null });
 	} catch (e) {
 		states.set(key, { at: states.get(key)?.at ?? null, error: (e as Error).message });
 	}
-	await reuse(`procurement-purchases:${key}`, () => refreshPurchases(sql), 60_000).catch(() => {});
+	const saved = await monitor(sql, shops);
+	const { selected, capturedAt, error } = saved.purchases;
+	if (
+		!force &&
+		(/滑块|安全验证/.test(error ?? "") ||
+			(saved.purchases.complete &&
+				capturedAt &&
+				Date.now() - Date.parse(capturedAt) < 15 * 60_000 &&
+				!saved.orders.some((o) => o.createdAt && o.createdAt > capturedAt)))
+	)
+		return saved;
+	try {
+		await refreshPurchases(sql);
+	} catch (e) {
+		purchaseErrors.set(sql, { account: selected, capturedAt, error: (e as Error).message });
+	}
 	return monitor(sql, shops);
 }
 
@@ -183,7 +195,8 @@ async function selected(sql: Sql, p: z.infer<typeof selectionParams>) {
 	const bad = reads.results.find((r) => !r.ok);
 	if (bad) throw new Usage(`${bad.what}读取失败，停止采购以避免重复：${bad.error ?? "未知原因"}`);
 	const state = await snapshot(sql, reads);
-	return selectPurchase(state, checkOrders(state), p.orders, p.shops);
+	const expected = new Map(latest.orders.flatMap((order) => order.lines.map((line) => [`${order.sn}:${line.modelId}`, line] as const)));
+	return selectPurchase(state, checkOrders(state), p.orders, p.shops, expected);
 }
 
 export async function purchasePreview(sql: Sql, p: z.infer<typeof selectionParams>) {

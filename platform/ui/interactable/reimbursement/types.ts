@@ -54,6 +54,7 @@ export type Data = {
 	total: number;
 	summary: Summary;
 	pendingSummary: Summary;
+	pendingVersion: string;
 	offset: number;
 	limit: number;
 	global: { status: string; error: string | null } | null;

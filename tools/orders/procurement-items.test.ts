@@ -71,6 +71,7 @@ type DemandLine = Parameters<typeof procurementDemand>[0][number]["lines"][numbe
 const demandLine = (qty: number, state: Match["state"] = "unmatched", paidQty = 0, unpaidQty = 0): DemandLine => ({
 	...item,
 	qty,
+	cartRecorded: false,
 	target,
 	sources: [],
 	purchase: { state, label: state, paidQty, unpaidQty, requiredQty: qty, reason: null, matches: [], canPurchase: state === "unmatched" },
@@ -79,9 +80,6 @@ const demandOrder = (sn: string, ...lines: DemandLine[]) => ({
 	sn,
 	shop: "one",
 	shopId: "1",
-	cartPending: false,
-	cartDone: false,
-	purchase: { canPurchase: lines.every((line) => line.purchase.canPurchase) },
 	lines,
 });
 
@@ -94,8 +92,8 @@ test("不同订单的相同 1688 商品规格合计，保留各订单的数量",
 	assert.equal(same?.qty, 6);
 	assert.equal(same?.buyQty, 6);
 	assert.deepEqual(same?.orders, [
-		{ sn: "first", shop: "one", qty: 3 },
-		{ sn: "second", shop: "two", qty: 3 },
+		{ sn: "first", shop: "one", qty: 3, paidQty: 0, unpaidQty: 0, buyQty: 3, reviewQty: 0 },
+		{ sn: "second", shop: "two", qty: 3, paidQty: 0, unpaidQty: 0, buyQty: 3, reviewQty: 0 },
 	]);
 	assert.equal(different?.qty, 4);
 });
@@ -124,11 +122,11 @@ test("已付、待付、待加购与待核对各自有数量，未核实数量�
 		demandOrder("second", demandLine(1, "unpaid", 0, 1)),
 		demandOrder("third", demandLine(6, "partial", 2, 1)),
 		demandOrder("fourth", demandLine(5, "unknown", 4)),
-		{ ...demandOrder("fifth", demandLine(2)), cartPending: true },
-		{ ...demandOrder("sixth", demandLine(3)), cartDone: true },
+		demandOrder("fifth", { ...demandLine(2), cartRecorded: true }),
+		demandOrder("sixth", { ...demandLine(3), cartRecorded: true }),
 		demandOrder("seventh", demandLine(4)),
 	]);
 	assert.ok(summary);
 	const { qty, paidQty, unpaidQty, buyQty, reviewQty } = summary;
-	assert.deepEqual({ qty, paidQty, unpaidQty, buyQty, reviewQty }, { qty: 23, paidQty: 4, unpaidQty: 2, buyQty: 4, reviewQty: 13 });
+	assert.deepEqual({ qty, paidQty, unpaidQty, buyQty, reviewQty }, { qty: 23, paidQty: 4, unpaidQty: 2, buyQty: 7, reviewQty: 10 });
 });

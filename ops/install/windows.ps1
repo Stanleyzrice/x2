@@ -40,8 +40,8 @@ if (-not (Test-Path (Join-Path $app '.git'))) {
 
 & $pixi install --manifest-path $manifest
 if ($LASTEXITCODE -ne 0) { throw 'Could not install the X2 runtime.' }
-$gitShell = Join-Path $runtime '.pixi\envs\default\Library\usr\bin\sh.exe'
-if (-not (Test-Path $gitShell)) { throw 'Git sh.exe was not installed by the runtime.' }
+$gitShell = Join-Path $runtime '.pixi\envs\default\Library\bin\bash.exe'
+if (-not (Test-Path $gitShell)) { throw 'Git Bash was not installed by the runtime.' }
 $previousShell = $env:npm_config_script_shell
 Push-Location $app
 try {

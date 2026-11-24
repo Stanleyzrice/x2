@@ -37,6 +37,7 @@ import { type CollectSourceInput, sourceProductSchema } from "../tools/listing/s
 import { translate, translationState } from "../tools/listing/translations.ts";
 import { LISTING_WRITES } from "../tools/listing/writes.ts";
 import { shopImageFlow, xiangjiImages, xiangjiImagesParams } from "../tools/listing/xiangji-images.ts";
+import { listRecords, markAllReported, markReported } from "../tools/reimbursement/index.ts";
 import { deleteRun, postgresRunStore, type RunCreation, type RunLease, type RunStore } from "../tools/selection/run-store.ts";
 import { TOOLKITS } from "../x2.ts";
 
@@ -107,10 +108,51 @@ test("独立临时库：选品运行租约、幂等与货源导入事务", { tim
 		clients.push(sql, firstSql, secondSql);
 		const [database] = await sql<{ name: string }[]>`select current_database() as name`;
 		assert.equal(database?.name, name, "只允许在本次创建的临时库里运行 fixture");
-		for (const file of ["../platform/db/schema.sql", "../tools/selection/schema.sql", "../tools/listing/schema.sql", "../tools/chat/schema.sql"]) {
+		for (const file of [
+			"../platform/db/schema.sql",
+			"../tools/selection/schema.sql",
+			"../tools/listing/schema.sql",
+			"../tools/chat/schema.sql",
+			"../tools/reimbursement/schema.sql",
+		]) {
 			await sql.unsafe(await readFile(new URL(file, import.meta.url), "utf8"));
 		}
 		await sql`insert into strategies(name) values('集成测试策略')`;
+		await t.test("全部报账跨页只标记筛选内的已付款订单，版本冲突整批回滚", async () => {
+			await sql`insert into reimbursement_accounts(account_id,name) values ('A','A'),('B','B')`;
+			await sql`insert into reimbursement_runs(id,status) values ('fixture','succeeded')`;
+			const fact = {
+				receipt: { originalMinor: "100", paidAt: "2026-11-10T03:00:00Z", revision: "fixture" },
+				goodsMinor: "100",
+				freightMinor: "0",
+				discountMinor: "0",
+				supplier: "测试",
+				items: [],
+			};
+			await sql`insert into reimbursement_orders(account_id,order_id,fact,paid_at,captured_at,revision)
+				select a, i::text, ${sql.json(fact)}, case when i=54 then null when i=53 then '2026-11-11'::date else '2026-11-10'::date end, now(), 'fixture'
+				from unnest(array['A','B']) a cross join generate_series(1,54) i`;
+			const query = { accounts: ["A"], search: "测试", paidFrom: "2026-11-10", paidTo: "2026-11-10", offset: 50 };
+			const before = await listRecords(sql, query);
+			assert.equal(before.pendingSummary.orderCount, 52);
+			assert.equal(before.rows.length, 2);
+			const params = { ...query, pendingVersion: before.pendingVersion };
+			await markReported(sql, { account: "A", orderId: "1", reported: true, revision: 0 });
+			await markReported(sql, { account: "A", orderId: "1", reported: false, revision: 1 });
+			await assert.rejects(markAllReported(sql, params), /已变化/);
+			const current = await listRecords(sql, query);
+			assert.equal(current.pendingSummary.orderCount, 52);
+			const verified = { ...params, pendingVersion: current.pendingVersion };
+			const submissions = await Promise.allSettled([markAllReported(firstSql, verified), markAllReported(secondSql, verified)]);
+			assert.deepEqual(
+				submissions.flatMap((r) => (r.status === "fulfilled" ? [r.value.marked] : [])),
+				[52],
+			);
+			assert.equal((await listRecords(sql, query)).pendingSummary.orderCount, 0);
+			assert.equal((await listRecords(sql, { search: "", offset: 0 })).pendingSummary.orderCount, 54);
+			assert.equal((await sql`select revision from reimbursement_marks where account_id='A' and order_id='1'`)[0]?.revision, 3);
+		});
+
 		await t.test("客服首页保留最新成功快照，消息预览只返回本店当前窗口", async () => {
 			const shop = "cheeroutdoor";
 			const [binding] = await sql<{ shop_id: string }[]>`select shop_id from shop_settings where shop = ${shop}`;

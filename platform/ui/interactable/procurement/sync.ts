@@ -3,27 +3,35 @@ import { readCache } from "../../read-cache.ts";
 import type { Monitor } from "./types.ts";
 
 export function monitorSync(
-	load: (item: string, shops: string[]) => Promise<Monitor>,
+	load: (item: string, shops: string[], force: boolean) => Promise<Monitor>,
 	publish: (item: string, shops: string[], value: Monitor) => void,
 	epoch: (item: string) => number = () => 0,
 	current: (item: string, shops: string[]) => Monitor | null = () => null,
 	ttl = 45_000,
 ) {
 	const reads = readCache<Monitor>(ttl, 20);
-	return (item: string, shops: string[], force = false) => {
+	const active = new Map<string, Promise<Monitor>>();
+	return async (item: string, shops: string[], force = false) => {
 		const key = JSON.stringify([item, [...new Set(shops)].sort()]);
 		const saved = current(item, shops) ?? reads.peek(key);
-		if (!force && saved && [saved.error, saved.purchases?.error].some((message) => /滑块|安全验证/.test(message ?? ""))) return Promise.resolve(saved);
-		return reads.read(
+		if (!force && saved && /滑块|安全验证/.test(saved.error ?? "")) return Promise.resolve(saved);
+		if (force && active.has(key)) await active.get(key)?.catch(() => {});
+		const result = reads.read(
 			key,
 			async () => {
 				const version = epoch(item);
-				const value = await load(item, shops);
+				const value = await load(item, shops, force);
 				if (epoch(item) === version) publish(item, shops, value);
 				return value;
 			},
 			force,
 		);
+		if (!force) active.set(key, result);
+		try {
+			return await result;
+		} finally {
+			if (active.get(key) === result) active.delete(key);
+		}
 	};
 }
 

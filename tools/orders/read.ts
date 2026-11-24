@@ -149,17 +149,23 @@ const REUSE_MS = 2 * 60_000;
 const memo = new Map<string, { at: number; value: Promise<unknown> }>();
 const fresh = (key: string, maxAge: number) => {
 	const m = memo.get(key);
-	return m && Date.now() - m.at < maxAge ? m : null;
+	return m && (m.at === Infinity || Date.now() - m.at < maxAge) ? m : null;
 };
 
 export function reuse<T>(key: string, fn: () => Promise<T>, maxAge = REUSE_MS): Promise<T> {
 	const m = fresh(key, maxAge);
 	if (m) return m.value as Promise<T>;
 	const value = fn();
-	memo.set(key, { at: Date.now(), value });
-	value.catch(() => {
-		if (memo.get(key)?.value === value) memo.delete(key);
-	});
+	const entry = { at: Infinity, value };
+	memo.set(key, entry);
+	void value.then(
+		() => {
+			entry.at = Date.now();
+		},
+		() => {
+			if (memo.get(key) === entry) memo.delete(key);
+		},
+	);
 	return value;
 }
 const again = (key: string) => (fresh(key, REUSE_MS) ? "（2 分钟内读过，复用）" : "");

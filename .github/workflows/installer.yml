@@ -31,4 +31,5 @@ jobs:
           Copy-Item ops/install/pixi.toml $runtime
           git clone --local $env:GITHUB_WORKSPACE (Join-Path $env:X2_INSTALL_DIR 'app')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:Path = ($env:Path -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'git.exe')) }) -join ';'
           & ./ops/install/windows.ps1 -Check

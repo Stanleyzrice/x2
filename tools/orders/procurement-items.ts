@@ -6,46 +6,42 @@ export type ProcurementSourceRow = { itemId: string; offerId: string; title: str
 export type ProcurementListingRow = { shop: string; shopId: string; productId: string; offerId: string; title: string | null };
 export type ProcurementSource = { offerId: string; url: string; title: string; chosen: boolean; broken: string | null; origin: "chosen" | "listing" };
 export type ProcurementLine = Omit<ProcurementItem, "image"> & { image: string | null; sources: ProcurementSource[] };
+type Quantities = { qty: number; paidQty: number; unpaidQty: number; buyQty: number; reviewQty: number };
+const emptyQuantities = (): Quantities => ({ qty: 0, paidQty: 0, unpaidQty: 0, buyQty: 0, reviewQty: 0 });
 type DemandOrder = {
 	sn: string;
 	shop: string;
 	shopId: string;
-	cartPending: boolean;
-	cartDone: boolean;
-	purchase: Pick<Match, "canPurchase">;
-	lines: (ProcurementLine & { target: MatchNeed["target"]; purchase: Match })[];
+	lines: (ProcurementLine & { target: MatchNeed["target"]; purchase: Match; cartRecorded: boolean })[];
 };
-type Demand = {
+type Demand = Quantities & {
 	key: string;
 	name: string;
 	spec: string;
 	target: MatchNeed["target"];
-	qty: number;
-	paidQty: number;
-	unpaidQty: number;
-	buyQty: number;
-	reviewQty: number;
-	orders: { sn: string; shop: string; qty: number }[];
+	orders: (Quantities & { sn: string; shop: string })[];
 };
 
 export function procurementDemand(orders: DemandOrder[]): Demand[] {
 	const groups = new Map<string, Omit<Demand, "orders"> & { orders: Map<string, Demand["orders"][number]> }>();
 	for (const order of orders) {
-		for (const { itemId, modelId, name, spec, qty, target, purchase } of order.lines) {
+		for (const { itemId, modelId, name, spec, qty, target, purchase, cartRecorded } of order.lines) {
 			if (!Number.isSafeInteger(qty) || qty < 1) continue;
 			const key = JSON.stringify(target ? ["1688", target.offerId, target.skuId, target.specId ?? null] : ["shopee", order.shopId, itemId, modelId]);
-			const group = groups.get(key) ?? { key, name, spec, target, qty: 0, paidQty: 0, unpaidQty: 0, buyQty: 0, reviewQty: 0, orders: new Map() };
-			const verified = purchase.state === "paid" || purchase.state === "unpaid" || purchase.state === "partial";
+			const group = groups.get(key) ?? { key, name, spec, target, ...emptyQuantities(), orders: new Map() };
+			const verified = purchase.state === "paid" || purchase.state === "unpaid" || purchase.state === "partial" || purchase.state === "refund";
 			const paidQty = verified ? purchase.paidQty : 0;
 			const unpaidQty = verified ? purchase.unpaidQty : 0;
-			const buyQty = order.purchase.canPurchase && purchase.canPurchase && !order.cartPending && !order.cartDone ? qty : 0;
-			group.qty += qty;
-			group.paidQty += paidQty;
-			group.unpaidQty += unpaidQty;
-			group.buyQty += buyQty;
-			group.reviewQty += qty - paidQty - unpaidQty - buyQty;
-			const source = group.orders.get(order.sn) ?? { sn: order.sn, shop: order.shop, qty: 0 };
-			source.qty += qty;
+			const missing = qty - paidQty - unpaidQty;
+			const buyQty = !cartRecorded && target && (purchase.canPurchase || purchase.state === "partial") ? missing : 0;
+			const source = group.orders.get(order.sn) ?? { sn: order.sn, shop: order.shop, ...emptyQuantities() };
+			for (const totals of [group, source]) {
+				totals.qty += qty;
+				totals.paidQty += paidQty;
+				totals.unpaidQty += unpaidQty;
+				totals.buyQty += buyQty;
+				totals.reviewQty += missing - buyQty;
+			}
 			group.orders.set(order.sn, source);
 			groups.set(key, group);
 		}

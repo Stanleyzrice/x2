@@ -109,3 +109,28 @@ test("原确认在执行中断后，只有全部精确写入均已核清才解�
 	assert.equal(purchaseState("unknown", ["结果未知"]), "unknown");
 	assert.equal(purchaseState("unknown", [undefined]), "completed");
 });
+
+test("跨单同规格预览数量等于逐单需求，仅用所选订单的货源并核对同一 1688 规格", () => {
+	const s = snapshot();
+	s.orders[1]!.items[0]!.qty = 3;
+	const source = s.sources[0]!,
+		sku = source.skus[0]!;
+	const target = { offerId: source.offerId, skuId: sku.skuId, specId: sku.specId };
+	const targets = new Map([
+		["1:m", { target, qty: 2 }],
+		["2:m", { target, qty: 3 }],
+	]);
+	const result = checkOrders(s);
+	const [row] = selectPurchase(s, result, [sn("1"), sn("2")], ["cheeroutdoor"], targets);
+	assert.equal(row?.qty, 5);
+	assert.deepEqual(
+		row?.lines.map((l) => l.qty),
+		[2, 3],
+	);
+	const different = new Map([["2:m", { target: { ...target, skuId: SkuId.parse("another") }, qty: 3 }]]);
+	assert.throws(() => selectPurchase(s, result, [sn("2")], ["cheeroutdoor"], different), /规格或数量不一致/);
+	assert.throws(() => selectPurchase(s, result, [sn("2")], ["cheeroutdoor"], new Map([["2:m", { target, qty: 2 }]])), /数量不一致/);
+	s.orders[0]!.items[0]!.itemId = "unselected";
+	s.sources.push({ ...source, itemId: "unselected", chosen: false });
+	assert.equal(selectPurchase(s, checkOrders(s), [sn("2")], ["cheeroutdoor"], targets)[0]?.qty, 3);
+});

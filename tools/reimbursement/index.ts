@@ -1,11 +1,13 @@
 // 已付款采购记录的查询与刷新入口：网页只读取保存事实，手动与定时刷新都经过账号锁和完整分页发布。
+import { createHash } from "node:crypto";
+import type postgres from "postgres";
 import { z } from "zod";
 import { db, type Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { flag, get, type Toolkit } from "../../platform/tool.ts";
 import { exportRecords } from "./export.ts";
 import { present, type StoredPurchase, summarizeOriginalAmounts } from "./facts.ts";
-import { checkScope, recordFilter, recordQuery, type Scope, scope } from "./query.ts";
+import { checkScope, type RecordQuery, recordFilter, recordQuery, type Scope, scope } from "./query.ts";
 import { refreshAccount, refreshAll, runLockPresent } from "./sync.ts";
 
 export { refreshAccount, refreshAll } from "./sync.ts";
@@ -38,6 +40,20 @@ export async function accountStates(sql: Sql, allowed?: string[]) {
  ${allowed ? sql`where a.account_id in ${sql(allowed)}` : sql``} order by a.name, a.account_id`;
 }
 
+type ReportAmount = { account: string; orderId: string; revision: number; minor: string | null; reported: boolean };
+
+function reportAmounts(sql: Sql | postgres.TransactionSql, p: RecordQuery) {
+	return sql<ReportAmount[]>`select o.fact->'receipt'->>'originalMinor' as minor, coalesce(m.reported, false) as reported,
+ o.account_id as account, o.order_id as "orderId", coalesce(m.revision, 0) as revision
+ from reimbursement_orders o left join reimbursement_marks m on m.account_id = o.account_id and m.order_id = o.order_id ${recordFilter(sql, p)}
+ order by o.account_id, o.order_id`;
+}
+
+const pendingVersion = (rows: ReportAmount[]) =>
+	createHash("sha256")
+		.update(JSON.stringify(rows.map((r) => [r.account, r.orderId, r.revision, r.minor])))
+		.digest("hex");
+
 export async function listRecords(sql: Sql, p: Scope & { search: string; offset: number; paidFrom?: string; paidTo?: string }) {
 	const filter = recordFilter(sql, p);
 	const live = runLockPresent(sql);
@@ -60,8 +76,7 @@ export async function listRecords(sql: Sql, p: Scope & { search: string; offset:
  from reimbursement_orders o join reimbursement_accounts a on a.account_id = o.account_id
  left join reimbursement_marks m on m.account_id = o.account_id and m.order_id = o.order_id ${filter}
  order by o.paid_at desc, o.account_id, o.order_id limit 50 offset ${p.offset}`,
-		sql<{ minor: string | null; reported: boolean }[]>`select o.fact->'receipt'->>'originalMinor' as minor, coalesce(m.reported, false) as reported
- from reimbursement_orders o left join reimbursement_marks m on m.account_id = o.account_id and m.order_id = o.order_id ${filter}`,
+		reportAmounts(sql, p),
 		p.accounts
 			? Promise.resolve([])
 			: sql<
@@ -72,7 +87,8 @@ export async function listRecords(sql: Sql, p: Scope & { search: string; offset:
 		accountStates(sql, p.accounts),
 	]);
 	const summary = summarizeOriginalAmounts(amounts.map((a) => a.minor));
-	const pendingSummary = summarizeOriginalAmounts(amounts.filter((a) => !a.reported).map((a) => a.minor));
+	const pending = amounts.filter((a) => !a.reported);
+	const pendingSummary = summarizeOriginalAmounts(pending.map((a) => a.minor));
 	return {
 		query: { account: p.account ?? null, accounts: p.accounts ?? null, search: p.search, paidFrom: p.paidFrom ?? "", paidTo: p.paidTo ?? "", offset: p.offset },
 		accounts,
@@ -80,6 +96,7 @@ export async function listRecords(sql: Sql, p: Scope & { search: string; offset:
 		total: summary.orderCount,
 		summary,
 		pendingSummary,
+		pendingVersion: pendingVersion(pending),
 		offset: p.offset,
 		limit: 50,
 		rows: rows.map(({ fact, ...r }) => ({
@@ -108,6 +125,26 @@ export async function markReported(sql: Sql, p: Scope & { account: string; order
  returning reported, revision, updated_at as "updatedAt"`;
 	if (!mark) throw new Usage("报帐标记版本已更新，未覆盖另一处的修改；请重新读取后再选择");
 	return { account: p.account, orderId: p.orderId, reported: mark.reported, revision: mark.revision, updatedAt: mark.updatedAt.toISOString() };
+}
+
+export async function markAllReported(sql: Sql, p: RecordQuery & { pendingVersion: string }) {
+	const changed = "待报账订单或标记已变化，请核对最新数量后再确认";
+	try {
+		return await sql.begin("isolation level repeatable read", async (tx) => {
+			const pending = (await reportAmounts(tx, p)).filter((r) => !r.reported);
+			if (pendingVersion(pending) !== p.pendingVersion) throw new Usage(changed);
+			const result = await tx`insert into reimbursement_marks (account_id, order_id, reported, revision)
+ select o.account_id, o.order_id, true, 1 from reimbursement_orders o
+ left join reimbursement_marks m using (account_id, order_id) ${recordFilter(tx, p)} and not coalesce(m.reported, false)
+ order by o.account_id, o.order_id
+ on conflict (account_id, order_id) do update set reported = true, revision = reimbursement_marks.revision + 1, updated_at = now()
+ where not reimbursement_marks.reported`;
+			return { marked: result.count };
+		});
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "40001") throw new Usage(changed);
+		throw error;
+	}
 }
 
 export async function refreshRecords(sql: Sql, p: Scope, run = { all: refreshAll, account: refreshAccount }) {
@@ -140,6 +177,16 @@ export const reimbursement: Toolkit = {
 			"仅导出未勾选已报帐的订单：订单截图、总价、产品成本单价、购买数量、实际付款、订单号、报账金额总计；总计按每单原实付加总仅展示一次，不修改报帐标记",
 			recordQuery,
 			async (p) => exportRecords(await db(), p),
+		),
+		"mark-all-reported": get(
+			"将当前筛选内所有分页的待报账采购单标记为已报账",
+			recordQuery.extend({
+				pendingVersion: z
+					.string()
+					.regex(/^[a-f0-9]{64}$/)
+					.describe("本次列表的 pendingVersion"),
+			}),
+			async (p) => markAllReported(await db(), p),
 		),
 		"mark-reported": get(
 			"人工设置本地是否已报帐标记，可撤销；不是外部报帐提交或批准，需传当前reportRevision防止覆盖并发修改",

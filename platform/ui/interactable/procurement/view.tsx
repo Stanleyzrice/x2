@@ -16,16 +16,16 @@ import { api, type BrowserConnectionResult, type Item as PageItem, type PageSumm
 import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
 import { monitorSync, preserveMonitor } from "./sync.ts";
-import type { Monitor, OrderLine, PurchaseMatch, PurchaseResult, SkuDemand } from "./types.ts";
+import { type Monitor, type OrderLine, type PurchaseMatch, type PurchaseResult, type SkuDemand, selectedDemand } from "./types.ts";
 
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
 const syncMonitor = monitorSync(
-	async (item, shops) => {
+	async (item, shops, force) => {
 		// 所有同步入口先保留快照；外站同步期间会暂时关闭订单采购资格。
 		await api.procurementMonitor(item, shops);
 		api.beginProcurementSync(item, shops);
 		try {
-			return await api.act<Monitor>(item, "sync");
+			return await api.act<Monitor>(item, "sync", { force });
 		} finally {
 			api.endProcurementSync(item, shops);
 		}
@@ -126,6 +126,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	const [connecting, setConnecting] = useState(false);
 	const connectionBusy = useRef(false);
 	const lock = useRef(false);
+	const [lastRecheck, setLastRecheck] = useState<string | null>(null);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const syncRead = useRef<(force?: boolean) => Promise<void>>(async () => {});
 	useEffect(() => {
@@ -137,9 +138,11 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 			setSyncing(true);
 			try {
 				if (stopped) return;
-				await syncMonitor(item.id, props.shops, force);
+				const latest = await syncMonitor(item.id, props.shops, force);
 				if (!stopped) {
 					setSyncError(null);
+					if (force) setLastRecheck(new Date().toISOString());
+					if (force && latest.purchases?.complete) setActionError((previous) => (/滑块|安全验证/.test(previous ?? "") ? null : previous));
 					reload();
 				}
 			} catch (e) {
@@ -321,7 +324,13 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 								将 {verifiedBuyer.name} 设为采购账号
 							</Button>
 						)}
-						{automaticSyncPaused && <p className="text-xs text-muted-foreground">等待验证期间暂停自动同步；验证完成后重新检测恢复。</p>}
+						{lastRecheck && (
+							<p className="text-xs text-muted-foreground">
+								上次手动重读：{time(lastRecheck)}
+								{data?.purchases?.complete ? " · 采购记录读取成功" : ""}
+							</p>
+						)}
+						{automaticSyncPaused && <p className="text-xs text-muted-foreground">采购记录等候人工验证。完成后点「验证完成，重新检测」，X2 会重新读取订单。</p>}
 					</CardContent>
 				</Card>
 				{props.shops.map((shop) => (
@@ -387,7 +396,9 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					</CardContent>
 				</Card>
 			)}
-			{!data?.error && data?.demand?.length ? <SkuDemandTable rows={data.demand} /> : null}
+			{!data?.error && data?.demand?.length ? (
+				<SkuDemandTable rows={selectedDemand(data.demand, new Set(selectedOrders))} selectedCount={selectedOrders.length} />
+			) : null}
 			<Card className="overflow-hidden">
 				<CardContent className="p-0">
 					<div className="flex flex-wrap items-center gap-3 border-b p-4">
@@ -482,10 +493,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					)}
 				</CardContent>
 			</Card>
-			<p className="text-xs text-muted-foreground">
-				采购状态按 1688
-				订单的商品、规格、时间及数量匹配；匹配记录不等于已付款。同规格采购数量只分配一次，缺少对应或资料时显示待核对。加入购物车后由你核对、付款下单。
-			</p>
+			<p className="text-xs text-muted-foreground">需补件数已扣除能匹配的已付和待付数量。待核对件数单列；部分已采购的订单请核对后补齐，以免整单重复加购。</p>
 			<Dialog
 				open={Boolean(preview)}
 				onOpenChange={(open) => {
@@ -512,17 +520,21 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	);
 }
 
-function SkuDemandTable({ rows }: { rows: SkuDemand[] }) {
+function SkuDemandTable({ rows, selectedCount }: { rows: SkuDemand[]; selectedCount: number }) {
 	return (
 		<Card>
 			<CardContent className="space-y-3 p-4">
-				<h3 className="font-medium">按 SKU 汇总采购</h3>
+				<h3 className="font-medium">{selectedCount ? `已选 ${selectedCount} 张订单` : "全部待出货订单"} · 按 SKU（商品规格）汇总</h3>
+				<p className="text-sm">
+					共 {rows.length} 个规格，订单需求 {rows.reduce((n, r) => n + r.qty, 0)} 件，已确认需补 {rows.reduce((n, r) => n + r.buyQty, 0)} 件，待核对{" "}
+					{rows.reduce((n, r) => n + r.reviewQty, 0)} 件。
+				</p>
 				<Table>
 					<TableHeader>
 						<TableRow>
 							<TableHead>商品规格</TableHead>
 							<TableHead className="text-right">需求件数</TableHead>
-							<TableHead className="text-right">待采购</TableHead>
+							<TableHead className="text-right">需补件数</TableHead>
 							<TableHead>采购进度</TableHead>
 							<TableHead>来源订单</TableHead>
 						</TableRow>
@@ -540,7 +552,7 @@ function SkuDemandTable({ rows }: { rows: SkuDemand[] }) {
 									)}
 								</TableCell>
 								<TableCell className="text-right align-top tabular-nums">{row.qty}</TableCell>
-								<TableCell className="text-right align-top font-semibold tabular-nums">{row.buyQty === 0 && row.reviewQty ? "—" : row.buyQty}</TableCell>
+								<TableCell className="text-right align-top font-semibold tabular-nums">{row.buyQty || !row.reviewQty ? row.buyQty : "待核对"}</TableCell>
 								<TableCell className="align-top text-xs text-muted-foreground">
 									{row.paidQty > 0 && <p>已付 {row.paidQty} 件</p>}
 									{row.unpaidQty > 0 && <p>待付款 {row.unpaidQty} 件</p>}

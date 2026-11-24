@@ -17,7 +17,8 @@ export const actions = {
 	list: "reimbursement.list",
 	refresh: "reimbursement.refresh",
 	markReported: "reimbursement.mark-reported",
+	markAllReported: "reimbursement.mark-all-reported",
 	export: "reimbursement.export",
 };
-export const inputs = ["account", "search", "paidFrom", "paidTo", "offset", "orderId", "reported", "revision"];
+export const inputs = ["account", "search", "paidFrom", "paidTo", "offset", "orderId", "reported", "revision", "pendingVersion"];
 export const examples: z.input<typeof props>[] = [{ title: "采购报账" }];

@@ -155,8 +155,7 @@ class Hit extends Error {
 
 export async function challenge(browser: string, site: string, tabId?: number): Promise<Challenge> {
 	if (tabId !== undefined) verification.challenge(site, browser, tabId);
-	const name = await browserName(browser).catch(() => browser.slice(0, 8));
-	return new Challenge(`${sites.get(site)?.title ?? site} 要过滑块验证：在 ${name} 的浏览器里拉一下再重试`);
+	return new Challenge(`${sites.get(site)?.title ?? site} 要过滑块验证，请在原验证页手动完成，再点击「验证完成，重新检测」`);
 }
 
 async function within<T>(b: Browser, site: string, fn: () => Promise<T>): Promise<T> {

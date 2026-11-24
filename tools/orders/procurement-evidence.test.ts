@@ -229,8 +229,8 @@ test("monitor首屏只读完整采购快照，已出货历史需求先占量但�
 		items_text: "当前待采购",
 		items: [item],
 		step: null,
-		cart_pending: false,
-		cart_done: false,
+		cart_pending: [],
+		cart_done: [],
 	};
 	const previous = { ...current, sn: "shipped-order", created_at: new Date("2026-11-06T03:30:00Z") };
 	const queries: string[] = [];

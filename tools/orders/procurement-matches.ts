@@ -218,11 +218,15 @@ export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], cov
 		else if (ambiguous) {
 			state = "unknown";
 			reason = ambiguous.reason ?? "相关采购记录的商品或规格编号不完整。";
-		} else if (row.paidQty + row.unpaidQty > 0) state = "partial";
-		else if (row.kinds.has("refund")) state = "refund";
+		} else if (row.kinds.has("refund")) state = "refund";
+		else if (row.paidQty + row.unpaidQty > 0) state = "partial";
 		else if (row.kinds.has("closed")) state = "closed";
 		else state = "unmatched";
-		const detail = state === "partial" ? `需求 ${need.qty} 件，已付款 ${row.paidQty} 件，待付款 ${row.unpaidQty} 件；尚未完整覆盖。` : null;
+		const missing = need.qty - row.paidQty - row.unpaidQty;
+		const detail =
+			state === "partial"
+				? `需求 ${need.qty} 件，已付款 ${row.paidQty} 件，待付款 ${row.unpaidQty} 件。${missing ? `尚缺 ${missing} 件。` : "全部件数均已下单。"}`
+				: null;
 		result.set(`${need.sn}:${need.modelId}`, {
 			state,
 			label: LABELS[state],

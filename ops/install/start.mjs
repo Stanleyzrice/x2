@@ -116,14 +116,31 @@ async function chrome(python) {
 	const extracted = join(staging, "extracted");
 	const release = join(directory, version);
 	await mkdir(extracted);
+	process.stdout.write(`Downloading Chrome for Testing ${version}...\n`);
+	const download = new AbortController();
+	let file;
+	let written = 0;
+	const monitor = setInterval(() => {
+		const bytes = file?.bytesWritten ?? 0;
+		if (bytes === written) download.abort(new Error("Chrome download made no progress for 60 seconds."));
+		else process.stdout.write(`Chrome download: ${(bytes / 1024 ** 2).toFixed(1)} MiB\n`);
+		written = bytes;
+	}, 60_000);
 	try {
-		const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(300_000) });
+		const response = await fetch(url, { redirect: "error", signal: download.signal });
 		if (!response.ok || !response.body) throw new Error("Could not download Chrome for Testing.");
-		await pipeline(response.body, createWriteStream(archive));
+		file = createWriteStream(archive);
+		await pipeline(response.body, file, { signal: download.signal });
+		clearInterval(monitor);
+		process.stdout.write(`Extracting Chrome for Testing ${version}...\n`);
 		if (win) run(python, ["-m", "zipfile", "-e", archive, extracted]);
 		else run("/usr/bin/ditto", ["-x", "-k", archive, extracted]);
 		await rename(extracted, release);
+	} catch (error) {
+		download.signal.throwIfAborted();
+		throw error;
 	} finally {
+		clearInterval(monitor);
 		await rm(staging, { recursive: true, force: true });
 	}
 	if (!existsSync(binary(version))) throw new Error("Chrome for Testing is missing after extraction.");
@@ -155,16 +172,27 @@ try {
 	const done = once(web, "exit");
 	try {
 		let setup;
-		for (let attempt = 0; attempt < 100 && web.exitCode === null && web.signalCode === null; attempt++) {
-			const response = await fetch(`${url}/api/setup`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
-			if (response?.ok) {
-				setup = await response.json();
-				break;
+		let lastFailure;
+		const deadline = Date.now() + 120_000;
+		while (Date.now() < deadline && web.exitCode === null && web.signalCode === null) {
+			try {
+				const response = await fetch(`${url}/api/setup`, { signal: AbortSignal.timeout(2000) });
+				if (response.ok) {
+					setup = await response.json();
+					break;
+				}
+				lastFailure = `HTTP ${response.status}`;
+			} catch (error) {
+				lastFailure = error.cause?.code ?? error.name;
 			}
 			await setTimeout(500);
 		}
 		if (web.exitCode !== null || web.signalCode !== null) throw new Error(`X2 web exited during startup (${web.exitCode ?? web.signalCode}).`);
-		if (!setup) throw new Error(`X2 web did not respond at ${url}. See the messages above.`);
+		if (!setup) {
+			const page = await fetch(url, { signal: AbortSignal.timeout(2000) }).catch(() => null);
+			const stage = page?.ok ? "X2 web is listening but /api/setup did not become ready" : "X2 web did not start listening";
+			throw new Error(`${stage} at ${url} (${lastFailure ?? "no setup response"}). See the messages above.`);
+		}
 		if (!setup.database) throw new Error("X2 web started, but its database initialization failed.");
 		if (!checkOnly) {
 			const chromeProcess = spawn(

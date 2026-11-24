@@ -8,5 +8,5 @@ export type Props = z.infer<typeof props>;
 export const actions = { monitor: "orders.monitor", sync: "orders.monitor-sync", result: "orders.purchase-result" };
 export const writeActions = { cart: "orders.purchase" };
 export const writePreviews = { cart: "orders.purchase-preview" };
-export const inputs = ["orders", "requestId"];
+export const inputs = ["orders", "requestId", "force"];
 export const examples: z.input<typeof props>[] = [{ shops: ["cheeroutdoor"] }];

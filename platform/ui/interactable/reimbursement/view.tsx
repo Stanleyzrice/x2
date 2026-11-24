@@ -2,6 +2,7 @@
 
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, ExternalLinkIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useLightbox } from "@/components/lightbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,8 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const [exportError, setExportError] = useState<string | null>(null);
 	const [markError, setMarkError] = useState<string | null>(null);
 	const [marking, setMarking] = useState<Record<string, "saving" | MarkReceipt>>({});
+	const [markingAll, setMarkingAll] = useState(false);
+	const bulkLock = useRef(false);
 	const markingRef = useRef(new Set<string>());
 	useEffect(() => {
 		const timer = setTimeout(() => {
@@ -83,7 +86,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	}, [data]);
 	const markReported = async (row: RecordRow, reported: boolean) => {
 		const key = `${row.account}:${row.orderId}`;
-		if (markingRef.current.has(key)) return;
+		if (bulkLock.current || markingRef.current.has(key)) return;
 		markingRef.current.add(key);
 		setMarking((old) => ({ ...old, [key]: "saving" }));
 		setMarkError(null);
@@ -109,6 +112,31 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 			});
 			api.invalidateReimbursementRecords(item.id);
 			reload();
+		}
+	};
+	const markAll = async () => {
+		if (!data?.pendingSummary.orderCount || bulkLock.current || query !== search || Object.values(marking).includes("saving")) return;
+		const count = data.pendingSummary.orderCount;
+		if (!window.confirm(`将当前筛选（含全部分页）的 ${count} 笔待报账订单全部标记为已报账？`)) return;
+		bulkLock.current = true;
+		setMarkingAll(true);
+		setMarkError(null);
+		try {
+			const { marked } = await api.act<{ marked: number }>(item.id, "markAllReported", {
+				account: input.account,
+				search,
+				paidFrom,
+				paidTo,
+				pendingVersion: data.pendingVersion,
+			});
+			toast.success(`已将 ${marked} 笔订单标记为已报账`);
+		} catch (e) {
+			setMarkError(errorOf(e));
+		} finally {
+			api.invalidateReimbursementRecords(item.id);
+			reload();
+			bulkLock.current = false;
+			setMarkingAll(false);
 		}
 	};
 	const refresh = (targetAccount?: string) => {
@@ -168,7 +196,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 						variant="outline"
 						onClick={download}
 						title="导出当前筛选内未勾选已报帐的订单，包含所有分页"
-						disabled={exporting || !data || query !== search || Object.values(marking).some((state) => state === "saving")}
+						disabled={markingAll || exporting || !data || query !== search || Object.values(marking).some((state) => state === "saving")}
 					>
 						<DownloadIcon />
 						{exporting ? "正在导出…" : "导出未报账"}
@@ -344,6 +372,14 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 							<p className="text-xs text-muted-foreground">
 								未报帐 {data.pendingSummary.orderCount} 单 · {data.pendingSummary.missingCount} 单金额未知
 							</p>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => void markAll()}
+								disabled={markingAll || !data.pendingSummary.orderCount || query !== search || Object.values(marking).includes("saving")}
+							>
+								{markingAll ? "正在标记…" : "全部标记为已报账"}
+							</Button>
 						</CardContent>
 					</Card>
 					<Card className="gap-2 py-4">
@@ -409,7 +445,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 											<Checkbox
 												aria-label={`已报帐：${r.accountName} ${r.orderId}`}
 												checked={r.reported}
-												disabled={Boolean(marking[`${r.account}:${r.orderId}`])}
+												disabled={markingAll || Boolean(marking[`${r.account}:${r.orderId}`])}
 												onCheckedChange={(value) => void markReported(r, value === true)}
 												title={r.reported ? `标记时间：${time(r.reportedAt)}` : "尚未标记报帐"}
 											/>

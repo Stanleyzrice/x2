@@ -33,8 +33,8 @@ test("采购快照并行读取已有货源索引，保留待核对状态且不�
 					items_text: "商品",
 					items: [{ itemId: "11", modelId: "12", name: "商品", spec: "大号", qty: 1, image: "" }],
 					step: null,
-					cart_pending: true,
-					cart_done: true,
+					cart_pending: ["12"],
+					cart_done: ["12"],
 				},
 			]);
 		if (query.includes("from sources") || query.includes("from listings")) return wait.promise.then(() => []);
@@ -58,7 +58,7 @@ test("采购快照并行读取已有货源索引，保留待核对状态且不�
 	assert.equal(result.orders[0]?.lines[0]?.sources.length, 0);
 	assert.equal(result.purchases.selected, null);
 	assert.equal(result.purchases.error, "尚未选择采购账号");
-	assert.deepEqual(result.demand[0]?.orders, [{ sn: "order-1", shop: "one", qty: 1 }]);
+	assert.deepEqual(result.demand[0]?.orders, [{ sn: "order-1", shop: "one", qty: 1, paidQty: 0, unpaidQty: 0, buyQty: 0, reviewQty: 1 }]);
 	assert.equal(result.demand[0]?.reviewQty, 1);
 });
 
@@ -77,4 +77,32 @@ test("Shopee 同步失败后仍尝试读取 1688，分别报告两边的结果",
 	assert.equal(result.error, "Shopee 订单同步失败");
 	assert.equal(result.purchases.complete, false);
 	assert.equal(result.purchases.error, "1688 采购账号读取失败");
+});
+
+test("1688 验证期间仍刷新 Shopee，人工重检会重新读采购记录并替换旧的滑块错误", async () => {
+	let checks = 0,
+		orders = 0;
+	const sql = (async (strings: TemplateStringsArray | string[]) => {
+		if (!("raw" in strings)) return {};
+		const q = strings.join("?");
+		if (q.startsWith("update orders")) {
+			orders++;
+			throw new Error("fixture 店铺离线");
+		}
+		if (q.startsWith("select buy_account")) {
+			checks++;
+			throw new Error(checks === 1 ? "1688 要过滑块验证" : "新的采购读取结果");
+		}
+		if (q.includes("from order_settings s")) return [{ selected: "fixture", account: null }];
+		if (q.includes("from orders o")) return [];
+		throw new Error(q);
+	}) as unknown as Sql;
+	const first = await syncMonitor(sql, ["challenge"]);
+	assert.match(first.purchases.error!, /滑块/);
+	await syncMonitor(sql, ["challenge"]);
+	assert.equal(checks, 1);
+	assert.equal(orders, 2);
+	const manual = await syncMonitor(sql, ["challenge"], true);
+	assert.equal(manual.purchases.error, "新的采购读取结果");
+	assert.equal(checks, 2);
 });
