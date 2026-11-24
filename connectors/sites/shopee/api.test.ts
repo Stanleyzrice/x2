@@ -6,7 +6,7 @@ import { z } from "zod";
 import { reply } from "../../../platform/reply.ts";
 import { conversation, message } from "./chat.ts";
 import { productTrafficOf } from "./marketing.ts";
-import { orderIndexOf, ordersOf } from "./orders.ts";
+import { orderIndexOf, orderIndexPagination, ordersOf } from "./orders.ts";
 import { attributesOf, liveProductsOf, performanceOf, productAttribute, productInfoOf, unlistRequest, unlistResult } from "./products.ts";
 import { editProductInfo } from "./publish.ts";
 import { ItemId, listingHeaders } from "./seller.ts";
@@ -158,6 +158,12 @@ test("订单列表总数缺失不是零单，真实零单与数字字符串可�
 	assert.throws(() => orderIndexOf({ data: { index_list: [] } }), /pagination/);
 	assert.throws(() => orderIndexOf({ data: { index_list: [], pagination: {} } }), /total/);
 	assert.throws(() => orderIndexOf({ data: { index_list: [], pagination: { total: -1 } } }), /total/);
+});
+
+test("订单首页不传来源页，下一页沿用上一页返回的分页标记", () => {
+	assert.deepEqual(orderIndexPagination(1, 40), { page_number: 1, page_size: 40 });
+	const first = orderIndexOf({ data: { index_list: [{ order_id: "101", shop_id: "1" }], pagination: { total: 2, next_page_sentinel: "page-token" } } });
+	assert.deepEqual(orderIndexPagination(2, 40, first.nextPageSentinel), { page_number: 2, page_size: 40, from_page_number: 1, page_sentinel: "page-token" });
 });
 
 test("分包裹订单保留所有包裹状态，不把已出货商品隐藏在首个待出货状态里", () => {

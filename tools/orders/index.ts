@@ -47,7 +47,7 @@ export const orders: Toolkit = {
 	kind: "tool",
 	tools: {
 		monitor: get("读取当前店铺的 Shopee 待出货订单快照", monitorParams, async (p) => monitor(await db(), p.shops)),
-		"monitor-sync": get("只读刷新 Shopee 待出货订单，不加购", monitorParams, async (p) => syncMonitor(await db(), p.shops)),
+		"monitor-sync": get("只读刷新 Shopee 待出货订单和已配置账号的 1688 采购记录", monitorParams, async (p) => syncMonitor(await db(), p.shops)),
 		"purchase-preview": get("现读订单、货源、采购单和购物车，预览选中订单的精确加购内容", selectionParams, async (p) => purchasePreview(await db(), p)),
 		purchase: write("确认采购预览后，把选中订单加入 1688 购物车，由人付款下单", purchaseParams, planPurchase),
 		"purchase-result": get("只查询原采购确认的结果，不重新提交加购", monitorParams.extend({ requestId: z.string().uuid() }), async (p) =>

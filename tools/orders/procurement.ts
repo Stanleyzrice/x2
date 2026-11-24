@@ -169,7 +169,6 @@ export async function syncMonitor(sql: Sql, shops: string[]) {
 		states.set(key, { at, error: null });
 	} catch (e) {
 		states.set(key, { at: states.get(key)?.at ?? null, error: (e as Error).message });
-		return monitor(sql, shops);
 	}
 	await reuse(`procurement-purchases:${key}`, () => refreshPurchases(sql), 60_000).catch(() => {});
 	return monitor(sql, shops);

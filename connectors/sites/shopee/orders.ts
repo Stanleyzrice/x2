@@ -39,6 +39,7 @@ const orderIndexReply = withData(
 	z.looseObject({
 		index_list: z.array(ref),
 		pagination: z.looseObject({
+			next_page_sentinel: z.unknown().optional(),
 			total: z
 				.union([z.number(), z.string().regex(/^\d+$/)])
 				.transform(Number)
@@ -47,23 +48,37 @@ const orderIndexReply = withData(
 	}),
 );
 
-export function orderIndexOf(raw: unknown): { total: number; refs: Ref[] } {
+export function orderIndexOf(raw: unknown): { total: number; refs: Ref[]; nextPageSentinel?: unknown } {
 	const b = reply(orderIndexReply, raw, "Shopee /api/v3/order/search_order_list_index");
-	return { total: b.data.pagination.total, refs: b.data.index_list };
+	const { total, next_page_sentinel } = b.data.pagination;
+	return { total, refs: b.data.index_list, ...(next_page_sentinel == null ? {} : { nextPageSentinel: next_page_sentinel }) };
 }
 
-export async function orderIndex(tab: number, pageNo = 1, pageSize = 40): Promise<{ total: number; refs: Ref[] }> {
+export function orderIndexPagination(pageNo: number, pageSize: number, pageSentinel?: unknown) {
+	return { page_number: pageNo, page_size: pageSize, ...(pageNo === 1 ? {} : { from_page_number: pageNo - 1, page_sentinel: pageSentinel }) };
+}
+
+export async function orderIndex(tab: number, pageNo = 1, pageSize = 40, pageSentinel?: unknown): Promise<ReturnType<typeof orderIndexOf>> {
 	// 没有 index_list 不能当成没有订单：是「回包变了」
 	const raw = await seller("/api/v3/order/search_order_list_index", z.unknown(), {
 		body: {
 			order_list_tab: tab,
 			entity_type: 1,
-			pagination: { from_page_number: pageNo, page_number: pageNo, page_size: pageSize },
+			pagination: orderIndexPagination(pageNo, pageSize, pageSentinel),
 			filter: { fulfillment_type: 0, is_drop_off: 0, fulfillment_source: 0, action_filter: 0 },
 			sort: { sort_type: 3, ascending: false },
 		},
 	});
 	return orderIndexOf(raw);
+}
+
+export async function* orderIndexPages(tab: number) {
+	let pageSentinel: unknown;
+	for (let pageNo = 1; ; pageNo++) {
+		const page = await orderIndex(tab, pageNo, 40, pageSentinel);
+		yield page;
+		pageSentinel = page.nextPageSentinel;
+	}
 }
 
 const time = (seconds: unknown) => (Number(seconds) > 0 ? new Date(Number(seconds) * 1000).toISOString() : null);
@@ -163,8 +178,7 @@ export async function orderCards(tab: number, refs: Ref[]): Promise<Order[]> {
 
 export async function orders(tab: number): Promise<Order[]> {
 	const refs: Ref[] = [];
-	for (let n = 1; ; n++) {
-		const { total, refs: page } = await orderIndex(tab, n);
+	for await (const { total, refs: page } of orderIndexPages(tab)) {
 		refs.push(...page);
 		if (refs.length >= total || page.length === 0) break;
 	}

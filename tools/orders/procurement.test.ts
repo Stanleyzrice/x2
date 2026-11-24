@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "../../platform/db/index.ts";
-import { monitor, selectionParams } from "./procurement.ts";
+import { monitor, selectionParams, syncMonitor } from "./procurement.ts";
 
 test("采购预览的 CLI 与网页复用订单号数组校验并保留长编号", () => {
 	const requestId = "11111111-1111-4111-8111-111111111111";
@@ -60,4 +60,21 @@ test("采购快照并行读取已有货源索引，保留待核对状态且不�
 	assert.equal(result.purchases.error, "尚未选择采购账号");
 	assert.deepEqual(result.demand[0]?.orders, [{ sn: "order-1", shop: "one", qty: 1 }]);
 	assert.equal(result.demand[0]?.reviewQty, 1);
+});
+
+test("Shopee 同步失败后仍尝试读取 1688，分别报告两边的结果", async () => {
+	const sql = (async (strings: TemplateStringsArray | string[]) => {
+		if (!("raw" in strings)) return {};
+		const query = strings.join("?");
+		if (query.startsWith("update orders")) throw new Error("Shopee 订单同步失败");
+		if (query.startsWith("select buy_account")) throw new Error("1688 采购账号读取失败");
+		if (query.includes("from order_settings s")) return [{ selected: "fixture", account: null }];
+		if (query.includes("from orders o")) return [];
+		throw new Error(`非预期查询：${query}`);
+	}) as unknown as Sql;
+	const result = await syncMonitor(sql, ["fixture"]);
+	assert.equal(result.checkedAt, null);
+	assert.equal(result.error, "Shopee 订单同步失败");
+	assert.equal(result.purchases.complete, false);
+	assert.equal(result.purchases.error, "1688 采购账号读取失败");
 });

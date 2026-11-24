@@ -1,6 +1,6 @@
 // Shopee 待出货订单读取与完整性校验；列表、详情、店铺身份都对得上才可采购，不借用 Chanboss 状态。
 import { z } from "zod";
-import { type Order, oneOrder, orderCards, orderIndex, TAB } from "../../connectors/sites/shopee/orders.ts";
+import { type Order, oneOrder, orderCards, orderIndexPages, TAB } from "../../connectors/sites/shopee/orders.ts";
 import { OrderSn, shop as readShop } from "../../connectors/sites/shopee/seller.ts";
 import { inAccount } from "../../platform/browser/browser.ts";
 import { Usage } from "../../platform/errors.ts";
@@ -78,8 +78,7 @@ export async function readShopeeOrders(account: string): Promise<{ shopId: strin
 		const refs: Ref[] = [];
 		const seen = new Set<string>();
 		let expected: number | null = null;
-		for (let n = 1; ; n++) {
-			const page = await orderIndex(TAB.toShip, n);
+		for await (const page of orderIndexPages(TAB.toShip)) {
 			validateIndexPage(page.total, page.refs, shopId, seen, expected);
 			expected ??= page.total;
 			refs.push(...page.refs);
