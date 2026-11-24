@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pricePosition, summarizePriceBand } from "../../platform/ui/interactable/selection/price-band-data.ts";
-import { priceBandSource } from "./price-band.ts";
+import { priceBandSearchKey, priceBandSource } from "./price-band.ts";
 
 function item(id: number, price: number, sales: number, date: string | null = "20261116", shopId: number | null = id) {
 	return {
@@ -14,6 +14,13 @@ function item(id: number, price: number, sales: number, date: string | null = "2
 		itemDataList: [{ timest: date, sales30Day: String(sales) }],
 	};
 }
+
+test("类目和热词可用台湾词原义及常见简体词匹配", () => {
+	const key = priceBandSearchKey("電腦與周邊配件 > 軟體");
+	assert.ok(key.includes("软体"));
+	assert.ok(key.includes("软件"));
+	assert.equal(priceBandSearchKey("硅藻泥地墊"), "硅藻泥地垫");
+});
 
 test("价格带只使用台湾站的同日单一标价，区分真实零销量和无日期的零值", () => {
 	const source = priceBandSource("浴室地墊", [
@@ -44,6 +51,7 @@ test("主力价带用销量加权，店铺先聚合，同价没有销量时不�
 	]);
 	const { bands, mainBand } = summarizePriceBand(source, "");
 	assert.deepEqual(mainBand, { lower: 199, upper: 199 });
+	assert.equal(bands[1]?.sales, 14);
 	assert.equal(bands[1]?.topShopShare, (12 / 14) * 100);
 	assert.equal(bands[2]?.topShopShare, null);
 	assert.equal(bands[3]?.topShopShare, null);

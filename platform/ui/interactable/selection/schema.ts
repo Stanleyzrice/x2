@@ -10,6 +10,7 @@ export const actions = {
 	start: "selection.run-start",
 	cancel: "selection.run-cancel",
 	"price-band-categories": "selection.price-band-categories",
+	"price-band-words": "selection.price-band-words",
 	"price-band": "selection.price-band",
 };
 export const inputs = ["strategyId", "limit", "brief", "requestId", "runId", "model", "path", "keyword", "wordId"];

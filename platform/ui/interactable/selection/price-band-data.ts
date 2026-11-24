@@ -1,5 +1,5 @@
-export type PriceBandWord = { hotWordId: number; word: string };
-export type PriceBandCategory = { path: number[]; name: string };
+export type PriceBandWord = { hotWordId: number; word: string; searchKey?: string };
+export type PriceBandCategory = { path: number[]; name: string; searchKey?: string };
 export type PriceBandSource = {
 	kind: "samples";
 	keyword: string;
@@ -8,8 +8,6 @@ export type PriceBandSource = {
 	dated: number;
 	rows: { price: number; sales: number; title: string; shop: string | null }[];
 };
-export type PriceBandResult = PriceBandSource | { kind: "words"; words: PriceBandWord[] };
-
 const specKey = (text: string) => text.normalize("NFKC").toLowerCase().replaceAll("×", "x").replace(/\s/g, "");
 
 export function summarizePriceBand(source: PriceBandSource, specification: string) {
@@ -47,6 +45,7 @@ export function summarizePriceBand(source: PriceBandSource, specification: strin
 				price,
 				label: String(price),
 				items: group.items,
+				sales: group.sales,
 				itemShare: (group.items / items) * 100,
 				salesShare: sales > 0 ? (group.sales / sales) * 100 : null,
 				sellingRate: (group.selling / group.items) * 100,

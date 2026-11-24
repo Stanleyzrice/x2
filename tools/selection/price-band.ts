@@ -9,7 +9,13 @@ const read = (name: "categories" | "hot-words" | "hot-word-items", input: Record
 	runReadTool(`zhixia.${name}`, zhixia.tools[name], { ...input, expectedSiteId: 1 });
 
 const simplify = Converter({ from: "t", to: "cn" });
+const simplifyTaiwan = Converter({ from: "twp", to: "cn" });
 const wordKey = (word: string) => simplify(word.normalize("NFKC").replace(/\s+/g, "").toLowerCase());
+export function priceBandSearchKey(label: string): string {
+	const simplified = wordKey(label);
+	const common = wordKey(simplifyTaiwan(label));
+	return common === simplified ? simplified : `${simplified} ${common}`;
+}
 const wordSchema = z.object({ hotWordId: z.number().int().positive(), word: z.string() });
 const dateSchema = z.iso.date();
 const itemSchema = z.object({
@@ -62,10 +68,21 @@ export function priceBandSource(keyword: string, raw: unknown[]): PriceBandSourc
 	};
 }
 
-export const priceBandCategories = get("读取知虾台湾站类目，供价格带限定比较范围", undefined, async () => categoryPaths(await read("categories")));
+export const priceBandCategories = get("读取知虾台湾站类目，供价格带限定比较范围", undefined, async () =>
+	categoryPaths(await read("categories")).map((category) => ({ ...category, searchKey: priceBandSearchKey(category.name) })),
+);
+
+const categoryPath = z.array(z.number().int().positive()).min(1).max(3).describe("知虾类目路径");
+async function readWords(path: number[]) {
+	return z.object({ rows: z.array(wordSchema) }).parse(await read("hot-words", { path })).rows;
+}
+
+export const priceBandWords = get("读取知虾台湾站指定类目的原生热词，供价格带搜索", z.object({ path: categoryPath }), async ({ path }) =>
+	(await readWords(path)).map((word) => ({ ...word, searchKey: priceBandSearchKey(word.word) })),
+);
 
 const input = z.object({
-	path: z.array(z.number().int().positive()).min(1).max(3).describe("知虾类目路径"),
+	path: categoryPath,
 	keyword: z.string().trim().min(1).max(120),
 	wordId: z.number().int().positive().optional().describe("用户选中的知虾原生词编号"),
 });
@@ -73,7 +90,7 @@ const input = z.object({
 export const priceBand = get("查询知虾台湾站近30天价格带样本，只读取关键词和竞品", input, async ({ path, keyword, wordId }) => {
 	let word: PriceBandWord | undefined = wordId === undefined ? undefined : { hotWordId: wordId, word: keyword };
 	if (!word) {
-		const { rows } = z.object({ rows: z.array(wordSchema) }).parse(await read("hot-words", { path }));
+		const rows = await readWords(path);
 		const key = wordKey(keyword);
 		const exact = rows.filter((row) => wordKey(row.word) === key);
 		if (exact.length === 1) word = exact[0];

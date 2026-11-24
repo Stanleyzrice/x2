@@ -1,3 +1,5 @@
+import { Combobox } from "@base-ui/react/combobox";
+import { ChevronsUpDownIcon } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, ReferenceLine, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -8,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { errorOf } from "@/lib/state";
 import { api } from "../../api.ts";
-import { type PriceBandCategory, type PriceBandResult, type PriceBandSource, pricePosition, summarizePriceBand } from "./price-band-data.ts";
+import { readCache } from "../../read-cache.ts";
+import { type PriceBandCategory, type PriceBandSource, type PriceBandWord, pricePosition, summarizePriceBand } from "./price-band-data.ts";
 
 const number = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 });
 const money = (price: number) => `NT$${number.format(price)}`;
@@ -18,42 +21,118 @@ const chartConfig = {
 	salesShare: { label: "近30天销量占比", color: "var(--chart-2)" },
 };
 
+function SearchChoice<T extends { searchKey?: string }>({
+	id,
+	items,
+	value,
+	label,
+	itemKey,
+	placeholder,
+	empty,
+	loading,
+	disabled,
+	onOpen,
+	onSelect,
+}: {
+	id: string;
+	items: T[];
+	value: T | null;
+	label: (item: T) => string;
+	itemKey: (item: T) => string | number;
+	placeholder: string;
+	empty: string;
+	loading: boolean;
+	disabled: boolean;
+	onOpen: () => void;
+	onSelect: (item: T | null) => void;
+}) {
+	return (
+		<Combobox.Root<T>
+			items={items}
+			value={value}
+			itemToStringLabel={label}
+			isItemEqualToValue={(item, selected) => itemKey(item) === itemKey(selected)}
+			filter={(item, query) =>
+				query
+					.normalize("NFKC")
+					.trim()
+					.toLowerCase()
+					.split(/\s+/)
+					.every((token) => label(item).toLowerCase().includes(token) || item.searchKey?.includes(token))
+			}
+			limit={50}
+			autoHighlight
+			openOnInputClick
+			disabled={disabled}
+			onOpenChange={(open) => {
+				if (open) onOpen();
+			}}
+			onValueChange={onSelect}
+		>
+			<div className="relative">
+				<Combobox.Input id={id} render={<Input className="pr-8" />} placeholder={placeholder} onFocus={(event) => event.currentTarget.select()} />
+				<Combobox.Trigger aria-label={placeholder} className="absolute inset-y-0 right-0 grid w-8 place-items-center rounded-r-lg text-muted-foreground">
+					<ChevronsUpDownIcon className="size-4" />
+				</Combobox.Trigger>
+			</div>
+			<Combobox.Portal>
+				<Combobox.Positioner sideOffset={5} className="z-50">
+					<Combobox.Popup className="w-(--anchor-width) min-w-48 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
+						<Combobox.Empty className="px-2 py-2 text-sm text-muted-foreground">{loading ? "正在读取知虾…" : empty}</Combobox.Empty>
+						<Combobox.List className="max-h-72 overflow-auto">
+							{(item: T) => (
+								<Combobox.Item
+									key={itemKey(item)}
+									value={item}
+									className="cursor-pointer rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+								>
+									{label(item)}
+								</Combobox.Item>
+							)}
+						</Combobox.List>
+					</Combobox.Popup>
+				</Combobox.Positioner>
+			</Combobox.Portal>
+		</Combobox.Root>
+	);
+}
+
 export function PriceBand({ itemId }: { itemId: string }) {
 	const id = useId();
 	const [categories, setCategories] = useState<PriceBandCategory[] | null>(null);
-	const [path, setPath] = useState("");
-	const [keyword, setKeyword] = useState("");
+	const [category, setCategory] = useState<PriceBandCategory | null>(null);
+	const [words, setWords] = useState<PriceBandWord[] | null>(null);
+	const [word, setWord] = useState<PriceBandWord | null>(null);
 	const [spec, setSpec] = useState("");
 	const [price, setPrice] = useState("");
-	const [result, setResult] = useState<PriceBandResult | null>(null);
-	const [busy, setBusy] = useState(false);
+	const [result, setResult] = useState<PriceBandSource | null>(null);
+	const [pending, setPending] = useState<"categories" | "words" | "analysis" | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [wordCache] = useState(() => readCache<PriceBandWord[]>());
 
-	async function readCategories() {
-		setBusy(true);
+	async function load<T>(stage: NonNullable<typeof pending>, request: () => Promise<T>, receive: (value: T) => void) {
+		if (pending) return;
+		setPending(stage);
 		setError(null);
 		try {
-			setCategories(await api.act<PriceBandCategory[]>(itemId, "price-band-categories"));
+			receive(await request());
 		} catch (failure) {
 			setError(errorOf(failure));
 		} finally {
-			setBusy(false);
+			setPending(null);
 		}
 	}
 
-	async function query(term: string, wordId?: number) {
-		if (!path || !term.trim() || busy) return;
-		setKeyword(term);
+	function analyze(selected: PriceBandWord | null) {
+		if (pending) return;
+		setWord(selected);
 		setResult(null);
-		setBusy(true);
-		setError(null);
-		try {
-			setResult(await api.act<PriceBandResult>(itemId, "price-band", { path: path.split(",").map(Number), keyword: term, wordId }));
-		} catch (failure) {
-			setError(errorOf(failure));
-		} finally {
-			setBusy(false);
-		}
+		if (!category || !selected) return;
+		void load(
+			"analysis",
+			() => api.act<PriceBandSource>(itemId, "price-band", { path: category.path, keyword: selected.word, wordId: selected.hotWordId }),
+			setResult,
+		);
 	}
 
 	const ownPrice = /^\d+(?:\.\d{1,2})?$/.test(price) && Number(price) > 0 && Number.isFinite(Number(price)) ? Number(price) : null;
@@ -64,102 +143,92 @@ export function PriceBand({ itemId }: { itemId: string }) {
 				<span className="text-xs text-muted-foreground">知虾 · 台湾站 · 近30天</span>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				{categories ? (
-					<form
-						className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[1.3fr_1.45fr_1fr_0.8fr]"
-						onSubmit={(event) => {
-							event.preventDefault();
-							void query(keyword);
-						}}
-					>
-						<div className="min-w-0 space-y-1.5">
-							<Label htmlFor={`${id}-category`}>类目</Label>
-							<select
-								id={`${id}-category`}
-								className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm focus-visible:outline-ring"
-								disabled={busy}
-								value={path}
-								onChange={(event) => {
-									setPath(event.target.value);
-									setResult(null);
-								}}
-							>
-								<option value="">请选择知虾类目</option>
-								{categories.map((category) => (
-									<option key={category.path.join(",")} value={category.path.join(",")}>
-										{category.name}
-									</option>
-								))}
-							</select>
-						</div>
-						<div className="min-w-0 space-y-1.5">
-							<Label htmlFor={`${id}-keyword`}>关键词</Label>
-							<div className="flex items-center gap-2">
-								<Input
-									id={`${id}-keyword`}
-									placeholder="例如 硅藻泥地垫"
-									maxLength={120}
-									disabled={busy}
-									value={keyword}
-									onChange={(event) => {
-										setKeyword(event.target.value);
-										setResult(null);
-									}}
-								/>
-								<Button size="sm" type="submit" disabled={busy || !path || !keyword.trim()}>
-									{busy ? "正在读取知虾" : "查询"}
-								</Button>
-							</div>
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor={`${id}-spec`}>可比规格（标题包含）</Label>
-							<Input id={`${id}-spec`} placeholder="例如 40×60，选填" maxLength={80} value={spec} onChange={(event) => setSpec(event.target.value)} />
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor={`${id}-price`}>本品售价（NT$）</Label>
-							<Input
-								id={`${id}-price`}
-								inputMode="decimal"
-								placeholder="例如 199，选填"
-								maxLength={12}
-								value={price}
-								aria-invalid={!!price && ownPrice === null}
-								onChange={(event) => setPrice(event.target.value)}
-							/>
-						</div>
-					</form>
-				) : (
-					<Button size="sm" variant="outline" disabled={busy} onClick={() => void readCategories()}>
-						{busy ? "正在读取知虾" : "读取知虾类目"}
-					</Button>
+				<div className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[1.3fr_1.45fr_1fr_0.8fr]">
+					<div className="min-w-0 space-y-1.5">
+						<Label htmlFor={`${id}-category`}>类目</Label>
+						<SearchChoice
+							id={`${id}-category`}
+							items={categories ?? []}
+							value={category}
+							label={(item) => item.name}
+							itemKey={(item) => item.path.join(",")}
+							placeholder="搜索类目，如软件"
+							empty={categories ? "没有匹配的类目" : "暂未读到类目"}
+							loading={pending === "categories"}
+							disabled={pending === "words" || pending === "analysis"}
+							onOpen={() => {
+								if (!categories) void load("categories", () => api.act<PriceBandCategory[]>(itemId, "price-band-categories"), setCategories);
+							}}
+							onSelect={(selected) => {
+								setCategory(selected);
+								setWords(null);
+								setWord(null);
+								setResult(null);
+								setError(null);
+							}}
+						/>
+					</div>
+					<div className="min-w-0 space-y-1.5">
+						<Label htmlFor={`${id}-keyword`}>关键词</Label>
+						<SearchChoice
+							id={`${id}-keyword`}
+							items={words ?? []}
+							value={word}
+							label={(item) => item.word}
+							itemKey={(item) => item.hotWordId}
+							placeholder={category ? "搜索或选择知虾热词" : "请先选类目"}
+							empty={words ? "该类目的热词里没有匹配" : "暂未读到热词"}
+							loading={pending === "words"}
+							disabled={!category || pending === "analysis"}
+							onOpen={() => {
+								if (category && !words)
+									void load(
+										"words",
+										() => wordCache.read(category.path.join(","), () => api.act<PriceBandWord[]>(itemId, "price-band-words", { path: category.path })),
+										setWords,
+									);
+							}}
+							onSelect={analyze}
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor={`${id}-spec`}>可比规格（标题包含）</Label>
+						<Input id={`${id}-spec`} placeholder="例如 40×60，选填" maxLength={80} value={spec} onChange={(event) => setSpec(event.target.value)} />
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor={`${id}-price`}>本品售价（NT$）</Label>
+						<Input
+							id={`${id}-price`}
+							inputMode="decimal"
+							placeholder="例如 199，选填"
+							maxLength={12}
+							value={price}
+							aria-invalid={!!price && ownPrice === null}
+							onChange={(event) => setPrice(event.target.value)}
+						/>
+					</div>
+				</div>
+				{pending === "analysis" && (
+					<p className="text-sm text-muted-foreground" role="status">
+						正在读取「{word?.word}」的竞品数据…
+					</p>
 				)}
 				{error && (
 					<div role="alert" className="space-y-2 text-sm">
 						<p className="text-destructive">{error}</p>
-						<Button variant="link" className="h-auto p-0" render={<a href="https://shopee.mobduos.com/workbench/home" target="_blank" rel="noreferrer" />}>
-							打开知虾工作台
-						</Button>
-					</div>
-				)}
-				{result?.kind === "words" && (
-					<div className="space-y-2 text-sm">
-						<p className="text-muted-foreground">{result.words.length ? "请选择对应的知虾关键词" : "该类目的热搜词中未找到匹配，请调整类目或关键词。"}</p>
 						<div className="flex flex-wrap gap-2">
-							{result.words.map((word) => (
-								<Button
-									key={word.hotWordId}
-									size="sm"
-									variant="outline"
-									className="h-auto max-w-full whitespace-normal"
-									onClick={() => void query(word.word, word.hotWordId)}
-								>
-									{word.word}
+							{word && (
+								<Button variant="link" className="h-auto p-0" onClick={() => analyze(word)}>
+									重新查询
 								</Button>
-							))}
+							)}
+							<Button variant="link" className="h-auto p-0" render={<a href="https://shopee.mobduos.com/workbench/home" target="_blank" rel="noreferrer" />}>
+								打开知虾工作台
+							</Button>
 						</div>
 					</div>
 				)}
-				{result?.kind === "samples" && <Distribution source={result} spec={spec} ownPrice={ownPrice} />}
+				{result && <Distribution source={result} spec={spec} ownPrice={ownPrice} />}
 			</CardContent>
 		</Card>
 	);
@@ -176,7 +245,8 @@ function Distribution({ source, spec, ownPrice }: { source: PriceBandSource; spe
 				);
 	const ownBand = position?.exact ? bands[position.index] : undefined;
 	const gap = ownBand?.salesShare == null ? null : ownBand.salesShare - ownBand.itemShare;
-	const index = position?.index ?? 0;
+	const index = position?.index ?? bands.reduce((best, row, i) => (row.sales > (bands[best]?.sales ?? 0) ? i : best), 0);
+	const comparisonPrice = ownPrice ?? bands[index]?.price;
 	const start = Math.max(0, Math.min(index - 1, bands.length - 3));
 	const nearby = bands.slice(start, start + 3);
 	const priceLabel = position?.exact
@@ -263,45 +333,48 @@ function Distribution({ source, spec, ownPrice }: { source: PriceBandSource; spe
 							<dd className="text-lg font-semibold tabular-nums">{gap === null ? "—" : `${gap > 0 ? "+" : ""}${number.format(gap)} 个百分点`}</dd>
 						</div>
 					</dl>
-					{position && (
-						<div className="space-y-2">
+					<div className="space-y-2">
+						<div className="flex flex-wrap items-baseline gap-2">
 							<h3 className="font-medium">相邻价位对比</h3>
-							<Table className="tabular-nums">
-								<TableHeader>
-									<TableRow>
-										<TableHead>标价</TableHead>
-										<TableHead>样本商品数</TableHead>
-										<TableHead>销量占比</TableHead>
-										<TableHead>动销率</TableHead>
-										<TableHead>前3店铺销量占比</TableHead>
-									</TableRow>
-								</TableHeader>
-								<TableBody>
-									{nearby.map((row) => (
-										<TableRow key={row.price} className={row.price === ownPrice ? "bg-muted font-semibold" : undefined}>
-											<TableCell>{money(row.price)}</TableCell>
-											<TableCell>{number.format(row.items)} 款</TableCell>
-											<TableCell>{percent(row.salesShare)}</TableCell>
-											<TableCell>{percent(row.sellingRate)}</TableCell>
-											<TableCell>
-												<div className="flex items-center gap-3">
-													<span>{percent(row.topShopShare)}</span>
-													{row.topShopShare !== null && (
-														<div aria-hidden="true" className="h-1.5 w-16 overflow-hidden rounded-full bg-muted-foreground/20">
-															<div className="h-full bg-chart-2" style={{ width: `${row.topShopShare}%` }} />
-														</div>
-													)}
-												</div>
-											</TableCell>
-										</TableRow>
-									))}
-								</TableBody>
-							</Table>
+							{!position && !!bands[index]?.sales && <span className="text-xs text-muted-foreground">默认对比销量最高价位附近</span>}
 						</div>
-					)}
+						<Table className="tabular-nums">
+							<TableHeader>
+								<TableRow>
+									<TableHead>标价</TableHead>
+									<TableHead>样本商品数</TableHead>
+									<TableHead>近30天销量</TableHead>
+									<TableHead>销量占比</TableHead>
+									<TableHead>动销率</TableHead>
+									<TableHead>前3店铺销量占比</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{nearby.map((row) => (
+									<TableRow key={row.price} className={row.price === comparisonPrice ? "bg-muted font-semibold" : undefined}>
+										<TableCell>{money(row.price)}</TableCell>
+										<TableCell>{number.format(row.items)} 款</TableCell>
+										<TableCell>{number.format(row.sales)} 件</TableCell>
+										<TableCell>{percent(row.salesShare)}</TableCell>
+										<TableCell>{percent(row.sellingRate)}</TableCell>
+										<TableCell>
+											<div className="flex items-center gap-3">
+												<span>{percent(row.topShopShare)}</span>
+												{row.topShopShare !== null && (
+													<div aria-hidden="true" className="h-1.5 w-16 overflow-hidden rounded-full bg-muted-foreground/20">
+														<div className="h-full bg-chart-2" style={{ width: `${row.topShopShare}%` }} />
+													</div>
+												)}
+											</div>
+										</TableCell>
+									</TableRow>
+								))}
+							</TableBody>
+						</Table>
+					</div>
 				</>
 			)}
-			<p className="text-xs text-muted-foreground">仅统计同日且只有一个标价的样本商品。在售状态、支付金额和支付买家口径待核实。</p>
+			<p className="text-xs text-muted-foreground">仅统计同日且只有一个标价的样本商品。销量未按渠道拆分。在售状态、支付金额和支付买家口径待核实。</p>
 		</section>
 	);
 }
