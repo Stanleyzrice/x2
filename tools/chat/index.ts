@@ -10,7 +10,7 @@ import { assertSuggestionContext, sendInput } from "./context.ts";
 import { pendingReplies } from "./pending.ts";
 import { listConversations, readDisplay } from "./read.ts";
 import { contextById, inboxSnapshot, saveContext, saveDraft, saveInbox, threadSnapshot, threadState } from "./store.ts";
-import { draftPrompt } from "./talk.ts";
+import { draftPrompt, replyRules } from "./talk.ts";
 import { historyDays, rollingWindow } from "./window.ts";
 import { CHAT_WRITES, planSend, preview, type ReplyParams, replaySend, replyWrite } from "./writes.ts";
 
@@ -66,8 +66,7 @@ export const chat: Toolkit = {
 			const { context } = await readContext(p),
 				sql = await db();
 			assertSuggestionContext(context);
-			const instructions = (await readFile(new URL(`../../${p.policyPath}`, import.meta.url), "utf8")).trim();
-			if (!instructions) throw new Error("客服规则是空的");
+			const instructions = replyRules(await readFile(new URL(`../../${p.policyPath}`, import.meta.url), "utf8"));
 			const result = await suggest(instructions, draftPrompt(p.shop, context.messages), config);
 			const text = z.string().trim().min(1).max(2000).parse(result.text),
 				id = randomUUID();

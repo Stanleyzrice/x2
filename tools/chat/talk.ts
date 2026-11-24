@@ -80,6 +80,13 @@ export function messagesOf(raw: RawMessage[], shopId: string): Message[] {
 
 const WHO: Record<Sender, string> = { buyer: "买家", us: "我们", auto: "我们的自动回复", platform: "平台", other_auto: "买家的自动回复" };
 
+export function replyRules(skill: string): string {
+	const section = skill.split(/^## 回复规则[ \t]*\r?$/m)[1];
+	const rules = section?.split(/^## /m, 1)[0]?.trim();
+	if (!rules) throw new Error("客服技能缺少回复规则");
+	return rules;
+}
+
 /** 让模型写回复草稿的提示：人会看、会改，不知道的不编 */
 export function draftPrompt(shop: string, messages: Message[], instructions = ""): string {
 	return [

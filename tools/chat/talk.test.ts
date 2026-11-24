@@ -1,7 +1,8 @@
 // 聊聊：谁发的、一句话、先后；未回覆的排前面
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { conversationsOf, draftPrompt, messagesOf } from "./talk.ts";
+import { conversationsOf, draftPrompt, messagesOf, replyRules } from "./talk.ts";
 
 const conv = (id: number, over: Record<string, unknown>) => ({
 	id,
@@ -55,4 +56,13 @@ test("消息：from_shop_id 是这家店是我们发的，从旧到新；不是�
 		],
 	);
 	assert.match(draftPrompt("ni1206", m), /「ni1206」[\s\S]*买家：有现货吗\n买家：\[图片\]\n我们：有的\n我们的自动回复：下班了$/);
+});
+
+test("客服模型只收到技能中的回复规则", async () => {
+	const skill = await readFile(new URL("../../.agents/skills/chat/SKILL.md", import.meta.url), "utf8");
+	const rules = replyRules(skill);
+	assert.match(rules, /台湾繁体/);
+	assert.doesNotMatch(rules, /node x2\.ts|history-days|requestId|##|^name:/m);
+	assert.equal(replyRules(skill.replaceAll("\n", "\r\n")), rules);
+	assert.throws(() => replyRules("## 操作流程\n用 node x2.ts chat"), /缺少回复规则/);
 });
