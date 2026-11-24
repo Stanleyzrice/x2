@@ -1,4 +1,7 @@
-// 采购工作区只展示服务端给出的订单事实与写入结果，不在浏览器里拼采购规格。
+import type { Outcome } from "../writes.ts";
+
+export type ProcurementSource = { offerId: string; url: string; title: string; chosen: boolean; broken: string | null; origin: "chosen" | "listing" };
+export type PurchaseTarget = { offerId: string; skuId: string; specId?: string | null };
 export type PurchaseMatch = {
 	state: "paid" | "unpaid" | "partial" | "refund" | "closed" | "unmatched" | "unknown";
 	label: string;
@@ -16,14 +19,7 @@ export type OrderLine = {
 	spec: string;
 	qty: number;
 	image: string | null;
-	sources: {
-		offerId: string;
-		url: string;
-		title: string;
-		chosen: boolean;
-		broken: string | null;
-		origin: "chosen" | "listing";
-	}[];
+	sources: ProcurementSource[];
 	purchase?: PurchaseMatch;
 };
 export type Order = {
@@ -40,11 +36,11 @@ export type Order = {
 };
 export type Quantities = { qty: number; paidQty: number; unpaidQty: number; buyQty: number; reviewQty: number };
 export type SkuDemand = Quantities & {
-	image?: string | null;
+	image: string | null;
 	key: string;
 	name: string;
 	spec: string;
-	target: { offerId: string; skuId: string } | null;
+	target: PurchaseTarget | null;
 	orders: (Quantities & { sn: string; shop: string })[];
 };
 export type Monitor = {
@@ -55,20 +51,4 @@ export type Monitor = {
 	demand?: SkuDemand[];
 	purchases?: { selected?: string | null; account: string | null; loginId: string | null; capturedAt: string | null; complete: boolean; error: string | null };
 };
-export type PurchaseResult = {
-	state: string;
-	outcome?: { ran: { id: string; display: string; status: string; why?: string }[]; unknown: boolean; blocked: string | null } | null;
-};
-
-export function selectedDemand(rows: SkuDemand[], selected: Set<string>): SkuDemand[] {
-	if (!selected.size) return rows;
-	return rows.flatMap((row) => {
-		const orders = row.orders.filter((order) => selected.has(order.sn));
-		if (!orders.length) return [];
-		const totals: Quantities = { qty: 0, paidQty: 0, unpaidQty: 0, buyQty: 0, reviewQty: 0 };
-		for (const order of orders) {
-			for (const key of ["qty", "paidQty", "unpaidQty", "buyQty", "reviewQty"] as const) totals[key] += order[key];
-		}
-		return [{ ...row, ...totals, orders }];
-	});
-}
+export type PurchaseResult = { state: string; outcome?: Outcome | null };

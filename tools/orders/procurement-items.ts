@@ -1,33 +1,23 @@
 // 订单行只关联同商品的已选货源或同店已发布商品稿；链接指向商品，不推断 1688 SKU 对应。
 import { z } from "zod";
-import type { Match, MatchNeed } from "./procurement-matches.ts";
+import type { ProcurementSource, PurchaseMatch, PurchaseTarget, Quantities, SkuDemand } from "../../platform/web/procurement.ts";
 
 export type ProcurementItem = { itemId: string; modelId: string; name: string; spec: string; qty: number; image: string };
 export type ProcurementSourceRow = { itemId: string; offerId: string; title: string | null; itemImage: string | null; broken: string | null };
 export type ProcurementListingRow = { shop: string; shopId: string; productId: string; offerId: string; title: string | null };
 export type EvidenceCatalog = { shop: string; shopId: string; productId: string; models: unknown };
 const imageModels = z.array(z.object({ modelId: z.string().nullable(), image: z.string().nullish() }));
-export type ProcurementSource = { offerId: string; url: string; title: string; chosen: boolean; broken: string | null; origin: "chosen" | "listing" };
 export type ProcurementLine = Omit<ProcurementItem, "image"> & { image: string | null; skuImage: string | null; sources: ProcurementSource[] };
-type Quantities = { qty: number; paidQty: number; unpaidQty: number; buyQty: number; reviewQty: number };
 const emptyQuantities = (): Quantities => ({ qty: 0, paidQty: 0, unpaidQty: 0, buyQty: 0, reviewQty: 0 });
 type DemandOrder = {
 	sn: string;
 	shop: string;
 	shopId: string;
-	lines: (ProcurementLine & { target: MatchNeed["target"]; purchase: Match; cartRecorded: boolean })[];
-};
-type Demand = Quantities & {
-	key: string;
-	name: string;
-	spec: string;
-	image: string | null;
-	target: MatchNeed["target"];
-	orders: (Quantities & { sn: string; shop: string })[];
+	lines: (ProcurementLine & { target: PurchaseTarget | null; purchase: PurchaseMatch; cartRecorded: boolean })[];
 };
 
-export function procurementDemand(orders: DemandOrder[]): Demand[] {
-	const groups = new Map<string, Omit<Demand, "orders"> & { orders: Map<string, Demand["orders"][number]> }>();
+export function procurementDemand(orders: DemandOrder[]): SkuDemand[] {
+	const groups = new Map<string, Omit<SkuDemand, "orders"> & { orders: Map<string, SkuDemand["orders"][number]> }>();
 	for (const order of orders) {
 		for (const { itemId, modelId, name, spec, skuImage, qty, target, purchase, cartRecorded } of order.lines) {
 			if (!Number.isSafeInteger(qty) || qty < 1) continue;

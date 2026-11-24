@@ -4,7 +4,6 @@
 		"module": "esnext",
 		"moduleResolution": "bundler",
 		"jsx": "react-jsx",
-		"noUnusedLocals": false,
 		"types": ["node", "vite/client"],
 		"paths": {
 			"@/*": ["./*"]

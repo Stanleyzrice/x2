@@ -1,4 +1,3 @@
-// 客服模型回包和请求边界的隔离检查。
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";

@@ -1,10 +1,12 @@
 // 采购状态只取当前采购账号的完整成功快照；精确规格映射优先使用已发布商品稿，不按商品标题或相似名称猜采购关系。
+
 import { z } from "zod";
 import type { PurchaseFact } from "../../connectors/sites/1688/purchases.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
+import type { PurchaseMatch as Match } from "../../platform/web/procurement.ts";
 import type { EvidenceCatalog, ProcurementItem, ProcurementListingRow, ProcurementSourceRow } from "./procurement-items.ts";
-import type { Coverage, Match, MatchNeed, MatchRecord } from "./procurement-matches.ts";
+import type { Coverage, MatchNeed, MatchRecord } from "./procurement-matches.ts";
 import { exceptionFor, matchSku } from "./similar.ts";
 
 export type EvidenceSource = ProcurementSourceRow & { skus: unknown; exceptions: string | null };

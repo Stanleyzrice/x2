@@ -6,13 +6,13 @@ import type { BrowserConnectionInput, BrowserConnectionResult } from "../web/bro
 import type { HermesRequest, HermesRun } from "../web/hermes.ts";
 import type { Conversation, ConversationSummary, HistoryImport } from "../web/hermes-history.ts";
 import type { Item, Page, PageSummary } from "../web/pages.ts";
+import type { Monitor } from "../web/procurement.ts";
 import type { SetupState, XiangjiInput } from "../web/setup.ts";
 import type { Grid, Key, Meta, Pic, Shown as Row } from "../web/tables.ts";
 import type { HermesTurn } from "./hermes-schema.ts";
 import type { SourceDetail, SourceList } from "./interactable/catalog/source-types.ts";
 import type { CatalogResult } from "./interactable/catalog/types.ts";
 import { preserveMonitor } from "./interactable/procurement/sync.ts";
-import type { Monitor } from "./interactable/procurement/types.ts";
 import type { Data as ReimbursementData } from "./interactable/reimbursement/types.ts";
 import { errorOf } from "./lib/state.ts";
 import { readCache } from "./read-cache.ts";

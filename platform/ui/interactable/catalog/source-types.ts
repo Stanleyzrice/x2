@@ -1,46 +1,10 @@
-// 人工采集与备选区的网页响应；原始内容、缺失字段和上架状态均由工具返回，浏览器会话复用网页服务的类型。
 import type { CollectionSession as BrowserCollectionSession } from "../../../web/browser-connection.ts";
+import type { SourceFields, SourceItem, SourcePlatform } from "../../../web/listing-source.ts";
 
-export type SourcePlatform = "1688";
-export type SourceStatus = "collected" | "needs-input" | "ready" | "listed" | "unknown";
-export type SourceItem = {
-	id: string;
-	platform: SourcePlatform;
-	sourceId: string;
-	url: string;
-	title: string;
-	image: string | null;
-	skuCount: number;
-	capturedAt: string;
-	errors: string[];
-	status: SourceStatus;
-	problems: string[];
-	listingId: string | null;
-	productId: string | null;
-	deletable: boolean;
-	deleteProblem: string | null;
-	editedAt?: string | null;
-};
+export type { SourceFields, SourceItem, SourcePlatform, SourceStatus } from "../../../web/listing-source.ts";
+
 export type SourceDeletion = { deleted: string[]; alreadyDeleted: string[] };
 export type SourcePrompt = { shop: string; count: number; prompt: string; filename: string };
-export type SourceFields = {
-	title?: string;
-	description?: string;
-	weightKg?: number;
-	freightRmb?: number;
-	minQty?: number;
-	categoryPath?: number[];
-	daysToShip?: number;
-	attributes?: { attribute_id: number; attribute_values: { value_id: number }[] }[];
-	stocks?: Record<string, number>;
-	prices?: Record<string, number>;
-	salePricesTwd?: Record<string, number>;
-	weightsKg?: Record<string, number>;
-	tierLabels?: { source: string; name: string; options: Record<string, string> }[];
-	hiddenSkuImages?: string[];
-	mainImages?: string[];
-	detailImages?: string[];
-};
 export type SourceDetail = SourceItem & {
 	research?: {
 		kind: "strategy-run";

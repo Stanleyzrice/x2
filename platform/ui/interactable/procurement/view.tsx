@@ -13,11 +13,11 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { errorOf, saved as savedValue } from "@/lib/state";
+import type { Monitor, Order, OrderLine, PurchaseMatch, PurchaseResult, SkuDemand } from "../../../web/procurement.ts";
 import { api, type BrowserConnectionResult, type Item as PageItem, usePoll } from "../../api.ts";
 import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
-import { preserveMonitor } from "./sync.ts";
-import { type Monitor, type Order, type OrderLine, type PurchaseMatch, type PurchaseResult, type SkuDemand, selectedDemand } from "./types.ts";
+import { preserveMonitor, selectedDemand } from "./sync.ts";
 
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
 type Pending = { requestId: string; token: string };

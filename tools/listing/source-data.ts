@@ -4,12 +4,14 @@ import { z } from "zod";
 import { type Offer, OfferId, offerIdOf, SkuId, SpecId } from "../../connectors/sites/1688/api.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson, strs } from "../../platform/tool.ts";
+import { type SourceFields, sourceFieldsSchema, sourcePlatform, sourceStatus } from "../../platform/web/listing-source.ts";
+
+export { type SourceFields, type SourceItem, sourceFieldsSchema, sourcePlatform, sourceStatus } from "../../platform/web/listing-source.ts";
 
 export class RemovedSource extends Usage {}
 
 export const SourceId = z.string().regex(/^\d+$/).brand<"SourceId">();
 export type SourceId = z.output<typeof SourceId>;
-export const sourcePlatform = z.enum(["1688"]);
 const httpUrl = z.url({ protocol: /^https?$/ });
 export const descriptionBlock = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("text"), text: z.string() }),
@@ -97,28 +99,6 @@ export type CollectedSourceResult = {
 	sourceCapturedAt: string;
 	reusedSnapshot: boolean;
 };
-export const sourceFieldsSchema = z.object({
-	title: z.string().trim().min(1).optional(),
-	description: z.string().trim().min(1).optional(),
-	weightKg: z.number().positive().finite().optional(),
-	freightRmb: z.number().nonnegative().finite().optional(),
-	minQty: z.number().int().positive().optional(),
-	categoryPath: z.array(z.number().int().positive()).min(1).optional(),
-	daysToShip: z.number().int().positive().optional(),
-	attributes: z.array(z.object({ attribute_id: z.number().int(), attribute_values: z.array(z.object({ value_id: z.number().int() })) })).optional(),
-	stocks: z.record(z.string(), z.number().int().nonnegative()).optional(),
-	prices: z.record(z.string(), z.number().positive().finite()).optional(),
-	salePricesTwd: z.record(z.string(), z.number().int().positive()).optional(),
-	weightsKg: z.record(z.string(), z.number().positive().finite()).optional(),
-	tierLabels: z
-		.array(z.object({ source: z.string(), name: z.string().trim().min(1).max(14), options: z.record(z.string(), z.string().trim().min(1).max(20)) }))
-		.optional(),
-	hiddenSkuImages: z.array(httpUrl).optional(),
-	mainImages: z.array(httpUrl).min(1).max(9).optional(),
-	detailImages: z.array(httpUrl).max(12).optional(),
-});
-export type SourceFields = z.output<typeof sourceFieldsSchema>;
-
 /** 重选类目时仅保留本次明确给出的属性和备货天数，防止后续make重新应用旧类目补充值。 */
 export function mergeSourceFields(previous: SourceFields | null | undefined, fields: SourceFields): SourceFields {
 	const saved = sourceFieldsSchema.parse({ ...previous, ...fields });
@@ -129,7 +109,6 @@ export function mergeSourceFields(previous: SourceFields | null | undefined, fie
 	return saved;
 }
 
-// 备选区的输入和列表契约集中在数据边界；工具实现只负责读取、保存和串接既有上架。
 export const sourceShopParams = z.object({ shop: z.string().min(1), targetShop: z.string().min(1).optional() });
 export type SourceShopInput = z.output<typeof sourceShopParams>;
 export const sourceSelectionParams = sourceShopParams.extend({
@@ -145,31 +124,31 @@ export const sourceDeleteParams = sourceShopParams.extend({
 	sourceIds: explicitSourceIds("明确删除的备选商品编号，不能为空"),
 });
 export const sourcePromptParams = sourceShopParams.extend({ sourceIds: explicitSourceIds("明确导出的备选商品编号，不能为空") });
-export const sourceStatus = z.enum(["collected", "needs-input", "ready", "listed", "unknown"]);
 export const sourceListParams = sourceShopParams.extend({
 	query: z.string().default(""),
 	platform: z.enum(["all", ...sourcePlatform.options]).default("all"),
 	status: z.enum(["all", ...sourceStatus.options]).default("all"),
 });
-// 只在工具边界解析CLI数值与JSON文本；网页输入及持久化字段沿用原始结构校验，空值不转成零。
+const jsonField = <T extends z.ZodType>(field: z.ZodOptional<T>) => z.preprocess(parseJson, field.unwrap()).optional();
+const fields = sourceFieldsSchema.shape;
 export const sourceUpdateParams = sourceDetailParams.extend({
-	...sourceFieldsSchema.shape,
-	weightKg: z.preprocess(parseJson, sourceFieldsSchema.shape.weightKg.unwrap()).optional(),
-	freightRmb: z.preprocess(parseJson, sourceFieldsSchema.shape.freightRmb.unwrap()).optional(),
-	minQty: z.preprocess(parseJson, sourceFieldsSchema.shape.minQty.unwrap()).optional(),
-	daysToShip: z.preprocess(parseJson, sourceFieldsSchema.shape.daysToShip.unwrap()).optional(),
-	categoryPath: z.preprocess(parseJson, sourceFieldsSchema.shape.categoryPath.unwrap()).optional(),
-	attributes: z.preprocess(parseJson, sourceFieldsSchema.shape.attributes.unwrap()).optional(),
-	stocks: z.preprocess(parseJson, sourceFieldsSchema.shape.stocks.unwrap()).optional(),
-	prices: z.preprocess(parseJson, sourceFieldsSchema.shape.prices.unwrap()).optional(),
-	salePricesTwd: z.preprocess(parseJson, sourceFieldsSchema.shape.salePricesTwd.unwrap()).optional(),
-	weightsKg: z.preprocess(parseJson, sourceFieldsSchema.shape.weightsKg.unwrap()).optional(),
-	tierLabels: z.preprocess(parseJson, sourceFieldsSchema.shape.tierLabels.unwrap()).optional(),
-	hiddenSkuImages: z.preprocess(parseJson, sourceFieldsSchema.shape.hiddenSkuImages.unwrap()).optional(),
+	...fields,
+	weightKg: jsonField(fields.weightKg),
+	freightRmb: jsonField(fields.freightRmb),
+	minQty: jsonField(fields.minQty),
+	daysToShip: jsonField(fields.daysToShip),
+	categoryPath: jsonField(fields.categoryPath),
+	attributes: jsonField(fields.attributes),
+	stocks: jsonField(fields.stocks),
+	prices: jsonField(fields.prices),
+	salePricesTwd: jsonField(fields.salePricesTwd),
+	weightsKg: jsonField(fields.weightsKg),
+	tierLabels: jsonField(fields.tierLabels),
+	hiddenSkuImages: jsonField(fields.hiddenSkuImages),
 	resetFields: z.array(z.enum(["weightKg", "freightRmb", "daysToShip", "categoryPath", "minQty"])).optional(),
 	expectedEditedAt: z.iso.datetime().nullable().optional(),
-	mainImages: z.preprocess(parseJson, sourceFieldsSchema.shape.mainImages.unwrap()).optional(),
-	detailImages: z.preprocess(parseJson, sourceFieldsSchema.shape.detailImages.unwrap()).optional(),
+	mainImages: jsonField(fields.mainImages),
+	detailImages: jsonField(fields.detailImages),
 });
 export const sourcePublishParams = sourceSelectionParams.extend({
 	requestId: z.string().uuid(),
@@ -178,24 +157,6 @@ export const sourcePublishParams = sourceSelectionParams.extend({
 });
 export type SourcePublishInput = z.output<typeof sourcePublishParams>;
 export const sourcePublishResultParams = sourceShopParams.extend({ requestId: z.string().uuid() });
-export type SourceItem = {
-	id: string;
-	platform: SourceProduct["platform"];
-	sourceId: string;
-	url: string;
-	title: string;
-	image: string | null;
-	skuCount: number;
-	capturedAt: string;
-	errors: string[];
-	status: z.output<typeof sourceStatus>;
-	problems: string[];
-	listingId: string | null;
-	productId: string | null;
-	deletable: boolean;
-	deleteProblem: string | null;
-	editedAt?: string | null;
-};
 export type SourceApproval = { kind: "original-source"; sourceProductId: string; hash: string; at: string };
 /** 新建使用完整product指纹；已有商品仍须把本次批准绑定到当前稿与实际商品编号。 */
 export function sourcePublicationHash(

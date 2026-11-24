@@ -1,4 +1,3 @@
-// 采购页精确匹配与统一数量分配测试：付款证据、手工采购、退款、历史占量及缺失事实均独立核对。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Coverage, type MatchNeed, type MatchRecord, matchProcurement } from "./procurement-matches.ts";

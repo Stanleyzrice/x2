@@ -1,4 +1,3 @@
-// Chat 状态读取的并发与未决发送优先级测试；只用内存返回值，不连库。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "../../platform/db/index.ts";

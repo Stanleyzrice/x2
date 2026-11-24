@@ -1,4 +1,3 @@
-// 采购快照只读与货源索引并发测试；不触发 Shopee 同步、加购或真实数据库写入。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "../../platform/db/index.ts";

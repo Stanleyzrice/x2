@@ -17,9 +17,8 @@ import { Collector } from "./source-collection.tsx";
 import { SourceSheet } from "./source-details.tsx";
 import { SourcePromptButton } from "./source-prompt.tsx";
 import { currentPublishResult, publishReceiptOf, publishUnresolved, sourceCanPublish, sourceCanSelect } from "./source-state.ts";
-import type { PublishReceipt, SourceDeletion, SourceItem, SourceList, SourcePlatform, SourcePreparation, SourceReceipt, SourceStatus } from "./source-types.ts";
+import type { PublishReceipt, SourceDeletion, SourceItem, SourceList, SourcePreparation, SourceReceipt, SourceStatus } from "./source-types.ts";
 
-const platformName = (_platform: SourcePlatform) => "1688";
 export const sourceStatus: Record<SourceStatus, string> = {
 	collected: "已采集",
 	"needs-input": "待补充",
@@ -371,7 +370,7 @@ function SourceTable({
 							</TableCell>
 							<TableCell>
 								<a href={row.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm underline underline-offset-4">
-									{platformName(row.platform)}
+									{row.platform}
 									<ArrowUpRightIcon className="size-3" />
 								</a>
 								<p className="mt-1 max-w-44 truncate text-xs text-muted-foreground">{row.url}</p>

@@ -4,6 +4,7 @@ import { OrderSn } from "../../connectors/sites/shopee/seller.ts";
 import type { Sql } from "../../platform/db/index.ts";
 import { Usage } from "../../platform/errors.ts";
 import { parseJson } from "../../platform/tool.ts";
+import type { Monitor, PurchaseResult } from "../../platform/web/procurement.ts";
 import type { Outcome, Ran } from "../../platform/writes.ts";
 import { refreshAccount } from "../reimbursement/index.ts";
 import { checkOrders } from "./check.ts";
@@ -83,7 +84,6 @@ export async function monitor(sql: Sql, shops: string[], range?: OrderDateRange,
 	const demands = [...new Map([...historical, ...rows].map((row) => [row.sn, row])).values()];
 	const itemIds = [...new Set(demands.flatMap((row) => row.items.map((item) => item.itemId)))];
 	const demandShops = [...new Set(demands.map((row) => row.shop))];
-	// 两类已有货源索引互不依赖，并发读取，首屏不等待外站同步。
 	const [sources, listings, catalog] = await Promise.all([
 		itemIds.length
 			? sql<EvidenceSource[]>`select item_id as "itemId", offer_id as "offerId", title, item_image as "itemImage", broken, skus, sku_exceptions as exceptions
@@ -154,7 +154,7 @@ export async function monitor(sql: Sql, shops: string[], range?: OrderDateRange,
 		purchases,
 		orders,
 		demand: procurementDemand(orders),
-	};
+	} satisfies Monitor;
 }
 
 export async function syncMonitor(sql: Sql, shops: string[], force = false, range?: OrderDateRange) {
@@ -228,7 +228,7 @@ export async function planPurchase(sql: Sql, p: z.infer<typeof purchaseParams>) 
 	return [p.items.map((params) => ({ op: "加购", params }))];
 }
 
-export async function purchaseResult(sql: Sql, shops: string[], requestId: string) {
+export async function purchaseResult(sql: Sql, shops: string[], requestId: string): Promise<PurchaseResult> {
 	const [r] = await sql<
 		{ state: string; outcome: Outcome | null; params: z.infer<typeof purchaseParams>; created_at: Date; expires_at: Date }[]
 	>`select state, outcome, params, created_at, expires_at from web_confirmations

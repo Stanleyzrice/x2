@@ -18,7 +18,6 @@ import { DetailImage, DetailsContent } from "./details-content.tsx";
 import { SourceImageTranslation } from "./source-image-translation.tsx";
 import type { SourceDetail, SourceFields } from "./source-types.ts";
 
-const platformName = (_platform: SourceDetail["platform"]) => "1688";
 const price = (value: number | null) => (value === null ? "未取得" : `¥${value.toFixed(2)}`);
 
 export function SourceSheet({
@@ -77,9 +76,7 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 	const [tab, setTab] = useState("specs");
 	const main = detail.selectedMain;
 	const images = [...new Set([...main, ...detail.skus.map((sku) => sku.image).filter((src): src is string => Boolean(src))])];
-	const lightbox = useLightbox(
-		images.map((src, index) => ({ src, alt: `商品原图 ${index + 1}`, label: `${platformName(detail.platform)} · 商品原图 ${index + 1}` })),
-	);
+	const lightbox = useLightbox(images.map((src, index) => ({ src, alt: `商品原图 ${index + 1}`, label: `${detail.platform} · 商品原图 ${index + 1}` })));
 	return (
 		<div className="space-y-6 p-5 sm:p-6">
 			<div className="flex flex-wrap items-start gap-5">
@@ -98,7 +95,7 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 				<div className="min-w-48 flex-1 space-y-3">
 					<h3 className="text-lg font-semibold">{detail.title || "未取得商品标题"}</h3>
 					<div className="flex flex-wrap items-center gap-3">
-						<Badge variant="outline">{platformName(detail.platform)}</Badge>
+						<Badge variant="outline">{detail.platform}</Badge>
 						<a href={detail.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm underline underline-offset-4">
 							打开货源链接
 							<ArrowUpRightIcon className="size-4" />

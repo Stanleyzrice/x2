@@ -1,7 +1,7 @@
-// 采购页从本地完整快照读事实，测试只使用模拟 SQL 与明确 SKU 对应，不访问账号或站点。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "../../platform/db/index.ts";
+import type { PurchaseMatch as Match } from "../../platform/web/procurement.ts";
 import { monitor } from "./procurement.ts";
 import {
 	assertProcurementAvailable,
@@ -12,7 +12,6 @@ import {
 	summarizePurchase,
 } from "./procurement-evidence.ts";
 import type { EvidenceCatalog } from "./procurement-items.ts";
-import type { Match } from "./procurement-matches.ts";
 
 const target = { shop: "one", shopId: "10" };
 const item = { itemId: "11", modelId: "12", name: "名称相同不用于匹配", spec: "大号", qty: 1, image: "" };

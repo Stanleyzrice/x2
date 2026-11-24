@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { findTool, register } from "../platform/tool.ts";
 import { COMPONENTS, KINDS, parseProps } from "../platform/web/pages.ts";
+import { sourceUpdateParams } from "../tools/listing/source-data.ts";
 import { TOOLKITS } from "../x2.ts";
 
 register(...TOOLKITS);
@@ -59,6 +60,14 @@ test("组件动作引用已登记工具，站点写入必须有独立的读取�
 			const tool = findTool(id);
 			assert.ok(tool?.kind === "write" && "plan" in tool, `${c.name} → ${id}`);
 		}
+	}
+});
+
+test("备选商品详情允许提交全部编辑字段，店铺身份由页面固定", () => {
+	const inputs = COMPONENTS.get("catalog")!.inputs!;
+	assert.ok(!inputs.includes("shop"));
+	for (const key of Object.keys(sourceUpdateParams.shape)) {
+		if (key !== "shop") assert.ok(inputs.includes(key), key);
 	}
 });
 

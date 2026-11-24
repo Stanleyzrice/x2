@@ -1,10 +1,11 @@
-// 采购页的事实匹配：沿用精确规格、时间窗口和先后数量分配；有采购记录不等于已付款，不改变原采购写入规则。
+import type { PurchaseMatch as Match, PurchaseTarget } from "../../platform/web/procurement.ts";
+
 export type MatchNeed = {
 	sn: string;
 	modelId: string;
 	qty: number;
 	createdAt: string | null;
-	target: { offerId: string; skuId: string; specId?: string | null } | null;
+	target: PurchaseTarget | null;
 	offerIds?: string[];
 	reason?: string;
 	heldStatus?: string;
@@ -27,17 +28,6 @@ export type MatchRecord = {
 	};
 };
 export type Coverage = { account: string | null; capturedAt: string | null; complete: boolean; error: string | null };
-export type Match = {
-	state: "paid" | "unpaid" | "partial" | "refund" | "closed" | "unmatched" | "unknown";
-	label: string;
-	paidQty: number;
-	unpaidQty: number;
-	requiredQty: number;
-	reason: string | null;
-	matches: { orderId: string; qty: number; status: string; paidAt: string | null; url: string }[];
-	canPurchase: boolean;
-};
-
 type Kind = "paid" | "unpaid" | "refund" | "closed" | "unknown";
 type Slot = { record: MatchRecord; created: number | null; left: number; kind: Kind; reason: string | null };
 const SKEW_MS = 3600_000;

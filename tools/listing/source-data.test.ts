@@ -1,4 +1,3 @@
-// 人工原始快照的回归：保留1688身份，缺失库存不伪装成零，原文规格不偷偷翻译。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { updatedAttributes } from "./category.ts";

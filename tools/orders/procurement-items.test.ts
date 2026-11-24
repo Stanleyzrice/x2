@@ -1,6 +1,6 @@
-// 采购订单行保留真实商品、规格与数量；货源按商品和店铺归属关联，不猜规格，不信任存下来的 URL。
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { PurchaseMatch as Match } from "../../platform/web/procurement.ts";
 import {
 	type ProcurementItem,
 	type ProcurementListingRow,
@@ -9,7 +9,7 @@ import {
 	procurementImage,
 	procurementLines,
 } from "./procurement-items.ts";
-import type { Match, MatchNeed } from "./procurement-matches.ts";
+import type { MatchNeed } from "./procurement-matches.ts";
 
 const item: ProcurementItem = { itemId: "10", modelId: "11", name: "商品", spec: "大号", qty: 3, image: "https://img.example/shopee.jpg" };
 const chosen: ProcurementSourceRow = { itemId: "10", offerId: "123", title: "选用货源", itemImage: "https://img.example/item.jpg", broken: null };
