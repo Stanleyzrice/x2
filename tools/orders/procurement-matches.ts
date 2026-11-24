@@ -96,7 +96,7 @@ function sameTarget(need: MatchNeed, record: MatchRecord, exact: boolean): boole
 	return typeof t.specId !== "string" || record.fulfillment?.specId == null || record.fulfillment.specId === t.specId;
 }
 
-export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], coverage: Coverage): Map<string, Match> {
+export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], coverage: Coverage, unreadSince?: number | null): Map<string, Match> {
 	const captured = time(coverage.capturedAt);
 	const unique = new Map<string, { record: MatchRecord; conflict: boolean }>();
 	for (const record of records.filter((r) => r.account === coverage.account)) {
@@ -209,12 +209,24 @@ export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], cov
 					(other.created === null || (slot.created !== null && slot.created >= other.created - SKEW_MS)),
 			);
 		});
+		const uncertainRange =
+			unreadSince != null &&
+			slots.some(
+				(slot) =>
+					(slot.kind === "paid" || slot.kind === "unpaid") &&
+					sameTarget(need, slot.record, true) &&
+					inRange(row.created, slot) &&
+					slot.created! >= unreadSince - SKEW_MS,
+			);
 		let state: Match["state"];
 		let reason = row.invalid;
 		if (reason || !coverage.account || captured === null || !coverage.complete || coverage.error) {
 			state = "unknown";
 			reason ??=
 				coverage.error ?? (!coverage.account ? "采购账号尚未核对。" : captured === null ? "采购记录采集时间未知。" : "采购记录读取不完整，不能确定采购状态。");
+		} else if (uncertainRange) {
+			state = "unknown";
+			reason = "日期范围外有尚未采集的订单也可能用了这笔采购，请采集相应日期后核对。";
 		} else if (uncertainHistory) {
 			state = "unknown";
 			reason = "另有订单的状态、货源规格、时间或数量待核对，无法排除该采购记录已被占用，请先核对原采购单。";
@@ -235,8 +247,8 @@ export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], cov
 		result.set(`${need.sn}:${need.modelId}`, {
 			state,
 			label: LABELS[state],
-			paidQty: row.paidQty,
-			unpaidQty: row.unpaidQty,
+			paidQty: uncertainRange ? 0 : row.paidQty,
+			unpaidQty: uncertainRange ? 0 : row.unpaidQty,
 			requiredQty: need.qty,
 			reason: [reason, detail, ...new Set(row.reasons), row.matches.length ? INFERENCE : null].filter(Boolean).join("；") || null,
 			matches: row.matches,

@@ -2,7 +2,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Order } from "../../connectors/sites/shopee/orders.ts";
-import { shopeeItems, shopeeOrderRow, shopeeState, validateCards, validateCartOrder, validateIndexPage } from "./shopee.ts";
+import {
+	collectShopeeOrders,
+	orderDateRange,
+	shopeeItems,
+	shopeeOrderRow,
+	shopeeState,
+	validateCards,
+	validateCartOrder,
+	validateIndexPage,
+} from "./shopee.ts";
 
 const order = (changes: Partial<Order> = {}): Order => ({
 	orderId: "1",
@@ -98,4 +107,42 @@ test("同批同规格只统计待出货订单；取消申请、陌生或缺失�
 		assert.throws(() => validateCartOrder(c, { sn: c.orderSn, shopee_order_id: c.orderId, shop_id: c.shopId }, [{ modelId: "M1", qty: 2 }]), /未加购/);
 	}
 	assert.throws(() => validateCards([cards[0]!, { ...cards[1]!, shopId: "OTHER" }], batch.slice(0, 2), "S1"), /身份不符/);
+});
+
+test("自定义下单日按 UTC+8 包含首尾整日，只采集范围内商品；其他店铺的日期不能代用", async () => {
+	const range = orderDateRange.parse({ from: "2026-11-23", to: "2026-11-24" });
+	assert.ok(orderDateRange.safeParse({ from: range.from, to: range.from }).success);
+	for (const args of [{ from: range.to, to: range.from }, { from: "2026-02-30", to: range.to }, { from: range.from }])
+		assert.equal(orderDateRange.safeParse(args).success, false);
+	const dates = ["2026-11-22T15:59:59Z", "2026-11-22T16:00:00Z", "2026-11-24T15:59:59Z", "2026-11-24T16:00:00Z"];
+	const refs = dates.map((_, i) => ({ order_id: String(i), shop_id: "S1" }));
+	const saved = [
+		{ orderId: "0", shopId: "S1", sn: "SN0", createdAt: new Date(dates[0]!) },
+		{ orderId: "1", shopId: "other", sn: "other", createdAt: new Date(dates[0]!) },
+	];
+	const lookedUp: string[] = [],
+		cardIds: string[] = [];
+	const result = await collectShopeeOrders(
+		"S1",
+		refs,
+		range,
+		saved,
+		async (id) => {
+			lookedUp.push(id);
+			return { order_id: id, order_sn: `SN${id}`, shop_id: "S1", create_time: Date.parse(dates[Number(id)]!) / 1000 };
+		},
+		async (_, batch) =>
+			batch.map((ref) => {
+				const id = String(ref.order_id);
+				cardIds.push(id);
+				return order({ orderId: id, orderSn: `SN${id}` });
+			}),
+	);
+	assert.deepEqual(lookedUp, ["1", "2", "3"]);
+	assert.deepEqual(cardIds, ["1", "2"]);
+	assert.equal(result.unreadSince, Date.parse(dates[3]!));
+	assert.deepEqual(
+		result.orders.map((o) => o.orderSn),
+		["SN1", "SN2"],
+	);
 });

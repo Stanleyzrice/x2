@@ -19,6 +19,7 @@ export type SourceItem = {
 	productId: string | null;
 	deletable: boolean;
 	deleteProblem: string | null;
+	editedAt?: string | null;
 };
 export type SourceDeletion = { deleted: string[]; alreadyDeleted: string[] };
 export type SourcePrompt = { shop: string; count: number; prompt: string; filename: string };
@@ -33,6 +34,10 @@ export type SourceFields = {
 	attributes?: { attribute_id: number; attribute_values: { value_id: number }[] }[];
 	stocks?: Record<string, number>;
 	prices?: Record<string, number>;
+	salePricesTwd?: Record<string, number>;
+	weightsKg?: Record<string, number>;
+	tierLabels?: { source: string; name: string; options: Record<string, string> }[];
+	hiddenSkuImages?: string[];
 	mainImages?: string[];
 	detailImages?: string[];
 };
@@ -53,6 +58,12 @@ export type SourceDetail = SourceItem & {
 	props: { name: string; values: { name: string; image: string }[] }[];
 	skus: { id: string; name: string; attrs: string[]; price: number | null; stock: number | null; image: string | null; weightKg: number | null }[];
 	fields: SourceFields;
+	tiers: { source: string; name: string; options: { source: string; name: string }[] }[];
+	salePrices: Record<string, number | null>;
+	skuNames: Record<string, string>;
+	listingDescription: string;
+	selectedMain: string[];
+	selectedDetail: string[];
 };
 export type SourceList = {
 	shop: string;

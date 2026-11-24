@@ -8,6 +8,12 @@ import { reply } from "../../platform/reply.ts";
 
 export type Ref = { order_id: string | number; shop_id: string | number; region_id?: string | null };
 export type ShopeeOrder = Order & { createdAt: Date };
+export const orderDateRange = z.object({ from: z.iso.date(), to: z.iso.date() }).refine((r) => r.from <= r.to, "下单起始日不能晚于截止日");
+export type OrderDateRange = z.infer<typeof orderDateRange>;
+export function orderBounds(range?: OrderDateRange) {
+	return range && { start: new Date(`${range.from}T00:00:00+08:00`), end: new Date(Date.parse(`${range.to}T00:00:00+08:00`) + 86_400_000) };
+}
+export type KnownOrderDate = { orderId: string; shopId: string; sn: string; createdAt: Date };
 const detail = z.looseObject({
 	order_id: z.union([z.string(), z.number()]),
 	order_sn: z.string(),
@@ -76,7 +82,51 @@ async function inShop<T>(account: string, run: (shopId: string) => Promise<T>): 
 	});
 }
 
-export async function readShopeeOrders(account: string): Promise<{ shopId: string; orders: ShopeeOrder[] }> {
+export async function collectShopeeOrders(
+	shopId: string,
+	refs: Ref[],
+	range?: OrderDateRange,
+	saved: KnownOrderDate[] = [],
+	readDetail = oneOrder,
+	readCards = orderCards,
+) {
+	const known = new Map(saved.filter((row) => row.shopId === shopId).map((row) => [row.orderId, row]));
+	const bounds = orderBounds(range);
+	const dates = new Map<string, { sn: string; createdAt: Date }>();
+	const selected: Ref[] = [];
+	let unreadSince: number | null = null;
+	for (const ref of refs) {
+		const id = String(ref.order_id);
+		let date = known.get(id);
+		if (!date) {
+			const raw = reply(detail, await readDetail(id), "Shopee /api/v3/order/get_one_order");
+			if (String(raw.order_id) !== id || String(raw.shop_id) !== shopId) throw new Usage("Shopee 订单详情与列表的店铺或订单身份不符");
+			date = { orderId: id, shopId, sn: raw.order_sn, createdAt: new Date(raw.create_time * 1000) };
+		}
+		if (bounds && (date.createdAt < bounds.start || date.createdAt >= bounds.end)) {
+			if (!known.has(id)) unreadSince = Math.min(unreadSince ?? Infinity, date.createdAt.getTime());
+			continue;
+		}
+		dates.set(id, date);
+		selected.push(ref);
+	}
+	const orders: ShopeeOrder[] = [];
+	const sns = new Set<string>();
+	for (let i = 0; i < selected.length; i += 5) {
+		const batch = selected.slice(i, i + 5);
+		const cards = await readCards(TAB.toShip, batch);
+		validateCards(cards, batch, shopId);
+		for (const order of cards) {
+			const date = dates.get(order.orderId)!;
+			if (date.sn !== order.orderSn || sns.has(order.orderSn)) throw new Usage("Shopee 订单号重复或与详情不符，读取不完整");
+			sns.add(order.orderSn);
+			orders.push({ ...order, createdAt: date.createdAt });
+		}
+	}
+	return { orders, unreadSince };
+}
+
+export async function readShopeeOrders(account: string, range?: OrderDateRange, known?: KnownOrderDate[]) {
 	return inShop(account, async (shopId) => {
 		const refs: Ref[] = [];
 		const seen = new Set<string>();
@@ -87,22 +137,7 @@ export async function readShopeeOrders(account: string): Promise<{ shopId: strin
 			refs.push(...page.refs);
 			if (seen.size === expected) break;
 		}
-		const out: ShopeeOrder[] = [];
-		const sns = new Set<string>();
-		for (let i = 0; i < refs.length; i += 5) {
-			const batch = refs.slice(i, i + 5);
-			const cards = await orderCards(TAB.toShip, batch);
-			validateCards(cards, batch, shopId);
-			for (const order of cards) {
-				if (sns.has(order.orderSn)) throw new Usage("Shopee 订单号重复，读取不完整");
-				sns.add(order.orderSn);
-				const raw = reply(detail, await oneOrder(order.orderId), "Shopee /api/v3/order/get_one_order");
-				if (String(raw.order_id) !== order.orderId || raw.order_sn !== order.orderSn || String(raw.shop_id) !== shopId)
-					throw new Usage("Shopee 订单详情与列表的店铺或订单身份不符");
-				out.push({ ...order, createdAt: new Date(raw.create_time * 1000) });
-			}
-		}
-		return { shopId, orders: out };
+		return { shopId, ...(await collectShopeeOrders(shopId, refs, range, known)) };
 	});
 }
 

@@ -44,7 +44,6 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, type PageSummary, type SetupState, usePoll } from "./api.ts";
 import { HermesChat } from "./hermes-chat.tsx";
-import { OrderNotifications } from "./interactable/procurement/view.tsx";
 import { PageView } from "./page.tsx";
 import { preloadPage, usePagePreload } from "./preload.ts";
 import { SetupPage } from "./setup.tsx";
@@ -154,7 +153,6 @@ function App({ id, setup }: { id: string; setup: SetupState }) {
 	usePagePreload(pages ?? [], current);
 	return (
 		<SidebarProvider>
-			<OrderNotifications pages={pages ?? []} />
 			<Nav
 				pages={pages ?? []}
 				active={current}

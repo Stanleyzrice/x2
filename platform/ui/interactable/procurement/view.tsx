@@ -1,97 +1,25 @@
-// 新订单提醒在 X2 打开期间检查 Shopee；采购先预览、再确认，保存原请求，网络中断或结果未知都只查原结果。
+// 按人选定的下单日期采集 Shopee；采购先预览、再确认，保存原请求，网络中断或结果未知都只查原结果。
 
 import { ArrowUpRightIcon, BellIcon, PackageIcon, RefreshCwIcon, ShoppingCartIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { useLightbox } from "@/components/lightbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { errorOf, remember, saved as savedValue } from "@/lib/state";
-import { api, type BrowserConnectionResult, type Item as PageItem, type PageSummary, usePoll } from "../../api.ts";
+import { errorOf, saved as savedValue } from "@/lib/state";
+import { api, type BrowserConnectionResult, type Item as PageItem, usePoll } from "../../api.ts";
 import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
-import { monitorSync, preserveMonitor } from "./sync.ts";
+import { preserveMonitor } from "./sync.ts";
 import { type Monitor, type Order, type OrderLine, type PurchaseMatch, type PurchaseResult, type SkuDemand, selectedDemand } from "./types.ts";
 
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
-const syncMonitor = monitorSync(
-	async (item, shops, force) => {
-		// 所有同步入口先保留快照；外站同步期间会暂时关闭订单采购资格。
-		await api.procurementMonitor(item, shops);
-		api.beginProcurementSync(item, shops);
-		try {
-			return await api.act<Monitor>(item, "sync", { force });
-		} finally {
-			api.endProcurementSync(item, shops);
-		}
-	},
-	(item, shops, value) => api.setProcurementMonitor(item, shops, preserveMonitor(api.peekProcurementMonitor(item, shops), value)),
-	(item) => api.procurementMonitorEpoch(item),
-	(item, shops) => api.peekProcurementMonitor(item, shops),
-);
-const seen = new Set<string>();
-
-export function OrderNotifications({ pages }: { pages: PageSummary[] }) {
-	const id = pages.find((p) => p.workspace?.component === "procurement")?.id;
-	useEffect(() => {
-		if (!id) return;
-		let stopped = false;
-		let busy = false;
-		const read = async () => {
-			if (busy) return;
-			busy = true;
-			try {
-				const page = await api.page(id);
-				const item = page.items.find((i) => i.fixed && i.component === "procurement");
-				if (!item || stopped) return;
-				const shops = (item.props as Props).shops;
-				const data = await syncMonitor(item.id, shops);
-				if (stopped || data.error || !data.checkedAt) return;
-				const fresh = data.orders.filter((o) => {
-					const key = `x2-order-notified:${o.shop}:${o.sn}`;
-					if (o.purchase?.state === "paid" || o.purchase?.state === "unpaid" || o.cartDone || o.cartPending || seen.has(key)) return false;
-					return !savedValue(key);
-				});
-				if (!fresh.length) return;
-				for (const o of fresh) {
-					const key = `x2-order-notified:${o.shop}:${o.sn}`;
-					seen.add(key);
-					remember(key, "1");
-				}
-				toast(`Shopee 有 ${fresh.length} 张待出货订单`, {
-					description: fresh
-						.map((o) => o.sn)
-						.slice(0, 3)
-						.join("、"),
-					duration: 12_000,
-					action: {
-						label: "查看采购",
-						onClick: () => {
-							location.hash = page.workspace?.key ?? id;
-						},
-					},
-				});
-			} catch {
-				/* 登录或读取失败由采购页面显示，后台不反复弹窗。 */
-			} finally {
-				busy = false;
-			}
-		};
-		void read();
-		const timer = setInterval(() => void read(), 60_000);
-		return () => {
-			stopped = true;
-			clearInterval(timer);
-		};
-	}, [id]);
-	return null;
-}
-
 type Pending = { requestId: string; token: string };
 type Preview = { token: string; display: string; expiresAt: string; trialRequired: boolean; requestId: string };
 function saved(key: string): Pending | null {
@@ -116,50 +44,37 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	return <Procurement key={`${item.id}:${props.shops.join(",")}`} props={props} item={item} />;
 }
 function Procurement({ props, item }: { props: Props; item: PageItem }) {
-	const [data, error, reload] = usePoll(
-		() => api.procurementMonitor(item.id, props.shops),
-		60_000,
-		[item.id, props.shops],
-		api.peekProcurementMonitor(item.id, props.shops),
-	);
+	const [dateRange, setDateRange] = useState({ from: "", to: "" });
+	const [data, setData] = useState<Monitor | null>(null);
 	const [syncing, setSyncing] = useState(false);
 	const [connecting, setConnecting] = useState(false);
 	const connectionBusy = useRef(false);
 	const lock = useRef(false);
-	const [lastRecheck, setLastRecheck] = useState<string | null>(null);
+	const collecting = useRef<Promise<void> | null>(null);
+	const attempted = useRef(false);
 	const [syncError, setSyncError] = useState<string | null>(null);
-	const syncRead = useRef<(force?: boolean) => Promise<void>>(async () => {});
-	useEffect(() => {
-		let stopped = false;
-		let reading = false;
-		const read = async (force = false) => {
-			if (reading || connectionBusy.current || lock.current) return;
-			reading = true;
-			setSyncing(true);
-			try {
-				if (stopped) return;
-				const latest = await syncMonitor(item.id, props.shops, force);
-				if (!stopped) {
-					setSyncError(null);
-					if (force) setLastRecheck(new Date().toISOString());
-					if (force && latest.purchases?.complete) setActionError((previous) => (/滑块|安全验证/.test(previous ?? "") ? null : previous));
-					reload();
-				}
-			} catch (e) {
-				if (!stopped) setSyncError(errorOf(e));
-			} finally {
-				reading = false;
-				if (!stopped) setSyncing(false);
-			}
-		};
-		syncRead.current = read;
-		void read();
-		const timer = setInterval(() => void read(), 60_000);
-		return () => {
-			stopped = true;
-			clearInterval(timer);
-		};
-	}, [item.id, props.shops, reload]);
+	const validRange = Boolean(dateRange.from && dateRange.to && dateRange.from <= dateRange.to);
+	const read = async (refresh = true) => {
+		if (!validRange || collecting.current || connectionBusy.current || lock.current) return;
+		attempted.current = true;
+		setSyncing(true);
+		setSyncError(null);
+		const request = api
+			.readProcurement(item.id, dateRange, refresh)
+			.then((latest) => {
+				setData((previous) => preserveMonitor(previous, latest));
+				if (latest.purchases?.complete) setActionError((error) => (/滑块|安全验证/.test(error ?? "") ? null : error));
+			})
+			.catch((e: unknown) => setSyncError(errorOf(e)))
+			.finally(() => {
+				collecting.current = null;
+				setSyncing(false);
+			});
+		collecting.current = request;
+		await request;
+	};
+	const reload = useRef(read);
+	reload.current = read;
 	const [selected, setSelected] = useState<string[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [actionError, setActionError] = useState<string | null>(null);
@@ -168,12 +83,28 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	const [pending, setPending] = useState(() => saved(storageKey));
 	const [result, setResult] = useState<PurchaseResult | null>(null);
 	const [verifiedBuyer, setVerifiedBuyer] = useState<BrowserConnectionResult["account"]>(undefined);
-	const buyer = data?.purchases?.selected;
+	const [settings, settingsError, reloadSettings] = usePoll(
+		() => api.rows({ table: "order_settings", columns: ["buy_account"], filter: { id: "1" } }),
+		60_000,
+		[item.id],
+	);
+	const buyer = settings ? String(settings[0]?.buy_account ?? "") || null : data?.purchases?.selected;
 	const connectionChanged = (checking: boolean) => {
 		connectionBusy.current = checking;
 		setConnecting(checking);
 	};
-	const connected = () => syncRead.current(true);
+	const connected = async () => {
+		if (collecting.current) await collecting.current;
+		if (attempted.current) await reload.current();
+	};
+	const changeDate = (field: "from" | "to", value: string) => {
+		setDateRange({ ...dateRange, [field]: value });
+		attempted.current = false;
+		setData(null);
+		setSelected([]);
+		setSyncError(null);
+		setActionError(null);
+	};
 	const chooseBuyer = async () => {
 		if (!verifiedBuyer || buyer !== null || lock.current || syncing || connectionBusy.current || pending) return;
 		lock.current = true;
@@ -181,8 +112,8 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		setActionError(null);
 		try {
 			await api.set("order_settings", { id: "1" }, "buy_account", verifiedBuyer.id);
+			reloadSettings();
 			setVerifiedBuyer(undefined);
-			api.invalidateProcurementMonitor(item.id);
 		} catch (e) {
 			setActionError(errorOf(e));
 			return;
@@ -192,8 +123,10 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		}
 		await connected();
 	};
-	const errors = [...new Set([actionError, syncError, data?.error, data?.purchases?.error, error].filter((message): message is string => Boolean(message)))];
-	const automaticSyncPaused = [data?.error, data?.purchases?.error].some((message) => /滑块|安全验证/.test(message ?? ""));
+	const errors = [
+		...new Set([actionError, syncError, settingsError, data?.error, data?.purchases?.error].filter((message): message is string => Boolean(message))),
+	];
+	const verificationRequired = [data?.error, data?.purchases?.error].some((message) => /滑块|安全验证/.test(message ?? ""));
 	// 勾选用于读取和核对；是否允许加购由预览及确认的服务端实时检查决定。
 	const selectable = data?.orders.filter((o) => !o.cartPending) ?? [];
 	const selectedOrders = selected.filter((sn) => selectable.some((o) => o.sn === sn));
@@ -210,8 +143,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					localStorage.removeItem(storageKey);
 					setPending(null);
 					setSelected([]);
-					api.invalidateProcurementMonitor(item.id);
-					reload();
+					if (attempted.current) void reload.current(false);
 				}
 			} catch (e) {
 				if (!stopped) setActionError(errorOf(e));
@@ -223,7 +155,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 			stopped = true;
 			clearInterval(timer);
 		};
-	}, [item.id, pending, storageKey, reload]);
+	}, [item.id, pending, storageKey]);
 	const start = async () => {
 		if (lock.current || connectionBusy.current || pending || !selectedOrders.length) return;
 		lock.current = true;
@@ -231,7 +163,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 		setActionError(null);
 		try {
 			const requestId = crypto.randomUUID();
-			const prepared = await api.prepare(item.id, "cart", { orders: selectedOrders, requestId });
+			const prepared = await api.prepare(item.id, "cart", { orders: selectedOrders, requestId, dateRange });
 			setPreview({ ...prepared, requestId });
 		} catch (e) {
 			setActionError(errorOf(e));
@@ -281,17 +213,51 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 						<BellIcon className="size-4" /> SHOPEE ORDERS
 					</p>
 					<h2 className="text-2xl font-semibold">订单采购</h2>
-					<p className="text-sm text-muted-foreground">{props.shops.join("、")} · X2 打开时每分钟检查新订单，点击开始采购后加入 1688 购物车。</p>
+					<p className="text-sm text-muted-foreground">{props.shops.join("、")} · 按下单日期采集待出货订单，核对后可加入 1688 购物车。</p>
 				</div>
-				<Button variant="outline" disabled={busy || syncing || connecting} onClick={() => void syncRead.current(true)}>
-					<RefreshCwIcon />
-					{syncing ? "正在更新订单…" : "刷新订单"}
-				</Button>
 			</header>
+			<div className="flex flex-wrap items-end gap-3">
+				<div className="space-y-1.5">
+					<Label htmlFor={`order-from-${item.id}`}>下单起始日</Label>
+					<Input
+						id={`order-from-${item.id}`}
+						type="date"
+						className="w-44"
+						disabled={syncing || busy || connecting || Boolean(preview)}
+						value={dateRange.from}
+						onChange={(e) => changeDate("from", e.target.value)}
+					/>
+				</div>
+				<div className="space-y-1.5">
+					<Label htmlFor={`order-to-${item.id}`}>下单截止日</Label>
+					<Input
+						id={`order-to-${item.id}`}
+						type="date"
+						className="w-44"
+						disabled={syncing || busy || connecting || Boolean(preview)}
+						value={dateRange.to}
+						min={dateRange.from || undefined}
+						onChange={(e) => changeDate("to", e.target.value)}
+					/>
+				</div>
+				<Button variant="outline" disabled={!validRange || busy || syncing || connecting} onClick={() => void read()}>
+					<RefreshCwIcon />
+					{syncing ? "正在读取订单…" : "开始采集"}
+				</Button>
+				{dateRange.from && dateRange.to && !validRange && (
+					<span role="alert" className="text-sm text-destructive">
+						截止日不能早于起始日
+					</span>
+				)}
+			</div>
 			<div className="flex flex-wrap items-center gap-3 text-sm">
-				<Badge variant="secondary">可选订单 {selectable.length}</Badge>
+				{data && <Badge variant="secondary">可选订单 {selectable.length}</Badge>}
 				<span className="text-muted-foreground">Shopee 最近读取：{data?.checkedAt ? time(data.checkedAt) : "尚未读取"}</span>
-				{syncing ? <span className="text-xs text-muted-foreground">展示订单快照 · 后台更新中…</span> : null}
+				{data && (
+					<span className="text-xs text-muted-foreground">
+						下单日期 {dateRange.from} 至 {dateRange.to}（UTC+8）
+					</span>
+				)}
 				<a className="ml-auto inline-flex items-center gap-1 underline underline-offset-4" href="https://seller.shopee.tw/" target="_blank" rel="noreferrer">
 					打开 Shopee Seller Centre
 					<ArrowUpRightIcon className="size-4" />
@@ -309,14 +275,14 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 						<BrowserConnection
 							expectedAccount={data?.purchases?.account ?? buyer ?? undefined}
 							verificationRequired={errors.some((message) => /滑块|安全验证/.test(message))}
-							disabled={busy || syncing || connecting}
+							disabled={busy || connecting}
 							onCheckingChange={(checking) => {
 								if (checking) setVerifiedBuyer(undefined);
 								connectionChanged(checking);
 							}}
 							onConnected={async (account) => {
-								if (buyer === null) setVerifiedBuyer(account);
-								else await connected();
+								if (buyer == null) setVerifiedBuyer(account);
+								await connected();
 							}}
 						/>
 						{buyer === null && verifiedBuyer && (
@@ -324,13 +290,8 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 								将 {verifiedBuyer.name} 设为采购账号
 							</Button>
 						)}
-						{lastRecheck && (
-							<p className="text-xs text-muted-foreground">
-								上次手动重读：{time(lastRecheck)}
-								{data?.purchases?.complete ? " · 采购记录读取成功" : ""}
-							</p>
-						)}
-						{automaticSyncPaused && <p className="text-xs text-muted-foreground">采购记录等候人工验证。完成后点「验证完成，重新检测」，X2 会重新读取订单。</p>}
+
+						{verificationRequired && <p className="text-xs text-muted-foreground">采购记录等候人工验证。完成后点「验证完成，重新检测」，X2 会重新读取订单。</p>}
 					</CardContent>
 				</Card>
 				{props.shops.map((shop) => (
@@ -340,7 +301,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 							<BrowserConnection
 								site="shopee"
 								expectedAccount={shop}
-								disabled={busy || syncing || connecting}
+								disabled={busy || connecting}
 								onCheckingChange={connectionChanged}
 								onConnected={connected}
 							/>
@@ -415,7 +376,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 								<Checkbox
 									id={`select-orders-${item.id}`}
 									aria-label="全选待采购订单"
-									disabled={Boolean(pending) || !selectable.length || Boolean(data?.error) || !data?.demand?.length}
+									disabled={Boolean(pending) || !selectable.length || Boolean(data?.error || syncError) || syncing || !data?.demand?.length}
 									checked={Boolean(selectable.length) && selectedOrders.length === selectable.length}
 									indeterminate={selectedOrders.length > 0 && selectedOrders.length < selectable.length}
 									onCheckedChange={(checked) => setSelected(checked ? selectable.map((order) => order.sn) : [])}
@@ -426,7 +387,16 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 						</div>
 						<Button
 							className="ml-auto"
-							disabled={busy || connecting || buyer === null || Boolean(pending) || !selectedOrders.length || Boolean(data?.error) || !data?.demand?.length}
+							disabled={
+								busy ||
+								connecting ||
+								buyer === null ||
+								Boolean(pending) ||
+								!selectedOrders.length ||
+								Boolean(data?.error || syncError) ||
+								syncing ||
+								!data?.demand?.length
+							}
 							onClick={() => void start()}
 						>
 							<ShoppingCartIcon />
@@ -434,7 +404,13 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 						</Button>
 					</div>
 					{!data ? (
-						<Skeleton className="m-4 h-48" />
+						syncing ? (
+							<Skeleton className="m-4 h-48" />
+						) : (
+							<p className="p-12 text-center text-sm text-muted-foreground">
+								{syncError ? "采集未完成，请重试。" : "选择下单起始日和截止日后，点击「开始采集」。"}
+							</p>
+						)
 					) : !data.orders.length ? (
 						<p className="p-12 text-center text-sm text-muted-foreground">
 							{data.error || syncError
@@ -450,8 +426,8 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 							rows={data.demand}
 							orders={data.orders}
 							selected={new Set(selectedOrders)}
-							pending={Boolean(pending) || Boolean(data.error)}
-							stale={Boolean(data.error)}
+							pending={Boolean(pending || data.error || syncError) || syncing}
+							stale={Boolean(data.error || syncError)}
 							onSelect={(sn, checked) => setSelected((before) => (checked ? [...new Set([...before, sn])] : before.filter((id) => id !== sn)))}
 						/>
 					)}

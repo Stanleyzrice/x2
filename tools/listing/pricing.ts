@@ -1,7 +1,7 @@
 // 核价（纯函数）：店铺设置 → 核价参数；每个规格的售价、重量、库存；缺重量、国内运费时 agent 要估什么；重新核价（不读 1688）；报价（选品用）
 import type { Offer } from "../../connectors/sites/1688/api.ts";
 import type { Mark } from "./pics.ts";
-import { minPrice, type PriceParams, priceParams } from "./price.ts";
+import { margin, minPrice, type PriceParams, priceParams } from "./price.ts";
 import { purchaseLimitOf } from "./purchase-limit.ts";
 import type { OfferLike, PriceInput, ShopSettingsRow } from "./row.ts";
 import { templateParams, templateUnitPrice } from "./template-pricing.ts";
@@ -61,21 +61,28 @@ export function variantTemplatePrice(v: Variant, freightRmb: number | null, p: N
 export function priceVariants(
 	variants: Variant[],
 	s: Settings,
-	opts: { weightKg: number | null; freightRmb: number | null; minimumPurchase?: number },
+	opts: { weightKg: number | null; freightRmb: number | null; minimumPurchase?: number; fields?: PriceInput["source_fields"] },
 ): Variant[] {
 	const units = opts.minimumPurchase ?? s.minPurchase;
 	return variants.map((v): Variant => {
 		const cleared = { ...v };
 		delete cleared.pricingProblem;
-		if (v.pricingInput) {
+		const salePrice = opts.fields?.salePricesTwd?.[v.skuId];
+		if (v.pricingInput || salePrice !== undefined) {
 			const explicit: Variant = {
 				...cleared,
-				costRmb: v.pricingInput.costRmb,
-				weightKg: v.pricingInput.chargeableWeightKg,
-				priceTwd: v.pricingInput.priceTwd,
+				costRmb: opts.fields?.prices?.[v.skuId] ?? v.pricingInput?.costRmb ?? v.costRmb,
+				weightKg: opts.fields?.weightsKg?.[v.skuId] ?? v.pricingInput?.chargeableWeightKg ?? v.weightKg ?? opts.weightKg,
+				priceTwd: salePrice ?? v.pricingInput!.priceTwd,
 				stock: Math.min(v.stock, s.stockCap),
 			};
-			if (!s.template) explicit.pricingProblem = `核价：${v.sku} 的显式售价缺少模板参数，保留输入待核`;
+			if (!s.template && salePrice !== undefined) {
+				if (explicit.weightKg && opts.freightRmb !== null) {
+					const m = margin(salePrice, explicit.costRmb, opts.freightRmb, explicit.weightKg, s.params, s.preOrder);
+					if (m.rate < s.params.minMarginRate || m.profitRmb < s.params.minMarginRmb)
+						explicit.pricingProblem = `核价：${v.sku} 指定售价 NT$${salePrice} 未达到店铺最低利润要求`;
+				}
+			} else if (!s.template) explicit.pricingProblem = `核价：${v.sku} 的显式售价缺少模板参数，保留输入待核`;
 			else {
 				const result = variantTemplatePrice(explicit, opts.freightRmb, s.template, units);
 				if (result.missing.length) explicit.pricingProblem = `核价：${v.sku} 缺${result.missing.join("、")}，保留输入待核`;
@@ -155,7 +162,7 @@ export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb:
 	const variants = priceVariants(
 		specs.variants.map((v) => ({ ...v, weightKg: weights.get(v.skuId) ?? null })),
 		s,
-		{ weightKg: num(l.weight_kg), freightRmb, minimumPurchase },
+		{ weightKg: num(l.weight_kg), freightRmb, minimumPurchase, fields: l.source_fields },
 	);
 	const policy = pricingPolicy(s);
 	// jsonb 会重排 key，按 key 比较；老结算快照没存参数时靠重算后的售价判断。
@@ -184,10 +191,22 @@ export function reprice(l: PriceInput, s: Settings): { specs: Specs; freightRmb:
 export function specsAndPrices(
 	o: Offer,
 	s: Settings,
-	opts: { removed?: string[]; prev?: Specs | null; weightKg: number | null; freightRmb: number | null; minimumPurchase?: number; originalText?: boolean },
+	opts: {
+		removed?: string[];
+		prev?: Specs | null;
+		weightKg: number | null;
+		freightRmb: number | null;
+		minimumPurchase?: number;
+		originalText?: boolean;
+		fields?: PriceInput["source_fields"];
+	},
 ): { specs: Specs; problems: string[] } {
 	const built = specsFrom(o, opts.removed ?? [], opts.prev ?? null, { originalText: opts.originalText });
-	const specs: Specs = { tiers: built.specs.tiers, variants: priceVariants(built.specs.variants, s, opts) };
+	const tiers = built.specs.tiers.map((tier) => {
+		const label = opts.fields?.tierLabels?.find((entry) => entry.source === tier.source);
+		return label ? { ...tier, name: label.name, options: tier.options.map((o) => ({ ...o, name: label.options[o.source] ?? o.name })) } : tier;
+	});
+	const specs: Specs = { tiers, variants: priceVariants(built.specs.variants, s, opts) };
 	return { specs, problems: [...sourceMoqProblems(o, specs), ...built.problems, ...structureProblems(specs)] };
 }
 

@@ -13,48 +13,33 @@ test("API 错误只显示文字消息，空回包或非文字 error 仍保留 HT
 	await assert.rejects(api.pages(), { name: "Error", message: "需要重新登录" });
 });
 
-test("读到截断或缺少订单的回包时不覆盖采购快照，后续可以重读", async (t) => {
-	const item = "procurement-incomplete";
+test("采购必须带上自定义下单日期，拒绝截断或缺少订单的快照，允许重读", async (t) => {
+	const dateRange = { from: "2026-11-03", to: "2026-11-11" };
 	const good = { checkedAt: "latest", error: null, orders: [] };
 	const replies = [new Response('{"orders":'), Response.json({}), Response.json(good)];
-	t.mock.method(globalThis, "fetch", async () => replies.shift()!);
-	api.setProcurementMonitor(item, ["one"], good);
-	try {
-		await assert.rejects(api.procurementMonitor(item, ["one"], true), /返回的数据不完整/);
-		await assert.rejects(api.procurementMonitor(item, ["one"], true), /缺少订单列表/);
-		assert.equal(api.peekProcurementMonitor(item, ["one"]), good);
-		assert.deepEqual(await api.procurementMonitor(item, ["one"], true), good);
-	} finally {
-		api.invalidateProcurementMonitor(item);
-	}
+	const bodies: unknown[] = [];
+	t.mock.method(globalThis, "fetch", async (_: unknown, opt: RequestInit) => {
+		bodies.push(JSON.parse(String(opt.body)));
+		return replies.shift()!;
+	});
+	await assert.rejects(api.readProcurement("one", dateRange, true), /返回的数据不完整/);
+	await assert.rejects(api.readProcurement("one", dateRange, false), /缺少订单列表/);
+	assert.deepEqual(await api.readProcurement("one", dateRange, true), good);
+	assert.deepEqual(bodies.slice(0, 2), [
+		{ item: "one", action: "sync", input: { dateRange, force: true } },
+		{ item: "one", action: "monitor", input: { dateRange } },
+	]);
 });
 
-test("采购缓存隔离店铺范围，同一范围合并读取，同步结果回填可立即回显", async (t) => {
-	let calls = 0;
-	t.mock.method(globalThis, "fetch", async () => {
-		calls++;
-		return Response.json({ checkedAt: String(calls), error: null, orders: [] });
+test("预加载订单采购页面不启动无日期订单采集或汇总", async (t) => {
+	const paths: string[] = [];
+	t.mock.method(globalThis, "fetch", async (url: string) => {
+		paths.push(url);
+		return Response.json({ items: [{ component: "procurement", id: "fixture" }] });
 	});
-	const item = "procurement-cache-test";
-	try {
-		const [first, shared] = await Promise.all([api.procurementMonitor(item, ["one"]), api.procurementMonitor(item, ["one"])]);
-		assert.equal(calls, 1);
-		assert.equal(first, shared);
-		assert.equal(api.peekProcurementMonitor(item, ["two"]), null);
-		await api.procurementMonitor(item, ["two"]);
-		assert.equal(calls, 2);
-		const updated = { checkedAt: "latest", error: null, orders: [] };
-		api.setProcurementMonitor(item, ["one"], updated);
-		assert.equal(await api.procurementMonitor(item, ["one"]), updated);
-		assert.equal(calls, 2);
-		const epoch = api.procurementMonitorEpoch(item);
-		api.invalidateProcurementMonitor(item);
-		assert.equal(api.procurementMonitorEpoch(item), epoch + 1);
-		assert.equal(api.peekProcurementMonitor(item, ["one"]), null);
-		assert.equal(api.peekProcurementMonitor(item, ["two"]), null);
-	} finally {
-		api.invalidateProcurementMonitor(item);
-	}
+	await preloadPage("date-fixture");
+	assert.equal(paths.length, 1);
+	assert.match(paths[0]!, /api\/page\?/);
 });
 
 test("报账缓存隔离账号范围、筛选及页码，失效后重新取人工标记", async (t) => {
@@ -82,55 +67,6 @@ test("报账缓存隔离账号范围、筛选及页码，失效后重新取人�
 		assert.deepEqual(await api.reimbursementRecords(item, query), { revision: 8 });
 	} finally {
 		api.invalidateReimbursementRecords(item);
-	}
-});
-
-test("采购同步期间保留内容，人工操作失效后重新核对，同一店铺集合不受顺序影响", async (t) => {
-	let calls = 0;
-	t.mock.method(globalThis, "fetch", async () => Response.json({ checkedAt: String(++calls), error: null, orders: [] }));
-	const item = "procurement-sync-cache-test";
-	const shops = ["one", "two"];
-	const first = await api.procurementMonitor(item, shops);
-	api.beginProcurementSync(item, shops);
-	try {
-		assert.equal(await api.procurementMonitor(item, ["two", "one", "one"], true), first);
-		assert.equal(calls, 1);
-		api.invalidateProcurementMonitor(item);
-		assert.equal((await api.procurementMonitor(item, shops, true)).checkedAt, "2");
-	} finally {
-		api.endProcurementSync(item, shops);
-	}
-	try {
-		assert.equal((await api.procurementMonitor(item, shops, true)).checkedAt, "3");
-	} finally {
-		api.invalidateProcurementMonitor(item);
-	}
-});
-
-test("采购同步失败后的只读轮询仍保留旧内容，成功确认无订单时正常清空", async (t) => {
-	const item = "procurement-failed-poll-test";
-	const order = { sn: "saved-order", shop: "one", createdAt: null, shipBy: null, items: "商品", lines: [], step: "待核对", cartPending: true, cartDone: false };
-	const replies = [
-		{ checkedAt: "last-success", error: null, orders: [order] },
-		{ checkedAt: null, error: "同步失败", orders: [] },
-		{ checkedAt: null, error: "同步仍未成功", orders: [] },
-		{ checkedAt: "fresh-success", error: null, orders: [] },
-	];
-	t.mock.method(globalThis, "fetch", async () => Response.json(replies.shift()));
-	try {
-		await api.procurementMonitor(item, ["one"]);
-		for (const message of ["同步失败", "同步仍未成功"]) {
-			const data = await api.procurementMonitor(item, ["one"], true);
-			assert.equal(data.error, message);
-			assert.equal(data.checkedAt, "last-success");
-			assert.deepEqual(data.orders, [order]);
-		}
-		const fresh = await api.procurementMonitor(item, ["one"], true);
-		assert.equal(fresh.error, null);
-		assert.equal(fresh.checkedAt, "fresh-success");
-		assert.deepEqual(fresh.orders, []);
-	} finally {
-		api.invalidateProcurementMonitor(item);
 	}
 });
 

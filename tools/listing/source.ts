@@ -12,7 +12,8 @@ import { imageLanguageBlock } from "./image-language.ts";
 import { original } from "./images.ts";
 import { make } from "./make.ts";
 import { addListings } from "./pick.ts";
-import { type Settings, settingsOf } from "./pricing.ts";
+import { freightOf, num, pricingPolicy, type Settings, settingsOf, specsAndPrices, usableWeights } from "./pricing.ts";
+import { purchaseLimitOf } from "./purchase-limit.ts";
 import { inShopQueued } from "./queue.ts";
 import { productOf } from "./ready.ts";
 import { importReviewedImages, reviewedImagesParams, reviewedImagesPreview } from "./reviewed-images.ts";
@@ -33,6 +34,7 @@ import {
 	sourceDetailParams,
 	sourceFieldsSchema,
 	sourceListParams,
+	sourceOffer,
 	sourceProductSchema,
 	sourcePromptParams,
 	sourcePublicationHash,
@@ -45,10 +47,11 @@ import {
 } from "./source-data.ts";
 import { type SourcePromptSnapshot, sourcePrompt, sourcePromptSnapshotSchema } from "./source-prompt.ts";
 import { textProblems } from "./text.ts";
+import { specsOf } from "./variants.ts";
 import { listingSourceImageUrl, xiangjiImages, xiangjiImagesParams } from "./xiangji-images.ts";
 
 export { type SourceItem, sourceDeleteParams } from "./source-data.ts";
-export { saveSource };
+export { saveSource, update as updateSource };
 
 type SourceRow = {
 	id: SourceId;
@@ -296,8 +299,9 @@ function itemOf(raw: SourceRow | SourceSummary, ctx: Omit<Context, "sources">): 
 		platform: source.platform,
 		sourceId: source.source_id,
 		url: source.url,
-		title: row?.title ?? source.source_title,
-		image: source.source_image,
+		title: row?.source_fields?.title ?? row?.title ?? source.source_title,
+		image: row?.source_fields?.mainImages?.[0] ?? row?.images.main?.find((pic) => pic.imageId && !pic.drop)?.from ?? source.source_image,
+		editedAt: row?.source_edited_at?.toISOString() ?? null,
 		skuCount: source.sku_count,
 		capturedAt: source.captured_at.toISOString(),
 		errors: source.source_errors,
@@ -310,7 +314,7 @@ function itemOf(raw: SourceRow | SourceSummary, ctx: Omit<Context, "sources">): 
 	};
 }
 
-async function ensureDraft(sql: Sql, source: SourceRow, shop: string): Promise<ListingRow> {
+async function ensureDraft(sql: Sql, source: SourceRow, shop: string): Promise<ListingRow & { revision: string }> {
 	const [active] = await sql`select 1 from listing_sources where id = ${source.id} and deleted_at is null`;
 	if (!active) throw new Usage("商品已从备选区移除，请刷新列表");
 	const pick = sourceResearchPick(source.research ?? [], shop);
@@ -319,7 +323,7 @@ async function ensureDraft(sql: Sql, source: SourceRow, shop: string): Promise<L
 	await sql`insert into listing_source_links (source_id, shop, listing_id) values (${source.id}, ${shop}, ${addedRow.id}) on conflict (source_id, shop) do nothing`;
 	if (addedRow.isNew)
 		await sql`update listings set source_product_id = ${source.id}, source_fields = '{}'::jsonb, images = '{"imageMode":"original"}'::jsonb where id = ${addedRow.id}`;
-	const [row] = await sql<ListingRow[]>`select * from listings where id = ${addedRow.id}`;
+	const [row] = await sql<(ListingRow & { revision: string })[]>`select *, xmin::text as revision from listings where id = ${addedRow.id}`;
 	return row!;
 }
 
@@ -377,12 +381,45 @@ async function sources(sql: Sql, input: z.output<typeof sourceListParams>) {
 	};
 }
 
+function sourceSpecs(source: SourceProduct, row: ListingRow | undefined, fields: import("./source-data.ts").SourceFields, settings: Settings) {
+	const { offer } = sourceOffer(source, fields);
+	if (!offer) return null;
+	const usable = usableWeights(offer);
+	const freightRmb = fields.freightRmb ?? freightOf(offer, row?.freight_rmb);
+	const minimumPurchase = purchaseLimitOf({ min_purchase: row?.min_purchase }, settings.minPurchase);
+	const calculated = specsAndPrices(usable, settings, {
+		fields,
+		originalText: true,
+		prev: specsOf(row?.variants),
+		removed: row?.removed_variants ?? [],
+		weightKg: fields.weightKg ?? num(row?.weight_kg),
+		freightRmb,
+		minimumPurchase,
+	});
+	return { ...calculated, offer: usable, pricing: { ...pricingPolicy(settings), freightRmb, minimumPurchase, at: new Date().toISOString() } };
+}
+
 async function detail(sql: Sql, input: z.output<typeof sourceDetailParams>) {
 	const ctx = await context(sql, input, [input.sourceId]);
 	const source = ctx.sources[0]!,
 		row = ctx.listings.get(String(source.id));
 	const fields = row?.source_fields ?? {};
+	const specs = specsOf(row?.variants) ?? sourceSpecs(source.snapshot, row, fields, ctx.settings)?.specs;
 	return {
+		tiers: specs?.tiers.filter((t) => t.name || t.source) ?? [],
+		salePrices: { ...Object.fromEntries((specs?.variants ?? []).map((v) => [v.skuId, v.priceTwd])), ...fields.salePricesTwd },
+		selectedMain: fields.mainImages ?? row?.images.main?.filter((p) => p.imageId && !p.drop).map((p) => p.from) ?? source.snapshot.images,
+		selectedDetail: fields.detailImages ?? row?.images.detail?.filter((p) => p.imageId && !p.drop).map((p) => p.from) ?? source.snapshot.description.images,
+		skuNames: Object.fromEntries(
+			(specs?.variants ?? []).map((v) => [
+				v.skuId,
+				v.options
+					.map((idx, i) => specs!.tiers[i]?.options[idx]?.name)
+					.filter(Boolean)
+					.join(" / "),
+			]),
+		),
+		listingDescription: fields.description ?? row?.description ?? source.snapshot.description.text,
 		...itemOf(source, ctx),
 		images: source.snapshot.images,
 		description: source.snapshot.description,
@@ -403,11 +440,21 @@ async function update(sql: Sql, input: z.output<typeof sourceUpdateParams>) {
 	if (row.product_id || row.listed_at || ctx.pending.has(String(row.id))) throw new Usage("商品已提交或已建好，不能用备选区覆盖；结果未知时先核对");
 	if (String(row.source_product_id ?? "") !== String(source.id)) throw new Usage("已有商品稿保留原流程，请在原商品稿工具中补充资料");
 	const fields = sourceFieldsSchema.parse(input);
+	if (!Object.keys(fields).length && !input.resetFields?.length) return detail(sql, input);
+	if (input.expectedEditedAt !== undefined && input.expectedEditedAt !== (row.source_edited_at?.toISOString() ?? null))
+		throw new Usage("此商品已在其他窗口编辑，请重新打开详情后再保存");
 	const saved = mergeSourceFields(row.source_fields, fields);
+	if (input.resetFields?.includes("categoryPath")) {
+		delete saved.attributes;
+		delete saved.daysToShip;
+	}
+	for (const key of input.resetFields ?? []) delete saved[key];
 	const ids = new Set(source.snapshot.skus.map((s) => s.id));
-	if (Object.keys({ ...saved.stocks, ...saved.prices }).some((id) => !ids.has(id))) throw new Usage("补充的规格不在这件来源商品中");
+	if (Object.keys({ ...saved.stocks, ...saved.prices, ...saved.salePricesTwd, ...saved.weightsKg }).some((id) => !ids.has(id)))
+		throw new Usage("补充的规格不在这件来源商品中");
 	for (const [selected, original] of [
 		[saved.mainImages, source.snapshot.images],
+		[saved.hiddenSkuImages, source.snapshot.skus.map((s) => s.image)],
 		[saved.detailImages, source.snapshot.description.images],
 	] as const)
 		if (selected?.some((url) => !original.includes(url))) throw new Usage("只能从已保存原图中选择，不接受另一商品的图片");
@@ -418,7 +465,38 @@ async function update(sql: Sql, input: z.output<typeof sourceUpdateParams>) {
 		fields.categoryPath !== undefined,
 	);
 	if (attributeChanges?.missing.length) throw new Usage(`属性：${attributeChanges.missing.join("；")}`);
-	const columns: Record<string, unknown> = { source_fields: sql.json(saved as Json), source_approval: null, problems: null, updated_at: new Date() };
+	const columns: Record<string, unknown> = {
+		source_fields: sql.json(saved as Json),
+		source_edited_at: new Date(),
+		source_approval: null,
+		updated_at: new Date(),
+	};
+	for (const key of input.resetFields ?? []) {
+		const col = { weightKg: "weight_kg", freightRmb: "freight_rmb", daysToShip: "days_to_ship", categoryPath: "category_path", minQty: null }[key];
+		if (col) columns[col] = null;
+		if (key === "categoryPath") Object.assign(columns, { category_id: null, category_name: null, attributes: null, attributes_text: null, days_to_ship: null });
+	}
+	const rebuildSpecs = ["prices", "stocks", "weightsKg", "tierLabels", "hiddenSkuImages", "salePricesTwd", "weightKg", "freightRmb", "minQty"].some(
+		(key) => key in fields,
+	);
+	if (row.offer && (rebuildSpecs || input.resetFields?.length)) {
+		const computed = sourceSpecs(source.snapshot, { ...row, ...columns }, saved, ctx.settings);
+		if (computed) {
+			columns.variants = sql.json(computed.specs as Json);
+			columns.pricing = sql.json(computed.pricing as Json);
+			columns.offer = sql.json({ ...row.offer, ...computed.offer } as Json);
+		} else columns.variants = null;
+	}
+	if (fields.mainImages || fields.detailImages) {
+		const images = { ...row.images };
+		for (const [role, urls] of [
+			["main", fields.mainImages],
+			["detail", fields.detailImages],
+		] as const) {
+			if (urls && images[role]) images[role] = urls.flatMap((url) => images[role]!.filter((pic) => pic.from === url));
+		}
+		columns.images = sql.json(images as Json);
+	}
 	if (fields.title !== undefined) columns.title = fields.title;
 	if (fields.description !== undefined) columns.description = fields.description;
 	if (fields.weightKg !== undefined) columns.weight_kg = fields.weightKg;
@@ -438,9 +516,7 @@ async function update(sql: Sql, input: z.output<typeof sourceUpdateParams>) {
 		const [active] = await tx`select 1 from listing_sources where id = ${source.id} and deleted_at is null for share`;
 		if (!active) throw new Usage("商品已从备选区移除，未保存旧页面的修改");
 		return tx`update listings set ${tx(columns)} where id = ${row.id} and product_id is null and listed_at is null
-			and source_fields is not distinct from ${row.source_fields == null ? null : tx.json(row.source_fields as Json)}
-			and category_id is not distinct from ${row.category_id}
-			and attributes is not distinct from ${row.attributes == null ? null : tx.json(row.attributes as Json)}
+			and xmin::text = ${row.revision}
 			and not exists (select 1 from writes where params->>'listingId' = ${String(row.id)} and status in ('待执行','已提交','结果未知','不一致')) returning id`;
 	});
 	if (!changed.length) throw new Usage("商品资料或提交状态刚变化，未覆盖修改；请刷新后再保存");

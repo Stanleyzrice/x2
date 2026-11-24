@@ -7,17 +7,13 @@ export async function preloadPage(id: string): Promise<void> {
 		const page = await api.page(id);
 		await Promise.all(
 			page.items
-				.filter((item) => !item.invalid && ["catalog", "procurement", "reimbursement"].includes(item.component))
+				.filter((item) => !item.invalid && ["catalog", "reimbursement"].includes(item.component))
 				.map((item) => {
 					if (item.component === "catalog") {
 						const props = item.props as { shop: string; defaultStatus?: string; mode?: string };
 						if (props.mode === "collect") return null;
 						if (props.mode === "candidates") return api.sources(item.id, { targetShop: props.shop, query: "", platform: "all", status: "all" });
 						return api.catalogProducts(item.id, { shop: props.shop, query: "", status: props.defaultStatus ?? "1", stock: "all", page: 1, pageSize: 50 });
-					}
-					if (item.component === "procurement") {
-						const props = item.props as { shops: string[] };
-						return api.procurementMonitor(item.id, props.shops);
 					}
 					const props = item.props as { accounts?: string[] };
 					return api.reimbursementRecords(item.id, { accounts: props.accounts, search: "", paidFrom: "", paidTo: "", offset: 0 });

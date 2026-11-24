@@ -28,6 +28,7 @@ export type ListingRow = {
 	offer_id: OfferId;
 	source_product_id?: string | null;
 	source_fields?: SourceFields | null;
+	source_edited_at?: Date | null;
 	source_approval?: SourceApproval | null;
 	strategy: string;
 	cancelled: boolean;
@@ -88,6 +89,7 @@ export type OfferLike = Partial<Omit<Offer, "skus" | "tags" | "freight">> & {
 };
 /** 核价要的商品稿的几格 */
 export type PriceInput = {
+	source_fields?: SourceFields | null;
 	variants: unknown;
 	offer: OfferLike | null;
 	weight_kg?: string | null;

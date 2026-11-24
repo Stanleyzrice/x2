@@ -190,3 +190,11 @@ test("取消中的同规格不制造补货需求；只有可能共用一笔实�
 	assert.equal(check({ ...held, target: { ...held.target!, skuId: "another" } }, [record()]).state, "paid");
 	assert.equal(check({ ...held, createdAt: "2026-11-06T03:30:00Z" }, [record()]).state, "paid");
 });
+
+test("跨日采集不把可能由未读订单占用的同一采购行分配给任何一张订单", () => {
+	const since = Date.parse("2026-11-05T00:00:00Z");
+	const matches = matchProcurement([need("1"), need("2")], [record()], coverage, since);
+	for (const match of matches.values()) assert.deepEqual([match.state, match.paidQty, match.canPurchase], ["unknown", 0, false]);
+	assert.equal(matchProcurement([need()], [record()], coverage, Date.parse("2026-11-07T00:00:00Z")).get("1:model")?.state, "paid");
+	assert.equal(matchProcurement([need()], [record({ skuId: "other" })], coverage, since).get("1:model")?.state, "unmatched");
+});

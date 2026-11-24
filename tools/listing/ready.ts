@@ -21,7 +21,7 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 	const dropped = new Set((l.removed_variants ?? []) as string[]);
 	if (specs.variants.some((v) => dropped.has(v.sku))) problems.push("规格：已移除的规格还在，待重做商品稿（x2 listing make）");
 	problems.push(...pricingProblems(specs, estimateNeeds(l)), ...structureProblems(specs));
-	if (s.template && reprice(l, s)?.changed) problems.push("核价：模板规则、成本或售价已变，待重新核价（x2 status）");
+	if ((s.template || l.source_fields?.salePricesTwd) && reprice(l, s)?.changed) problems.push("核价：模板规则、成本或售价已变，待重新核价（x2 status）");
 	if (!l.category_path?.length) problems.push("未定类目");
 	else if (!categoryAllowed(String(l.category_path[l.category_path.length - 1]), s.categories, l.category_exception))
 		problems.push("类目：不在本店允许的类目里，且未记录本稿类目例外");
@@ -31,6 +31,16 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 			validateSavedReviewedImages(l);
 		} catch (e) {
 			problems.push((e as Error).message);
+		}
+	}
+	if (l.source_edited_at) {
+		for (const [role, urls] of [
+			["main", l.source_fields?.mainImages],
+			["detail", l.source_fields?.detailImages],
+		] as const) {
+			if (!urls) continue;
+			const actual = [...new Set(usedPics(l.images, role, new Set(l.removed_images ?? [])).map(({ pic }) => pic.from))];
+			if (JSON.stringify(actual) !== JSON.stringify(urls)) problems.push("图：当前稿件与人工选图不一致，请按已选图片重新准备");
 		}
 	}
 	let sizeChart: string | null = null;
@@ -51,8 +61,8 @@ export function productOf(l: ListingRow, s: Settings): { product?: Product; info
 	);
 	const product: Product = {
 		parentSku: `LT${l.offer_id}`,
-		title: String(l.title),
-		description: String(l.description),
+		title: l.source_fields?.title ?? String(l.title),
+		description: l.source_fields?.description ?? String(l.description),
 		categoryPath: (l.category_path as unknown[]).map(Number),
 		attributes: l.attributes ?? [],
 		preOrder: s.preOrder,

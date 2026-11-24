@@ -64,9 +64,6 @@ const pageCache = readCache<Page>();
 const catalogCache = readCache<CatalogResult>();
 const sourceCache = readCache<SourceList>();
 const sourceDetailCache = readCache<SourceDetail>(30_000, 20);
-const procurementCache = readCache<Monitor>(15_000, 20);
-const procurementEpochs = new Map<string, number>();
-const procurementSyncs = new Map<string, number>();
 const reimbursementCache = readCache<ReimbursementData>(15_000);
 type CatalogQuery = { shop: string; query: string; status: string; stock: string; category?: string; page: number; pageSize: number };
 const catalogKey = (item: string, input: CatalogQuery) =>
@@ -75,7 +72,6 @@ export type SourceQuery = { targetShop: string; query: string; platform: string;
 type SourceDetailQuery = { targetShop: string; sourceId: string };
 const sourceKey = (item: string, input: SourceQuery) => `${item}:${JSON.stringify([input.targetShop, input.query, input.platform, input.status])}`;
 const sourceDetailKey = (item: string, input: SourceDetailQuery) => `${item}:${JSON.stringify([input.targetShop, input.sourceId])}`;
-const procurementKey = (item: string, shops: string[]) => `${item}:${JSON.stringify([...new Set(shops)].sort())}`;
 export type ReimbursementQuery = { accounts?: string[]; account?: string; search: string; paidFrom: string; paidTo: string; offset: number };
 const reimbursementKey = (item: string, input: ReimbursementQuery) =>
 	`${item}:${JSON.stringify([input.accounts ?? null, input.account ?? null, input.search, input.paidFrom, input.paidTo, input.offset])}`;
@@ -123,37 +119,11 @@ export const api = {
 		sourceCache.invalidate(prefix);
 		sourceDetailCache.invalidate(prefix);
 	},
-	procurementMonitor: (item: string, shops: string[], force = false) => {
-		const key = procurementKey(item, shops);
-		const cached = procurementCache.peek(key);
-		// 同步暂时关闭旧订单的采购资格，保留已显示内容；人工操作失效后仍允许重新核对。
-		if (procurementSyncs.has(key) && cached) return Promise.resolve(cached);
-		return procurementCache.read(
-			key,
-			async () => {
-				const current = await call<Monitor>("POST", "/api/page/act", { item, action: "monitor", input: {} });
-				return preserveMonitor(procurementCache.peek(key), current);
-			},
-			force,
-		);
-	},
-	peekProcurementMonitor: (item: string, shops: string[]) => procurementCache.peek(procurementKey(item, shops)),
-	setProcurementMonitor: (item: string, shops: string[], value: Monitor) => procurementCache.set(procurementKey(item, shops), value),
-	beginProcurementSync: (item: string, shops: string[]) => {
-		const key = procurementKey(item, shops);
-		procurementSyncs.set(key, (procurementSyncs.get(key) ?? 0) + 1);
-	},
-	endProcurementSync: (item: string, shops: string[]) => {
-		const key = procurementKey(item, shops);
-		const count = procurementSyncs.get(key) ?? 0;
-		if (count > 1) procurementSyncs.set(key, count - 1);
-		else procurementSyncs.delete(key);
-	},
-	procurementMonitorEpoch: (item: string) => procurementEpochs.get(item) ?? 0,
-	invalidateProcurementMonitor: (item: string) => {
-		procurementEpochs.set(item, (procurementEpochs.get(item) ?? 0) + 1);
-		procurementCache.invalidate(`${item}:`);
-	},
+	readProcurement: async (item: string, dateRange: { from: string; to: string }, refresh: boolean) =>
+		preserveMonitor(
+			null,
+			await call<Monitor>("POST", "/api/page/act", { item, action: refresh ? "sync" : "monitor", input: { dateRange, ...(refresh ? { force: true } : {}) } }),
+		),
 	reimbursementRecords: (item: string, input: ReimbursementQuery, force = false) =>
 		reimbursementCache.read(reimbursementKey(item, input), () => call<ReimbursementData>("POST", "/api/page/act", { item, action: "list", input }), force),
 	peekReimbursementRecords: (item: string, input: ReimbursementQuery) => reimbursementCache.peek(reimbursementKey(item, input)),

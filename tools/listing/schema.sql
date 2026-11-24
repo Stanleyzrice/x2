@@ -166,6 +166,7 @@ create table if not exists listing_source_links (
 );
 alter table listings add column if not exists source_product_id bigint references listing_sources(id);
 alter table listings add column if not exists source_fields jsonb;
+alter table listings add column if not exists source_edited_at timestamptz;
 alter table listings add column if not exists source_approval jsonb;
 create table if not exists listing_source_requests (
 	request_id uuid primary key,

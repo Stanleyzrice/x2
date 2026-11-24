@@ -26,14 +26,15 @@ import {
 	saveImageLanguageReviews,
 	variantImageTarget,
 } from "../tools/listing/image-language.ts";
+import { make } from "../tools/listing/make.ts";
 import { settingsOf } from "../tools/listing/pricing.ts";
 import { productOf } from "../tools/listing/ready.ts";
 import { previewListingReview, setListingReview } from "../tools/listing/review.ts";
 import { reviewedImagesScope } from "../tools/listing/reviewed-images.ts";
 import { ListingId, type ListingRow, type ShopSettingsRow } from "../tools/listing/row.ts";
 import { sizeChartScope } from "../tools/listing/size-chart.ts";
-import { saveCollectedSource } from "../tools/listing/source.ts";
-import { type CollectSourceInput, sourceProductSchema } from "../tools/listing/source-data.ts";
+import { saveCollectedSource, updateSource } from "../tools/listing/source.ts";
+import { type CollectSourceInput, sourceProductSchema, sourceUpdateParams } from "../tools/listing/source-data.ts";
 import { translate, translationState } from "../tools/listing/translations.ts";
 import { LISTING_WRITES } from "../tools/listing/writes.ts";
 import { shopImageFlow, xiangjiImages, xiangjiImagesParams } from "../tools/listing/xiangji-images.ts";
@@ -633,6 +634,37 @@ await translate(sql, ${JSON.stringify([item])}, { submit: async () => {
 
 			await assert.rejects(call("publish", { id: other.id }), /不在本次已授权/);
 			await assert.rejects(call("publish", { id: draft.id }), new RegExp(`原写入待核对 ${pending.id}`));
+		});
+		await t.test("备选人工售价与选图进入实际建品参数，按店保存并拒绝旧编辑", async () => {
+			const shop = "cheeroutdoor";
+			const source = product("520098");
+			source.images.push("https://example.com/second.jpg");
+			const saved = await saveCollectedSource(sql, { shop, link: source.url }, source);
+			const edit = (fields: Record<string, unknown>, targetShop = shop) =>
+				updateSource(sql, sourceUpdateParams.parse({ shop, targetShop, sourceId: saved.sourceId, ...fields }));
+			const before = await edit({});
+			assert.equal(before.editedAt, null);
+			const first = await edit({ title: "人工上架標題", description: "人工上架描述", salePricesTwd: { "sku-1": 239 }, expectedEditedAt: null });
+			assert.ok(first.editedAt && first.listingId);
+			assert.equal(first.salePrices["sku-1"], 239);
+			assert.equal((await edit({}, "ni1206")).editedAt, null);
+			await assert.rejects(edit({ expectedEditedAt: null, salePricesTwd: { "sku-1": 159 } }), /其他窗口/);
+			await make(sql, first.listingId, () => {}, { prepareOnly: true });
+			const uploaded = source.images.map((from, i) => ({ from, imageId: `uploaded-${i}` }));
+			await sql`update listings set images=${sql.json({ main: uploaded, imageMode: "original" })}, problems=null,category_path='[1234]',days_to_ship=5 where id=${first.listingId}`;
+			const after = await edit({ mainImages: [source.images[1]], salePricesTwd: { "sku-1": 249 }, expectedEditedAt: first.editedAt });
+			assert.deepEqual(after.selectedMain, [source.images[1]]);
+			assert.deepEqual(after.images, source.images);
+			const [row] = await sql<ListingRow[]>`select * from listings where id=${first.listingId}`;
+			const [shopRow] = await sql<ShopSettingsRow[]>`select * from shop_settings where shop=${shop}`;
+			const ready = productOf(row!, settingsOf(shopRow!));
+			assert.ok(ready.info, ready.problems.join("；"));
+			assert.equal(ready.info.name, "人工上架標題");
+			assert.deepEqual(ready.info.images, ["uploaded-1"]);
+			assert.equal(ready.info.model_list[0]?.price, "249");
+			await edit({ salePricesTwd: { "sku-1": 1 } });
+			const [tooLow] = await sql<ListingRow[]>`select * from listings where id=${first.listingId}`;
+			assert.match(productOf(tooLow!, settingsOf(shopRow!)).problems.join("；"), /最低利润/);
 		});
 	} finally {
 		for (const lease of leases) await lease.release().catch(() => {});

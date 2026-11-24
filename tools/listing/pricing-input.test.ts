@@ -303,3 +303,17 @@ test("保存单件代发证据只解决MOQ告警，保留其他货源、尺码�
 	assert.equal(result.minimumPurchase, 1, "采购方式不能改平台最低购买数量");
 	assert.ok(result.rows.every((r) => r.pricingInput?.purchaseMode === "single-dropship"));
 });
+
+test("备选的人工售价按来源规格覆盖核价，调整模板仍保留原输入，清空后恢复", () => {
+	const base = { offer: offer(), variants: explicitSpecs(), pricing: snapshot };
+	const priced = (salePricesTwd: Record<string, number>) => reprice({ ...base, source_fields: { salePricesTwd } }, settings())!.specs.variants;
+	assert.deepEqual(
+		priced({ "1": 1 }).map((v) => v.priceTwd),
+		[1, 219],
+	);
+	assert.match(priced({ "1": 1 })[0]!.pricingProblem!, /毛利率/);
+	assert.deepEqual(
+		priced({}).map((v) => v.priceTwd),
+		[219, 219],
+	);
+});

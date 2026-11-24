@@ -128,6 +128,7 @@ export async function make(
 		freightRmb: freight,
 		minimumPurchase: purchaseLimitOf(l, s.minPurchase),
 		originalText: Boolean(source),
+		fields,
 	});
 	const specs = withSkuImages(sourceSpecs, options.skuImages);
 	// 先形成完整来源与核价字段；仅准备到此保存，不进入任何图片、模型或类目流程。

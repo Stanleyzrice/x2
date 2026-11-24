@@ -108,6 +108,7 @@ export function checkSourcePreflight(
 			freightRmb,
 			minimumPurchase,
 			originalText: true,
+			fields,
 		},
 	);
 	const dropshipWithEvidence =
@@ -128,7 +129,7 @@ export function checkSourcePreflight(
 	};
 	const priced = specs.variants.map((variant) => {
 		const explicitFreight = variant.pricingInput?.freightRmbPerUnit;
-		const explicitPrice = variant.pricingInput?.priceTwd ?? null;
+		const explicitPrice = fields.salePricesTwd?.[variant.skuId] ?? variant.pricingInput?.priceTwd ?? null;
 		const price = calculatePricing({
 			template,
 			costRmb: variant.costRmb,

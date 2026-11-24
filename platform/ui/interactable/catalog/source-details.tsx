@@ -1,6 +1,6 @@
 // 备选商品沿用 Catalog 的可调宽度详情面板、图片浏览和详情内容；人工补充只写覆盖字段，原始采集快照保留。
 import { ArrowUpRightIcon, LoaderCircleIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useLightbox } from "@/components/lightbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,18 +74,20 @@ export function SourceSheet({
 }
 
 function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail; item: Item; targetShop: string; saved: () => void }) {
-	const images = [...new Set([...detail.images, ...detail.skus.map((sku) => sku.image).filter((src): src is string => Boolean(src))])];
+	const [tab, setTab] = useState("specs");
+	const main = detail.selectedMain;
+	const images = [...new Set([...main, ...detail.skus.map((sku) => sku.image).filter((src): src is string => Boolean(src))])];
 	const lightbox = useLightbox(
 		images.map((src, index) => ({ src, alt: `商品原图 ${index + 1}`, label: `${platformName(detail.platform)} · 商品原图 ${index + 1}` })),
 	);
 	return (
 		<div className="space-y-6 p-5 sm:p-6">
 			<div className="flex flex-wrap items-start gap-5">
-				{detail.images[0] && (
+				{main[0] && (
 					<div className="w-52 space-y-2">
-						<DetailImage src={detail.images[0]} label="商品主图" open={() => lightbox.open(0)} />
+						<DetailImage src={main[0]} label="商品主图" open={() => lightbox.open(0)} />
 						<div className="flex gap-2 overflow-x-auto">
-							{detail.images.slice(1, 4).map((src) => (
+							{main.slice(1, 4).map((src) => (
 								<div key={src} className="shrink-0">
 									<DetailImage src={src} label="商品主图" open={() => lightbox.open(images.indexOf(src))} thumbnail />
 								</div>
@@ -102,7 +104,12 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 							<ArrowUpRightIcon className="size-4" />
 						</a>
 					</div>
-					<p className="text-sm text-muted-foreground">原文 · 原图保存</p>
+					{detail.editedAt && <Badge variant="secondary">已人工编辑</Badge>}
+					{!detail.productId && detail.status !== "unknown" && (
+						<Button size="sm" variant="outline" onClick={() => setTab("fields")}>
+							编辑上架资料
+						</Button>
+					)}
 					{[...detail.errors, ...detail.problems].map((problem) => (
 						<p key={problem} className="text-xs text-muted-foreground">
 							{problem}
@@ -132,11 +139,11 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 						))}
 				</section>
 			)}
-			<Tabs defaultValue="specs">
+			<Tabs value={tab} onValueChange={setTab}>
 				<TabsList variant="line" className="border-b">
 					<TabsTrigger value="specs">规格</TabsTrigger>
-					<TabsTrigger value="content">原文与详情图</TabsTrigger>
-					<TabsTrigger value="fields">补充上架资料</TabsTrigger>
+					<TabsTrigger value="content">上架图文</TabsTrigger>
+					<TabsTrigger value="fields">编辑上架资料</TabsTrigger>
 					{!detail.productId && detail.status !== "unknown" && <TabsTrigger value="translation">翻译图片</TabsTrigger>}
 				</TabsList>
 				<TabsContent value="specs" className="pt-4">
@@ -146,6 +153,7 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 								<TableHead>规格图</TableHead>
 								<TableHead>规格</TableHead>
 								<TableHead>采购价 CNY（人民币）</TableHead>
+								<TableHead>上架售价 TWD（新台币）</TableHead>
 								<TableHead>库存</TableHead>
 								<TableHead>重量 kg（千克）</TableHead>
 							</TableRow>
@@ -154,24 +162,25 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 							{detail.skus.map((sku) => (
 								<TableRow key={sku.id}>
 									<TableCell>
-										{sku.image ? (
+										{sku.image && !detail.fields.hiddenSkuImages?.includes(sku.image) ? (
 											<DetailImage src={sku.image} label={sku.name || "规格图"} open={() => lightbox.open(images.indexOf(sku.image!))} thumbnail />
 										) : (
 											<span className="text-xs text-muted-foreground">未提供</span>
 										)}
 									</TableCell>
 									<TableCell>
-										<p>{sku.name || sku.attrs.join(" / ") || "单一规格"}</p>
+										<p>{detail.skuNames[sku.id] || sku.name || sku.attrs.join(" / ") || "单一规格"}</p>
 										<p className="mt-1 text-xs text-muted-foreground">{sku.id}</p>
 									</TableCell>
-									<TableCell>{price(sku.price)}</TableCell>
+									<TableCell>{price(detail.fields.prices?.[sku.id] ?? sku.price)}</TableCell>
+									<TableCell>{detail.salePrices[sku.id] == null ? "待核价" : `NT$${detail.salePrices[sku.id]}`}</TableCell>
 									<TableCell>{sku.stock ?? "未取得"}</TableCell>
-									<TableCell>{sku.weightKg ?? "未取得"}</TableCell>
+									<TableCell>{detail.fields.weightsKg?.[sku.id] ?? sku.weightKg ?? "未取得"}</TableCell>
 								</TableRow>
 							))}
 							{!detail.skus.length && (
 								<TableRow>
-									<TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+									<TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
 										尚未取得规格，请在采购平台确认商品详情已完整加载。
 									</TableCell>
 								</TableRow>
@@ -182,19 +191,33 @@ function DetailBody({ detail, item, targetShop, saved }: { detail: SourceDetail;
 				<TabsContent value="content" className="pt-5">
 					<DetailsContent
 						product={{
-							productImages: detail.images,
-							description: { blocks: detail.description.blocks, error: detail.errors.join("；") || null },
+							productImages: main,
+							description: {
+								blocks:
+									detail.fields.description !== undefined || detail.fields.detailImages !== undefined || detail.listingDescription !== detail.description.text
+										? [{ type: "text", text: detail.listingDescription }, ...detail.selectedDetail.map((src) => ({ type: "image" as const, src }))]
+										: detail.description.blocks.filter((block) => block.type !== "image" || detail.selectedDetail.includes(block.src)),
+								error: detail.errors.join("；") || null,
+							},
 							detailReadAt: detail.capturedAt,
 						}}
-						sourceLabel={platformName(detail.platform)}
+						sourceLabel={targetShop}
 						reading={false}
 					/>
 				</TabsContent>
 				<TabsContent value="fields" className="pt-5">
-					{detail.status === "listed" || detail.status === "unknown" ? (
+					{detail.productId || detail.status === "listed" || detail.status === "unknown" ? (
 						<p className="text-sm text-muted-foreground">已上架或结果待核对的商品保留当前资料，请先通过现有商品核对流程处理。</p>
 					) : (
-						<SourceEditor detail={detail} item={item} targetShop={targetShop} onSaved={saved} />
+						<SourceEditor
+							detail={detail}
+							item={item}
+							targetShop={targetShop}
+							onSaved={() => {
+								saved();
+								setTab("specs");
+							}}
+						/>
 					)}
 				</TabsContent>
 				{!detail.productId && detail.status !== "unknown" && (
@@ -223,9 +246,10 @@ const numericMap = (values: Record<string, string>, name: string) =>
 		}),
 	);
 
-function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDetail; targetShop: string; item: Item; onSaved: () => void }) {
+function SourceEditor({ detail: initial, targetShop, item, onSaved }: { detail: SourceDetail; targetShop: string; item: Item; onSaved: () => void }) {
+	const detail = useRef(initial).current;
 	const [title, setTitle] = useState(detail.fields.title ?? detail.title);
-	const [description, setDescription] = useState(detail.fields.description ?? detail.description.text);
+	const [description, setDescription] = useState(detail.fields.description ?? detail.listingDescription);
 	const [weight, setWeight] = useState(numberText(detail.fields.weightKg));
 	const [freight, setFreight] = useState(numberText(detail.fields.freightRmb));
 	const [minQty, setMinQty] = useState(numberText(detail.fields.minQty ?? detail.minQty));
@@ -238,8 +262,18 @@ function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDet
 	const [prices, setPrices] = useState<Record<string, string>>(() =>
 		Object.fromEntries(detail.skus.map((sku) => [sku.id, numberText(detail.fields.prices?.[sku.id])])),
 	);
-	const [mainImages, setMainImages] = useState(detail.fields.mainImages ?? detail.images);
-	const [detailImages, setDetailImages] = useState(detail.fields.detailImages ?? detail.description.images);
+	const [salePrices, setSalePrices] = useState<Record<string, string>>(() =>
+		Object.fromEntries(Object.entries(detail.fields.salePricesTwd ?? {}).map(([id, value]) => [id, String(value)])),
+	);
+	const [weights, setWeights] = useState<Record<string, string>>(() =>
+		Object.fromEntries(Object.entries(detail.fields.weightsKg ?? {}).map(([id, value]) => [id, String(value)])),
+	);
+	const tierDefaults = detail.tiers.map((t) => ({ source: t.source, name: t.name, options: Object.fromEntries(t.options.map((o) => [o.source, o.name])) }));
+	const [tiers, setTiers] = useState(tierDefaults);
+	const skuImages = [...new Set(detail.skus.flatMap((s) => (s.image ? [s.image] : [])))];
+	const [hiddenSkuImages, setHiddenSkuImages] = useState(detail.fields.hiddenSkuImages ?? []);
+	const [mainImages, setMainImages] = useState(detail.selectedMain);
+	const [detailImages, setDetailImages] = useState(detail.selectedDetail);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
@@ -262,22 +296,57 @@ function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDet
 				freightRmb = optionalNumber(freight, "国内运费"),
 				minimum = optionalNumber(minQty, "起订量"),
 				daysToShip = optionalNumber(days, "备货天数");
-			const fields: SourceFields = {
-				...(title.trim() ? { title } : {}),
-				...(description.trim() ? { description } : {}),
-				...(weightKg === null ? {} : { weightKg }),
-				...(freightRmb === null ? {} : { freightRmb }),
-				...(minimum === null ? {} : { minQty: minimum }),
-				...(daysToShip === null ? {} : { daysToShip }),
-				...(categoryPath.length ? { categoryPath } : {}),
-				...(parsedAttributes.length || detail.fields.attributes ? { attributes: parsedAttributes as SourceFields["attributes"] } : {}),
-				stocks: numericMap(stocks, "库存"),
-				prices: numericMap(prices, "采购价"),
-				...(detail.images.length ? { mainImages } : {}),
-				detailImages,
-			};
-			await api.act<SourceDetail>(item.id, "sourceUpdate", { sourceId: detail.id, targetShop, ...fields });
-			setMessage("已保存上架资料，原始采集内容保留。再次上架时会重新检查必填项。");
+			if (!title.trim() || (!description.trim() && (detail.fields.description || detail.listingDescription))) throw new Error("请填写上架标题和描述");
+			const fields: SourceFields = {};
+			const resetFields: string[] = [];
+			for (const [key, value] of Object.entries({ weightKg, freightRmb, minQty: minimum, daysToShip }) as [
+				"weightKg" | "freightRmb" | "minQty" | "daysToShip",
+				number | null,
+			][]) {
+				const previous = detail.fields[key] ?? (key === "minQty" ? detail.minQty : null);
+				if (value !== null && value !== previous) fields[key] = value;
+				else if (value === null && detail.fields[key] !== undefined) resetFields.push(key);
+			}
+			if (title.trim() !== (detail.fields.title ?? detail.title)) fields.title = title.trim();
+			if (description.trim() !== (detail.fields.description ?? detail.listingDescription)) fields.description = description.trim();
+			const differs = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+			if (differs(categoryPath, detail.fields.categoryPath ?? [])) {
+				if (categoryPath.length) fields.categoryPath = categoryPath;
+				else resetFields.push("categoryPath");
+			}
+			if (differs(parsedAttributes, detail.fields.attributes ?? [])) fields.attributes = parsedAttributes as SourceFields["attributes"];
+			for (const [key, values, label] of [
+				["stocks", stocks, "库存"],
+				["prices", prices, "采购价"],
+				["salePricesTwd", salePrices, "上架售价"],
+				["weightsKg", weights, "重量"],
+			] as const) {
+				const map = numericMap(values, label);
+				const prev = detail.fields[key] ?? {};
+				if (Object.keys(map).length !== Object.keys(prev).length || Object.entries(map).some(([id, v]) => prev[id] !== v)) fields[key] = map;
+			}
+			if (Object.values(fields.salePricesTwd ?? {}).some((v) => !Number.isSafeInteger(v) || v <= 0)) throw new Error("新台币上架售价请填写正整数");
+			if (differs(tiers, tierDefaults)) fields.tierLabels = tiers;
+			if (differs(hiddenSkuImages, detail.fields.hiddenSkuImages ?? [])) fields.hiddenSkuImages = hiddenSkuImages;
+			if (differs(mainImages, detail.selectedMain)) {
+				if (!mainImages.length || mainImages.length > 9) throw new Error("上架主图请保留 1 至 9 张");
+				fields.mainImages = mainImages;
+			}
+			if (differs(detailImages, detail.selectedDetail)) {
+				if (detailImages.length > 12) throw new Error("上架详情图最多 12 张");
+				fields.detailImages = detailImages;
+			}
+			if (!Object.keys(fields).length && !resetFields.length) {
+				setMessage("当前没有修改。");
+				return;
+			}
+			await api.act<SourceDetail>(item.id, "sourceUpdate", {
+				sourceId: detail.id,
+				targetShop,
+				expectedEditedAt: detail.editedAt ?? null,
+				resetFields,
+				...fields,
+			});
 			onSaved();
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
@@ -287,7 +356,7 @@ function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDet
 	};
 	return (
 		<div className="space-y-5">
-			<p className="text-xs text-muted-foreground">以下资料仅用于 {targetShop} 上架。空白表示尚未补充，沿用既有店铺规则检查。</p>
+			<p className="text-xs text-muted-foreground">修改将用于 {targetShop} 的商品稿。每个规格可单独填写新台币售价。</p>
 			<div className="space-y-2">
 				<Label htmlFor="source-title">上架标题</Label>
 				<Input id="source-title" value={title} onChange={(e) => setTitle(e.target.value)} disabled={busy} />
@@ -322,13 +391,15 @@ function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDet
 			</details>
 			{detail.skus.length > 0 && (
 				<section className="space-y-2">
-					<h4 className="text-sm font-semibold">规格缺失资料</h4>
-					<p className="text-xs text-muted-foreground">只填写需要补充或覆盖的值；未填时沿用采集到的采购价和库存。</p>
+					<h4 className="text-sm font-semibold">规格与上架售价</h4>
+					<p className="text-xs text-muted-foreground">售价按每件填写，留空沿用店铺核价。</p>
 					<Table>
 						<TableHeader>
 							<TableRow>
 								<TableHead>规格</TableHead>
 								<TableHead>采购价 CNY（人民币）</TableHead>
+								<TableHead>上架售价 TWD（新台币）</TableHead>
+								<TableHead>重量 kg（千克）</TableHead>
 								<TableHead>库存</TableHead>
 							</TableRow>
 						</TableHeader>
@@ -350,6 +421,30 @@ function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDet
 									</TableCell>
 									<TableCell>
 										<Input
+											aria-label={`${sku.name}上架售价`}
+											type="number"
+											min="1"
+											step="1"
+											placeholder={numberText(detail.salePrices[sku.id]) || "自动核价"}
+											value={salePrices[sku.id] ?? ""}
+											onChange={(e) => setSalePrices({ ...salePrices, [sku.id]: e.target.value })}
+											disabled={busy}
+										/>
+									</TableCell>
+									<TableCell>
+										<Input
+											aria-label={`${sku.name}重量`}
+											type="number"
+											min="0.001"
+											step="0.001"
+											placeholder={numberText(sku.weightKg)}
+											value={weights[sku.id] ?? ""}
+											onChange={(e) => setWeights({ ...weights, [sku.id]: e.target.value })}
+											disabled={busy}
+										/>
+									</TableCell>
+									<TableCell>
+										<Input
 											aria-label={`${sku.name}库存`}
 											type="number"
 											min="0"
@@ -366,8 +461,39 @@ function SourceEditor({ detail, targetShop, item, onSaved }: { detail: SourceDet
 					</Table>
 				</section>
 			)}
-			<ImageSelection label="选用主图" images={detail.images} selected={mainImages} max={9} change={setMainImages} disabled={busy} />
-			<ImageSelection label="选用详情图" images={detail.description.images} selected={detailImages} max={12} change={setDetailImages} disabled={busy} />
+			{tiers.map((tier, i) => (
+				<div className="space-y-2" key={tier.source}>
+					<Label>规格名称 · {tier.source}</Label>
+					<Input
+						aria-label={`${tier.source}规格名称`}
+						value={tier.name}
+						disabled={busy}
+						onChange={(e) => setTiers(tiers.map((t, n) => (n === i ? { ...t, name: e.target.value } : t)))}
+					/>
+					<div className="grid gap-2 sm:grid-cols-3">
+						{Object.entries(tier.options).map(([key, name]) => (
+							<Label className="flex-col items-start" key={key}>
+								{key}
+								<Input
+									value={name}
+									disabled={busy}
+									onChange={(e) => setTiers(tiers.map((t, n) => (n === i ? { ...t, options: { ...t.options, [key]: e.target.value } } : t)))}
+								/>
+							</Label>
+						))}
+					</div>
+				</div>
+			))}
+			<ImageSelection label="上架主图" images={detail.images} selected={mainImages} max={9} change={setMainImages} disabled={busy} />
+			<ImageSelection label="上架详情图" images={detail.description.images} selected={detailImages} max={12} change={setDetailImages} disabled={busy} />
+			<ImageSelection
+				label="规格图"
+				images={skuImages}
+				selected={skuImages.filter((url) => !hiddenSkuImages.includes(url))}
+				max={skuImages.length}
+				change={(urls) => setHiddenSkuImages(skuImages.filter((url) => !urls.includes(url)))}
+				disabled={busy}
+			/>
 			{error && (
 				<p role="alert" className="text-sm text-destructive">
 					{error}
@@ -432,7 +558,7 @@ function ImageSelection({
 			<h4 className="text-sm font-semibold">
 				{label} · 已选 {selected.length} / {max}
 			</h4>
-			<p className="text-xs text-muted-foreground">超过平台数量限制时请明确选择，未选图片仍保留在原始采集内容中。</p>
+			<p className="text-xs text-muted-foreground">取消勾选即可从本店上架稿移除，再次勾选可恢复。</p>
 			<div className="flex flex-wrap gap-3">
 				{[...new Set(images)].map((src, index) => (
 					<label key={src} htmlFor={`${label}-${index}`} className="relative block cursor-pointer">
@@ -441,7 +567,7 @@ function ImageSelection({
 							alt={`${label} ${index + 1}`}
 							referrerPolicy="no-referrer"
 							loading="lazy"
-							className="size-24 rounded-lg border bg-background object-contain"
+							className={`size-24 rounded-lg border bg-background object-contain ${selected.includes(src) ? "" : "opacity-40"}`}
 						/>
 						<Checkbox
 							id={`${label}-${index}`}

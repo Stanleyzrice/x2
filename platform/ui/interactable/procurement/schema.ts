@@ -2,11 +2,11 @@
 import { z } from "zod";
 import { title } from "../../props.ts";
 
-export const description = "Shopee 新订单提醒；人工开始采购，确认精确商品后加入 1688 购物车，由人付款下单";
+export const description = "按下单日期采集 Shopee 订单；人工开始采购，确认精确商品后加入 1688 购物车，由人付款下单";
 export const props = z.strictObject({ title, shops: z.array(z.string().min(1)).min(1).default(["cheeroutdoor"]) });
 export type Props = z.infer<typeof props>;
 export const actions = { monitor: "orders.monitor", sync: "orders.monitor-sync", result: "orders.purchase-result" };
 export const writeActions = { cart: "orders.purchase" };
 export const writePreviews = { cart: "orders.purchase-preview" };
-export const inputs = ["orders", "requestId", "force"];
+export const inputs = ["orders", "requestId", "force", "dateRange"];
 export const examples: z.input<typeof props>[] = [{ shops: ["cheeroutdoor"] }];

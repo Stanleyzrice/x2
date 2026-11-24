@@ -379,6 +379,11 @@ function SourceTable({
 							<TableCell className="text-sm">{row.skuCount ? `${row.skuCount} 规格` : "待补规格"}</TableCell>
 							<TableCell>
 								<Badge variant="secondary">{sourceStatus[row.status]}</Badge>
+								{row.editedAt && (
+									<Badge variant="outline" className="ml-1">
+										已人工编辑
+									</Badge>
+								)}
 								{row.problems.length > 0 && <p className="mt-1 max-w-52 text-xs text-muted-foreground">{row.problems[0]}</p>}
 								{row.errors.length > 0 && <p className="mt-1 max-w-52 text-xs text-destructive">{row.errors[0]}</p>}
 							</TableCell>

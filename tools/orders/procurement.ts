@@ -19,10 +19,12 @@ import { type EvidenceCatalog, type ProcurementItem, procurementDemand, procurem
 import { type MatchNeed, matchProcurement } from "./procurement-matches.ts";
 import { purchaseState, samePurchase, selectPurchase } from "./purchase.ts";
 import { buyAccount, readAll, reuse, writeOrders } from "./read.ts";
+import { type OrderDateRange, orderBounds, orderDateRange } from "./shopee.ts";
 import { snapshot } from "./status.ts";
 import { cartParams } from "./writes.ts";
 
 export const monitorParams = z.object({
+	dateRange: z.preprocess(parseJson, orderDateRange).optional().describe("下单日期范围 {from,to}，起止日均含，UTC+8"),
 	shops: z
 		.preprocess(parseJson, z.array(z.string().min(1)).min(1).max(100))
 		.default(["cheeroutdoor"])
@@ -49,10 +51,10 @@ type MonitorRow = {
 	cart_pending: string[];
 	cart_done: string[];
 };
-type MonitorSync = { at: string | null; error: string | null; excluded: Awaited<ReturnType<typeof writeOrders>>["excluded"] };
+type MonitorSync = { unreadSince?: number | null; at: string | null; error: string | null; excluded: Awaited<ReturnType<typeof writeOrders>>["excluded"] };
 const syncs = new WeakMap<Sql, Map<string, MonitorSync>>();
 const purchaseErrors = new WeakMap<Sql, { account: string | null; capturedAt: string | null; error: string }>();
-const scopeKey = (shops: string[]) => JSON.stringify([...new Set(shops)].sort());
+const scopeKey = (shops: string[], range?: OrderDateRange) => JSON.stringify([[...new Set(shops)].sort(), range]);
 async function refreshPurchases(sql: Sql): Promise<void> {
 	const account = await buyAccount(sql);
 	if (!account) throw new Usage("请先配置 1688 采购账号");
@@ -61,7 +63,8 @@ async function refreshPurchases(sql: Sql): Promise<void> {
 	purchaseErrors.delete(sql);
 }
 
-export async function monitor(sql: Sql, shops: string[]) {
+export async function monitor(sql: Sql, shops: string[], range?: OrderDateRange, unreadSince?: number | null) {
+	const bounds = orderBounds(range);
 	const [rows, historical, evidence] = await Promise.all([
 		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step, o.platform_status,
 		array(select distinct l->>'modelId' from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
@@ -69,7 +72,8 @@ export async function monitor(sql: Sql, shops: string[]) {
 		array(select distinct l->>'modelId' from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
 			and w.status in ('成功', '已核对') and l->>'sn' = o.sn) as cart_done
 		from orders o where o.shop in ${sql(shops)} and o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货'
-		order by o.created_at desc nulls last, o.sn desc`,
+		and (${bounds?.start ?? null}::timestamptz is null or o.created_at >= ${bounds?.start ?? null} and o.created_at < ${bounds?.end ?? null})
+ order by o.created_at desc nulls last, o.sn desc`,
 		// 其他店铺及已履约需求一起分配数量，不能把以前已购买的件数重新分给当前待采购订单。
 		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step, o.platform_status,
 		array[]::text[] as cart_pending, array[]::text[] as cart_done from orders o where o.order_source = 'shopee'
@@ -119,8 +123,8 @@ export async function monitor(sql: Sql, shops: string[]) {
 	const failure = purchaseErrors.get(sql);
 	const purchaseError = failure && failure.account === evidence.coverage.selected && failure.capturedAt === evidence.coverage.capturedAt ? failure.error : null;
 	const purchases = purchaseError ? { ...evidence.coverage, complete: false, error: purchaseError } : evidence.coverage;
-	const matches = matchProcurement(needs, evidence.records, purchases);
-	const sync = syncs.get(sql)?.get(scopeKey(shops));
+	const sync = syncs.get(sql)?.get(scopeKey(shops, range));
+	const matches = matchProcurement(needs, evidence.records, purchases, unreadSince === undefined ? sync?.unreadSince : unreadSince);
 	const orders = rows.map((r) => {
 		const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings, catalog).map((line) => ({
 			...line,
@@ -153,16 +157,16 @@ export async function monitor(sql: Sql, shops: string[]) {
 	};
 }
 
-export async function syncMonitor(sql: Sql, shops: string[], force = false) {
-	const key = scopeKey(shops);
+export async function syncMonitor(sql: Sql, shops: string[], force = false, range?: OrderDateRange) {
+	const key = scopeKey(shops, range);
 	const states = syncs.get(sql) ?? new Map<string, MonitorSync>();
 	syncs.set(sql, states);
 	try {
 		const current = await reuse(
 			`procurement-monitor:${key}`,
 			async () => {
-				const { excluded } = await writeOrders(sql, shops);
-				return { at: new Date().toISOString(), excluded, error: null };
+				const { excluded, unreadSince } = await writeOrders(sql, shops, range);
+				return { at: new Date().toISOString(), excluded, unreadSince, error: null };
 			},
 			force ? 0 : 60_000,
 		);
@@ -170,7 +174,7 @@ export async function syncMonitor(sql: Sql, shops: string[], force = false) {
 	} catch (e) {
 		states.set(key, { ...(states.get(key) ?? { at: null, excluded: [] }), error: (e as Error).message });
 	}
-	const saved = await monitor(sql, shops);
+	const saved = await monitor(sql, shops, range);
 	const { selected, capturedAt, error } = saved.purchases;
 	if (
 		!force &&
@@ -186,17 +190,16 @@ export async function syncMonitor(sql: Sql, shops: string[], force = false) {
 	} catch (e) {
 		purchaseErrors.set(sql, { account: selected, capturedAt, error: (e as Error).message });
 	}
-	return monitor(sql, shops);
+	return monitor(sql, shops, range);
 }
 
 async function selected(sql: Sql, p: z.infer<typeof selectionParams>) {
-	await writeOrders(sql, p.shops);
 	await refreshPurchases(sql);
-	const latest = await monitor(sql, p.shops);
-	assertProcurementAvailable(latest.orders, p.orders);
-	const reads = await readAll(sql, undefined, p.shops);
+	const reads = await readAll(sql, undefined, p.shops, p.dateRange, true);
 	const bad = reads.results.find((r) => !r.ok);
 	if (bad) throw new Usage(`${bad.what}读取失败，停止采购以避免重复：${bad.error ?? "未知原因"}`);
+	const latest = await monitor(sql, p.shops, p.dateRange, reads.unreadSince);
+	assertProcurementAvailable(latest.orders, p.orders);
 	const state = await snapshot(sql, reads);
 	const expected = new Map(latest.orders.flatMap((order) => order.lines.map((line) => [`${order.sn}:${line.modelId}`, line] as const)));
 	return selectPurchase(state, checkOrders(state), p.orders, p.shops, expected);

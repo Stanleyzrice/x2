@@ -10,7 +10,7 @@ import type { Sql } from "../../platform/db/index.ts";
 import { NeedsHuman } from "../../platform/errors.ts";
 import { configuredWorkspaces, type Read } from "../../platform/tool.ts";
 import type { CartLine, Purchase } from "./allocate.ts";
-import { readShopeeOrders, shopeeOrderRow } from "./shopee.ts";
+import { type KnownOrderDate, type OrderDateRange, orderBounds, readShopeeOrders, shopeeOrderRow } from "./shopee.ts";
 import { refreshChosen } from "./source.ts";
 
 /** chanboss 状态：站上的代码 → chanboss 的词。paid、arrive 是推断的（2026-10-09 没有这两种状态的订单可核对） */
@@ -136,6 +136,7 @@ export async function buyAccount(sql: Sql): Promise<{ userId: string; loginId: s
 }
 
 export type Reads = {
+	unreadSince?: number | null;
 	cart: CartLine[];
 	purchases: Purchase[];
 	accounts: Map<string, string>;
@@ -179,19 +180,26 @@ async function attempt<T>(results: Read[], what: string, who: string, fn: () => 
 	}
 }
 
-export async function readAll(sql: Sql, log: (s: string) => void = console.error, shops = configuredOrderShops()): Promise<Reads> {
+export async function readAll(
+	sql: Sql,
+	log: (s: string) => void = console.error,
+	shops = configuredOrderShops(),
+	range?: OrderDateRange,
+	force = false,
+): Promise<Reads> {
 	const results: Read[] = [];
-	const ordersKey = `Shopee订单:${[...shops].sort().join(",")}`;
+	const bounds = orderBounds(range);
+	const ordersKey = `Shopee订单:${JSON.stringify([[...shops].sort(), range])}`;
 	log(`读 Shopee 待出货订单${again(ordersKey)}`);
-	await attempt(
+	const orders = await attempt(
 		results,
 		"订单",
 		"shopee",
-		() => reuse(ordersKey, () => writeOrders(sql, shops)),
+		() => reuse(ordersKey, () => writeOrders(sql, shops, range), force ? 0 : REUSE_MS),
 		(read) => read.count,
 	);
 	const toBuy = (
-		await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货' and o.shop in ${sql(shops)}`
+		await sql`select distinct i->>'itemId' as id from orders o, jsonb_array_elements(o.items) i where o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货' and o.shop in ${sql(shops)} and (${bounds?.start ?? null}::timestamptz is null or created_at >= ${bounds?.start ?? null} and created_at < ${bounds?.end ?? null})`
 	).map((r) => r.id as string);
 	if (toBuy.length) {
 		const key = `货源:${[...toBuy].sort().join(",")}`;
@@ -204,7 +212,7 @@ export async function readAll(sql: Sql, log: (s: string) => void = console.error
 			(n) => n,
 		);
 	}
-	return read1688(sql, log, results);
+	return { ...(await read1688(sql, log, results)), unreadSince: orders?.unreadSince };
 }
 
 export async function read1688(sql: Sql, log: (s: string) => void = console.error, results: Read[] = []): Promise<Reads> {
@@ -254,12 +262,19 @@ export function configuredOrderShops(): string[] {
 }
 
 /** 只有完整成功的 Shopee 待出货列表重新开放采购；读取失败或列表中消失的旧行保留历史，但不可继续加购。 */
-export async function writeOrders(sql: Sql, shops = configuredOrderShops()) {
+export async function writeOrders(sql: Sql, shops = configuredOrderShops(), range?: OrderDateRange) {
+	const bounds = orderBounds(range);
 	const excluded: { sn: string; status: string; reason: string }[] = [];
 	let count = 0;
+	let unreadSince: number | null = null;
 	for (const shop of [...new Set(shops)]) {
-		await sql`update orders set procurement_eligible = false where shop = ${shop} and order_source = 'shopee'`;
-		const read = await readShopeeOrders(shop);
+		await sql`update orders set procurement_eligible = false where shop = ${shop} and order_source = 'shopee' and (${bounds?.start ?? null}::timestamptz is null or created_at >= ${bounds?.start ?? null} and created_at < ${bounds?.end ?? null})`;
+		const known = range
+			? await sql<KnownOrderDate[]>`select shopee_order_id as "orderId", shop_id as "shopId", sn, created_at as "createdAt"
+			from orders where shop = ${shop} and order_source = 'shopee' and shopee_order_id is not null and created_at is not null`
+			: [];
+		const read = await readShopeeOrders(shop, range, known);
+		if (read.unreadSince !== null) unreadSince = Math.min(unreadSince ?? Infinity, read.unreadSince);
 		const rows = read.orders.map((order) => {
 			const row = shopeeOrderRow(order, shop);
 			if (!row.procurement_eligible) {
@@ -269,7 +284,7 @@ export async function writeOrders(sql: Sql, shops = configuredOrderShops()) {
 			return row;
 		});
 		await sql.begin(async (tx) => {
-			await tx`update orders set procurement_eligible = false, shopee_sync_at = now() where shop = ${shop} and order_source = 'shopee'`;
+			await tx`update orders set procurement_eligible = false, shopee_sync_at = now() where shop = ${shop} and order_source = 'shopee' and (${bounds?.start ?? null}::timestamptz is null or created_at >= ${bounds?.start ?? null} and created_at < ${bounds?.end ?? null})`;
 			for (const { items, ...row } of rows) {
 				const [existing] = await tx<{ shop_id: string | null }[]>`select shop_id from orders where sn = ${row.sn} for update`;
 				if (existing?.shop_id && existing.shop_id !== read.shopId) throw new Error(`订单 ${row.sn} 的历史店铺身份不符，停止同步`);
@@ -287,5 +302,5 @@ export async function writeOrders(sql: Sql, shops = configuredOrderShops()) {
 		});
 		count += rows.length;
 	}
-	return { count, excluded };
+	return { count, excluded, unreadSince };
 }

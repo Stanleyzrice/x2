@@ -108,6 +108,12 @@ export const sourceFieldsSchema = z.object({
 	attributes: z.array(z.object({ attribute_id: z.number().int(), attribute_values: z.array(z.object({ value_id: z.number().int() })) })).optional(),
 	stocks: z.record(z.string(), z.number().int().nonnegative()).optional(),
 	prices: z.record(z.string(), z.number().positive().finite()).optional(),
+	salePricesTwd: z.record(z.string(), z.number().int().positive()).optional(),
+	weightsKg: z.record(z.string(), z.number().positive().finite()).optional(),
+	tierLabels: z
+		.array(z.object({ source: z.string(), name: z.string().trim().min(1).max(14), options: z.record(z.string(), z.string().trim().min(1).max(20)) }))
+		.optional(),
+	hiddenSkuImages: z.array(httpUrl).optional(),
 	mainImages: z.array(httpUrl).min(1).max(9).optional(),
 	detailImages: z.array(httpUrl).max(12).optional(),
 });
@@ -156,6 +162,12 @@ export const sourceUpdateParams = sourceDetailParams.extend({
 	attributes: z.preprocess(parseJson, sourceFieldsSchema.shape.attributes.unwrap()).optional(),
 	stocks: z.preprocess(parseJson, sourceFieldsSchema.shape.stocks.unwrap()).optional(),
 	prices: z.preprocess(parseJson, sourceFieldsSchema.shape.prices.unwrap()).optional(),
+	salePricesTwd: z.preprocess(parseJson, sourceFieldsSchema.shape.salePricesTwd.unwrap()).optional(),
+	weightsKg: z.preprocess(parseJson, sourceFieldsSchema.shape.weightsKg.unwrap()).optional(),
+	tierLabels: z.preprocess(parseJson, sourceFieldsSchema.shape.tierLabels.unwrap()).optional(),
+	hiddenSkuImages: z.preprocess(parseJson, sourceFieldsSchema.shape.hiddenSkuImages.unwrap()).optional(),
+	resetFields: z.array(z.enum(["weightKg", "freightRmb", "daysToShip", "categoryPath", "minQty"])).optional(),
+	expectedEditedAt: z.iso.datetime().nullable().optional(),
 	mainImages: z.preprocess(parseJson, sourceFieldsSchema.shape.mainImages.unwrap()).optional(),
 	detailImages: z.preprocess(parseJson, sourceFieldsSchema.shape.detailImages.unwrap()).optional(),
 });
@@ -182,6 +194,7 @@ export type SourceItem = {
 	productId: string | null;
 	deletable: boolean;
 	deleteProblem: string | null;
+	editedAt?: string | null;
 };
 export type SourceApproval = { kind: "original-source"; sourceProductId: string; hash: string; at: string };
 /** 新建使用完整product指纹；已有商品仍须把本次批准绑定到当前稿与实际商品编号。 */
@@ -237,8 +250,8 @@ export function sourceOffer(source: SourceProduct, fields: SourceFields = {}): {
 				name: sku.name,
 				price,
 				stock,
-				image: sku.image ?? "",
-				weightKg: sku.weightKg,
+				image: sku.image && !fields.hiddenSkuImages?.includes(sku.image) ? sku.image : "",
+				weightKg: fields.weightsKg?.[sku.id] ?? sku.weightKg,
 			});
 	}
 	if (new Set(source.skus.map((s) => s.id)).size !== source.skus.length) problems.push("规格：来源SKU编号重复，待重新采集");

@@ -58,7 +58,7 @@ export const reviewedAssetsParams = z.object({
 });
 type Manifest = z.output<typeof reviewedImagesManifest>;
 type ImageInput = z.output<typeof image> & { skuIds?: string[] };
-type SourceRow = Pick<ListingRow, "shop" | "offer_id" | "offer" | "variants" | "images">;
+type SourceRow = Pick<ListingRow, "shop" | "offer_id" | "offer" | "variants" | "images" | "source_fields" | "source_edited_at">;
 const roles = ["main", "detail", "options"] as const;
 
 /** 第一层选项以来源URL分组；同URL的全部已选SKU必须一起绑定，禁止把别的花色图套到一个SKU。 */
@@ -84,7 +84,10 @@ export function reviewedImagesScope(row: SourceRow): string {
 function sourceLists(row: SourceRow) {
 	if (!row.offer) throw new Usage("缺已保存的货源");
 	const detail = z.array(z.string()).parse("detail" in row.offer ? (row.offer.detail ?? []) : []);
-	return { main: row.offer.images ?? [row.offer.image], detail };
+	return {
+		main: (row.source_edited_at && row.source_fields?.mainImages) || row.offer.images || [row.offer.image],
+		detail: (row.source_edited_at && row.source_fields?.detailImages) || detail,
+	};
 }
 
 export function reviewedImagesPreview(row: SourceRow) {
@@ -119,6 +122,15 @@ export function validateReviewedManifest(row: SourceRow, manifest: Manifest): vo
 			if (sourceShas.has(p.sourceUrl) && sourceShas.get(p.sourceUrl) !== p.sourceSha256) throw new Usage("同一来源URL的原图SHA不一致");
 			sourceShas.set(p.sourceUrl, p.sourceSha256);
 			if (p.provider === "clean-original" && p.sha256 !== p.sourceSha256) throw new Usage("clean-original的文件须与原图SHA相同，处理过的图须如实标注provider");
+		}
+	}
+	if (row.source_edited_at) {
+		for (const [role, urls] of [
+			["main", row.source_fields?.mainImages],
+			["detail", row.source_fields?.detailImages],
+		] as const) {
+			if (urls && JSON.stringify([...new Set(manifest[role].map((pic) => pic.sourceUrl))]) !== JSON.stringify(urls))
+				throw new Usage("请按备选详情中保存的人工选图及图序准备图片");
 		}
 	}
 	const required = reviewedOptions(row);
@@ -197,7 +209,7 @@ export function problemsAfterReviewedImages(row: SourceRow & Pick<ListingRow, "p
 function editable(row: Pick<ListingRow, "product_id" | "listed_at">) {
 	if (row.product_id || row.listed_at) throw new Usage("仅未建商品稿可导入已审图片");
 }
-const state = (row: SourceRow) => JSON.stringify([reviewedImagesScope(row), row.images]);
+const state = (row: SourceRow) => JSON.stringify([reviewedImagesScope(row), row.images, row.source_edited_at]);
 
 export async function importReviewedImages(sql: Sql, p: z.output<typeof reviewedImagesParams>) {
 	const [row] = await sql<ListingRow[]>`select * from listings where id = ${p.id}`;
