@@ -19,15 +19,19 @@ const refs = [{ order_id: "1", shop_id: "S1" }];
 
 test("Shopee 待出货行保留主来源、原始状态、商品图和真实下单时间，不伪装 Chanboss 状态", () => {
 	const createdAt = new Date("2026-11-04T01:00:00Z");
-	const row = shopeeOrderRow({ ...order(), createdAt }, "cheeroutdoor");
+	const pending = order({ status: "To Ship" });
+	validateCards([pending], refs, "S1");
+	const row = shopeeOrderRow({ ...pending, createdAt }, "cheeroutdoor");
 	assert.equal(row.order_source, "shopee");
-	assert.equal(row.shopee_status, "待出貨");
+	assert.equal(row.shopee_status, "To Ship");
+	assert.equal(row.platform_status, "待出货");
 	assert.equal(row.shopee_order_id, "1");
 	assert.equal(row.created_at, createdAt);
 	assert.equal(row.procurement_eligible, true);
 	assert.equal(row.items[0]!.image, "https://image.test/1");
 	assert.equal("chanboss_status" in row, false);
-	for (const status of ["Unpaid", "已取消", "Completed", "已出貨"]) assert.equal(shopeeState(status).eligible, false);
+	for (const status of ["To ship", " TO SHIP ", "待出貨", "READY_TO_SHIP"]) assert.equal(shopeeState(status).eligible, true);
+	for (const status of ["Unpaid", "已取消", "COMPLETED", "已出貨", "Shipped"]) assert.equal(shopeeState(status).eligible, false);
 	assert.throws(() => shopeeState("未知状态"), /尚未识别/);
 });
 
@@ -45,7 +49,7 @@ test("列表缺页、总数变化、重复 id、跨店或详情不全不能当�
 test("加购前现读 Shopee 校验订单、店铺、规格和数量，取消或变更立即停止", () => {
 	const stored = { sn: "SN1", shopee_order_id: "1", shop_id: "S1" },
 		lines = [{ modelId: "M1", qty: 2 }];
-	validateCartOrder(order(), stored, lines);
+	validateCartOrder(order({ status: "To Ship" }), stored, lines);
 	assert.throws(() => validateCartOrder(order({ status: "已取消" }), stored, lines), /不是待出货/);
 	assert.throws(() => validateCartOrder(order({ shopId: "OTHER" }), stored, lines), /身份变化/);
 	assert.throws(() => validateCartOrder(order({ orderSn: "OTHER" }), stored, lines), /身份变化/);

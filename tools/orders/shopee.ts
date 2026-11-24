@@ -14,24 +14,25 @@ const detail = z.looseObject({
 	shop_id: z.union([z.string(), z.number()]),
 	create_time: z.coerce.number().int().positive(),
 });
-const TO_SHIP = new Set(["To ship", "待出貨", "待出货", "READY_TO_SHIP"]);
+const TO_SHIP = new Set(["to ship", "待出貨", "待出货", "ready_to_ship"]);
 const CLOSED: Record<string, string> = {
-	Unpaid: "待付款",
+	unpaid: "待付款",
 	未付款: "待付款",
 	待付款: "待付款",
-	Cancelled: "不成立",
+	cancelled: "不成立",
 	已取消: "不成立",
 	取消中: "取消中",
-	Completed: "已完成",
+	completed: "已完成",
 	已完成: "已完成",
-	Shipped: "已出货",
+	shipped: "已出货",
 	已出貨: "已出货",
 	运送中: "已出货",
 	運送中: "已出货",
 };
 export function shopeeState(status: string): { eligible: boolean; platformStatus: string } {
-	if (TO_SHIP.has(status)) return { eligible: true, platformStatus: "待出货" };
-	if (CLOSED[status]) return { eligible: false, platformStatus: CLOSED[status]! };
+	const key = status.trim().toLowerCase();
+	if (TO_SHIP.has(key)) return { eligible: true, platformStatus: "待出货" };
+	if (Object.hasOwn(CLOSED, key)) return { eligible: false, platformStatus: CLOSED[key]! };
 	throw new Usage(`Shopee 订单状态尚未识别：${status || "空"}；先不采购`);
 }
 
