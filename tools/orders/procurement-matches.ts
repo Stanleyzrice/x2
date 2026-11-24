@@ -7,6 +7,7 @@ export type MatchNeed = {
 	target: { offerId: string; skuId: string; specId?: string | null } | null;
 	offerIds?: string[];
 	reason?: string;
+	heldStatus?: string;
 };
 export type MatchRecord = {
 	account: string;
@@ -134,7 +135,8 @@ export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], cov
 		const created = time(need.createdAt);
 		const invalid = conflicts.has(`${need.sn}:${need.modelId}`)
 			? "同一订单规格的需求资料冲突。"
-			: (need.reason ??
+			: (need.heldStatus ??
+				need.reason ??
 				(!need.target?.offerId || !need.target.skuId
 					? "尚未确定精确货源及规格，不能据商品名称匹配。"
 					: !need.sn || !need.modelId || created === null || !Number.isSafeInteger(need.qty) || need.qty < 1
@@ -196,11 +198,14 @@ export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], cov
 		);
 		const uncertainHistory = rows.some((other) => {
 			if (other === row || !other.invalid) return false;
-			if (other.need.target) return other.need.target.offerId === need.target?.offerId && other.need.target.skuId === need.target?.skuId;
+			if (other.need.target && !other.need.heldStatus)
+				return other.need.target.offerId === need.target?.offerId && other.need.target.skuId === need.target?.skuId;
 			// 未映射的历史需求可能已用了当前候选采购；不能将“旧规格无法映射”当作“未占用采购数量”。
 			return row.active.some(
 				(slot) =>
-					(!other.need.offerIds?.length || other.need.offerIds.includes(slot.record.offerId!)) &&
+					(other.need.target
+						? sameTarget(other.need, slot.record, false)
+						: !other.need.offerIds?.length || other.need.offerIds.includes(slot.record.offerId!)) &&
 					(other.created === null || (slot.created !== null && slot.created >= other.created - SKEW_MS)),
 			);
 		});
@@ -212,7 +217,7 @@ export function matchProcurement(needs: MatchNeed[], records: MatchRecord[], cov
 				coverage.error ?? (!coverage.account ? "采购账号尚未核对。" : captured === null ? "采购记录采集时间未知。" : "采购记录读取不完整，不能确定采购状态。");
 		} else if (uncertainHistory) {
 			state = "unknown";
-			reason = "历史订单的货源规格、时间或数量未能核清，无法排除该采购记录已被占用，请先核对原采购单。";
+			reason = "另有订单的状态、货源规格、时间或数量待核对，无法排除该采购记录已被占用，请先核对原采购单。";
 		} else if (row.paidQty === need.qty) state = "paid";
 		else if (row.unpaidQty === need.qty) state = "unpaid";
 		else if (ambiguous) {

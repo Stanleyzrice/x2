@@ -180,3 +180,13 @@ test("未映射历史只阻塞实际相关已付或待付候选，无采购证�
 	const unpaid = record({ paidAt: null, status: "waitbuyerpay", fulfillment: { ...record().fulfillment!, status: "waitbuyerpay" } });
 	assert.equal(matchProcurement([historical, current], [unpaid], coverage).get("new:model")?.state, "unknown");
 });
+
+test("取消中的同规格不制造补货需求；只有可能共用一笔实际采购时才需人工核对", () => {
+	const held = need("held", { heldStatus: "取消中" });
+	const current = need("active");
+	const check = (old: MatchNeed, records: MatchRecord[]) => matchProcurement([old, current], records, coverage).get("active:model")!;
+	assert.equal(check(held, []).state, "unmatched");
+	assert.equal(check(held, [record()]).state, "unknown");
+	assert.equal(check({ ...held, target: { ...held.target!, skuId: "another" } }, [record()]).state, "paid");
+	assert.equal(check({ ...held, createdAt: "2026-11-06T03:30:00Z" }, [record()]).state, "paid");
+});

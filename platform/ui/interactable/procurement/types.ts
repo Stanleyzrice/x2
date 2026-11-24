@@ -50,6 +50,7 @@ export type Monitor = {
 	checkedAt: string | null;
 	error: string | null;
 	orders: Order[];
+	excluded?: { sn: string; status: string; reason: string }[];
 	demand?: SkuDemand[];
 	purchases?: { selected?: string | null; account: string | null; loginId: string | null; capturedAt: string | null; complete: boolean; error: string | null };
 };

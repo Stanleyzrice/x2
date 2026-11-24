@@ -122,6 +122,8 @@ export function ordersOf(raw: unknown, refs: Ref[]): Order[] {
 	const out = b.data.card_list.map((w): Order => {
 		const card = (w.package_level_order_card ?? w.order_card)!;
 		const units = card.package_list?.length ? card.package_list : [card];
+		const status = String(card.status_info?.status ?? units[0]?.status_info?.status ?? "");
+		const packageStatuses = units.map((u) => String(u.status_info?.status ?? ""));
 		const packages = w.package_level_order_card
 			? units.map((u) => ({ ext: u.package_ext_info ?? {}, f: u.fulfilment_info ?? {} }))
 			: (card.package_ext_info_list ?? []).map((ext) => ({ ext, f: card.fulfilment_info ?? {} }));
@@ -133,8 +135,8 @@ export function ordersOf(raw: unknown, refs: Ref[]): Order[] {
 			orderId,
 			orderSn: String(card.card_header?.order_sn ?? ""),
 			shopId: String(reference.shop_id),
-			status: String(units[0]?.status_info?.status ?? card.status_info?.status ?? ""),
-			...(units.length > 1 ? { packageStatuses: units.map((u) => String(u.status_info?.status ?? "")) } : {}),
+			status,
+			...(units.length > 1 || packageStatuses[0] !== status ? { packageStatuses } : {}),
 			shipBy: time(card.order_ext_info?.ship_by_date),
 			// 订单卡片的金额是新台币乘 100000（2026-10-09：卡片 21000000，get_one_order 的 total_price 是 210）
 			total: Number(units[0]?.payment_info?.total_price ?? 0) / 100000,

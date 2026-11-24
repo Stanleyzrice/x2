@@ -396,6 +396,16 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					</CardContent>
 				</Card>
 			)}
+			{!data?.error && data?.excluded?.length ? (
+				<details className="rounded-lg border px-4 py-3 text-sm">
+					<summary className="cursor-pointer">本次读取有 {data.excluded.length} 张订单未计入采购</summary>
+					{data.excluded.map((order) => (
+						<p key={order.sn} className="mt-2 text-muted-foreground">
+							{order.sn} · {order.reason}（Shopee 状态：{order.status}）
+						</p>
+					))}
+				</details>
+			) : null}
 			{!data?.error && data?.demand?.length ? (
 				<SkuDemandTable rows={selectedDemand(data.demand, new Set(selectedOrders))} selectedCount={selectedOrders.length} />
 			) : null}
@@ -423,7 +433,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 							{data.error || syncError
 								? "暂时无法确认待出货订单，请查看读取错误后重试。"
 								: data.checkedAt
-									? "当前订单快照没有 Shopee 待出货订单。"
+									? "本次读取没有可整单采购的 Shopee 待出货订单。"
 									: "尚未取得已核对的 Shopee 待出货订单，正在后台更新…"}
 						</p>
 					) : (

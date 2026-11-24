@@ -168,14 +168,16 @@ test("订单首页不传来源页，下一页沿用上一页返回的分页标�
 
 test("分包裹订单保留所有包裹状态，不把已出货商品隐藏在首个待出货状态里", () => {
 	const raw = sample("get-order-list-card-list") as {
-		data: { card_list: { package_level_order_card?: { package_list: { status_info: { status: string } }[] } }[] };
+		data: { card_list: { package_level_order_card?: { status_info?: { status: string }; package_list: { status_info: { status: string } }[] } }[] };
 	};
 	const card = raw.data.card_list[0]!.package_level_order_card!;
+	card.status_info = { status: "Cancellation Requested" };
 	card.package_list.push({ ...card.package_list[0]!, status_info: { status: "Shipped" } });
 	const result = ordersOf(raw, [
 		{ order_id: 210000000001, shop_id: 1554182542 },
 		{ order_id: 210000000002, shop_id: 1554182542 },
 	]);
+	assert.equal(result[0]!.status, "Cancellation Requested");
 	assert.deepEqual(result[0]!.packageStatuses, ["To ship", "Shipped"]);
 });
 

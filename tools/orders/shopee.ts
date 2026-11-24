@@ -15,12 +15,14 @@ const detail = z.looseObject({
 	create_time: z.coerce.number().int().positive(),
 });
 const TO_SHIP = new Set(["to ship", "待出貨", "待出货", "ready_to_ship"]);
-const CLOSED: Record<string, string> = {
+const NON_SHIPPING: Record<string, string> = {
 	unpaid: "待付款",
 	未付款: "待付款",
 	待付款: "待付款",
 	cancelled: "不成立",
 	已取消: "不成立",
+	"cancellation requested": "取消中",
+	in_cancel: "取消中",
 	取消中: "取消中",
 	completed: "已完成",
 	已完成: "已完成",
@@ -32,8 +34,7 @@ const CLOSED: Record<string, string> = {
 export function shopeeState(status: string): { eligible: boolean; platformStatus: string } {
 	const key = status.trim().toLowerCase();
 	if (TO_SHIP.has(key)) return { eligible: true, platformStatus: "待出货" };
-	if (Object.hasOwn(CLOSED, key)) return { eligible: false, platformStatus: CLOSED[key]! };
-	throw new Usage(`Shopee 订单状态尚未识别：${status || "空"}；先不采购`);
+	return { eligible: false, platformStatus: Object.hasOwn(NON_SHIPPING, key) ? NON_SHIPPING[key]! : "状态待核对" };
 }
 
 export function validateIndexPage(total: number, refs: Ref[], shopId: string, seen: Set<string>, expected: number | null): void {
@@ -47,8 +48,11 @@ export function validateIndexPage(total: number, refs: Ref[], shopId: string, se
 	if (seen.size > total || (!refs.length && seen.size < total)) throw new Usage("Shopee 待出货订单列表数量不完整");
 }
 
-export function packagesEligible(order: Order): boolean {
-	return (order.packageStatuses ?? [order.status]).every((status) => shopeeState(status).eligible);
+function orderState(order: Order) {
+	const state = shopeeState(order.status);
+	if (order.packageStatuses?.some((status) => shopeeState(status).platformStatus !== state.platformStatus))
+		return { eligible: false, platformStatus: "包裹状态待核对" };
+	return state;
 }
 
 export function validateCards(cards: Order[], refs: Ref[], shopId: string): void {
@@ -58,8 +62,6 @@ export function validateCards(cards: Order[], refs: Ref[], shopId: string): void
 		if (order.shopId !== shopId || !expected.has(order.orderId) || seen.has(order.orderId) || !order.orderSn)
 			throw new Usage("Shopee 订单详情身份不符或重复，读取不完整");
 		seen.add(order.orderId);
-		shopeeState(order.status);
-		if (shopeeState(order.status).eligible && !packagesEligible(order)) throw new Usage(`Shopee 订单 ${order.orderSn} 包含非待出货包裹，未采购`);
 		if (!order.items.length || order.items.some((i) => !i.itemId || !Number.isSafeInteger(i.qty) || i.qty < 1))
 			throw new Usage(`Shopee 订单 ${order.orderSn} 商品明细不完整`);
 	}
@@ -119,7 +121,7 @@ export function shopeeItems(order: Order) {
 
 export function shopeeOrderRow(order: ShopeeOrder, account: string) {
 	const items = shopeeItems(order),
-		state = shopeeState(order.status);
+		state = orderState(order);
 	return {
 		sn: OrderSn.parse(order.orderSn),
 		shop: account,
@@ -127,7 +129,7 @@ export function shopeeOrderRow(order: ShopeeOrder, account: string) {
 		order_source: "shopee" as const,
 		shopee_order_id: order.orderId,
 		shopee_status: order.status,
-		procurement_eligible: state.eligible && packagesEligible(order),
+		procurement_eligible: state.eligible,
 		created_at: order.createdAt,
 		ship_by: order.shipBy ? new Date(order.shipBy) : null,
 		platform_status: state.platformStatus,
@@ -143,7 +145,7 @@ export function validateCartOrder(
 ): void {
 	if (!order || order.orderId !== stored.shopee_order_id || order.orderSn !== stored.sn || order.shopId !== stored.shop_id)
 		throw new Usage(`Shopee 订单 ${stored.sn} 的店铺或订单身份变化，未加购`);
-	if (!shopeeState(order.status).eligible || !packagesEligible(order)) throw new Usage(`Shopee 订单 ${stored.sn} 已不是待出货，未加购`);
+	if (!orderState(order).eligible) throw new Usage(`Shopee 订单 ${stored.sn} 已不是待出货，未加购`);
 	const items = shopeeItems(order);
 	for (const line of lines) {
 		const matches = items.filter((i) => i.modelId === line.modelId);

@@ -44,12 +44,14 @@ type MonitorRow = {
 	created_at: Date | null;
 	ship_by: Date | null;
 	items_text: string | null;
+	platform_status: string;
 	items: ProcurementItem[];
 	step: string | null;
 	cart_pending: string[];
 	cart_done: string[];
 };
-const syncs = new WeakMap<Sql, Map<string, { at: string | null; error: string | null }>>();
+type MonitorSync = { at: string | null; error: string | null; excluded: Awaited<ReturnType<typeof writeOrders>>["excluded"] };
+const syncs = new WeakMap<Sql, Map<string, MonitorSync>>();
 const purchaseErrors = new WeakMap<Sql, { account: string | null; capturedAt: string | null; error: string }>();
 const scopeKey = (shops: string[]) => JSON.stringify([...new Set(shops)].sort());
 async function refreshPurchases(sql: Sql): Promise<void> {
@@ -62,7 +64,7 @@ async function refreshPurchases(sql: Sql): Promise<void> {
 
 export async function monitor(sql: Sql, shops: string[]) {
 	const [rows, historical, evidence] = await Promise.all([
-		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
+		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step, o.platform_status,
 		array(select distinct l->>'modelId' from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
 			and w.status in ('待执行', '已提交', '结果未知', '不一致') and l->>'sn' = o.sn) as cart_pending,
 		array(select distinct l->>'modelId' from writes w, jsonb_array_elements(w.params->'lines') l where w.op = '加购'
@@ -70,9 +72,9 @@ export async function monitor(sql: Sql, shops: string[]) {
 		from orders o where o.shop in ${sql(shops)} and o.order_source = 'shopee' and o.procurement_eligible and o.platform_status = '待出货'
 		order by o.created_at desc nulls last, o.sn desc`,
 		// 其他店铺及已履约需求一起分配数量，不能把以前已购买的件数重新分给当前待采购订单。
-		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step,
+		sql<MonitorRow[]>`select o.sn, o.shop, o.shop_id, o.created_at, o.ship_by, o.items, o.items_text, o.step, o.platform_status,
 		array[]::text[] as cart_pending, array[]::text[] as cart_done from orders o where o.order_source = 'shopee'
-		and o.platform_status in ('待出货', '已出货', '已完成', '退货退款')`,
+		and o.platform_status in ('待出货', '已出货', '已完成', '退货退款', '取消中', '状态待核对', '包裹状态待核对')`,
 		readPurchaseEvidence(sql),
 	]);
 	const demands = [...new Map([...historical, ...rows].map((row) => [row.sn, row])).values()];
@@ -101,6 +103,7 @@ export async function monitor(sql: Sql, shops: string[]) {
 			sn: row.sn,
 			modelId: item.modelId,
 			qty: item.qty,
+			heldStatus: ["取消中", "状态待核对", "包裹状态待核对"].includes(row.platform_status) ? row.platform_status : undefined,
 			createdAt: row.created_at?.toISOString() ?? null,
 			offerIds: [
 				...new Set([
@@ -143,6 +146,7 @@ export async function monitor(sql: Sql, shops: string[]) {
 	});
 	return {
 		checkedAt: sync?.at ?? null,
+		excluded: sync?.excluded ?? [],
 		error: sync?.error ?? null,
 		purchases,
 		orders,
@@ -152,20 +156,20 @@ export async function monitor(sql: Sql, shops: string[]) {
 
 export async function syncMonitor(sql: Sql, shops: string[], force = false) {
 	const key = scopeKey(shops);
-	const states = syncs.get(sql) ?? new Map<string, { at: string | null; error: string | null }>();
+	const states = syncs.get(sql) ?? new Map<string, MonitorSync>();
 	syncs.set(sql, states);
 	try {
-		const at = await reuse(
+		const current = await reuse(
 			`procurement-monitor:${key}`,
 			async () => {
-				await writeOrders(sql, shops);
-				return new Date().toISOString();
+				const { excluded } = await writeOrders(sql, shops);
+				return { at: new Date().toISOString(), excluded, error: null };
 			},
 			force ? 0 : 60_000,
 		);
-		states.set(key, { at, error: null });
+		states.set(key, current);
 	} catch (e) {
-		states.set(key, { at: states.get(key)?.at ?? null, error: (e as Error).message });
+		states.set(key, { ...(states.get(key) ?? { at: null, excluded: [] }), error: (e as Error).message });
 	}
 	const saved = await monitor(sql, shops);
 	const { selected, capturedAt, error } = saved.purchases;

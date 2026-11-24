@@ -32,7 +32,7 @@ test("Shopee 待出货行保留主来源、原始状态、商品图和真实下�
 	assert.equal("chanboss_status" in row, false);
 	for (const status of ["To ship", " TO SHIP ", "待出貨", "READY_TO_SHIP"]) assert.equal(shopeeState(status).eligible, true);
 	for (const status of ["Unpaid", "已取消", "COMPLETED", "已出貨", "Shipped"]) assert.equal(shopeeState(status).eligible, false);
-	assert.throws(() => shopeeState("未知状态"), /尚未识别/);
+	assert.deepEqual(shopeeState("未知状态"), { eligible: false, platformStatus: "状态待核对" });
 });
 
 test("列表缺页、总数变化、重复 id、跨店或详情不全不能当作完整读取", () => {
@@ -74,7 +74,28 @@ test("分包裹的同一规格先合并数量；单规格的 model 0 使用商�
 
 test("混有已出货或取消包裹的订单不按整单数量采购", () => {
 	const mixed = order({ packageStatuses: ["待出貨", "已出貨"] });
-	assert.throws(() => validateCards([mixed], refs, "S1"), /非待出货包裹/);
-	assert.equal(shopeeOrderRow({ ...mixed, createdAt: new Date() }, "cheeroutdoor").procurement_eligible, false);
+	validateCards([mixed], refs, "S1");
+	const row = shopeeOrderRow({ ...mixed, createdAt: new Date() }, "cheeroutdoor");
+	assert.equal(row.procurement_eligible, false);
+	assert.equal(row.platform_status, "包裹状态待核对");
 	assert.throws(() => validateCartOrder(mixed, { sn: "SN1", shopee_order_id: "1", shop_id: "S1" }, [{ modelId: "M1", qty: 2 }]), /不是待出货/);
+});
+
+test("同批同规格只统计待出货订单；取消申请、陌生或缺失状态仅隔离本单并阻止加购", () => {
+	const cards = ["To Ship", "Cancellation Requested", "New status", ""].map((status, i) => order({ status, orderId: String(i + 1), orderSn: `SN${i + 1}` }));
+	const batch = cards.map((c) => ({ order_id: c.orderId, shop_id: c.shopId }));
+	validateCards(cards, batch, "S1");
+	const rows = cards.map((c) => shopeeOrderRow({ ...c, createdAt: new Date() }, "shop"));
+	assert.deepEqual(
+		rows.map((r) => r.platform_status),
+		["待出货", "取消中", "状态待核对", "状态待核对"],
+	);
+	assert.deepEqual(
+		rows.filter((r) => r.procurement_eligible).flatMap((r) => r.items.map((i) => [r.sn, i.qty])),
+		[["SN1", 2]],
+	);
+	for (const c of cards.slice(1)) {
+		assert.throws(() => validateCartOrder(c, { sn: c.orderSn, shopee_order_id: c.orderId, shop_id: c.shopId }, [{ modelId: "M1", qty: 2 }]), /未加购/);
+	}
+	assert.throws(() => validateCards([cards[0]!, { ...cards[1]!, shopId: "OTHER" }], batch.slice(0, 2), "S1"), /身份不符/);
 });
