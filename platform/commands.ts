@@ -109,7 +109,7 @@ export const platform: Toolkit = {
 					}
 					const { build } = await import("vite");
 					await build({ configFile: `${root}platform/ui/vite.config.ts`, logLevel: "warn" });
-					const { stop } = await serve(db, { host: p.host, port: p.port, dist: `${root}platform/ui/dist`, scratch: p.scratch });
+					const { stop } = await serve(db, { host: p.host, port: p.port, dist: resolve(root, "platform/ui/dist"), scratch: p.scratch });
 					const url = `http://${p.host === "0.0.0.0" ? "localhost" : p.host}:${p.port}`;
 					console.error(`网页：${url}（Ctrl-C 关掉）`);
 					await new Promise<void>((ok) => process.once("SIGINT", ok).once("SIGTERM", ok));

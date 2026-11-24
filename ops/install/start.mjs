@@ -150,11 +150,12 @@ try {
 	}
 	const webPort = await port(5170).catch(() => port());
 	const url = `http://127.0.0.1:${webPort}`;
+	process.stdout.write(`Starting X2 web at ${url}...\n`);
 	const web = spawn(process.execPath, ["x2.ts", "web", "--port", String(webPort)], { ...update, env });
 	const done = once(web, "exit");
 	try {
 		let setup;
-		for (let attempt = 0; attempt < 100 && web.exitCode === null; attempt++) {
+		for (let attempt = 0; attempt < 100 && web.exitCode === null && web.signalCode === null; attempt++) {
 			const response = await fetch(`${url}/api/setup`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
 			if (response?.ok) {
 				setup = await response.json();
@@ -162,7 +163,9 @@ try {
 			}
 			await setTimeout(500);
 		}
-		if (!setup?.database) throw new Error("X2 did not start with the database connected. See the messages above.");
+		if (web.exitCode !== null || web.signalCode !== null) throw new Error(`X2 web exited during startup (${web.exitCode ?? web.signalCode}).`);
+		if (!setup) throw new Error(`X2 web did not respond at ${url}. See the messages above.`);
+		if (!setup.database) throw new Error("X2 web started, but its database initialization failed.");
 		if (!checkOnly) {
 			const chromeProcess = spawn(
 				browser,
@@ -177,9 +180,15 @@ try {
 			process.stdout.write(`X2: ${url}\n`);
 			const [code] = await done;
 			process.exitCode = code ?? 0;
-		} else process.stdout.write(`X2 setup and database ready: ${url}\n`);
+		} else {
+			const page = await fetch(url, { signal: AbortSignal.timeout(2000) });
+			const script = (await page.text()).match(/<script\b[^>]*\bsrc="([^"]+)"/)?.[1];
+			const asset = script && (await fetch(new URL(script, url), { signal: AbortSignal.timeout(2000) }));
+			if (!asset?.ok || !asset.headers.get("content-type")?.startsWith("text/javascript")) throw new Error("X2 web frontend did not load.");
+			process.stdout.write(`X2 setup and database ready: ${url}\n`);
+		}
 	} finally {
-		if (web.exitCode === null) {
+		if (web.exitCode === null && web.signalCode === null) {
 			web.kill();
 			await done;
 		}
