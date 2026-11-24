@@ -9,9 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { errorOf, remember, saved } from "@/lib/state";
 import { ApiError, api, type Item as PageItem, usePoll } from "../../api.ts";
 import { flashModel, hermesModel, hermesModels, modelLabels } from "../../hermes-schema.ts";
+import { PriceBand } from "./price-band.tsx";
 import type { Props } from "./schema.ts";
 import { canCancelRun, createStartGate, initialStrategy, mergeRuns, restoredResearch, runOutcome, runOutcomeDetail } from "./state.ts";
 import { defaultSelectionLimit, type RunReceipt, type RunSummary, socialDiscoveryStrategy, strategyIds, type Workbench } from "./types.ts";
@@ -20,6 +22,37 @@ const dateTime = (value: string) =>
 	new Date(value).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 
 export function View({ props, item }: { props: Props; item: PageItem }) {
+	return (
+		<main className="mx-auto w-full max-w-4xl space-y-5 p-4 md:p-8">
+			<header className="flex flex-wrap items-center justify-between gap-3">
+				<h1 className="text-2xl font-semibold tracking-tight">{props.title ?? "策略选品"}</h1>
+				<Button variant="ghost" size="sm" render={<a href="#listing-candidates" />}>
+					上架备选区 <ArrowUpRightIcon />
+				</Button>
+			</header>
+			<Tabs defaultValue="workbench" className="gap-4">
+				<div className="border-b pb-0.5">
+					<TabsList variant="line" aria-label="策略选品">
+						<TabsTrigger value="workbench" className="px-2.5">
+							选品工作台
+						</TabsTrigger>
+						<TabsTrigger value="price-band" className="px-2.5">
+							价格带
+						</TabsTrigger>
+					</TabsList>
+				</div>
+				<TabsContent value="workbench" keepMounted>
+					<WorkbenchView props={props} item={item} />
+				</TabsContent>
+				<TabsContent value="price-band" keepMounted>
+					<PriceBand itemId={item.id} />
+				</TabsContent>
+			</Tabs>
+		</main>
+	);
+}
+
+function WorkbenchView({ props, item }: { props: Props; item: PageItem }) {
 	const id = useId();
 	const storageKey = `x2-selection:${item.id}:${props.shop}`;
 	const [restored] = useState(() => restoredResearch(saved(storageKey)));
@@ -86,13 +119,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	}
 
 	return (
-		<main className="mx-auto w-full max-w-4xl space-y-5 p-4 md:p-8">
-			<header className="flex flex-wrap items-center justify-between gap-3">
-				<h1 className="text-2xl font-semibold tracking-tight">{props.title ?? "策略选品"}</h1>
-				<Button variant="ghost" size="sm" render={<a href="#listing-candidates" />}>
-					上架备选区 <ArrowUpRightIcon />
-				</Button>
-			</header>
+		<div className="space-y-5">
 			<Card>
 				<CardHeader>
 					<CardTitle>开始选品</CardTitle>
@@ -258,7 +285,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 					</CardContent>
 				</Card>
 			)}
-		</main>
+		</div>
 	);
 }
 

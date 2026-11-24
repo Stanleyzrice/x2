@@ -8,6 +8,7 @@ import { flag, get, str, type Toolkit } from "../../platform/tool.ts";
 import { hermesModel } from "../../platform/ui/hermes-schema.ts";
 import { defaultSelectionLimit } from "../../platform/ui/interactable/selection/types.ts";
 import { loadRunConfig, loadSelectionPolicy, loadStrategyDefinitions, saveWorkflow, selectionStrategyId, workflowStepsSchema } from "./definitions.ts";
+import { priceBand, priceBandCategories } from "./price-band.ts";
 import { deleteRun, type RunDetail } from "./run-store.ts";
 import { cancelRun, getRun, listRuns, startRun, timeSeriesSummaryTool } from "./runs.ts";
 import { SELECTION_TABLES } from "./tables.ts";
@@ -50,6 +51,8 @@ export const selection: Toolkit = {
 	kind: "tool",
 	tools: {
 		"time-series-summary": timeSeriesSummaryTool,
+		"price-band-categories": priceBandCategories,
+		"price-band": priceBand,
 		workbench: get("当前商品发现与组合设计流程、证据边界及agent状态；不自动启动研究", z.object({ shop: str("目标店铺") }), async ({ shop }, source) => {
 			const sql = await db();
 			const definitions = await loadStrategyDefinitions(sql, shop);

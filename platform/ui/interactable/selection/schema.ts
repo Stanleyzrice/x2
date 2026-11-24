@@ -9,6 +9,8 @@ export const actions = {
 	workbench: "selection.workbench",
 	start: "selection.run-start",
 	cancel: "selection.run-cancel",
+	"price-band-categories": "selection.price-band-categories",
+	"price-band": "selection.price-band",
 };
-export const inputs = ["strategyId", "limit", "brief", "requestId", "runId", "model"];
+export const inputs = ["strategyId", "limit", "brief", "requestId", "runId", "model", "path", "keyword", "wordId"];
 export const examples: z.input<typeof props>[] = [{ shop: "cheeroutdoor", title: "策略选品" }];
