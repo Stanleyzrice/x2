@@ -16,7 +16,7 @@ import { api, type BrowserConnectionResult, type Item as PageItem, type PageSumm
 import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
 import { monitorSync, preserveMonitor } from "./sync.ts";
-import { type Monitor, type OrderLine, type PurchaseMatch, type PurchaseResult, type SkuDemand, selectedDemand } from "./types.ts";
+import { type Monitor, type Order, type OrderLine, type PurchaseMatch, type PurchaseResult, type SkuDemand, selectedDemand } from "./types.ts";
 
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
 const syncMonitor = monitorSync(
@@ -406,20 +406,27 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					))}
 				</details>
 			) : null}
-			{!data?.error && data?.demand?.length ? (
-				<SkuDemandTable rows={selectedDemand(data.demand, new Set(selectedOrders))} selectedCount={selectedOrders.length} />
-			) : null}
 			<Card className="overflow-hidden">
 				<CardContent className="p-0">
 					<div className="flex flex-wrap items-center gap-3 border-b p-4">
 						<div className="space-y-1 text-sm text-muted-foreground">
-							<p>已选 {selectedOrders.length} 张订单</p>
-							<p className="text-xs">按下单时间倒序 · 最新订单在前</p>
+							<h3 className="font-medium text-foreground">按 SKU（商品规格）汇总</h3>
+							<label htmlFor={`select-orders-${item.id}`} className="flex items-center gap-2">
+								<Checkbox
+									id={`select-orders-${item.id}`}
+									aria-label="全选待采购订单"
+									disabled={Boolean(pending) || !selectable.length || Boolean(data?.error) || !data?.demand?.length}
+									checked={Boolean(selectable.length) && selectedOrders.length === selectable.length}
+									indeterminate={selectedOrders.length > 0 && selectedOrders.length < selectable.length}
+									onCheckedChange={(checked) => setSelected(checked ? selectable.map((order) => order.sn) : [])}
+								/>
+								全选订单 · 已选 {selectedOrders.length} 张
+							</label>
 							{selectionNeedsReview ? <p className="text-xs">所选订单含需核对的采购状态，将先读取核对；勾选不会加购或付款。</p> : null}
 						</div>
 						<Button
 							className="ml-auto"
-							disabled={busy || connecting || buyer === null || Boolean(pending) || !selectedOrders.length}
+							disabled={busy || connecting || buyer === null || Boolean(pending) || !selectedOrders.length || Boolean(data?.error) || !data?.demand?.length}
 							onClick={() => void start()}
 						>
 							<ShoppingCartIcon />
@@ -436,70 +443,17 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 									? "本次读取没有可整单采购的 Shopee 待出货订单。"
 									: "尚未取得已核对的 Shopee 待出货订单，正在后台更新…"}
 						</p>
+					) : !data.demand?.length ? (
+						<p className="p-4 text-sm text-muted-foreground">暂时无法核对规格汇总，请刷新订单后重试。</p>
 					) : (
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead className="w-10">
-										<Checkbox
-											aria-label="全选待采购订单"
-											disabled={Boolean(pending)}
-											checked={Boolean(selectable.length) && selectedOrders.length === selectable.length}
-											indeterminate={selectedOrders.length > 0 && selectedOrders.length < selectable.length}
-											onCheckedChange={(checked) => setSelected(checked === true ? selectable.map((o) => o.sn) : [])}
-										/>
-									</TableHead>
-									<TableHead>订单</TableHead>
-									<TableHead>下单时间</TableHead>
-									<TableHead>商品、规格与 1688 货源</TableHead>
-									<TableHead>采购状态</TableHead>
-									<TableHead>出货期限</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{data.orders.map((order) => (
-									<TableRow key={order.sn}>
-										<TableCell>
-											<Checkbox
-												aria-label={`选择订单 ${order.sn}`}
-												checked={selectedOrders.includes(order.sn)}
-												disabled={Boolean(pending) || order.cartPending}
-												onCheckedChange={(checked) =>
-													setSelected((before) => (checked === true ? [...new Set([...before, order.sn])] : before.filter((sn) => sn !== order.sn)))
-												}
-											/>
-										</TableCell>
-										<TableCell className="align-top">
-											<p className="font-medium">{order.sn}</p>
-											<p className="mt-1 text-xs text-muted-foreground">{order.shop}</p>
-										</TableCell>
-										<TableCell className="whitespace-nowrap align-top text-xs">
-											{order.createdAt ? <time dateTime={order.createdAt}>{time(order.createdAt)}</time> : "未知"}
-										</TableCell>
-										<TableCell className="min-w-80 max-w-lg whitespace-normal align-top text-sm">
-											{order.lines.length ? (
-												<div className="space-y-4">
-													{order.lines.map((line) => (
-														<ProductLine key={`${line.itemId}:${line.modelId}`} line={line} />
-													))}
-												</div>
-											) : (
-												<p className="whitespace-pre-wrap">{order.items}</p>
-											)}
-										</TableCell>
-										<TableCell className="min-w-52 text-sm">
-											<ProcurementStatus purchase={order.purchase} />
-											{order.cartPending ? (
-												<p className="mt-1 text-xs text-muted-foreground">加购请求待核对</p>
-											) : order.cartDone ? (
-												<p className="mt-1 text-xs text-muted-foreground">已有加购记录</p>
-											) : null}
-										</TableCell>
-										<TableCell className="whitespace-nowrap text-xs">{time(order.shipBy)}</TableCell>
-									</TableRow>
-								))}
-							</TableBody>
-						</Table>
+						<SkuDemandTable
+							rows={data.demand}
+							orders={data.orders}
+							selected={new Set(selectedOrders)}
+							pending={Boolean(pending) || Boolean(data.error)}
+							stale={Boolean(data.error)}
+							onSelect={(sn, checked) => setSelected((before) => (checked ? [...new Set([...before, sn])] : before.filter((id) => id !== sn)))}
+						/>
 					)}
 				</CardContent>
 			</Card>
@@ -530,27 +484,61 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	);
 }
 
-function SkuDemandTable({ rows, selectedCount }: { rows: SkuDemand[]; selectedCount: number }) {
+function SkuDemandTable({
+	rows,
+	orders,
+	selected,
+	stale,
+	pending,
+	onSelect,
+}: {
+	rows: SkuDemand[];
+	orders: Order[];
+	selected: Set<string>;
+	stale: boolean;
+	pending: boolean;
+	onSelect: (sn: string, checked: boolean) => void;
+}) {
+	const [detailSn, setDetailSn] = useState<string | null>(null);
+	const bySn = new Map(orders.map((order) => [order.sn, order]));
+	const detail = detailSn ? bySn.get(detailSn) : undefined;
+	const scoped = selectedDemand(rows, selected);
+	const amounts = new Map(scoped.map((row) => [row.key, row]));
+	const showOrder = (source: SkuDemand["orders"][number]) => (
+		<div key={source.sn} className="mt-2 flex items-center gap-2">
+			<Checkbox
+				aria-label={`选择整单 ${source.sn}`}
+				checked={selected.has(source.sn)}
+				disabled={pending || bySn.get(source.sn)?.cartPending !== false}
+				onCheckedChange={(checked) => onSelect(source.sn, checked === true)}
+			/>
+			<button type="button" className="underline underline-offset-2" onClick={() => setDetailSn(source.sn)}>
+				{source.sn}
+			</button>
+			<span>× {source.qty}</span>
+		</div>
+	);
 	return (
-		<Card>
-			<CardContent className="space-y-3 p-4">
-				<h3 className="font-medium">{selectedCount ? `已选 ${selectedCount} 张订单` : "全部待出货订单"} · 按 SKU（商品规格）汇总</h3>
-				<p className="text-sm">
-					共 {rows.length} 个规格，订单需求 {rows.reduce((n, r) => n + r.qty, 0)} 件，已确认需补 {rows.reduce((n, r) => n + r.buyQty, 0)} 件，待核对{" "}
-					{rows.reduce((n, r) => n + r.reviewQty, 0)} 件。
-				</p>
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead>商品规格</TableHead>
-							<TableHead className="text-right">需求件数</TableHead>
-							<TableHead className="text-right">需补件数</TableHead>
-							<TableHead>采购进度</TableHead>
-							<TableHead>来源订单</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{rows.map((row) => (
+		<div className="space-y-3 p-4">
+			<p className="text-sm">
+				{stale && "上次成功读取的快照 · "}
+				{selected.size ? "已选订单" : "全部待出货订单"} · {scoped.length} 个规格，订单需求 {scoped.reduce((n, r) => n + r.qty, 0)} 件， 本次已确认要买{" "}
+				{scoped.reduce((n, r) => n + r.buyQty, 0)} 件，待核对 {scoped.reduce((n, r) => n + r.reviewQty, 0)} 件。
+			</p>
+			<Table>
+				<TableHeader>
+					<TableRow>
+						<TableHead>商品规格</TableHead>
+						<TableHead className="text-right">需求件数</TableHead>
+						<TableHead className="text-right">本次要买</TableHead>
+						<TableHead>采购进度</TableHead>
+						<TableHead>来源订单</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{rows.map((row) => {
+						const total = amounts.get(row.key);
+						return (
 							<TableRow key={row.key}>
 								<TableCell className="min-w-56 max-w-md whitespace-normal align-top">
 									<div className="flex items-start gap-3">
@@ -566,29 +554,48 @@ function SkuDemandTable({ rows, selectedCount }: { rows: SkuDemand[]; selectedCo
 										</div>
 									</div>
 								</TableCell>
-								<TableCell className="text-right align-top tabular-nums">{row.qty}</TableCell>
-								<TableCell className="text-right align-top font-semibold tabular-nums">{row.buyQty || !row.reviewQty ? row.buyQty : "待核对"}</TableCell>
+								<TableCell className="text-right align-top tabular-nums">{total ? total.qty : "—"}</TableCell>
+								<TableCell className="text-right align-top font-semibold tabular-nums">
+									{total ? (total.buyQty || !total.reviewQty ? `${total.buyQty} 件` : "待核对") : "—"}
+								</TableCell>
 								<TableCell className="align-top text-xs text-muted-foreground">
-									{row.paidQty > 0 && <p>已付 {row.paidQty} 件</p>}
-									{row.unpaidQty > 0 && <p>待付款 {row.unpaidQty} 件</p>}
-									{row.reviewQty > 0 && <p>待核对 {row.reviewQty} 件</p>}
+									{total && total.paidQty > 0 && <p>已付 {total.paidQty} 件</p>}
+									{total && total.unpaidQty > 0 && <p>待付款 {total.unpaidQty} 件</p>}
+									{total && total.reviewQty > 0 && <p>待核对 {total.reviewQty} 件</p>}
 								</TableCell>
 								<TableCell className="align-top text-xs">
-									<details>
-										<summary className="cursor-pointer">{row.orders.length} 张订单</summary>
-										{row.orders.map((order) => (
-											<p key={order.sn} className="mt-1">
-												{order.shop} · {order.sn} × {order.qty}
-											</p>
-										))}
-									</details>
+									{row.orders.slice(0, 2).map(showOrder)}
+									{row.orders.length > 2 && (
+										<details>
+											<summary className="cursor-pointer">另有 {row.orders.length - 2} 张订单</summary>
+											{row.orders.slice(2).map(showOrder)}
+										</details>
+									)}
 								</TableCell>
 							</TableRow>
-						))}
-					</TableBody>
-				</Table>
-			</CardContent>
-		</Card>
+						);
+					})}
+				</TableBody>
+			</Table>
+			<Dialog
+				open={Boolean(detail)}
+				onOpenChange={(open) => {
+					if (!open) setDetailSn(null);
+				}}
+			>
+				<DialogContent className="max-h-[85vh] overflow-auto">
+					<DialogHeader>
+						<DialogTitle>来源订单 {detail?.sn}</DialogTitle>
+						<DialogDescription>
+							{detail?.shop} · 下单 {time(detail?.createdAt ?? null)} · 出货期限 {time(detail?.shipBy ?? null)}
+						</DialogDescription>
+					</DialogHeader>
+					{detail?.lines.length ? detail.lines.map((line) => <ProductLine key={`${line.itemId}:${line.modelId}`} line={line} />) : <p>{detail?.items}</p>}
+					<ProcurementStatus purchase={detail?.purchase} />
+					{detail?.cartPending ? <p>加购请求待核对</p> : detail?.cartDone ? <p>已有加购记录</p> : null}
+				</DialogContent>
+			</Dialog>
+		</div>
 	);
 }
 

@@ -96,9 +96,11 @@ test("滑块或安全验证暂停自动同步；显式重试保留真实失败�
 
 test("同步失败保留已有订单和原采集时间，真实成功的空列表正常替换", () => {
 	const order: Order = { sn: "1", shop: "one", createdAt: null, shipBy: null, items: "", lines: [], step: "待核对", cartPending: true, cartDone: false };
-	const previous = { ...monitor, orders: [order] };
-	const failed = { checkedAt: null, error: "Shopee 读取失败", orders: [] };
-	assert.deepEqual(preserveMonitor(previous, failed), { ...failed, checkedAt: previous.checkedAt, orders: [order] });
+	const quantities = { qty: 1, buyQty: 0, paidQty: 0, unpaidQty: 0, reviewQty: 1 };
+	const demand = [{ key: "sku", name: "商品", spec: "红", target: null, ...quantities, orders: [{ sn: order.sn, shop: order.shop, ...quantities }] }];
+	const previous = { ...monitor, orders: [order], demand };
+	const failed = { checkedAt: null, error: "Shopee 读取失败", orders: [], demand: [] };
+	assert.deepEqual(preserveMonitor(previous, failed), { ...failed, checkedAt: previous.checkedAt, orders: [order], demand });
 	assert.equal(preserveMonitor(previous, monitor), monitor);
 });
 
