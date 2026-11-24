@@ -1,4 +1,3 @@
-// 只在当前浏览器会话中回显读取过的 Chat 快照；每次打开仍现读，不据快照保存草稿或发送。
 import { readCache } from "../../read-cache.ts";
 
 export type Conversation = { id: string; buyer: string; lastText: string; lastAt: string | null; unread: number; unreplied: boolean };
@@ -25,6 +24,8 @@ export type ThreadData = {
 	reply: { requestId: string; status: string; error: string | null } | null;
 	trialRequired: boolean;
 };
+
+export type MessageSnapshot = Pick<ThreadData["context"], "buyerId" | "buyerName" | "capturedAt" | "window" | "messages"> & { range: { complete: boolean } };
 
 export const inboxSnapshots = readCache<Inbox>(0, 10);
 export const threadSnapshots = readCache<ThreadData>(0, 60);

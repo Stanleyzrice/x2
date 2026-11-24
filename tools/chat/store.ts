@@ -1,7 +1,42 @@
 // Chat 运行事实与版本的薄持久层；上下文按身份和内容指纹去重，人工稿只接受明确版本。
 import type { Json, Sql } from "../../platform/db/index.ts";
 import type { Context } from "./context.ts";
+import type { listConversations } from "./read.ts";
 import { replyTried } from "./trial.ts";
+import { type HistoryWindow, inWindow } from "./window.ts";
+
+type Inbox = Awaited<ReturnType<typeof listConversations>>;
+
+export async function saveInbox(sql: Sql, inbox: Inbox) {
+	await sql`insert into chat_inbox_snapshots (shop, shop_id, days, data)
+		values (${inbox.shop}, ${inbox.shopId}, ${inbox.window.days}, ${sql.json(inbox)})
+		on conflict (shop, shop_id, days) do update set data = excluded.data
+		where chat_inbox_snapshots.data->'window'->>'to' <= excluded.data->'window'->>'to'`;
+}
+
+export async function inboxSnapshot(sql: Sql, shop: string, window: HistoryWindow) {
+	const [row] = await sql<{ data: Inbox }[]>`select c.data from chat_inbox_snapshots c
+		join shop_settings s on s.shop_id = c.shop_id and (s.shop = c.shop or s.shop_id = c.shop)
+		where c.shop = ${shop} and c.days = ${window.days} and c.data->>'capturedAt' >= ${window.from}`;
+	return row ? { ...row.data, rows: row.data.rows.filter((c) => inWindow(c.lastAt, window)) } : null;
+}
+
+export async function threadSnapshot(sql: Sql, shop: string, conversationId: string, window: HistoryWindow) {
+	const [row] = await sql<{ data: Context }[]>`select c.data from chat_contexts c
+		join shop_settings s on s.shop_id = c.shop_id and (s.shop = c.shop or s.shop_id = c.shop)
+		where c.shop = ${shop} and c.conversation_id = ${conversationId} and c.data->'window'->>'days' = ${String(window.days)}
+		and c.data->>'capturedAt' >= ${window.from} order by c.data->>'capturedAt' desc limit 1`;
+	if (!row) return null;
+	const { buyerId, buyerName, capturedAt, messages, range } = row.data;
+	return {
+		buyerId,
+		buyerName,
+		capturedAt,
+		window: row.data.window,
+		range: { complete: range.complete },
+		messages: messages.filter((m) => inWindow(m.at, window)),
+	};
+}
 
 export async function saveContext(sql: Sql, context: Context): Promise<Context> {
 	const [r] = await sql<

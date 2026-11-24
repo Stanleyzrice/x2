@@ -21,3 +21,7 @@ create table if not exists chat_intents (
  created_at timestamptz not null default now()
 );
 create index if not exists chat_suggestions_thread on chat_suggestions(shop, shop_id, conversation_id, created_at desc);
+create table if not exists chat_inbox_snapshots (
+ shop text not null, shop_id text not null, days int not null, data jsonb not null,
+ primary key(shop, shop_id, days)
+);

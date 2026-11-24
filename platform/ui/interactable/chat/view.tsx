@@ -1,7 +1,7 @@
 // Chat 只操作已注册actions；建议与人工输入分离，确认内容绑定服务端引用。
 
 import { ArrowLeftIcon, CheckIcon, RefreshCwIcon, SendIcon, SparklesIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { errorOf } from "@/lib/state";
 import { api, type Item as PageItem, usePoll } from "../../api.ts";
 import { type HermesModel, hermesModel, hermesModels, modelLabels } from "../../hermes-schema.ts";
-import { type Conversation, type Inbox, inboxSnapshots, type Suggestion, snapshotKey, type ThreadData, threadSnapshots, type Window } from "./cache.ts";
+import {
+	type Conversation,
+	type Inbox,
+	inboxSnapshots,
+	type MessageSnapshot,
+	type Suggestion,
+	snapshotKey,
+	type ThreadData,
+	threadSnapshots,
+	type Window,
+} from "./cache.ts";
 import type { Props } from "./schema.ts";
 
 type Pending = { conversationId: string; buyerName: string | null; requestId: string; status: string; error: string | null };
@@ -41,15 +51,36 @@ function inWindow(value: string | null, window: Window | undefined, now: number,
 	return Number.isFinite(timestamp) && timestamp >= lower && timestamp <= upper;
 }
 
+function useSavedSnapshot<T>(key: string, needed: boolean, read: () => Promise<T | null>) {
+	const [saved, setSaved] = useState<{ key: string; value: T } | null>(null);
+	const load = useEffectEvent(read);
+	useEffect(() => {
+		if (!needed) return;
+		let active = true;
+		void load().then(
+			(value) => {
+				if (active && value !== null) setSaved({ key, value });
+			},
+			() => {},
+		);
+		return () => {
+			active = false;
+		};
+	}, [key, needed]);
+	return saved?.key === key ? saved.value : null;
+}
+
 export function View({ props, item }: { props: Props; item: PageItem }) {
 	const inboxKey = snapshotKey(item.id, props.shop, props.historyDays);
-	const [received, error, refresh] = usePoll(
-		() => inboxSnapshots.read(inboxKey, () => api.act<Inbox>(item.id, "conversations")),
-		30_000,
-		[item.id, props.shop, props.historyDays],
-		inboxSnapshots.peek(inboxKey),
-	);
-	const inbox = received?.shop === props.shop && received.window.days === props.historyDays ? received : null;
+	const cached = inboxSnapshots.peek(inboxKey);
+	const saved = useSavedSnapshot(inboxKey, !cached, () => api.act<Inbox | null>(item.id, "inboxSnapshot"));
+	const [received, error, refresh] = usePoll(() => inboxSnapshots.read(inboxKey, () => api.act<Inbox>(item.id, "conversations")), 30_000, [
+		item.id,
+		props.shop,
+		props.historyDays,
+	]);
+	const latest = received?.shop === props.shop && received.window.days === props.historyDays ? received : null;
+	const inbox = latest ?? cached ?? saved;
 	const shownDays = inbox?.window.days ?? props.historyDays;
 	const [pendingReceived, pendingReadError, refreshPending] = usePoll(() => api.act<PendingInbox>(item.id, "pending"), 30_000, [item.id, props.shop]);
 	const pending = pendingReceived?.shop === props.shop ? pendingReceived : null;
@@ -78,7 +109,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 	const selectedExpired = Boolean(
 		picked &&
 			((selected?.lastAt && !inWindow(selected.lastAt, inbox?.window, now, props.historyDays)) ||
-				(inbox && nextCursor === null && !rows.some((c) => c.id === picked))),
+				(latest && nextCursor === null && !rows.some((c) => c.id === picked))),
 	);
 	const current = selectedExpired ? null : (picked ?? rows[0]?.id ?? null);
 	useEffect(() => {
@@ -199,7 +230,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 				</p>
 			) : null}
 			<div className="min-h-0 grow overflow-y-auto">
-				{!inbox ? (
+				{!inbox && !error ? (
 					<Skeleton className="m-3 h-32" />
 				) : (
 					rows
@@ -227,7 +258,7 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 				) : null}
 			</div>
 			{nextCursor ? (
-				<Button variant="ghost" disabled={moreBusy} onClick={() => void loadMore()}>
+				<Button variant="ghost" disabled={moreBusy || !latest} onClick={() => void loadMore()}>
 					載入更多會話
 				</Button>
 			) : inbox ? (
@@ -242,7 +273,12 @@ export function View({ props, item }: { props: Props; item: PageItem }) {
 				<Badge variant="secondary">買家聊聊</Badge>
 				<Badge variant="outline">最近{shownDays}天</Badge>
 				<span className="text-xs text-muted-foreground">持續更新，記錄滿{shownDays}天移出目前頁面</span>
-				{inbox ? <span className="ml-auto text-xs text-muted-foreground">上次讀取 {at(inbox.capturedAt)}</span> : null}
+				{inbox ? (
+					<span className="ml-auto text-xs text-muted-foreground">
+						{latest && !error ? "上次更新" : "快照"} {at(inbox.capturedAt)}
+						{!latest && !error ? " · 更新中…" : ""}
+					</span>
+				) : null}
 			</div>
 			<div className="min-h-0 grow">
 				<ResizablePanelGroup orientation="horizontal">
@@ -283,6 +319,8 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		[busy, setBusy] = useState(false),
 		[reading, setReading] = useState(false),
 		[live, setLive] = useState(false);
+	const saved = useSavedSnapshot(cacheKey, !data, () => api.act<MessageSnapshot | null>(item, "messageSnapshot", { conversationId }));
+	const context = data?.context ?? saved;
 	const [text, setText] = useState(""),
 		[revision, setRevision] = useState(0),
 		[dirty, setDirty] = useState(false),
@@ -298,8 +336,8 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		textRef = useRef(""),
 		generation = useRef(0);
 	const key = data ? `x2-chat:${shop}:${data.context.shopId}:${conversationId}` : null;
-	const shownDays = data?.context.window?.days ?? historyDays;
-	const visibleMessages = data?.context.messages.filter((m) => inWindow(m.at, data.context.window, now, historyDays)) ?? [];
+	const shownDays = context?.window?.days ?? historyDays;
+	const visibleMessages = context?.messages.filter((m) => inWindow(m.at, context.window, now, historyDays)) ?? [];
 	const windowChanged = data !== null && (!data.context.window || visibleMessages.length !== data.context.messages.length);
 	const load = useCallback(
 		async (cursor?: string) => {
@@ -438,7 +476,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 		if (!["結果未知", "结果未知", "已提交", "不一致"].includes(result.status)) setUncertain(null);
 		await load();
 	};
-	if (!data)
+	if (!context)
 		return (
 			<div className="p-4">
 				{error ? (
@@ -450,19 +488,18 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 				)}
 			</div>
 		);
-	const chosen = suggestion ?? data.suggestion,
-		stale = windowChanged || chosen?.contextHash !== data.context.contextHash;
-	const pending = Boolean(uncertain || (data.reply && ["已提交", "结果未知", "不一致"].includes(data.reply.status)));
+	const chosen = suggestion ?? data?.suggestion,
+		stale = windowChanged || chosen?.contextHash !== data?.context.contextHash;
+	const pending = Boolean(uncertain || (data?.reply && ["已提交", "结果未知", "不一致"].includes(data.reply.status)));
 	return (
 		<div className="flex h-full min-h-[34rem] min-w-0 flex-col">
 			<div className="flex items-center justify-between gap-2 border-b p-3">
 				<div>
-					<p className="font-medium">{data.context.buyerName}</p>
+					<p className="font-medium">{context.buyerName}</p>
 					<p className="text-xs text-muted-foreground">
-						{data.context.buyerId} · 最近{shownDays}天 {visibleMessages.length} 則 · {at(visibleMessages[0]?.at ?? null)} —{" "}
-						{at(visibleMessages.at(-1)?.at ?? null)}
-						{windowChanged ? " · 讀取範圍已更新，等待重新讀取" : !data.context.range.complete ? " · 範圍內尚有較早訊息" : ` · 已到最近${shownDays}天範圍起點`}
-						{` · ${live ? "讀取" : "快取"} ${at(data.context.capturedAt)}${reading ? " · 更新中…" : ""}`}
+						{context.buyerId} · 最近{shownDays}天 {visibleMessages.length} 則 · {at(visibleMessages[0]?.at ?? null)} — {at(visibleMessages.at(-1)?.at ?? null)}
+						{windowChanged ? " · 讀取範圍已更新，等待重新讀取" : !context.range.complete ? " · 範圍內尚有較早訊息" : ` · 已到最近${shownDays}天範圍起點`}
+						{` · ${live ? "讀取" : "快照"} ${at(context.capturedAt)}${reading ? " · 更新中…" : ""}`}
 					</p>
 				</div>
 				<Button variant="ghost" size="icon" aria-label="重新讀取訊息" onClick={() => void load()} disabled={reading}>
@@ -475,8 +512,8 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 				</p>
 			) : null}
 			<div className="min-h-32 grow">
-				{data.context.nextCursor && !windowChanged ? (
-					<Button className="w-full" variant="ghost" disabled={reading} onClick={() => void load(data.context.nextCursor ?? undefined)}>
+				{data?.context.nextCursor && !windowChanged ? (
+					<Button className="w-full" variant="ghost" disabled={!live || reading} onClick={() => void load(data.context.nextCursor ?? undefined)}>
 						載入最近{shownDays}天內較早訊息
 					</Button>
 				) : null}
@@ -524,11 +561,11 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 						<p className="mt-2 whitespace-pre-wrap text-sm">{chosen.text}</p>
 					</div>
 				) : null}
-				{data.reply || uncertain ? (
+				{data?.reply || uncertain ? (
 					<div className="flex items-center justify-between gap-2 text-xs">
 						<span>
-							{uncertain ? "發送結果未知" : data.reply?.status}
-							{data.reply?.error ? ` · ${data.reply.error}` : ""}
+							{uncertain ? "發送結果未知" : data?.reply?.status}
+							{data?.reply?.error ? ` · ${data.reply.error}` : ""}
 						</span>
 						{pending ? (
 							<Button size="sm" variant="outline" disabled={busy} onClick={() => void perform(reconcile)}>
@@ -618,10 +655,10 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 						<DialogTitle>確認收件方與回覆內容</DialogTitle>
 					</DialogHeader>
 					<pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words font-sans text-sm">{confirmation?.display}</pre>
-					{confirmation && (windowChanged || confirmation.contextHash !== data.context.contextHash) ? (
+					{confirmation && (windowChanged || confirmation.contextHash !== data?.context.contextHash) ? (
 						<p className="text-sm text-destructive">上下文已更新，請關閉後重新確認。</p>
 					) : null}
-					{data.trialRequired ? (
+					{data?.trialRequired ? (
 						<label htmlFor={`trial-${item}-${conversationId}`} className="flex gap-2 text-sm">
 							<Checkbox id={`trial-${item}-${conversationId}`} checked={trial} onCheckedChange={(v) => setTrial(v === true)} />
 							首次發送：確認這一位買家，並在 Shopee 核對結果
@@ -632,7 +669,7 @@ function Thread({ item, shop, conversationId, now, historyDays }: { item: string
 							取消
 						</Button>
 						<Button
-							disabled={busy || !live || reading || windowChanged || (data.trialRequired && !trial) || confirmation?.contextHash !== data.context.contextHash}
+							disabled={busy || !live || reading || windowChanged || (data?.trialRequired && !trial) || confirmation?.contextHash !== data?.context.contextHash}
 							onClick={() => void perform(confirm)}
 						>
 							發送這一則

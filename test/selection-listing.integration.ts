@@ -13,6 +13,9 @@ import { ModelId } from "../connectors/sites/shopee/seller.ts";
 import { client, type Sql } from "../platform/db/index.ts";
 import { register } from "../platform/tool.ts";
 import { deleteConversation, listConversations, readConversation, saveImportedConversation } from "../platform/web/hermes-history.ts";
+import { makeContext } from "../tools/chat/context.ts";
+import { inboxSnapshot, saveContext, saveInbox, threadSnapshot } from "../tools/chat/store.ts";
+import { rollingWindow } from "../tools/chat/window.ts";
 import { coverageScope, saveCoverage } from "../tools/listing/coverage.ts";
 import { editImageTarget, editParams } from "../tools/listing/edit.ts";
 import { listingHermesTools } from "../tools/listing/hermes.ts";
@@ -104,10 +107,32 @@ test("独立临时库：选品运行租约、幂等与货源导入事务", { tim
 		clients.push(sql, firstSql, secondSql);
 		const [database] = await sql<{ name: string }[]>`select current_database() as name`;
 		assert.equal(database?.name, name, "只允许在本次创建的临时库里运行 fixture");
-		for (const file of ["../platform/db/schema.sql", "../tools/selection/schema.sql", "../tools/listing/schema.sql"]) {
+		for (const file of ["../platform/db/schema.sql", "../tools/selection/schema.sql", "../tools/listing/schema.sql", "../tools/chat/schema.sql"]) {
 			await sql.unsafe(await readFile(new URL(file, import.meta.url), "utf8"));
 		}
 		await sql`insert into strategies(name) values('集成测试策略')`;
+		await t.test("客服首页保留最新成功快照，消息预览只返回本店当前窗口", async () => {
+			const shop = "cheeroutdoor";
+			const [binding] = await sql<{ shop_id: string }[]>`select shop_id from shop_settings where shop = ${shop}`;
+			const window = rollingWindow(7);
+			const previous = rollingWindow(7, new Date(Date.parse(window.to) - 1000));
+			const inbox = { shop, shopId: binding!.shop_id, window, capturedAt: window.to, rows: [], next: null, scope: "fixture" };
+			assert.equal(await inboxSnapshot(sql, shop, window), null);
+			await saveInbox(sql, inbox);
+			await saveInbox(sql, { ...inbox, shopId: "other", next: "other-shop" });
+			await saveInbox(sql, { ...inbox, window: previous, next: "older-page" });
+			assert.deepEqual(await inboxSnapshot(sql, shop, window), inbox);
+			assert.equal(await inboxSnapshot(sql, shop, rollingWindow(30)), null);
+
+			const target = { shop, shopId: inbox.shopId, userId: "seller", conversationId: "thread", buyerId: "buyer", buyerName: "fixture" };
+			const recent = { id: "2", sender: "buyer" as const, at: previous.to, text: "recent" };
+			const messages = [{ ...recent, id: "1", at: previous.from, text: "expired" }, recent];
+			await saveContext(sql, makeContext(target, messages, null, randomUUID(), new Date(previous.to), previous));
+			await saveContext(sql, makeContext({ ...target, shopId: "other" }, [], null, randomUUID(), new Date(window.to), window));
+			assert.deepEqual((await threadSnapshot(sql, shop, "thread", window))?.messages, [recent]);
+			assert.equal(await threadSnapshot(sql, shop, "other-thread", window), null);
+			assert.equal(await threadSnapshot(sql, shop, "thread", rollingWindow(30)), null);
+		});
 		await t.test("旧会话迁移可重复请求并恢复指定会话的原文和任务回执", async () => {
 			const id = randomUUID(),
 				previous = randomUUID();

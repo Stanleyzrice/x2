@@ -13,6 +13,8 @@ export const props = z.strictObject({
 export type Props = z.infer<typeof props>;
 export const actions = {
 	pending: "chat.pending",
+	inboxSnapshot: "chat.inbox-snapshot",
+	messageSnapshot: "chat.message-snapshot",
 	conversations: "chat.conversations",
 	messages: "chat.messages",
 	draft: "chat.draft",

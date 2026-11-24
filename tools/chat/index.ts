@@ -9,7 +9,7 @@ import { exclusive } from "../../platform/writes.ts";
 import { assertSuggestionContext, sendInput } from "./context.ts";
 import { pendingReplies } from "./pending.ts";
 import { listConversations, readDisplay } from "./read.ts";
-import { contextById, saveContext, saveDraft, threadState } from "./store.ts";
+import { contextById, inboxSnapshot, saveContext, saveDraft, saveInbox, threadSnapshot, threadState } from "./store.ts";
 import { draftPrompt } from "./talk.ts";
 import { historyDays, rollingWindow } from "./window.ts";
 import { CHAT_WRITES, planSend, preview, type ReplyParams, replaySend, replyWrite } from "./writes.ts";
@@ -39,8 +39,26 @@ export const chat: Toolkit = {
 	schema: new URL("./schema.sql", import.meta.url),
 	tools: {
 		pending: get("读取本店持久待核对发送的元数据；不返回旧消息正文、不发送", z.object({ shop }), async (p) => pendingReplies(await db(), p.shop)),
-		conversations: get("读取指定店铺的一页买家会话，返回rows、next与采集范围", z.object({ shop, cursor: z.string().optional(), historyDays }), (p) =>
-			listConversations(p.shop, p.cursor, rollingWindow(p.historyDays)),
+		"inbox-snapshot": get("读取本店最近保存的会话首页快照", z.object({ shop, historyDays }), async (p) =>
+			inboxSnapshot(await db(), p.shop, rollingWindow(p.historyDays)),
+		),
+		"message-snapshot": get("预览本店已读取的买家消息快照", conversation.extend({ historyDays }), async (p) =>
+			threadSnapshot(await db(), p.shop, p.conversationId, rollingWindow(p.historyDays)),
+		),
+		conversations: get(
+			"读取指定店铺的一页买家会话，返回rows、next与采集范围",
+			z.object({ shop, cursor: z.string().optional(), historyDays }),
+			async (p, source) => {
+				const inbox = await listConversations(p.shop, p.cursor, rollingWindow(p.historyDays));
+				if (source === "web" && !p.cursor) {
+					try {
+						await saveInbox(await db(), inbox);
+					} catch (error) {
+						console.error("买家客服快照保存失败", error instanceof Error ? error.message : String(error));
+					}
+				}
+				return inbox;
+			},
 		),
 		messages: get("现读所选会话的上下文，返回范围、指纹、建议、人工稿和发送状态；cursor仅连续向前加载", contextInput, readContext),
 		draft: get("用已配置的客服模型生成绑定上下文的建议；不覆盖人工草稿、不发送", suggestionInput, async (p) => {
