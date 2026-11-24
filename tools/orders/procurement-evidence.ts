@@ -11,7 +11,7 @@ export type EvidenceSource = ProcurementSourceRow & { skus: unknown; exceptions:
 export type EvidenceListing = ProcurementListingRow & { variants: unknown; offer: unknown };
 export type EvidenceCatalog = { shop: string; shopId: string; productId: string; models: unknown };
 export type PurchaseEvidence = {
-	coverage: Coverage & { loginId: string | null };
+	coverage: Coverage & { selected: string | null; loginId: string | null };
 	records: MatchRecord[];
 };
 
@@ -56,6 +56,7 @@ export async function readPurchaseEvidence(sql: Sql): Promise<PurchaseEvidence> 
 								? "当前采购账号尚无完整成功的 1688 订单快照"
 								: null;
 	const coverage = {
+		selected: accounts[0]?.selected ?? null,
 		account: account?.account ?? null,
 		loginId: account?.loginId ?? null,
 		capturedAt: account?.capturedAt?.toISOString() ?? null,

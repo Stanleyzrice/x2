@@ -77,7 +77,14 @@ function evidenceFixture(overrides: Record<string, unknown> = {}, duplicate = fa
 test("读取唯一当前采购账号的完整成功head，不筛掉未付订单且不混入旧revision", async () => {
 	const f = evidenceFixture();
 	const result = await readPurchaseEvidence(f.sql);
-	assert.deepEqual(result.coverage, { account: "4067517207", loginId: "tb-current", capturedAt: "2026-11-06T06:00:00.000Z", complete: true, error: null });
+	assert.deepEqual(result.coverage, {
+		selected: "tb-current",
+		account: "4067517207",
+		loginId: "tb-current",
+		capturedAt: "2026-11-06T06:00:00.000Z",
+		complete: true,
+		error: null,
+	});
 	assert.equal(result.records[0]?.orderId, "3012345678901234567");
 	assert.equal(result.records[0]?.createdAt, "2026-11-06T04:00:00.000Z");
 	assert.equal(result.records[0]?.fulfillment?.status, "waitsellersend");
@@ -91,6 +98,7 @@ test("读取唯一当前采购账号的完整成功head，不筛掉未付订单�
 test("账号映射冲突或无成功head不读采购行；当前账号同步失败保留旧事实但完整性不冒充成功", async () => {
 	for (const fixture of [evidenceFixture({}, true), evidenceFixture({ account: null }), evidenceFixture({ headStatus: null })]) {
 		const result = await readPurchaseEvidence(fixture.sql);
+		assert.equal(result.coverage.selected, "tb-current");
 		assert.equal(result.coverage.complete, false);
 		assert.ok(result.coverage.error);
 		assert.deepEqual(result.records, []);

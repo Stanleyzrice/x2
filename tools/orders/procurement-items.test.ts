@@ -1,7 +1,15 @@
 // 采购订单行保留真实商品、规格与数量；货源按商品和店铺归属关联，不猜规格，不信任存下来的 URL。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type ProcurementItem, type ProcurementListingRow, type ProcurementSourceRow, procurementImage, procurementLines } from "./procurement-items.ts";
+import {
+	type ProcurementItem,
+	type ProcurementListingRow,
+	type ProcurementSourceRow,
+	procurementDemand,
+	procurementImage,
+	procurementLines,
+} from "./procurement-items.ts";
+import type { Match, MatchNeed } from "./procurement-matches.ts";
 
 const item: ProcurementItem = { itemId: "10", modelId: "11", name: "商品", spec: "大号", qty: 3, image: "https://img.example/shopee.jpg" };
 const chosen: ProcurementSourceRow = { itemId: "10", offerId: "123", title: "选用货源", itemImage: "https://img.example/item.jpg", broken: null };
@@ -56,4 +64,71 @@ test("图片拒绝可执行协议、内嵌凭证和无效地址；1688 链接只
 	assert.equal(procurementImage("https://img.example/a.jpg"), "https://img.example/a.jpg");
 	const [line] = procurementLines(order(), [{ ...chosen, offerId: "123/../../evil" }], [{ ...listing, offerId: "javascript:alert(1)" }]);
 	assert.deepEqual(line!.sources, []);
+});
+
+const target: MatchNeed["target"] = { offerId: "123", skuId: "42", specId: "大号" };
+type DemandLine = Parameters<typeof procurementDemand>[0][number]["lines"][number];
+const demandLine = (qty: number, state: Match["state"] = "unmatched", paidQty = 0, unpaidQty = 0): DemandLine => ({
+	...item,
+	qty,
+	target,
+	sources: [],
+	purchase: { state, label: state, paidQty, unpaidQty, requiredQty: qty, reason: null, matches: [], canPurchase: state === "unmatched" },
+});
+const demandOrder = (sn: string, ...lines: DemandLine[]) => ({
+	sn,
+	shop: "one",
+	shopId: "1",
+	cartPending: false,
+	cartDone: false,
+	purchase: { canPurchase: lines.every((line) => line.purchase.canPurchase) },
+	lines,
+});
+
+test("不同订单的相同 1688 商品规格合计，保留各订单的数量", () => {
+	const [same, different] = procurementDemand([
+		demandOrder("first", demandLine(2), { ...demandLine(1), itemId: "20", modelId: "21" }),
+		{ ...demandOrder("second", demandLine(3)), shop: "two", shopId: "2" },
+		demandOrder("third", { ...demandLine(4), target: { ...target, specId: "小号" } }),
+	]);
+	assert.equal(same?.qty, 6);
+	assert.equal(same?.buyQty, 6);
+	assert.deepEqual(same?.orders, [
+		{ sn: "first", shop: "one", qty: 3 },
+		{ sn: "second", shop: "two", qty: 3 },
+	]);
+	assert.equal(different?.qty, 4);
+});
+
+test("未映射的规格按 Shopee 店铺、商品和规格归集，相同名称不混算", () => {
+	const unmapped = (qty: number) => ({ ...demandLine(qty, "unknown"), target: null });
+	const groups = procurementDemand([
+		demandOrder("first", unmapped(2)),
+		demandOrder("second", unmapped(3)),
+		{ ...demandOrder("third", unmapped(4)), shopId: "2" },
+		demandOrder("fourth", { ...unmapped(5), modelId: "12" }),
+	]);
+	assert.deepEqual(
+		groups.map(({ qty, buyQty, reviewQty }) => [qty, buyQty, reviewQty]),
+		[
+			[5, 0, 5],
+			[4, 0, 4],
+			[5, 0, 5],
+		],
+	);
+});
+
+test("已付、待付、待加购与待核对各自有数量，未核实数量不会计入待加购", () => {
+	const [summary] = procurementDemand([
+		demandOrder("first", demandLine(2, "paid", 2)),
+		demandOrder("second", demandLine(1, "unpaid", 0, 1)),
+		demandOrder("third", demandLine(6, "partial", 2, 1)),
+		demandOrder("fourth", demandLine(5, "unknown", 4)),
+		{ ...demandOrder("fifth", demandLine(2)), cartPending: true },
+		{ ...demandOrder("sixth", demandLine(3)), cartDone: true },
+		demandOrder("seventh", demandLine(4)),
+	]);
+	assert.ok(summary);
+	const { qty, paidQty, unpaidQty, buyQty, reviewQty } = summary;
+	assert.deepEqual({ qty, paidQty, unpaidQty, buyQty, reviewQty }, { qty: 23, paidQty: 4, unpaidQty: 2, buyQty: 4, reviewQty: 13 });
 });

@@ -38,11 +38,24 @@ export type Order = {
 	cartDone: boolean;
 	purchase?: PurchaseMatch;
 };
+export type SkuDemand = {
+	key: string;
+	name: string;
+	spec: string;
+	target: { offerId: string; skuId: string } | null;
+	qty: number;
+	paidQty: number;
+	unpaidQty: number;
+	buyQty: number;
+	reviewQty: number;
+	orders: { sn: string; shop: string; qty: number }[];
+};
 export type Monitor = {
 	checkedAt: string | null;
 	error: string | null;
 	orders: Order[];
-	purchases?: { account: string | null; loginId: string | null; capturedAt: string | null; complete: boolean; error: string | null };
+	demand?: SkuDemand[];
+	purchases?: { selected?: string | null; account: string | null; loginId: string | null; capturedAt: string | null; complete: boolean; error: string | null };
 };
 export type PurchaseResult = {
 	state: string;

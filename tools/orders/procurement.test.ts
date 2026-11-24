@@ -56,4 +56,8 @@ test("采购快照并行读取已有货源索引，保留待核对状态且不�
 	assert.equal(result.orders[0]?.step, "采购状态待核对");
 	assert.equal(result.orders[0]?.purchase.canPurchase, false);
 	assert.equal(result.orders[0]?.lines[0]?.sources.length, 0);
+	assert.equal(result.purchases.selected, null);
+	assert.equal(result.purchases.error, "尚未选择采购账号");
+	assert.deepEqual(result.demand[0]?.orders, [{ sn: "order-1", shop: "one", qty: 1 }]);
+	assert.equal(result.demand[0]?.reviewQty, 1);
 });

@@ -16,7 +16,7 @@ import {
 	readPurchaseEvidence,
 	summarizePurchase,
 } from "./procurement-evidence.ts";
-import { type ProcurementItem, procurementLines } from "./procurement-items.ts";
+import { type ProcurementItem, procurementDemand, procurementLines } from "./procurement-items.ts";
 import { type MatchNeed, matchProcurement } from "./procurement-matches.ts";
 import { purchaseState, samePurchase, selectPurchase } from "./purchase.ts";
 import { buyAccount, readAll, reuse, writeOrders } from "./read.ts";
@@ -50,12 +50,19 @@ type MonitorRow = {
 	cart_done: boolean;
 };
 const syncs = new WeakMap<Sql, Map<string, { at: string | null; error: string | null }>>();
+const purchaseErrors = new WeakMap<Sql, string>();
 const scopeKey = (shops: string[]) => JSON.stringify([...new Set(shops)].sort());
 async function refreshPurchases(sql: Sql): Promise<void> {
-	const account = await buyAccount(sql);
-	if (!account) throw new Error("请先配置 1688 采购账号");
-	const result = await refreshAccount(sql, { id: account.userId, name: account.loginId });
-	if (result.status !== "succeeded") throw new Error(result.error ?? "1688 采购订单仍在同步，保留上次成功快照");
+	try {
+		const account = await buyAccount(sql);
+		if (!account) throw new Usage("请先配置 1688 采购账号");
+		const result = await refreshAccount(sql, { id: account.userId, name: account.loginId });
+		if (result.status !== "succeeded") throw new Error(result.error ?? "1688 采购订单仍在同步，保留上次成功快照");
+		purchaseErrors.delete(sql);
+	} catch (e) {
+		purchaseErrors.set(sql, (e as Error).message);
+		throw e;
+	}
 }
 
 export async function monitor(sql: Sql, shops: string[]) {
@@ -111,31 +118,38 @@ export async function monitor(sql: Sql, shops: string[]) {
 			...procurementTarget({ shop: row.shop, shopId: row.shop_id }, item, sources, listings, catalog),
 		})),
 	);
-	const matches = matchProcurement(needs, evidence.records, evidence.coverage);
+	const targets = new Map(needs.map((need) => [`${need.sn}:${need.modelId}`, need.target]));
+	const purchaseError = evidence.coverage.selected && purchaseErrors.get(sql);
+	const purchases = purchaseError ? { ...evidence.coverage, complete: false, error: purchaseError } : evidence.coverage;
+	const matches = matchProcurement(needs, evidence.records, purchases);
 	const sync = syncs.get(sql)?.get(scopeKey(shops));
+	const orders = rows.map((r) => {
+		const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings).map((line) => ({
+			...line,
+			target: targets.get(`${r.sn}:${line.modelId}`) ?? null,
+			purchase: matches.get(`${r.sn}:${line.modelId}`)!,
+		}));
+		const purchase = summarizePurchase(lines.map((line) => line.purchase));
+		return {
+			sn: r.sn,
+			shop: r.shop,
+			shopId: r.shop_id,
+			createdAt: r.created_at?.toISOString() ?? null,
+			shipBy: r.ship_by?.toISOString() ?? null,
+			items: r.items_text ?? "",
+			lines,
+			purchase,
+			step: purchase.label,
+			cartPending: r.cart_pending,
+			cartDone: r.cart_done,
+		};
+	});
 	return {
 		checkedAt: sync?.at ?? null,
 		error: sync?.error ?? null,
-		purchases: evidence.coverage,
-		orders: rows.map((r) => {
-			const lines = procurementLines({ shop: r.shop, shopId: r.shop_id, items: r.items }, sources, listings).map((line) => ({
-				...line,
-				purchase: matches.get(`${r.sn}:${line.modelId}`)!,
-			}));
-			const purchase = summarizePurchase(lines.map((line) => line.purchase));
-			return {
-				sn: r.sn,
-				shop: r.shop,
-				createdAt: r.created_at?.toISOString() ?? null,
-				shipBy: r.ship_by?.toISOString() ?? null,
-				items: r.items_text ?? "",
-				lines,
-				purchase,
-				step: purchase.label,
-				cartPending: r.cart_pending,
-				cartDone: r.cart_done,
-			};
-		}),
+		purchases,
+		orders,
+		demand: procurementDemand(orders),
 	};
 }
 
@@ -148,7 +162,6 @@ export async function syncMonitor(sql: Sql, shops: string[]) {
 			`procurement-monitor:${key}`,
 			async () => {
 				await writeOrders(sql, shops);
-				await refreshPurchases(sql);
 				return new Date().toISOString();
 			},
 			60_000,
@@ -156,7 +169,9 @@ export async function syncMonitor(sql: Sql, shops: string[]) {
 		states.set(key, { at, error: null });
 	} catch (e) {
 		states.set(key, { at: states.get(key)?.at ?? null, error: (e as Error).message });
+		return monitor(sql, shops);
 	}
+	await reuse(`procurement-purchases:${key}`, () => refreshPurchases(sql), 60_000).catch(() => {});
 	return monitor(sql, shops);
 }
 

@@ -12,11 +12,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { errorOf, remember, saved as savedValue } from "@/lib/state";
-import { api, type Item as PageItem, type PageSummary, usePoll } from "../../api.ts";
+import { api, type BrowserConnectionResult, type Item as PageItem, type PageSummary, usePoll } from "../../api.ts";
 import { BrowserConnection } from "../../browser-connection.tsx";
 import type { Props } from "./schema.ts";
 import { monitorSync, preserveMonitor } from "./sync.ts";
-import type { Monitor, OrderLine, PurchaseMatch, PurchaseResult } from "./types.ts";
+import type { Monitor, OrderLine, PurchaseMatch, PurchaseResult, SkuDemand } from "./types.ts";
 
 const time = (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知");
 const syncMonitor = monitorSync(
@@ -63,7 +63,7 @@ export function OrderNotifications({ pages }: { pages: PageSummary[] }) {
 					seen.add(key);
 					remember(key, "1");
 				}
-				toast(`Shopee 有 ${fresh.length} 张待采购订单`, {
+				toast(`Shopee 有 ${fresh.length} 张待出货订单`, {
 					description: fresh
 						.map((o) => o.sn)
 						.slice(0, 3)
@@ -164,11 +164,31 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 	const storageKey = `x2-procurement-pending:${item.id}:${props.shops.join(",")}`;
 	const [pending, setPending] = useState(() => saved(storageKey));
 	const [result, setResult] = useState<PurchaseResult | null>(null);
+	const [verifiedBuyer, setVerifiedBuyer] = useState<BrowserConnectionResult["account"]>(undefined);
+	const buyer = data?.purchases?.selected;
 	const connectionChanged = (checking: boolean) => {
 		connectionBusy.current = checking;
 		setConnecting(checking);
 	};
 	const connected = () => syncRead.current(true);
+	const chooseBuyer = async () => {
+		if (!verifiedBuyer || buyer !== null || lock.current || syncing || connectionBusy.current || pending) return;
+		lock.current = true;
+		setBusy(true);
+		setActionError(null);
+		try {
+			await api.set("order_settings", { id: "1" }, "buy_account", verifiedBuyer.id);
+			setVerifiedBuyer(undefined);
+			api.invalidateProcurementMonitor(item.id);
+		} catch (e) {
+			setActionError(errorOf(e));
+			return;
+		} finally {
+			lock.current = false;
+			setBusy(false);
+		}
+		await connected();
+	};
 	const errors = [...new Set([actionError, syncError, data?.error, data?.purchases?.error, error].filter((message): message is string => Boolean(message)))];
 	const automaticSyncPaused = [data?.error, data?.purchases?.error].some((message) => /滑块|安全验证/.test(message ?? ""));
 	// 勾选用于读取和核对；是否允许加购由预览及确认的服务端实时检查决定。
@@ -275,7 +295,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 				</a>
 			</div>
 			<div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-				<span>1688 采购账号：{data?.purchases?.loginId ?? data?.purchases?.account ?? "尚未核对"}</span>
+				<span>1688 采购账号：{data?.purchases?.loginId ?? buyer ?? "尚未选择"}</span>
 				<span>上次完整同步：{data?.purchases?.capturedAt ? time(data.purchases.capturedAt) : "尚未同步"}</span>
 				{data?.purchases?.error && !syncing ? <span>{data.purchases.capturedAt ? "本次同步未完成，保留上次完整记录。" : "采购订单同步尚未完成。"}</span> : null}
 			</div>
@@ -284,12 +304,23 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					<CardContent className="space-y-3 p-4">
 						<h3 className="text-sm font-medium">1688 采购账号连接</h3>
 						<BrowserConnection
-							expectedAccount={data?.purchases?.account ?? data?.purchases?.loginId ?? undefined}
+							expectedAccount={data?.purchases?.account ?? buyer ?? undefined}
 							verificationRequired={errors.some((message) => /滑块|安全验证/.test(message))}
 							disabled={busy || syncing || connecting}
-							onCheckingChange={connectionChanged}
-							onConnected={connected}
+							onCheckingChange={(checking) => {
+								if (checking) setVerifiedBuyer(undefined);
+								connectionChanged(checking);
+							}}
+							onConnected={async (account) => {
+								if (buyer === null) setVerifiedBuyer(account);
+								else await connected();
+							}}
 						/>
+						{buyer === null && verifiedBuyer && (
+							<Button variant="outline" size="sm" disabled={busy || syncing || connecting || Boolean(pending)} onClick={() => void chooseBuyer()}>
+								将 {verifiedBuyer.name} 设为采购账号
+							</Button>
+						)}
 						{automaticSyncPaused && <p className="text-xs text-muted-foreground">等待验证期间暂停自动同步；验证完成后重新检测恢复。</p>}
 					</CardContent>
 				</Card>
@@ -356,6 +387,7 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 					</CardContent>
 				</Card>
 			)}
+			{!data?.error && data?.demand?.length ? <SkuDemandTable rows={data.demand} /> : null}
 			<Card className="overflow-hidden">
 				<CardContent className="p-0">
 					<div className="flex flex-wrap items-center gap-3 border-b p-4">
@@ -364,7 +396,11 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 							<p className="text-xs">按下单时间倒序 · 最新订单在前</p>
 							{selectionNeedsReview ? <p className="text-xs">所选订单含需核对的采购状态，将先读取核对；勾选不会加购或付款。</p> : null}
 						</div>
-						<Button className="ml-auto" disabled={busy || connecting || Boolean(pending) || !selectedOrders.length} onClick={() => void start()}>
+						<Button
+							className="ml-auto"
+							disabled={busy || connecting || buyer === null || Boolean(pending) || !selectedOrders.length}
+							onClick={() => void start()}
+						>
 							<ShoppingCartIcon />
 							{busy ? "正在读取采购信息…" : "开始采购"}
 						</Button>
@@ -473,6 +509,59 @@ function Procurement({ props, item }: { props: Props; item: PageItem }) {
 				</DialogContent>
 			</Dialog>
 		</div>
+	);
+}
+
+function SkuDemandTable({ rows }: { rows: SkuDemand[] }) {
+	return (
+		<Card>
+			<CardContent className="space-y-3 p-4">
+				<h3 className="font-medium">按 SKU 汇总采购</h3>
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead>商品规格</TableHead>
+							<TableHead className="text-right">需求件数</TableHead>
+							<TableHead className="text-right">待采购</TableHead>
+							<TableHead>采购进度</TableHead>
+							<TableHead>来源订单</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{rows.map((row) => (
+							<TableRow key={row.key}>
+								<TableCell className="min-w-56 max-w-md whitespace-normal align-top">
+									<p className="font-medium">{row.name || "未命名商品"}</p>
+									<p className="text-xs text-muted-foreground">{row.spec || "单规格"}</p>
+									{row.target && (
+										<a className="text-xs underline" href={`https://detail.1688.com/offer/${row.target.offerId}.html`} target="_blank" rel="noreferrer">
+											1688 SKU {row.target.skuId}
+										</a>
+									)}
+								</TableCell>
+								<TableCell className="text-right align-top tabular-nums">{row.qty}</TableCell>
+								<TableCell className="text-right align-top font-semibold tabular-nums">{row.buyQty === 0 && row.reviewQty ? "—" : row.buyQty}</TableCell>
+								<TableCell className="align-top text-xs text-muted-foreground">
+									{row.paidQty > 0 && <p>已付 {row.paidQty} 件</p>}
+									{row.unpaidQty > 0 && <p>待付款 {row.unpaidQty} 件</p>}
+									{row.reviewQty > 0 && <p>待核对 {row.reviewQty} 件</p>}
+								</TableCell>
+								<TableCell className="align-top text-xs">
+									<details>
+										<summary className="cursor-pointer">{row.orders.length} 张订单</summary>
+										{row.orders.map((order) => (
+											<p key={order.sn} className="mt-1">
+												{order.shop} · {order.sn} × {order.qty}
+											</p>
+										))}
+									</details>
+								</TableCell>
+							</TableRow>
+						))}
+					</TableBody>
+				</Table>
+			</CardContent>
+		</Card>
 	);
 }
 
