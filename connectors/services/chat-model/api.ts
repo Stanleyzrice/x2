@@ -37,11 +37,16 @@ export function endpoint(base: string): URL {
 	url.pathname = path.endsWith("/chat/completions") ? path : `${path}/chat/completions`;
 	return url;
 }
+export function hasDsmlMarkup(text: string): boolean {
+	return /(?:<|&lt;)\/?\s*[|｜]+\s*DSML\s*[|｜]+/i.test(text);
+}
 export function completionOf(value: unknown) {
 	const parsed = completion.safeParse(value);
 	if (!parsed.success) throw new Error("客服模型回包变了，无法读取模型名或回复正文");
 	const r = parsed.data;
-	return { text: r.choices[0]!.message.content, model: r.model, tokens: r.usage?.total_tokens ?? null };
+	const text = r.choices[0]!.message.content;
+	if (hasDsmlMarkup(text)) throw new NeedsHuman("模型回傳了工具指令，無法採用這則建議。請重新產生或切換模型。");
+	return { text, model: r.model, tokens: r.usage?.total_tokens ?? null };
 }
 export async function suggest(system: string, context: string, config: ChatModelConfig, request: typeof fetch = fetch) {
 	const url = endpoint(config.baseUrl);

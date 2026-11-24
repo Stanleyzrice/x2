@@ -1,4 +1,5 @@
 // Chat 运行事实与版本的薄持久层；上下文按身份和内容指纹去重，人工稿只接受明确版本。
+import { hasDsmlMarkup } from "../../connectors/services/chat-model/api.ts";
 import type { Json, Sql } from "../../platform/db/index.ts";
 import type { Context } from "./context.ts";
 import type { listConversations } from "./read.ts";
@@ -51,7 +52,7 @@ export async function contextById(sql: Sql, shop: string, conversationId: string
 }
 export async function threadState(sql: Sql, context: Context) {
 	// 各项互不依赖，避免共享远端库的延迟按查询次数累加；最新 intent 的写入状态最后读取。
-	const [[draft], [suggestion], [intent], [pending], tried] = await Promise.all([
+	const [[draft], [latestSuggestion], [intent], [pending], tried] = await Promise.all([
 		sql<
 			{ text: string; revision: number }[]
 		>`select text, revision from chat_drafts where shop = ${context.shop} and shop_id = ${context.shopId} and conversation_id = ${context.conversationId}`,
@@ -71,6 +72,7 @@ export async function threadState(sql: Sql, context: Context) {
 				{ status: string; error: string | null }[]
 			>`select status, error from writes where op = '聊聊回复' and key = ${`chat-reply:${intent.request_id}`} order by id desc limit 1`
 		: [];
+	const suggestion = latestSuggestion && !hasDsmlMarkup(latestSuggestion.text) ? latestSuggestion : null;
 	return {
 		draft: draft ?? { text: "", revision: 0 },
 		suggestion: suggestion

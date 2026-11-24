@@ -53,6 +53,13 @@ test("缺字段的回包明确失败", () => {
 	assert.throws(() => completionOf({ choices: [] }), /回包变了/);
 });
 
+test("客服模型正文混入 DSML 工具标记时拒绝整条建议", async () => {
+	for (const content of ['<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="bash">', "您好\n</｜DSML｜tool_calls>", "&lt;||DSML|| invoke&gt;"]) {
+		const request: typeof fetch = async () => Response.json({ model: "deepseek-flash", choices: [{ message: { content } }] });
+		await assert.rejects(suggest("rule", "context", config, request), /模型回傳了工具指令/);
+	}
+});
+
 test("HTTP 错误不泄露响应体或密钥，也不重试", async () => {
 	let calls = 0;
 	const request: typeof fetch = async () => {
